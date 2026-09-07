@@ -29,7 +29,7 @@ All_map[4]   = sum_i alpha_i T_i * |n_i . p_i|   # camera-frame plane distance o
 
 So the side buffer is four channels we do not already have (normal 3 + distance 1) — exactly the width of
 the `extra_signals` path our 3DGS branch uses today for normals (`rendering.py:162-170`, 4 channels because
-the compiled kernel takes 8 total but not 7). Both `All_map[0:3]` and `All_map[4]` are un-normalised
+the compiled kernel takes 8 total but not 7). Both `All_map[0:3]` and `All_map[4]` are un-normalized
 alpha-weighted sums, and the depth formula is a ratio of them, so the missing alpha division cancels — the
 same reason the plane-induced homography below can use the raw accumulated `n` and `d`.
 
@@ -56,7 +56,7 @@ same reason the plane-induced homography below can use the raw accumulated `n` a
   the plane depth in **camera** space (`point_utils.depth2point_world` returns camera points; its world
   transform is commented out) and scales by the detached alpha (`pgsr_scene.py:319`). gsplat's
   `depth_to_normal` cross product has the same handedness as upstream's `depth_pcd2normal`.
-- `normal` is the raw accumulated normal, **not** normalised — upstream compares and warps with the
+- `normal` is the raw accumulated normal, **not** normalized — upstream compares and warps with the
   accumulated one.
 
 ### 2. Losses (`collab_splats/splats/losses.py`, helpers in `collab_splats/splats/pgsr.py`)
@@ -71,31 +71,31 @@ Three registry entries, all gated at step 7000 upstream (`pgsr_scene.py:108,114`
 
 - **Single view:** `w = (1 - grad_weight(gt))^5`, eroded with a 5×5 min-filter, times
   `|depth_normal - normal|.sum(channels)`, meaned. `grad_weight` is the max of the mean absolute
-  horizontal/vertical colour differences, min-max normalised, padded with 1.0 (`pgsr_scene.py:29-45`).
-- **Multi view:** unproject this view's `plane_depth` to world points, project into the neighbour, read its
+  horizontal/vertical color differences, min-max normalized, padded with 1.0 (`pgsr_scene.py:29-45`).
+- **Multi view:** unproject this view's `plane_depth` to world points, project into the neighbor, read its
   `plane_depth` bilinearly, re-project back, and take the pixel round-trip error `pixel_noise`. The mask is
   `in-frame and z > 0.1 and pixel_noise < 1.0`; the weight is `exp(-pixel_noise).detach()`. `pgsr_geo` is
   `(weight * pixel_noise)[mask].mean()`.
 - **NCC:** sample up to `num_sample = 102400` masked pixels, build 7×7 patches (`patch_size = 3`), warp them
-  into the neighbour through the plane-induced homography
+  into the neighbor through the plane-induced homography
   `H = K_near (R_rel - t_rel n^T / d) K_ref^-1` built from the **accumulated** `n`, `d` (scale cancels),
   and take `1 - NCC^2` clamped to [0, 2], keeping patches with `ncc < 0.9`, weighted by the same weights.
 
-### 3. Neighbour views (`collab_splats/splats/pgsr.py`)
+### 3. Neighbor views (`collab_splats/splats/pgsr.py`)
 
 GS-SR prefers its COLMAP path (`pgsr_dataloader.py:31-46`): the MVSNet-style covisibility score
 `sum over co-visible points of exp(-(theta - 5)^2 / (2 sigma^2))`, `sigma = 1` below 5° and `10` above,
 top `num_multi_view = 5` per view. We have no per-image track ids at the trainer boundary, so the score is
 computed over the seed point cloud we already pass in, with co-visibility approximated by "projects inside
 both frames with positive depth". The pose-only fallback (angle < 30°, distance in [0.01, 1.5]) is not
-reimplemented: its distance thresholds are raw-COLMAP-unit values that mean nothing in our normalised frame.
+reimplemented: its distance thresholds are raw-COLMAP-unit values that mean nothing in our normalized frame.
 
 ### 4. Trainer (`collab_splats/splats/trainer.py`)
 
-- `pgsr` renders a second view — one of the current view's neighbours, sampled uniformly — once any
+- `pgsr` renders a second view — one of the current view's neighbors, sampled uniformly — once any
   multi-view term is live, at the same downscale factor and through the same pose refiner, with gradient
   (upstream backprops through both renders, `pgsr_scene.py:211-217`).
-- The neighbour render, the two cameras and the gray images ride in `target["pgsr"]`, so the loss registry
+- The neighbor render, the two cameras and the gray images ride in `target["pgsr"]`, so the loss registry
   signature stays `(render, target, gaussians, scene_scale, spec)`.
 - Gray is ITU-R 601-2 luma (`torchvision.transforms.Grayscale`, GS-SR `cameras/__init__.py:64`),
   computed on the GPU target at the step's resolution; GS-SR keeps `ncc_scale = 1.0`.
@@ -125,9 +125,9 @@ Unit tests in `tests/splats/test_pgsr.py`, all CPU except the two marked `@cuda`
   intersection (closed form, no rasterizer);
 - the gradient weight is 1 on a flat image and drops on an edge; erosion shrinks the mask;
 - `lncc` is 0 for identical patches, and invariant to per-patch gain/bias (that is what NCC buys);
-- the homography maps the reference pixel of a plane onto its true neighbour pixel, checked against an
+- the homography maps the reference pixel of a plane onto its true neighbor pixel, checked against an
   explicit projection of a known 3D plane;
-- neighbour selection prefers a co-visible view at ~5° over a co-visible view at 60° and over one that sees
+- neighbor selection prefers a co-visible view at ~5° over a co-visible view at 60° and over one that sees
   nothing in common;
 - `@cuda`: a 60-step `primitive: pgsr` run writes the same artifact set as 3dgs, and the same with
   `representation: scaffold` (GS-SR's `scaffold-pgsr`).

@@ -364,7 +364,7 @@ parameter and raises.
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
 | `mesh.enabled` | bool | `false` | Build TSDF/Poisson mesh (opt-in) |
-| `mesh.source` | str | `feedforward` | `feedforward` fuses pointcloud.zarr depth; `splats` fuses splats.zarr renders (needs the splats stage; `native_resolution` ignored) |
+| `mesh.source` | str | `feedforward` | `feedforward` fuses pointcloud.zarr depth; `splats` re-renders the splats stage's `ckpt.pt` and fuses that (needs the splats stage; `native_resolution` ignored) |
 | `mesh.mesher` | str | `tsdf` | `tsdf` or `poisson` |
 | `mesh.voxel_size` | float | `0.01` | TSDF voxel size in metres |
 | `mesh.sdf_trunc` | float | `0.04` | TSDF truncation distance in metres |
@@ -372,7 +372,7 @@ parameter and raises.
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
-| `splats.pose_opt` | bool | `true` | Refine camera poses jointly (`CameraOptModule`) |
+| `splats.pose_opt` | bool | `true` | Refine camera poses jointly (`CameraOpt`) |
 | `splats.sh_degree` | int | `3` | Max spherical-harmonics degree |
 | `splats.sh_degree_interval` | int | `1000` | Steps between SH-degree increments |
 | `splats.init_opacity` | float | `0.1` | Initial Gaussian opacity |
@@ -380,7 +380,7 @@ parameter and raises.
 | `splats.scales_lr` | float | `5.0e-3` | Scales learning rate |
 | `splats.quats_lr` | float | `1.0e-3` | Quaternion learning rate |
 | `splats.opacities_lr` | float | `5.0e-2` | Opacity learning rate |
-| `splats.sh0_lr` | float | `2.5e-3` | DC colour learning rate |
+| `splats.sh0_lr` | float | `2.5e-3` | DC color learning rate |
 | `splats.shN_lr` | float | `1.25e-4` | Higher-order SH learning rate |
 | `splats.pose_lr` | float | `1.0e-5` | Pose-opt learning rate, × scene scale |
 | `splats.cap_max` | int | `1000000` | `3dgs` only: Gaussian budget for `MCMCStrategy` |
@@ -582,7 +582,6 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |
 | `<backend>/splats/ckpt.pt` | trainer checkpoint: Gaussian params + pose-opt state, for resuming or re-rendering |
-| `<backend>/splats/splats.zarr` | per-training-view renders: `rgb`, `depth`, `normal`, `alpha`, `c2w`, `K`, plus `median_depth` (the RaDe-GS surface depth) on 2DGS runs |
 | `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
 | `<backend>/pointcloud.zarr` | further processing inside this repo (depth, poses, confidence when the method produces it) — see below |
@@ -594,6 +593,11 @@ per-point semantics. One scene may be reconstructed by several backends, so a pe
 latent code is only meaningful next to the point set it indexes. `images/` sits at the
 scene root instead: the keyframes are decoded once from the video and shared by every
 backend that reconstructs the scene.
+
+`splats/splats.zarr` was retired on 2026-09-06 — `splats/ckpt.pt` is self-contained (model,
+cameras, image size, config) and `collab_splats.splats.rendering.load_checkpoint` +
+`render_views` reproduce every render. Scenes processed before that date still have the store;
+nothing reads it, and it can be deleted.
 
 **Migration (2026-09-05):** `<backend>/transforms.json` is no longer written. Because
 `push_outputs` is `rclone copy` with no `--delete` and `verify_push` is `--one-way`, scenes

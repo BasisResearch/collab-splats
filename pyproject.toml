@@ -132,8 +132,11 @@ feedforward = [
 ]
 
 gpu = [
-  # CUDA build toolkit (nvcc + cccl headers) for compiling bae/gsplat in the venv.
-  # 12.1.1 matches torch 2.5.1+cu121. torch already vendors the runtime libs.
+  # NOT a working compiler. Measured 2026-09-06: every nvidia-cuda-nvcc-cu12 wheel (12.1 … 12.8)
+  # ships only ptxas, and the cccl wheel this pin resolves to predates <cuda/std/optional>, which
+  # gsplat d2f5c0f needs. A SYSTEM toolkit (nvidia/cuda:*-devel, or cuda-nvcc-12-1 +
+  # cuda-libraries-dev-12-1) plus setup.sh's CCCL 12.6.77 overlay is the supported path — this
+  # extra only rounds out the headers/libs torch does not vendor.
   "cuda-toolkit[all]==12.1.1",
 ]
 

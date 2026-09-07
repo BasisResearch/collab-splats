@@ -34,6 +34,8 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "native_resolution": False,
             "color_map_iterations": 0,
             "splat_depth": "expected",
+            "splat_max_depth_frac": None,
+            "splat_max_depth_grad": None,
             "source": "feedforward",
         },
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},

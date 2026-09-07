@@ -20,8 +20,11 @@ if [ -x /usr/local/cuda/bin/nvcc ]; then
 else
     cat >&2 <<'MSG'
 setup.sh: no nvcc at /usr/local/cuda/bin/nvcc — bae and gsplat build from source and need it.
-Use the nvidia/cuda:12.1.1-devel image, or on a bare host build the toolkit with micromamba
-(gsplat d2f5c0f needs CCCL >= 2.2 for <cuda/std/optional>; verified 2026-08-22):
+Use the nvidia/cuda:12.1.1-devel image (it supplies nvcc + dev headers, but NOT a new enough
+CCCL — the block below overlays that), or install just the two apt packages the image ships
+(verified 2026-09-06 on a bare host, exact match to torch cu121):
+  apt-get install -y --no-install-recommends cuda-nvcc-12-1 cuda-libraries-dev-12-1
+Or build the toolkit with micromamba (verified 2026-08-22):
   micromamba create -p /opt/cuda-nvcc-12.1 -c nvidia -c conda-forge \
       cuda-version=12.1 cuda-nvcc=12.1 cuda-cudart-dev=12.1 cuda-libraries-dev=12.1
   ln -sfn libcudart.so.12 /opt/cuda-nvcc-12.1/lib/libcudart.so   # solver leaves it dangling
@@ -29,6 +32,28 @@ Use the nvidia/cuda:12.1.1-devel image, or on a bare host build the toolkit with
 MSG
     exit 1
 fi
+# libcu++ (CCCL) floor — REQUIRED even inside nvidia/cuda:12.1.1-devel. gsplat d2f5c0f includes
+# <cuda/std/optional>, which arrived in CCCL 2.2. CUDA 12.1 ships cuda/std/detail/libcxx/include/
+# optional but NOT cuda/std/optional, so with a newer overlay on the path the OUTER header resolves
+# to the overlay while the NESTED one falls back to 12.1's pre-2.2 libcxx and dies with
+# "fatal error: __config: No such file or directory". Measured 2026-09-06: cccl 12.3.101 and
+# 12.4.127 still lack cuda/std/optional; 12.6.77 is the first wheel that carries it. Staged to its
+# own prefix so the venv and the system toolkit are both left alone.
+# The overlay reaches nvcc ONLY through NVCC_PREPEND_FLAGS. Do NOT also put it on CPLUS_INCLUDE_PATH
+# (or CPATH): those rank BELOW the toolkit's own -I on the host preprocessor's search order, which
+# resurrects the exact __config failure this block exists to prevent.
+CCCL_PREFIX="${CCCL_PREFIX:-/opt/cccl-12.6.77}"
+CCCL_INC="$CCCL_PREFIX/nvidia/cuda_cccl/include"
+if [ ! -f "$CCCL_INC/cuda/std/optional" ]; then
+    /root/.local/bin/uv pip install --target "$CCCL_PREFIX" nvidia-cuda-cccl-cu12==12.6.77
+fi
+if [ -f "$CCCL_INC/cuda/std/optional" ]; then
+    export NVCC_PREPEND_FLAGS="-I$CCCL_INC ${NVCC_PREPEND_FLAGS:-}"
+else
+    echo "setup.sh: no <cuda/std/optional> at $CCCL_INC — gsplat d2f5c0f will fail to compile." >&2
+    exit 1
+fi
+
 export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0;8.9;8.6;8.0;7.5;7.0}"
 # Cap parallel compile jobs. torch's cpp_extension defaults to one job per CPU; each cc1plus
 # for a torch C++/CUDA file needs ~2-4 GB, so the default OOM-kills the compiler in a memory-

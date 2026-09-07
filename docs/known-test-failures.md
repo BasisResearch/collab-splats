@@ -1,28 +1,65 @@
 # Known Test Failures
 
-## 2026-09-06 — 3 `test_splats_stage` mesh failures: stale stub config, unmasked by the gsplat repair (OPEN)
+## 2026-09-06 — RESOLVED: `tests/wrapper/test_splats_stage.py`: 3 `KeyError: 'splat_max_depth_frac'` failures
 
-`tests/wrapper/test_splats_stage.py::test_mesh_source_splats_fuses_from_splats_zarr`,
-`::test_mesh_sfm_aligned_zarr_fuses` and `::test_mesh_stage_forwards_splat_depth_from_the_config`
-fail identically with `KeyError: 'splat_max_depth_frac'` raised from `_run_tsdf_mesh`
-(`collab_splats/wrapper/reconstructor.py`, the `splat_max_depth_frac=mesh_cfg[...]` line).
-Measured 2026-09-06 on `clean/pointcloud`: **3 failed, 14 passed**.
+Reproduced on `clean/splats` at `6611ef7c`; **pre-existing, not caused by the splats cleanup.** At
+that point the cleanup had not touched `reconstructor.py` at all, and its only edits to the other two
+files involved were inside comments: `97c2fae0` renamed `CameraOptModule` to `CameraOpt` in a
+`configs/base.yaml` comment, and `b4e67d22` renamed `prepare_training_target` to `prepare_target` in a
+comment in this test file. Neither can change behaviour, so neither can raise a `KeyError`.
 
-Dated to `ddd8ddea` (2026-08-27, *feat(mesh): cut unconstrained and discontinuous depth before splat
-TSDF fusion*), which added two `mesh_cfg["splat_max_depth_frac"]` / `["splat_max_depth_grad"]` reads
-to `_run_tsdf_mesh`. **The cause is the test's stub, not the yaml:** `ddd8ddea` did add both keys to
-`configs/base.yaml` (they are present, `null`/`null`), but the only test file it touched was
-`tests/mesh/test_splats_adapter.py`. `test_splats_stage.py::_stub_reconstructor` builds its Reconstructor via
-`Reconstructor.__new__(Reconstructor)` and a hand-written `config["mesh"]` literal, so it never sees
-the base.yaml merge and still carries the pre-`ddd8ddea` key set. The fix is two keys in that stub
-dict, not a config change.
+```
+FAILED tests/wrapper/test_splats_stage.py::test_mesh_source_splats_fuses_from_splats_zarr
+FAILED tests/wrapper/test_splats_stage.py::test_mesh_sfm_aligned_zarr_fuses
+FAILED tests/wrapper/test_splats_stage.py::test_mesh_stage_forwards_splat_depth_from_the_config
+3 failed, 13 passed
+```
 
-Invisible until 2026-09-06 because the whole file was a **collection error** under the venv's retired
-`gsplat-rade` 1.4.0 (no `gsplat.losses`); the venv now holds the pinned upstream `1.5.3 @ d2f5c0f8`,
-the file collects, and these three surface. Same debt and same owner (the mesh owner) as the 6
-`tests/wrapper/test_reconstructor.py` + `tests/wrapper/test_reconstructor_loger_kwargs.py`
-base.yaml-assert failures tracked below. Not a pointcloud-cleanup regression — reproduces
-on the base checkout.
+That output is kept verbatim; the first test is now called
+`test_mesh_source_splats_fuses_from_the_checkpoint`, renamed by the same task that closed this entry
+when `splats.zarr` was retired in favour of `splats/ckpt.pt`.
+
+All three raised `KeyError: 'splat_max_depth_frac'` in `Reconstructor.mesh()`, on the `mesh_cfg`
+subscripts that build the `_run_tsdf_mesh` call.
+
+**Cause.** `c1b50e02` ("fix(mesh): ship the splat depth cuts off after measuring them") added
+`splat_max_depth_frac` and `splat_max_depth_grad` to `configs/base.yaml` and read both by direct
+subscript in `mesh()`. `configs/base.yaml` has carried both keys ever since and was never the
+problem. The stale thing was the hand-rolled `recon.config` dict in this test file's own
+`_stub_reconstructor`, whose `"mesh"` block stopped at `splat_depth`, so every test in the file that
+reached the `_run_tsdf_mesh` call site died on the first missing key.
+
+**Resolved 2026-09-06** by the splats cleanup's Task 18, which owns this test file: the two keys were
+added to `_stub_reconstructor`'s `"mesh"` block with their shipping defaults.
+
+```python
+            "splat_max_depth_frac": None,
+            "splat_max_depth_grad": None,
+```
+
+The wider point stands: a hand-rolled config fixture silently rots every time `base.yaml` gains a key
+that `reconstructor.py` reads by subscript. Building the fixture from `base.yaml` with explicit
+overrides would make this class of failure impossible, and is still not done.
+
+## 2026-09-06 — `pgsr_multiview` + `pose_opt: true` produces NaN pose deltas (OPEN, pre-existing bug)
+
+Not a test failure — no test covers this combination — but a real bug, recorded so the next person to
+enable it does not rediscover it from scratch.
+
+**Measured against the PRE-refactor tree (`edd1fafb`), so this is not caused by the splats cleanup.**
+With `losses.pgsr_multiview.weight > 0` and `splats.pose_opt: true`, the pose deltas go NaN within
+50 training steps and the final render dies inside `torch.linalg.inv`.
+
+What was ruled out:
+
+- The loss **value** stays finite the whole way through — it is the **backward** pass that produces
+  the NaN, not the forward.
+- The `geo` and `ncc` sub-weights make no difference at any setting tried.
+- `pgsr_normal` alone (without `pgsr_multiview`) is fine with `pose_opt: true`.
+
+Consequence: the splats parity harness pins `pose_opt: False` on its `3dgs_pgsr` config. That is a
+workaround for this bug, not a preference, and the comment at that config says so. If this is ever
+fixed, the parity baseline for that one config must be re-measured.
 
 ## 2026-09-05 — `av` is declared but missing from `uv.lock`, and `uv lock` cannot regenerate
 

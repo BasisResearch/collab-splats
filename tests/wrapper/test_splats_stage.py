@@ -7,6 +7,7 @@ Splats-stage wiring: leaf registration, base.yaml default, and the arrays handed
   pointcloud stage to align).
 """
 
+from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,6 +18,7 @@ import torch
 import yaml
 import zarr
 
+from collab_splats.splats.gaussian import Gaussians
 from collab_splats.splats.trainer import SplatsConfig
 from collab_splats.wrapper.reconstructor import (
     _STAGE_DEPS,
@@ -65,14 +67,14 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
     ):
         out = recon.splats()
 
-    assert out == recon.backend_dir / "splats" / "splats.zarr"
+    assert out == recon.backend_dir / "splats" / "ckpt.pt"
     cfg, images, world_to_cam, intrinsics, points, colors, out_dir = train.call_args.args
     depth_targets = train.call_args.kwargs["depth_targets"]
     assert cfg.max_steps == 1
     assert images[0, 0, 0, 0] == 20 and images[2, 0, 0, 0] == 0  # follows image_paths (reversed), not store order
     assert world_to_cam.shape == (3, 4, 4) and intrinsics.shape == (3, 3, 3) and points.shape == (200, 3)
     assert out_dir == recon.backend_dir / "splats"
-    # Model-res depth is handed over as-is; train() resizes per view (prepare_training_target)
+    # Model-res depth is handed over as-is; train() resizes per view (prepare_target)
     assert depth_targets.shape == (3, 4, 4)
     # Depth rows reordered to image_paths (reversed): row 0 is frame 2, row 2 is frame 0
     assert depth_targets[0, 0, 0] == 3 and depth_targets[2, 0, 0] == 1
@@ -117,6 +119,31 @@ def test_splats_stage_skips_when_output_exists(tmp_path):
     train.assert_not_called()
 
 
+def test_splats_stage_skip_path_returns_the_checkpoint_path(tmp_path):
+    """
+    The early return is a second return statement — the trained path's assertion cannot reach it.
+    """
+    recon = _stub_reconstructor(tmp_path)
+    recon._stage_output_exists = lambda stage: stage == "splats"
+    with patch("collab_splats.splats.trainer.train"):
+        out = recon.splats()
+    assert out == recon.backend_dir / "splats" / "ckpt.pt"
+
+
+def test_splats_stage_output_marker_is_the_checkpoint(tmp_path):
+    """
+    The stage marker is a third site, read by run_pipeline and by the skip-check above.
+    """
+    recon = _stub_reconstructor(tmp_path)
+    del recon._stage_output_exists  # _stub_reconstructor stubs it out; this test wants the real one
+    splats_dir = recon.backend_dir / "splats"
+    splats_dir.mkdir(parents=True)
+
+    assert not recon._stage_output_exists("splats")
+    (splats_dir / "ckpt.pt").write_bytes(b"")
+    assert recon._stage_output_exists("splats")
+
+
 def test_splats_conf_percentile_log_reports_the_zero_target_fraction(tmp_path, caplog):
     """
     An SfM zarr has no confidence channel; the log must say so AND report the share of
@@ -145,40 +172,94 @@ def test_splats_conf_percentile_log_reports_the_zero_target_fraction(tmp_path, c
     assert "25.00% of target pixels are zero" in caplog.text
 
 
-def _write_minimal_splats_zarr(path, n_views=3, height=4, width=5):
+def _write_ckpt(path, primitive="3dgs", n_views=3, height=4, width=5):
     """
-    splats.zarr with the array set the mesh adapter reads; all-ones alpha so nothing is dropped.
+    Minimal trained-model ckpt.pt at `path` — the splats stage's only artifact of record.
+
+    - Deliberately a local copy of the fixture in tests/mesh/test_splats_adapter.py: that file
+      belongs to the mesh adapter's suite, and importing across test packages couples them.
+    - `primitive` decides whether the adapter will accept `splat_depth: median` (2dgs only).
     """
-    store = zarr.open_group(path, mode="w")
-    rgb = np.full((n_views, height, width, 3), 7, np.uint8)
-    depth = np.ones((n_views, height, width), np.float32)
-    alpha = np.ones((n_views, height, width), np.float32)
-    c2w = np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1))
-    intrinsics = np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1))
-    for name, array in (("rgb", rgb), ("depth", depth), ("alpha", alpha), ("c2w", c2w), ("K", intrinsics)):
-        store.create_array(name, data=array)
-    store.attrs["primitive"] = "3dgs"
+    rng = np.random.default_rng(0)
+    cfg = SplatsConfig.from_dict({"primitive": primitive, "max_steps": 10, "losses": {}})
+    model = Gaussians(
+        cfg,
+        rng.uniform(-0.5, 0.5, (200, 3)).astype(np.float32),
+        rng.integers(0, 255, (200, 3)).astype(np.uint8),
+        scene_scale=1.0,
+        n_views=n_views,
+        device="cpu",
+    )
+
+    ckpt = model.checkpoint()
+    ckpt["config"] = asdict(cfg)
+    ckpt["cam_to_world"] = torch.eye(4)[None].repeat(n_views, 1, 1)
+    ckpt["intrinsics"] = torch.tensor([[20.0, 0.0, width / 2], [0.0, 20.0, height / 2], [0.0, 0.0, 1.0]])[None].repeat(
+        n_views, 1, 1
+    )
+    ckpt["image_ids"] = list(range(n_views))
+    ckpt["image_size"] = (height, width)
+    ckpt["appearance"] = None
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(ckpt, path)
+    return path
 
 
-def test_mesh_source_splats_without_zarr_raises(tmp_path):
+def _fake_render_views(depths, medians=None):
+    """
+    Stand-in rasterizer yielding caller-chosen pixels, shaped as `render_views` does.
+
+    - `rgb` is (1, H, W, 3) in [0, 1]; `depth`, `median_depth` and `alpha` are (1, H, W, 1).
+    - Alpha is all-ones, which the adapter's percentile gate keeps in full, so the depths a
+      test writes are the depths that reach fusion.
+    """
+    depths = np.asarray(depths, dtype=np.float32)
+    medians = depths if medians is None else np.asarray(medians, dtype=np.float32)
+    rgbs = np.zeros(depths.shape + (3,), dtype=np.float32)
+    alphas = np.ones_like(depths)
+
+    def render_views(model, camera_opt, cam_to_world, intrinsics, height, width):
+        for view in range(len(depths)):
+            yield {
+                "rgb": torch.from_numpy(rgbs[view])[None],
+                "depth": torch.from_numpy(depths[view])[None, ..., None],
+                "median_depth": torch.from_numpy(medians[view])[None, ..., None],
+                "alpha": torch.from_numpy(alphas[view])[None, ..., None],
+            }
+
+    return render_views
+
+
+def _patch_renders(monkeypatch, render_views):
+    """Swap the rasterizer the adapter imports at call time for a scripted one."""
+    monkeypatch.setattr("collab_splats.splats.rendering.render_views", render_views)
+
+
+def test_mesh_source_splats_without_a_checkpoint_raises(tmp_path):
     recon = _stub_reconstructor(tmp_path)
     recon.config["mesh"]["source"] = "splats"
     with pytest.raises(ValueError, match="mesh.source: splats"):
         recon.mesh()
 
 
-def test_mesh_source_splats_fuses_from_splats_zarr(tmp_path):
+def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path, monkeypatch):
     recon = _stub_reconstructor(tmp_path)
     recon.config["mesh"]["source"] = "splats"
     recon.config["mesh"]["native_resolution"] = True  # ignored on this path, must not raise
-    splats_dir = recon.backend_dir / "splats"
-    splats_dir.mkdir(parents=True)
-    _write_minimal_splats_zarr(splats_dir / "splats.zarr", n_views=3)
+    _write_ckpt(recon.backend_dir / "splats" / "ckpt.pt", n_views=3)
+
+    # Per-view depths: a shape-only assertion also passes on an all-zero stack, which is what
+    # a checkpoint rendered from the wrong poses returns
+    depths = np.stack([np.full((4, 5), view + 1.0, np.float32) for view in range(3)])
+    _patch_renders(monkeypatch, _fake_render_views(depths))
     with patch("collab_splats.mesh.utils.mesh_from_tsdf_inputs") as fuse:
         fuse.return_value = SimpleNamespace(mesh_path=recon.backend_dir / "mesh.ply")
         out = recon.mesh()
-    depths, rgbs, c2w, intrinsics = fuse.call_args.args[:4]
-    assert depths.shape[0] == 3 and out == recon.backend_dir / "mesh.ply"
+
+    fused = fuse.call_args.args[0]
+    assert [float(fused[view].min()) for view in range(3)] == [1.0, 2.0, 3.0]
+    assert out == recon.backend_dir / "mesh.ply"
 
 
 def test_mesh_source_unknown_raises(tmp_path):
@@ -255,7 +336,7 @@ def test_mesh_stage_forwards_splat_depth_from_the_config(tmp_path):
     recon.config["mesh"]["splat_depth"] = "median"
     splats_dir = recon.backend_dir / "splats"
     splats_dir.mkdir(parents=True)
-    _write_minimal_splats_zarr(splats_dir / "splats.zarr", n_views=3)
+    (splats_dir / "ckpt.pt").write_bytes(b"")  # _run_tsdf_mesh is patched; only the precondition runs
 
     with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as fuse:
         recon.mesh()
@@ -264,30 +345,86 @@ def test_mesh_stage_forwards_splat_depth_from_the_config(tmp_path):
     assert fuse.call_args.kwargs["splat_depth"] == "median"
 
 
-def test_run_tsdf_mesh_forwards_splat_depth_to_the_adapter(tmp_path):
+def test_run_tsdf_mesh_forwards_splat_depth_to_the_adapter(tmp_path, monkeypatch):
     """
     splat_depth has to survive the last hop too — mesh() → _run_tsdf_mesh → the splats adapter.
     """
-    # Store carries BOTH depth arrays, so a dropped pass-through fuses 1.0 instead of raising
-    splats_zarr = tmp_path / "splats.zarr"
-    _write_minimal_splats_zarr(splats_zarr, n_views=2, height=4, width=5)
-    store = zarr.open_group(splats_zarr, mode="a")
-    store.create_array("median_depth", data=np.full((2, 4, 5), 3.0, np.float32))
+    # A 2dgs checkpoint (the only kind the adapter renders median depth from), scripted to
+    # return BOTH depths, so a dropped pass-through fuses 1.0 instead of raising
+    ckpt_path = _write_ckpt(tmp_path / "ckpt.pt", primitive="2dgs", n_views=2)
+    _patch_renders(
+        monkeypatch,
+        _fake_render_views(np.ones((2, 4, 5), np.float32), medians=np.full((2, 4, 5), 3.0, np.float32)),
+    )
 
-    result = SimpleNamespace(extrinsics=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)))
+    # result=None on purpose: the splats branch no longer reads it. The frame-count cross-check
+    # that did is gone — a checkpoint carries the poses it was rendered with, so a COLMAP model
+    # with a different image count is not something this fusion can be wrong about
     with patch("collab_splats.mesh.utils.mesh_from_tsdf_inputs") as fuse:
         fuse.return_value = SimpleNamespace(mesh_path=tmp_path / "mesh.ply")
         _run_tsdf_mesh(
-            result=result,
+            result=None,
             pointcloud_zarr=tmp_path / "pointcloud.zarr",
             output_dir=tmp_path,
             voxel_size=0.01,
             sdf_trunc=0.04,
             depth_trunc=2.0,
             source="splats",
-            splats_zarr=splats_zarr,
+            splats_ckpt=ckpt_path,
             splat_depth="median",
         )
 
     # Assert on the fused values, not a mock kwarg — this exercises the adapter end of the hop
     assert fuse.call_args.args[0][0, 0, 0] == 3.0  # the median array, not the expected one
+
+
+def _splats_adapter_kwargs(tmp_path, **overrides):
+    """
+    Drive _run_tsdf_mesh's splats branch with the adapter mocked and hand back its call kwargs.
+    """
+    depths = np.ones((2, 4, 5), np.float32)
+    rgbs = np.zeros((2, 4, 5, 3), np.float32)
+    c2w = np.repeat(np.eye(4, dtype=np.float32)[None], 2, axis=0)
+    intrinsics = np.repeat(np.eye(3, dtype=np.float32)[None], 2, axis=0)
+
+    with (
+        patch("collab_splats.mesh.utils._splats_to_tsdf_inputs") as adapter,
+        patch("collab_splats.mesh.utils.mesh_from_tsdf_inputs") as fuse,
+    ):
+        adapter.return_value = (depths, rgbs, c2w, intrinsics)
+        fuse.return_value = SimpleNamespace(mesh_path=tmp_path / "mesh.ply")
+        _run_tsdf_mesh(
+            result=None,
+            pointcloud_zarr=tmp_path / "pointcloud.zarr",
+            output_dir=tmp_path,
+            voxel_size=0.01,
+            sdf_trunc=0.04,
+            depth_trunc=2.0,
+            source="splats",
+            splats_ckpt=tmp_path / "ckpt.pt",
+            **overrides,
+        )
+    return adapter.call_args.kwargs
+
+
+# The splats branch hands the adapter four tunables. One test each, setting only its own knob:
+# a single test asserting all four would die for any of them and so could not say which broke.
+def test_run_tsdf_mesh_forwards_conf_percentile_to_the_adapter(tmp_path):
+    """
+    conf_percentile is the alpha gate; dropped, every low-confidence pixel fuses.
+    """
+    assert _splats_adapter_kwargs(tmp_path, conf_percentile=20.0)["conf_percentile"] == 20.0
+
+
+def test_run_tsdf_mesh_forwards_max_depth_frac_to_the_adapter(tmp_path):
+    """
+    splat_max_depth_frac is the far cut; dropped, blown-out background fuses.
+    """
+    assert _splats_adapter_kwargs(tmp_path, splat_max_depth_frac=0.5)["max_depth_frac"] == 0.5
+
+
+def test_run_tsdf_mesh_forwards_max_depth_grad_to_the_adapter(tmp_path):
+    """
+    splat_max_depth_grad is the discontinuity cut; dropped, depth straddling an edge fuses.
+    """
+    assert _splats_adapter_kwargs(tmp_path, splat_max_depth_grad=0.05)["max_depth_grad"] == 0.05

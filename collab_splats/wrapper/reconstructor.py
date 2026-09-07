@@ -573,12 +573,12 @@ def _run_tsdf_mesh(
     color_map_iterations: int = 0,
     images_dir: Path | None = None,
     source: str = "feedforward",
-    splats_zarr: Path | None = None,
+    splats_ckpt: Path | None = None,
     splat_depth: str = "expected",
     splat_max_depth_frac: float | None = None,
     splat_max_depth_grad: float | None = None,
 ) -> Path:
-    """Fuse depth + RGB from pointcloud.zarr (or splats.zarr renders) into a TSDF mesh, using COLMAP poses."""
+    """Fuse depth + RGB from pointcloud.zarr (COLMAP poses) or from a splats ckpt.pt (its own poses)."""
     from collab_splats.mesh.utils import pointcloud_to_mesh
     from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 
@@ -593,21 +593,16 @@ def _run_tsdf_mesh(
             logger.info(
                 "mesh.native_resolution ignored: splats renders are already at frame resolution"
             )
+        # No frame-count cross-check against `result`: the checkpoint carries the poses it was
+        # trained with and the fusion uses those, so a COLMAP model from another run cannot make
+        # this fusion wrong. `result` is read only on the feedforward branch below.
         depths, rgbs, c2w, intrinsics = _splats_to_tsdf_inputs(
-            splats_zarr,
+            splats_ckpt,
             conf_percentile=conf_percentile,
             splat_depth=splat_depth,
             max_depth_frac=splat_max_depth_frac,
             max_depth_grad=splat_max_depth_grad,
         )
-        n_views = depths.shape[0]
-        n_poses = result.extrinsics.shape[0]
-        if n_views != n_poses:
-            raise ValueError(
-                f"Frame-count mismatch: COLMAP reconstruction has {n_poses} images but "
-                f"{splats_zarr} has {n_views}. They are from different runs — re-run the "
-                "splats stage, or point --stages mesh at the matching scene."
-            )
         output_dir.mkdir(parents=True, exist_ok=True)
         mesh_result = mesh_from_tsdf_inputs(
             depths,
@@ -1216,7 +1211,7 @@ class Reconstructor:
         result: PointcloudResult | None = None,
         overwrite: bool = False,
     ) -> Path:
-        """Build a TSDF mesh from `mesh.source` depth: pointcloud.zarr (default) or splats.zarr renders.
+        """Build a TSDF mesh from `mesh.source` depth: pointcloud.zarr (default) or splats ckpt.pt renders.
 
         COLMAP is the pose authority on the feedforward path; the splats path fuses the poses
         the splats were actually rendered with (including pose-opt deltas) and uses alpha as
@@ -1234,7 +1229,7 @@ class Reconstructor:
         if result is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        # Source-specific input check: each branch needs only its own zarr on disk
+        # Source-specific input check: each branch needs only its own artifact on disk
         mesh_cfg = self.config["mesh"]
         source = mesh_cfg["source"]
         if source not in ("feedforward", "splats"):
@@ -1242,12 +1237,12 @@ class Reconstructor:
                 f"mesh.source must be 'feedforward' or 'splats', got {source!r}"
             )
         pointcloud_zarr = self.pointcloud_zarr
-        splats_zarr = None
+        splats_ckpt = None
         if source == "splats":
-            splats_zarr = self.backend_dir / "splats" / "splats.zarr"
-            if not splats_zarr.exists():
+            splats_ckpt = self.backend_dir / "splats" / "ckpt.pt"
+            if not splats_ckpt.exists():
                 raise ValueError(
-                    f"mesh.source: splats needs {splats_zarr} — run the splats stage first "
+                    f"mesh.source: splats needs {splats_ckpt} — run the splats stage first "
                     "(it is never auto-run)"
                 )
         elif not pointcloud_zarr.exists():
@@ -1283,7 +1278,7 @@ class Reconstructor:
             splat_max_depth_grad=mesh_cfg["splat_max_depth_grad"],
             images_dir=self.images_dir,
             source=source,
-            splats_zarr=splats_zarr,
+            splats_ckpt=splats_ckpt,
         )
         logger.info("Mesh saved to %s", out)
         return out
@@ -1404,13 +1399,13 @@ class Reconstructor:
 
     def splats(self, overwrite: bool = False) -> Path:
         """
-        Train Gaussian splats from the pointcloud stage. Returns path to splats/splats.zarr.
+        Train Gaussian splats from the pointcloud stage. Returns path to splats/ckpt.pt.
         """
         out_dir = self.backend_dir / "splats"
-        splats_zarr = out_dir / "splats.zarr"
+        splats_ckpt = out_dir / "ckpt.pt"
         if not overwrite and self._stage_output_exists("splats"):
             logger.info("Splats exist at %s, skipping", out_dir)
-            return splats_zarr
+            return splats_ckpt
 
         result = self._resolve_result()
         if result is None:
@@ -1500,7 +1495,7 @@ class Reconstructor:
             depth_targets=depth_targets,
         )
         logger.info("Splats saved to %s", out_dir)
-        return splats_zarr
+        return splats_ckpt
 
     def reconstruction_quality_report(self, overwrite: bool = False) -> Path:
         """Reference-free error report: three measurements, one reconstruction_quality_report.json.
@@ -1564,7 +1559,7 @@ class Reconstructor:
         # needs these to refuse a named stage whose output already exists — and each leaf stage's
         # own skip-check reads them, so they live here once instead of three times.
         if stage == "splats":
-            return (self.backend_dir / "splats" / "splats.zarr").exists()
+            return (self.backend_dir / "splats" / "ckpt.pt").exists()
         if stage == "mesh":
             return (self.backend_dir / "mesh.ply").exists()
         if stage == "semantics":

@@ -94,7 +94,7 @@ pointcloud:
                                # skip_retriangulation flag). Costs extra runtime.
     random_seed: null         # seed InstantSfM's RUNTIME_OPTIONS (numpy/random/torch/cuda).
                               # InitializeRandomPositions draws unseeded, so two runs of the
-                              # same scene differ. null = upstream behaviour (unseeded).
+                              # same scene differ. null = upstream behavior (unseeded).
 
 semantics:
   enabled: true
@@ -127,24 +127,25 @@ mesh:
   # Both ship off: measured on GH010229, clean_repair already removes everything they remove.
   # frac cuts depth past that fraction of the camera trajectory's extent, but depth_trunc
   # above is the tighter of the two far gates unless it is set beyond the trajectory. grad
-  # cuts neighbour pairs jumping by more than that fraction of their own depth — it must
+  # cuts neighbor pairs jumping by more than that fraction of their own depth — it must
   # clear the scene's real grazing-angle gradient (~0.03 here) or it deletes whole surfaces
   # instead of silhouettes; 0.05 removed visible patches of good mesh.
   splat_max_depth_frac: null
   splat_max_depth_grad: null
 
 # Gaussian splats trained from the pointcloud stage (leaf stage `splats`, upstream gsplat).
-# Photometric (0.8 L1 + 0.2 SSIM) is always on; each loss below is active iff weight > 0 and
-# step >= start. Depth targets = feedforward depth masked by mesh.conf_percentile.
+# Photometric (0.8 L1 + 0.2 (1 - SSIM)) is always on; each loss below is active iff weight > 0 and
+# step >= start. Depth targets = pointcloud.zarr depth masked by mesh.conf_percentile.
 # 3dgs densifies with MCMC (fixed budget cap_max; needs opacity_reg/scale_reg), 2dgs with
 # gsplat's DefaultStrategy (grow_grad2d) and gets the distortion loss instead.
 splats:
   enabled: false
   primitive: 3dgs            # 3dgs (fast kernel, antialiased) | 2dgs (surface-aligned)
   # representation: vanilla (per-gaussian parameters) | scaffold (anchors + MLP decode).
-  # scaffold ignores sh_degree — its colours come from mlp_colour — and densifies anchors
+  # scaffold decodes color from mlp_color, so sh_degree/sh_degree_interval are vanilla-only:
+  # defaults are ignored, a deliberate override raises. It densifies anchors
   # rather than gaussians. Set losses.opacity_reg to 0 under scaffold: opacity is decoded and
-  # its sign is the offset visibility mask, so regularising it shuts offsets.
+  # its sign is the offset visibility mask, so regularizing it shuts offsets.
   representation: vanilla
   # scaffold:
   #   n_offsets: 10
@@ -157,13 +158,13 @@ splats:
   #   min_opacity: 0.005
   #   update_init_factor: 16    # level-0 growing grid, in voxels; later levels shrink it
   #   success_threshold: 0.8    # fraction of a refine window a slot/anchor must be seen for
-  #   appearance_dim: 0         # Scaffold's per-image embedding; independent of appearance_opt
+  #   appearance_dim: 32        # Scaffold's per-image embedding, 0 = off; indep. of appearance_opt
   max_steps: 30000
-  pose_opt: true             # refine camera poses jointly (CameraOptModule). +2.2 dB on a
-                             # 300-frame GoPro scene, +0.4 dB on the 30-frame tutorial, ~+3% time.
-  appearance_opt: false      # per-image affine colour (gain + bias per channel) to absorb
+  pose_opt: true             # refine camera poses jointly (CameraOpt). +2.2 dB on a
+                             # 300-frame GoPro scene, +0.44 dB on the 30-frame tutorial, +5% time.
+  appearance_opt: false      # per-image affine color (gain + bias per channel) to absorb
                              # exposure / white-balance drift. Train views only — novel views
-                             # render uncorrected. Regularised by losses.appearance_reg.
+                             # render uncorrected. Regularized by losses.appearance_reg.
   sh_degree: 3
   sh_degree_interval: 1000
   init_opacity: 0.1
@@ -173,13 +174,13 @@ splats:
   opacities_lr: 5.0e-2
   sh0_lr: 2.5e-3
   shN_lr: 1.25e-4
-  pose_lr: 1.0e-5            # x world-frame camera extent (also under normalize_scene)
+  pose_lr: 1.0e-5            # rotation x world-frame camera extent, translation x scene_scale
   appearance_lr: 1.0e-3
   cap_max: 1000000           # 3dgs only: Gaussian budget
   grow_grad2d: 2.0e-4        # 2dgs only (gsplat non-absgrad default; 8e-4 starved densification)
   num_downscales: 2          # coarse-to-fine (splatfacto): start at 1/4 res, double every
   resolution_schedule: 3000  # this many steps until native. 0 disables.
-  normalize_scene: false     # splatfacto Sim3 normalisation (centre on cameras, unit cube,
+  normalize_scene: false     # splatfacto Sim3 normalization (center on cameras, unit cube,
                              # scene_scale = 1); outputs are mapped back to world units
   log_every: 500
   # Each entry: {weight[, start, end, end_weight]} — with end the weight decays log-linearly
@@ -193,18 +194,18 @@ splats:
     opacity_reg: {weight: 0.01}
     scale_reg: {weight: 0.01}
     appearance_reg: {weight: 1.0e-3}   # no-op unless appearance_opt
-    # 2dgs: replace the two regularisers with  distortion: {weight: 0.01, start: 3000}
+    # 2dgs: replace the two regularizers with  distortion: {weight: 0.01, start: 3000}
     # PGSR (3dgs only — GS-SR pairs it with the vanilla rasterizer, there is no 2dgs-pgsr):
     #   pgsr_normal:    {weight: 0.015, start: 7000}
     #   pgsr_multiview: {weight: 1.0, start: 7000, geo: 0.03, ncc: 0.15}
     # pgsr_normal flattens surfaces against their own plane depth, weighted towards flat image
     # regions. pgsr_multiview is upstream's two multi-view terms in ONE entry, because both come
     # from one shared correspondence pass: geo is the round-trip reprojection error against a
-    # co-visible neighbour and ncc the patch photometric error through the plane homography (its
+    # co-visible neighbor and ncc the patch photometric error through the plane homography (its
     # own weight multiplies their sum). It renders a second view every step, so expect ~2x the
     # step cost from `start` on. Extra keys: pixel_noise_threshold (1.0 px), num_sample (102400),
     # patch_size (3 = 7x7 patches), num_multi_view (5) and max_points (20000) for the one-time
-    # neighbour selection.
+    # neighbor selection.
 
 localization:
   enabled: false

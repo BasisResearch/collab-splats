@@ -1,11 +1,5 @@
-"""cu121 migration verification — Phases 1, 2, 3.
-
-Run:
-    /opt/conda/envs/reconstruction/bin/python -m pytest tests/test_cu121_migration.py -v
-
-All tests are hard gates: any failure blocks the migration merge. Exception while the splats
-module is being built (plan 2026-08-22-splats-module): test_import_all_modules lists
-collab_splats.splats.* ahead of the package and stays red until Task 4 lands.
+"""
+Import and environment gate for the cu121 + uv migration: any failure blocks the merge.
 """
 
 import importlib
@@ -13,6 +7,7 @@ import importlib.metadata as importlib_metadata
 import importlib.util
 import sys
 import sysconfig
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -93,61 +88,83 @@ def test_import_collab_splats_top_level():
     import collab_splats  # noqa: F401
 
 
+# Every collab_splats submodule the gate imports. Module level so a second test can guard the
+# list's own width -- `collab_splats.splats.utils` went missing from it for two whole plans.
+MODULES = [
+    "collab_splats.pointcloud",
+    "collab_splats.pointcloud.base",
+    "collab_splats.geometry.bundle_adjustment",
+    "collab_splats.pointcloud.feedforward",
+    "collab_splats.pointcloud.feedforward.base",
+    "collab_splats.pointcloud.feedforward.vggtx",
+    "collab_splats.pointcloud.feedforward.mapanything",
+    "collab_splats.localization",
+    "collab_splats.pointcloud.sfm",
+    "collab_splats.pointcloud.sfm.colmap",
+    "collab_splats.pointcloud.sfm.hloc",
+    "collab_splats.pointcloud.sfm.instantsfm",
+    "collab_splats.pointcloud.vda",
+    "collab_splats.pointcloud.depth_align",
+    "collab_splats.pointcloud.utils",
+    "collab_splats.geometry.loop_closure.wrapper",
+    "collab_splats.geometry.loop_closure",
+    "collab_splats.geometry.loop_closure.matching",
+    "collab_splats.geometry.loop_closure.graph",
+    "collab_splats.geometry.loop_closure.submap",
+    "collab_splats.semantics",
+    "collab_splats.semantics.features",
+    "collab_splats.semantics.compression",
+    "collab_splats.semantics.segmentation",
+    "collab_splats.semantics.utils",
+    "collab_splats.mesh",
+    "collab_splats.mesh.base",
+    "collab_splats.mesh.poisson",
+    "collab_splats.mesh.tsdf",
+    "collab_splats.mesh.utils",
+    "collab_splats.splats",
+    "collab_splats.splats.cameras",
+    "collab_splats.splats.gaussian",
+    "collab_splats.splats.losses",
+    "collab_splats.splats.pgsr",
+    "collab_splats.splats.rendering",
+    "collab_splats.splats.scaffold",
+    "collab_splats.splats.trainer",
+    "collab_splats.splats.utils",
+    "collab_splats.utils",
+    "collab_splats.utils.torch_utils",
+    "collab_splats.preproc",
+    "collab_splats.preproc.video",
+    "collab_splats.preproc.qa",
+    "collab_splats.preproc.sampling",
+    # collab_splats.dashboard excluded: requires 'panel' which is not installed
+]
+
+
 def test_import_all_modules():
     """All collab_splats submodules must import without error."""
-    modules = [
-        "collab_splats.pointcloud",
-        "collab_splats.pointcloud.base",
-        "collab_splats.geometry.bundle_adjustment",
-        "collab_splats.pointcloud.feedforward",
-        "collab_splats.pointcloud.feedforward.base",
-        "collab_splats.pointcloud.feedforward.vggtx",
-        "collab_splats.pointcloud.feedforward.mapanything",
-        "collab_splats.localization",
-        "collab_splats.pointcloud.sfm",
-        "collab_splats.pointcloud.sfm.colmap",
-        "collab_splats.pointcloud.sfm.hloc",
-        "collab_splats.pointcloud.sfm.instantsfm",
-        "collab_splats.pointcloud.vda",
-        "collab_splats.pointcloud.depth_align",
-        "collab_splats.pointcloud.utils",
-        "collab_splats.geometry.loop_closure.wrapper",
-        "collab_splats.geometry.loop_closure",
-        "collab_splats.geometry.loop_closure.matching",
-        "collab_splats.geometry.loop_closure.graph",
-        "collab_splats.geometry.loop_closure.submap",
-        "collab_splats.semantics",
-        "collab_splats.semantics.features",
-        "collab_splats.semantics.compression",
-        "collab_splats.semantics.segmentation",
-        "collab_splats.semantics.utils",
-        "collab_splats.mesh",
-        "collab_splats.mesh.base",
-        "collab_splats.mesh.poisson",
-        "collab_splats.mesh.tsdf",
-        "collab_splats.mesh.utils",
-        "collab_splats.splats",
-        "collab_splats.splats.cameras",
-        "collab_splats.splats.losses",
-        "collab_splats.splats.rendering",
-        "collab_splats.splats.trainer",
-        "collab_splats.splats.outputs",
-        "collab_splats.utils",
-        "collab_splats.utils.torch_utils",
-        "collab_splats.preproc",
-        "collab_splats.preproc.video",
-        "collab_splats.preproc.qa",
-        "collab_splats.preproc.sampling",
-        # collab_splats.dashboard excluded: requires 'panel' which is not installed
-    ]
-
     failed = []
-    for mod in modules:
+    for mod in MODULES:
         try:
             importlib.import_module(mod)
         except Exception as e:
             failed.append(f"{mod}: {e}")
     assert not failed, "Import failures:\n" + "\n".join(failed)
+
+
+def test_the_module_list_covers_every_splats_module():
+    """The splats entries in MODULES must be every module the package actually ships."""
+    package = Path(__file__).resolve().parents[1] / "collab_splats" / "splats"
+    on_disk = {
+        "collab_splats.splats" if path.stem == "__init__" else f"collab_splats.splats.{path.stem}"
+        for path in package.glob("*.py")
+    }
+    listed = {name for name in MODULES if name.split(".")[:2] == ["collab_splats", "splats"]}
+
+    # A hand-kept list cannot guard its own width, and this is exactly where it failed:
+    # `collab_splats.splats.utils` was absent for two plans while every entry present imported
+    # cleanly. Equality, not `on_disk <= listed`, so an empty glob fails instead of passing.
+    # Only the splats package is covered -- the rest of MODULES stays hand-kept.
+    assert on_disk == listed
 
 
 def test_flagged_package_imports():

@@ -16,9 +16,9 @@
 
 ---
 
-### Task 1: Split the render seam (pure refactor, no behaviour change)
+### Task 1: Split the render seam (pure refactor, no behavior change)
 
-`render_view` currently activates raw parameters and rasterizes in one function. Split it so a scaffold decode can feed the same rasterizer. Behaviour must be byte-identical for vanilla.
+`render_view` currently activates raw parameters and rasterizes in one function. Split it so a scaffold decode can feed the same rasterizer. Behavior must be byte-identical for vanilla.
 
 **Files:**
 - Modify: `collab_splats/splats/rendering.py:44-160`
@@ -258,7 +258,7 @@ class ScaffoldConfig:
     voxel_size: float | None = None
 
     # Densification window and thresholds. grad_threshold is Scaffold's published value and is
-    # directly comparable because AnchorStrategy renormalises gradients the way gsplat's
+    # directly comparable because AnchorStrategy renormalizes gradients the way gsplat's
     # DefaultStrategy does (strategy/default.py:243-249).
     update_from: int = 1500
     update_until: int = 15000
@@ -268,7 +268,7 @@ class ScaffoldConfig:
     update_depth: int = 3  # coarse-to-fine growing levels
     update_hierarchy_factor: int = 4
 
-    # Scaffold's own per-image appearance embedding, concatenated into the colour MLP input.
+    # Scaffold's own per-image appearance embedding, concatenated into the color MLP input.
     # 0 disables it. Independent of splats.appearance_opt (our per-image affine module):
     # both ship, neither retires the other, and the 2x2 is measured.
     appearance_dim: int = 0
@@ -336,7 +336,7 @@ In `from_dict`, after the primitive check:
         # Scaffold decodes RGB from an MLP, so the SH schedule has nothing to act on
         if cfg.representation == "scaffold" and ("sh_degree" in block or "sh_degree_interval" in block):
             raise ValueError(
-                "splats.sh_degree / sh_degree_interval are vanilla-only; scaffold decodes RGB from mlp_colour"
+                "splats.sh_degree / sh_degree_interval are vanilla-only; scaffold decodes RGB from mlp_color"
             )
 ```
 
@@ -370,15 +370,15 @@ def test_mlp_heads_emit_per_offset_outputs():
     cfg = ScaffoldConfig(n_offsets=4, feat_dim=8)
     mlps = ScaffoldMLPs(cfg)
     features = torch.zeros(6, cfg.feat_dim + 4)  # feat + view dir (3) + view distance (1)
-    opacity, cov, colour = mlps(features, camera_id=None)
+    opacity, cov, color = mlps(features, camera_id=None)
     assert opacity.shape == (6, 4)
     assert cov.shape == (6, 4 * 7)
-    assert colour.shape == (6, 4 * 3)
+    assert color.shape == (6, 4 * 3)
     assert opacity.min() >= -1.0 and opacity.max() <= 1.0  # tanh
-    assert colour.min() >= 0.0 and colour.max() <= 1.0  # sigmoid
+    assert color.min() >= 0.0 and color.max() <= 1.0  # sigmoid
 
 
-def test_appearance_embedding_changes_colour_only_when_enabled():
+def test_appearance_embedding_changes_color_only_when_enabled():
     from collab_splats.splats.scaffold import ScaffoldMLPs
 
     features = torch.zeros(3, 8 + 4)
@@ -414,13 +414,13 @@ VIEW_DIM = 4  # unit view direction (3) + view distance (1)
 
 class ScaffoldMLPs(torch.nn.Module):
     """
-    The three Scaffold-GS decode heads: opacity, covariance, colour.
+    The three Scaffold-GS decode heads: opacity, covariance, color.
 
     - Input is [anchor_feat, view_dir, view_dist] per visible anchor; every head emits one row of
       ``n_offsets`` outputs per anchor.
-    - opacity ends in tanh (its sign is the offset visibility mask), colour in sigmoid (RGB),
+    - opacity ends in tanh (its sign is the offset visibility mask), color in sigmoid (RGB),
       covariance is raw (3 log-ish scale factors + 4 quaternion components per offset).
-    - ``appearance_dim > 0`` adds Scaffold's per-image embedding to the colour head input only.
+    - ``appearance_dim > 0`` adds Scaffold's per-image embedding to the color head input only.
 
     Head shapes follow city-super/Scaffold-GS scene/gaussian_model.py (MLP definitions); weights and
     code are not copied.
@@ -444,17 +444,17 @@ class ScaffoldMLPs(torch.nn.Module):
             torch.nn.Linear(width, 7 * cfg.n_offsets),
         )
 
-        # Scaffold's appearance embedding rides the colour head only
+        # Scaffold's appearance embedding rides the color head only
         self.embedding_appearance = None
-        colour_dim = base_dim
+        color_dim = base_dim
         if cfg.appearance_dim > 0:
             if n_views < 1:
                 raise ValueError("scaffold.appearance_dim > 0 needs n_views >= 1 to size the embedding")
             self.embedding_appearance = torch.nn.Embedding(n_views, cfg.appearance_dim)
             torch.nn.init.zeros_(self.embedding_appearance.weight)
-            colour_dim += cfg.appearance_dim
-        self.mlp_colour = torch.nn.Sequential(
-            torch.nn.Linear(colour_dim, width),
+            color_dim += cfg.appearance_dim
+        self.mlp_color = torch.nn.Sequential(
+            torch.nn.Linear(color_dim, width),
             torch.nn.ReLU(True),
             torch.nn.Linear(width, 3 * cfg.n_offsets),
             torch.nn.Sigmoid(),
@@ -462,20 +462,20 @@ class ScaffoldMLPs(torch.nn.Module):
 
     def forward(self, features: Tensor, camera_id: Tensor | None) -> tuple[Tensor, Tensor, Tensor]:
         """
-        Decode (opacity, covariance, colour) for every visible anchor. Shapes [A, K], [A, 7K], [A, 3K].
+        Decode (opacity, covariance, color) for every visible anchor. Shapes [A, K], [A, 7K], [A, 3K].
         """
         opacity = self.mlp_opacity(features)
         cov = self.mlp_cov(features)
 
-        # The embedding is per-image, so the colour head needs to know which view is being rendered
-        colour_input = features
+        # The embedding is per-image, so the color head needs to know which view is being rendered
+        color_input = features
         if self.embedding_appearance is not None:
             if camera_id is None:
                 raise ValueError("scaffold.appearance_dim > 0 requires camera_id at decode time")
             embedding = self.embedding_appearance(camera_id[:1]).expand(len(features), -1)
-            colour_input = torch.cat([features, embedding], dim=-1)
-        colour = self.mlp_colour(colour_input)
-        return opacity, cov, colour
+            color_input = torch.cat([features, embedding], dim=-1)
+        color = self.mlp_color(color_input)
+        return opacity, cov, color
 ```
 
 - [ ] **Step 4: Run the tests**
@@ -574,7 +574,7 @@ Append to `collab_splats/splats/scaffold.py`:
 
 def voxelize(points: Tensor, voxel_size: float) -> Tensor:
     """
-    One representative point per occupied voxel: round to the grid, dedup, return grid centres.
+    One representative point per occupied voxel: round to the grid, dedup, return grid centers.
     """
     grid_coords = torch.round(points / voxel_size)
     unique_coords = torch.unique(grid_coords, dim=0)
@@ -586,7 +586,7 @@ class AnchorField:
     Scaffold-GS anchors: the trainable state plus the per-view decode into neural Gaussians.
 
     - ``params`` is the ParameterDict the densification strategy grows and prunes; the MLP heads live
-      in ``mlps`` and are fixed-size, so they are optimised separately and never handed to the strategy.
+      in ``mlps`` and are fixed-size, so they are optimized separately and never handed to the strategy.
     - ``decode`` returns the rasterizer inputs plus ``decode_index``, the (anchor * n_offsets + offset)
       slot each emitted Gaussian came from. Anchor densification is built entirely on that index.
     """
@@ -604,7 +604,7 @@ class AnchorField:
         self.device = device
 
         # Voxel size from the seed points' own spacing: scale-free, so normalize_scene cannot
-        # silently change anchor density (Scaffold's absolute 0.001 default assumes a normalised scene)
+        # silently change anchor density (Scaffold's absolute 0.001 default assumes a normalized scene)
         points_t = torch.from_numpy(np.asarray(points, dtype=np.float32))
         if cfg.voxel_size is not None:
             self.voxel_size = float(cfg.voxel_size)
@@ -657,13 +657,13 @@ so both representations share one definition:
 ```python
 def median_knn_spacing(points: Tensor, k: int = 3) -> float:
     """
-    Median mean-distance to the k nearest neighbours — the seed points' own length scale.
+    Median mean-distance to the k nearest neighbors — the seed points' own length scale.
     """
     from sklearn.neighbors import NearestNeighbors
 
     array = points.detach().cpu().numpy()
-    neighbour_dists, _ = NearestNeighbors(n_neighbors=k + 1).fit(array).kneighbors(array)
-    return float(np.median(np.sqrt((neighbour_dists[:, 1:] ** 2).mean(-1))))
+    neighbor_dists, _ = NearestNeighbors(n_neighbors=k + 1).fit(array).kneighbors(array)
+    return float(np.median(np.sqrt((neighbor_dists[:, 1:] ** 2).mean(-1))))
 ```
 
 This is the one place in the codebase where a heavy import sits inside a function: `sklearn` is already a
@@ -756,7 +756,7 @@ def test_decode_is_differentiable_into_the_mlps():
     cam_to_world, intrinsics = _cam()
     decoded, _ = field.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
     decoded["colors"].sum().backward()
-    assert field.mlps.mlp_colour[0].weight.grad is not None
+    assert field.mlps.mlp_color[0].weight.grad is not None
     assert field.params["anchor_feat"].grad is not None
 
 
@@ -779,18 +779,18 @@ Add to `AnchorField` in `collab_splats/splats/scaffold.py`:
 ```python
     def visible_anchors(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> Tensor:
         """
-        Boolean mask of anchors whose centre projects in front of the camera and inside the frame.
+        Boolean mask of anchors whose center projects in front of the camera and inside the frame.
 
         - Deviation from upstream, which reuses the rasterizer's own prefilter pass. A projection test
           is cheaper and needs no extra rasterization; the margin keeps anchors whose Gaussians spill
-          into frame from centres just outside it.
+          into frame from centers just outside it.
         """
         world_to_cam = torch.linalg.inv(cam_to_world)[0]
         anchors_cam = self.params["anchors"] @ world_to_cam[:3, :3].T + world_to_cam[:3, 3]
         depth = anchors_cam[:, 2]
         in_front = depth > 1e-3
 
-        # Project with the frame's K; a whole-frame margin keeps off-centre anchors that still splat in
+        # Project with the frame's K; a whole-frame margin keeps off-center anchors that still splat in
         safe_depth = depth.clamp_min(1e-3)
         projected = (anchors_cam[:, :2] / safe_depth[:, None]) @ intrinsics[0, :2, :2].T + intrinsics[0, :2, 2]
         margin_x, margin_y = width * 0.5, height * 0.5
@@ -816,7 +816,7 @@ Add to `AnchorField` in `collab_splats/splats/scaffold.py`:
 
         - ``decode_index`` is ``anchor_index * n_offsets + offset_index`` per emitted Gaussian.
         - ``colors`` are post-activation RGB, so the caller rasterizes with ``sh_degree=None``.
-        - ``log_scales`` carries the decoded scales in log space for the scale regulariser.
+        - ``log_scales`` carries the decoded scales in log space for the scale regularizer.
 
         Follows generate_neural_gaussians in city-super/Scaffold-GS scene/gaussian_model.py
         (reimplemented; no code copied).
@@ -829,14 +829,14 @@ Add to `AnchorField` in `collab_splats/splats/scaffold.py`:
         scaling = torch.exp(self.params["scaling"][anchor_ids])
         offsets = self.params["offsets"][anchor_ids]
 
-        # View direction and distance from each anchor to the camera centre feed every head
-        camera_centre = cam_to_world[0, :3, 3]
-        to_camera = anchors - camera_centre
+        # View direction and distance from each anchor to the camera center feed every head
+        camera_center = cam_to_world[0, :3, 3]
+        to_camera = anchors - camera_center
         view_distance = to_camera.norm(dim=-1, keepdim=True)
         view_direction = to_camera / view_distance.clamp_min(1e-8)
         features = torch.cat([feat, view_direction, view_distance], dim=-1)
 
-        neural_opacity, cov, colour = self.mlps(features, camera_id)
+        neural_opacity, cov, color = self.mlps(features, camera_id)
 
         # Offsets with non-positive opacity contribute nothing: dropping them here is what keeps the
         # decoded count far below anchors x n_offsets
@@ -852,7 +852,7 @@ Add to `AnchorField` in `collab_splats/splats/scaffold.py`:
         scales = scaling[:, 3:6].repeat_interleave(n_offsets, dim=0)[keep] * torch.sigmoid(cov[:, :3])
         quats = F.normalize(cov[:, 3:7], dim=-1)
         opacities = neural_opacity.reshape(-1)[keep]
-        colors = colour.reshape(-1, 3)[keep]
+        colors = color.reshape(-1, 3)[keep]
 
         # 2DGS reads scales[..., :2]; zero the unused third channel so it can never be misread
         if primitive == "2dgs":
@@ -891,7 +891,7 @@ git commit --only collab_splats/splats/scaffold.py tests/splats/test_scaffold.py
 ### Task 6: Render scaffold through the existing rasterizers
 
 **Files:**
-- Modify: `collab_splats/splats/rendering.py` (accept `sh_degree=None` for post-activation colours)
+- Modify: `collab_splats/splats/rendering.py` (accept `sh_degree=None` for post-activation colors)
 - Test: `tests/splats/test_scaffold.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -934,7 +934,7 @@ def test_render_gradient_reaches_the_anchor_features():
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `/opt/venv/reconstruction/bin/python -m pytest tests/splats/test_scaffold.py -k "renders_through_gsplat or gradient_reaches" -v`
-Expected: FAIL — `rasterization` raises on the extra `log_scales` key or on SH-shaped colour handling.
+Expected: FAIL — `rasterization` raises on the extra `log_scales` key or on SH-shaped color handling.
 
 - [ ] **Step 3: Make `render_gaussians` tolerate decode extras**
 
@@ -981,7 +981,7 @@ def test_gradient_key_follows_the_primitive():
     assert AnchorStrategy(ScaffoldConfig(), primitive="2dgs").key_for_gradient == "gradient_2dgs"
 
 
-def test_accumulation_renormalises_gradients_like_gsplat():
+def test_accumulation_renormalizes_gradients_like_gsplat():
     """gsplat's DefaultStrategy scales means2d grads to [-1, 1] screen space before thresholding."""
     from collab_splats.splats.scaffold import AnchorStrategy
 
@@ -1071,7 +1071,7 @@ class AnchorStrategy(Strategy):
         """
         Scatter this view's screen-space gradient norms and opacities into the per-slot accumulators.
 
-        - Gradients are renormalised to [-1, 1] screen space exactly as gsplat's DefaultStrategy does
+        - Gradients are renormalized to [-1, 1] screen space exactly as gsplat's DefaultStrategy does
           (strategy/default.py:243-249), which is what makes Scaffold's published grad_threshold
           directly usable here.
         """
@@ -1538,7 +1538,7 @@ Append to `tests/splats/test_losses.py`:
 
 ```python
 def test_scale_reg_prefers_decoded_log_scales():
-    """Under scaffold there is no scales parameter: the regulariser reads the decoded scales."""
+    """Under scaffold there is no scales parameter: the regularizer reads the decoded scales."""
     from collab_splats.splats.losses import scale_reg_loss
 
     render = {"log_scales": torch.full((5, 3), -2.0)}
@@ -1562,7 +1562,7 @@ def scale_reg_loss(
     render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
 ) -> Tensor:
     """
-    Scale regulariser from gsplat (MCMC); expects raw log scales.
+    Scale regularizer from gsplat (MCMC); expects raw log scales.
 
     - Scaffold has no scales parameter — its Gaussians are decoded per view — so the render carries
       ``log_scales`` and that is used when present.
@@ -1835,7 +1835,7 @@ def bake_anchor_gaussians(
     Decode each anchor once at its mean observed view direction, for a static viewer-loadable ply.
 
     - Anchors seen by no training camera fall back to the direction of the nearest camera.
-    - Colours are baked into the degree-0 SH band; there are no higher bands to write.
+    - Colors are baked into the degree-0 SH band; there are no higher bands to write.
     - Lossy by construction: the trained model is view-dependent. splats.zarr renders are not affected.
     """
     device = anchor_field.params["anchors"].device
@@ -1854,9 +1854,9 @@ def bake_anchor_gaussians(
     # Unseen anchors: use the nearest camera's direction rather than dropping them from the ply
     unseen = seen_count == 0
     if bool(unseen.any()):
-        camera_centres = cam_to_world[:, :3, 3]
-        nearest = torch.cdist(anchors[unseen], camera_centres).argmin(dim=1)
-        to_nearest = anchors[unseen] - camera_centres[nearest]
+        camera_centers = cam_to_world[:, :3, 3]
+        nearest = torch.cdist(anchors[unseen], camera_centers).argmin(dim=1)
+        to_nearest = anchors[unseen] - camera_centers[nearest]
         direction_sum[unseen] = to_nearest / to_nearest.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         seen_count[unseen] = 1
 
@@ -1868,7 +1868,7 @@ def bake_anchor_gaussians(
     with torch.no_grad():
         features = torch.cat([anchor_field.params["anchor_feat"].detach(), mean_direction, mean_distance], dim=-1)
         camera_id = torch.zeros(1, dtype=torch.long, device=device)
-        neural_opacity, cov, colour = anchor_field.mlps(features, camera_id)
+        neural_opacity, cov, color = anchor_field.mlps(features, camera_id)
 
         n_offsets = anchor_field.cfg.n_offsets
         scaling = torch.exp(anchor_field.params["scaling"].detach())
@@ -1880,7 +1880,7 @@ def bake_anchor_gaussians(
         scales = scaling[:, 3:6].repeat_interleave(n_offsets, dim=0)[keep] * torch.sigmoid(cov[:, :3])
         quats = torch.nn.functional.normalize(cov[:, 3:7], dim=-1)
         opacities = neural_opacity.reshape(-1)[keep]
-        colors = colour.reshape(-1, 3)[keep]
+        colors = color.reshape(-1, 3)[keep]
 
     # The ply writer wants the raw forms every viewer expects: log scales, logit opacities, SH DC
     return {
@@ -1888,12 +1888,12 @@ def bake_anchor_gaussians(
         "scales": torch.log(scales.clamp_min(1e-12)),
         "quats": quats,
         "opacities": torch.logit(opacities.clamp(1e-4, 1 - 1e-4)),
-        "sh0": ((colors - 0.5) / SH_DC_NORMALISER).unsqueeze(1),
+        "sh0": ((colors - 0.5) / SH_DC_NORMALIZER).unsqueeze(1),
         "shN": torch.zeros(len(means), 0, 3, device=means.device),
     }
 ```
 
-`SH_DC_NORMALISER` is already defined in `trainer.py`; import it in `outputs.py` rather than redefining it.
+`SH_DC_NORMALIZER` is already defined in `trainer.py`; import it in `outputs.py` rather than redefining it.
 
 `shN` with zero bands is the degree-0 form `export_splats` expects. If it rejects an empty band dimension,
 write one zeroed degree-1 band instead (`torch.zeros(len(means), 3, 3)`) — never fabricate SH content, the
@@ -1991,7 +1991,7 @@ Under the `splats:` block, add the commented defaults:
 
 ```yaml
   # representation: vanilla (per-gaussian parameters) | scaffold (anchors + MLP decode).
-  # scaffold ignores sh_degree — its colours come from mlp_colour — and densifies anchors
+  # scaffold ignores sh_degree — its colors come from mlp_color — and densifies anchors
   # rather than gaussians.
   representation: vanilla
   # scaffold:
@@ -2084,4 +2084,4 @@ Run hygiene: send outputs through the `/tmp` symlink — `/workspace` has ~8.7 G
 - **Do not vendor Scaffold-GS or GS-SR source.** Reimplement from the paper; cite upstream file+line in comments.
 - **`graphify update .`** after the code lands, to keep the knowledge graph current.
 - **Commit with `--only`.** Other sessions share this git index; a bare `git commit -a` sweeps their work.
-- **`sh_degree=None`** is what tells the rasterizer that `colors` are RGB rather than SH. Passing an integer with (N, 3) colours fails inside gsplat with a shape error, not a clear message.
+- **`sh_degree=None`** is what tells the rasterizer that `colors` are RGB rather than SH. Passing an integer with (N, 3) colors fails inside gsplat with a shape error, not a clear message.

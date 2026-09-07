@@ -1,5 +1,5 @@
 """
-Synthetic splat-training scene: random coloured points in a box, cameras on a ring, analytic depth.
+Synthetic splat-training scene: random colored points in a box, cameras on a ring, analytic depth.
 """
 
 import numpy as np
@@ -9,7 +9,11 @@ FOCAL = 60.0
 
 def make_scene(n_views=8, height=64, width=64, n_points=200):
     """
-    Returns (images uint8 (n,H,W,3), world_to_cam (n,4,4), intrinsics (n,3,3), points, colors, depths (n,H,W)).
+    Build one synthetic scene.
+
+    Returns:
+        (images uint8 (n,H,W,3), world_to_cam (n,4,4), intrinsics (n,3,3), points, colors,
+        depths (n,H,W)).
     """
     rng = np.random.default_rng(0)
     points = rng.uniform(-0.5, 0.5, (n_points, 3)).astype(np.float32)

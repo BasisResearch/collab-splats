@@ -4,7 +4,7 @@
 
 **Goal:** Replace `collab_splats/nerfstudio/` + `wrapper/splatter.py` (gsplat-rade fork + nerfstudio fork) with a small `collab_splats/splats/` package that trains 3DGS/2DGS splats on upstream gsplat from an existing pointcloud stage, wired in as leaf stage `splats`.
 
-**Architecture:** Five focused files — `cameras.py` (vendored pose refinement), `losses.py` (registry of small loss functions + one scheduled loop), `rendering.py` (one `render_view` for both primitives), `trainer.py` (config with all tunables, Gaussian init, strategy, training loop), `outputs.py` (ply / ckpt / rendered zarr / quality report). `train()` takes plain arrays; `Reconstructor.splats()` assembles them from `PointcloudResult` + `FrameStore` + `feedforward.zarr`. Training happens in the COLMAP world frame (no normalisation). Densification: `MCMCStrategy` for 3DGS (fixed Gaussian budget, no gradient heuristics), `DefaultStrategy` for 2DGS (the only pairing upstream ships).
+**Architecture:** Five focused files — `cameras.py` (vendored pose refinement), `losses.py` (registry of small loss functions + one scheduled loop), `rendering.py` (one `render_view` for both primitives), `trainer.py` (config with all tunables, Gaussian init, strategy, training loop), `outputs.py` (ply / ckpt / rendered zarr / quality report). `train()` takes plain arrays; `Reconstructor.splats()` assembles them from `PointcloudResult` + `FrameStore` + `feedforward.zarr`. Training happens in the COLMAP world frame (no normalization). Densification: `MCMCStrategy` for 3DGS (fixed Gaussian budget, no gradient heuristics), `DefaultStrategy` for 2DGS (the only pairing upstream ships).
 
 **Tech Stack:** gsplat upstream pinned at commit `d2f5c0f` (git source, `no-build-isolation`), torch, zarr v3, numpy, sklearn (kNN), pytest. Python: `/opt/venv/reconstruction/bin/python`.
 
@@ -23,7 +23,7 @@
   - Docstrings open with `"""` on its own line, text on the next line, closing `"""` on its own line.
   - Names say what things are: `cam_to_world` not `c2w`, `n_views` not `N`, `write_splat_outputs` not `_save`.
   - **Unpack before you call.** Never index/slice/compute inside a call's argument list. `rendered_depth = render["depth"][has_target]` on its own line, then `depth_l1_loss(rendered_depth, target_depth, scene_scale)`.
-  - Tunables live on `SplatsConfig` with defaults, not as module constants. Module constants are only for things that are math or fixed by gsplat (`SH_DC_NORMALISER`, `PRIMITIVES`).
+  - Tunables live on `SplatsConfig` with defaults, not as module constants. Module constants are only for things that are math or fixed by gsplat (`SH_DC_NORMALIZER`, `PRIMITIVES`).
   - `########` dividers between major sections.
 - CUDA tests: `pytest.mark.skipif(not torch.cuda.is_available(), ...)`. Do not run CUDA tests while a heavy tmux job is running (46.6 GB cgroup cap).
 - Vendored code cites repo + commit + file + lines at the site.
@@ -340,7 +340,7 @@ def rotation_6d_to_matrix(rotation_6d: Tensor) -> Tensor:
     """
     Gram-Schmidt 6D rotation representation (Zhou et al. 2019) -> (..., 3, 3) rotation matrices.
     """
-    # First basis vector: normalised first triple
+    # First basis vector: normalized first triple
     first_triple = rotation_6d[..., :3]
     second_triple = rotation_6d[..., 3:]
     basis_x = F.normalize(first_triple, dim=-1)
@@ -414,7 +414,7 @@ git commit --only collab_splats/splats/__init__.py collab_splats/splats/cameras.
 
 Contract: `compute_losses(step, render, target, gaussians, loss_schedule, scene_scale) -> (total, {name: value})`. Photometric `0.8·L1 + 0.2·(1−SSIM)` always on. `loss_schedule` is the yaml `losses:` mapping `{name: {weight, start}}`; a loss contributes iff `weight > 0`, `step >= start`, and its function returns a value (returns `None` when its input is absent). Every optional loss has the same signature `(render, target, gaussians, scene_scale) -> Tensor | None`, so adding one (PAGaS later) is one function + one registry entry.
 
-`render` keys: `rgb`, `alpha`, `depth` `(1,H,W,C)`, `normal`, `depth_normal` `(1,H,W,3)`, and `distortion` `(1,H,W,1)` **only for 2dgs** (key absent otherwise). `target` keys: `rgb` `(1,H,W,3)` in `[0,1]`, `depth` `(1,H,W,1)` or `None` (0 = no target). `gaussians` is the `ParameterDict` (raw `opacities` logits, raw `scales` logs — what `gsplat.losses` regularisers expect).
+`render` keys: `rgb`, `alpha`, `depth` `(1,H,W,C)`, `normal`, `depth_normal` `(1,H,W,3)`, and `distortion` `(1,H,W,1)` **only for 2dgs** (key absent otherwise). `target` keys: `rgb` `(1,H,W,3)` in `[0,1]`, `depth` `(1,H,W,1)` or `None` (0 = no target). `gaussians` is the `ParameterDict` (raw `opacities` logits, raw `scales` logs — what `gsplat.losses` regularizers expect).
 
 - [x] **Step 1: Write the failing tests**
 
@@ -521,7 +521,7 @@ def test_distortion_skipped_when_render_has_no_map():
     assert "distortion" in with_map and "distortion" not in without_map
 
 
-def test_regularisers_read_raw_gaussian_params():
+def test_regularizers_read_raw_gaussian_params():
     schedule = {"opacity_reg": {"weight": 1.0}, "scale_reg": {"weight": 1.0}}
     _, values = compute_losses(0, _render(), _target(), _gaussians(), schedule, 1.0)
     assert values["opacity_reg"] > 0 and values["scale_reg"] > 0
@@ -597,7 +597,7 @@ def distortion_loss(render: dict, target: dict, gaussians: torch.nn.ParameterDic
 
 def opacity_reg_loss(render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float) -> Tensor:
     """
-    Opacity regulariser from gsplat (MCMC); expects raw logit opacities.
+    Opacity regularizer from gsplat (MCMC); expects raw logit opacities.
     """
     opacities = gaussians["opacities"]
     return gsplat_losses.opacity_reg_loss(opacities)
@@ -605,7 +605,7 @@ def opacity_reg_loss(render: dict, target: dict, gaussians: torch.nn.ParameterDi
 
 def scale_reg_loss(render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float) -> Tensor:
     """
-    Scale regulariser from gsplat (MCMC); expects raw log scales.
+    Scale regularizer from gsplat (MCMC); expects raw log scales.
     """
     log_scales = gaussians["scales"]
     return gsplat_losses.scale_reg_loss(log_scales)
@@ -684,7 +684,7 @@ git commit --only collab_splats/splats/losses.py tests/splats/test_losses.py \
 `tests/splats/synthetic.py`:
 ```python
 """
-Synthetic splat-training scene: random coloured points in a box, cameras on a ring, analytic depth.
+Synthetic splat-training scene: random colored points in a box, cameras on a ring, analytic depth.
 """
 
 import numpy as np
@@ -1050,7 +1050,7 @@ Run: `$PY -m pytest tests/splats/test_trainer.py -v` → `ModuleNotFoundError`.
 """
 Trainer for 3DGS / 2DGS splats on upstream gsplat.
 
-Training runs in the COLMAP world frame (no normalisation) so poses, depth and the ply line up
+Training runs in the COLMAP world frame (no normalization) so poses, depth and the ply line up
 with every other stage artifact. ``scene_scale`` — 1.1 x the largest camera distance from the
 camera centroid, as in gsplat's simple_trainer — only scales the means learning rate, the
 densification thresholds and the depth loss.
@@ -1082,7 +1082,7 @@ from collab_splats.utils.progress import progress
 logger = logging.getLogger(__name__)
 
 PRIMITIVES = ("3dgs", "2dgs")
-SH_DC_NORMALISER = 0.28209479177387814  # rgb -> SH degree-0 coefficient (1 / (2 sqrt(pi)))
+SH_DC_NORMALIZER = 0.28209479177387814  # rgb -> SH degree-0 coefficient (1 / (2 sqrt(pi)))
 
 ########################################
 # Config — every tunable, with gsplat simple_trainer defaults
@@ -1091,7 +1091,7 @@ SH_DC_NORMALISER = 0.28209479177387814  # rgb -> SH degree-0 coefficient (1 / (2
 
 def _default_losses(primitive: str) -> dict[str, dict]:
     """
-    Default loss schedule per primitive: MCMC regularisers for 3dgs, distortion for 2dgs.
+    Default loss schedule per primitive: MCMC regularizers for 3dgs, distortion for 2dgs.
     """
     losses = {"depth": {"weight": 0.01}, "normal_consistency": {"weight": 0.05, "start": 7000}}
     if primitive == "3dgs":
@@ -1187,23 +1187,23 @@ def init_gaussians_from_points(
     cfg: SplatsConfig, points: np.ndarray, colors: np.ndarray, scene_scale: float, device: str
 ) -> tuple[torch.nn.ParameterDict, dict[str, torch.optim.Optimizer]]:
     """
-    One Gaussian per seed point (scale from kNN spacing, colour as SH DC) plus one Adam per parameter.
+    One Gaussian per seed point (scale from kNN spacing, color as SH DC) plus one Adam per parameter.
 
     Port of create_splats_with_optimizers, gsplat @ d2f5c0f examples/simple_trainer.py.
     """
     n_points = len(points)
 
-    # Initial scale: mean distance to the 3 nearest neighbours, stored as log-scale
-    neighbour_dists, _ = NearestNeighbors(n_neighbors=4).fit(points).kneighbors(points)
-    mean_spacing = np.sqrt((neighbour_dists[:, 1:] ** 2).mean(-1))
+    # Initial scale: mean distance to the 3 nearest neighbors, stored as log-scale
+    neighbor_dists, _ = NearestNeighbors(n_neighbors=4).fit(points).kneighbors(points)
+    mean_spacing = np.sqrt((neighbor_dists[:, 1:] ** 2).mean(-1))
     spacing = torch.from_numpy(mean_spacing).float()
     log_scales = torch.log(spacing).unsqueeze(-1).repeat(1, 3)
 
-    # Colour: RGB goes into the degree-0 SH band, higher bands start at zero
+    # Color: RGB goes into the degree-0 SH band, higher bands start at zero
     rgb = torch.from_numpy(colors).float() / 255.0
     n_sh_coeffs = (cfg.sh_degree + 1) ** 2
     sh_coeffs = torch.zeros(n_points, n_sh_coeffs, 3)
-    sh_coeffs[:, 0, :] = (rgb - 0.5) / SH_DC_NORMALISER
+    sh_coeffs[:, 0, :] = (rgb - 0.5) / SH_DC_NORMALIZER
 
     # Raw parameters: random orientation, logit-opacity so sigmoid gives init_opacity
     initial_opacities = torch.logit(torch.full((n_points,), cfg.init_opacity))
@@ -1248,7 +1248,7 @@ def make_pose_refiner(
     cfg: SplatsConfig, n_views: int, scene_scale: float, lr_gamma: float, device: str
 ) -> tuple[CameraOptModule, torch.optim.Optimizer, ExponentialLR]:
     """
-    Zero-initialised CameraOptModule with its Adam optimizer and exponential lr decay.
+    Zero-initialized CameraOptModule with its Adam optimizer and exponential lr decay.
     """
     refiner = CameraOptModule(n_views).to(device)
     refiner.zero_init()
@@ -1587,7 +1587,7 @@ def render_all_views(
 
     with torch.no_grad():
         for view in progress(range(n_views), desc="splats render"):
-            # Refined pose if poses were optimised; the zarr stores what was actually rendered
+            # Refined pose if poses were optimized; the zarr stores what was actually rendered
             view_cam_to_world = cam_to_world[view : view + 1]
             view_intrinsics = intrinsics[view : view + 1]
             if pose_refiner is not None:
@@ -1814,7 +1814,7 @@ Run: `$PY -m pytest tests/wrapper/test_splats_stage.py -v` → FAIL (`'splats' i
 
 `_STAGE_ORDER` → `["preproc", "pointcloud", "refine", "semantics", "splats", "mesh", "localize", "verify", "reconstruction_quality_report"]`.
 
-`_STAGE_DEPS` — add in the neighbours' comment style:
+`_STAGE_DEPS` — add in the neighbors' comment style:
 ```python
     # splats: trains on COLMAP poses/points + frames.zarr; leaf — nothing reads it yet
     "splats": ["pointcloud"],
@@ -1926,7 +1926,7 @@ splats:
     normal_consistency: {weight: 0.05, start: 7000}
     opacity_reg: {weight: 0.01}
     scale_reg: {weight: 0.01}
-    # 2dgs: replace the two regularisers with  distortion: {weight: 100.0, start: 3000}
+    # 2dgs: replace the two regularizers with  distortion: {weight: 100.0, start: 3000}
 ```
 
 - [x] **Step 5: Run tests**
@@ -1948,7 +1948,7 @@ git commit --only collab_splats/wrapper/reconstructor.py configs/base.yaml tests
 
 - [x] **Step 1: configs/README.md**
 
-Key table: one row per `splats.*` key from the yaml block above, in the neighbours' column format, plus `splats.losses.<name>.{weight,start}`.
+Key table: one row per `splats.*` key from the yaml block above, in the neighbors' column format, plus `splats.losses.<name>.{weight,start}`.
 Layout table: rows for `<backend>/splats/splats.ply`, `ckpt.pt`, `splats.zarr`, `splats_quality_report.json`.
 Replace the "#### `ns-train --data` does not work on a published scene, by design" section with:
 
@@ -1957,7 +1957,7 @@ Replace the "#### `ns-train --data` does not work on a published scene, by desig
 
 `--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
 `frames.zarr` — no image directory, no transforms.json round-trip. Every `splats/` artifact is in
-the COLMAP world frame; nothing is normalised. `mesh` still fuses `feedforward.zarr`; fusing the
+the COLMAP world frame; nothing is normalized. `mesh` still fuses `feedforward.zarr`; fusing the
 splat renders (`mesh.source: splats`) is a follow-on.
 ```
 Add `splats` to the "Re-running one stage" leaf list.

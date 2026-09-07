@@ -24,19 +24,18 @@ These tasks are started but not complete — do not assume their targets are don
 - **docs-site** — Sphinx site setup ([spec](docs/superpowers/specs/2026-05-20-docs-site-design.md) · [plan](docs/superpowers/plans/2026-05-20-docs-site.md))
 - **bae-vggt-parity** — verify BA matches upstream `zitongzhan/vggt --implementation bae` ([spec](docs/superpowers/specs/2026-05-20-bae-vggt-parity-design.md))
 - **loma-matcher** — LoMa local matcher for localization ([spec](docs/superpowers/specs/2026-07-08-loma-matcher-integration-design.md) · [plan](docs/superpowers/plans/2026-07-08-loma-matcher-integration.md))
-- **scaffold-gs** — Scaffold-GS anchors on gsplat ([spec](docs/superpowers/specs/2026-08-27-scaffold-gs-gsplat-design.md) · [plan](docs/superpowers/plans/2026-08-27-scaffold-gs-gsplat.md))
-- **clean-final** — integration branch for the five cleanup efforts; preproc and semantics landed, pointcloud/splats/mesh pending ([spec](docs/superpowers/specs/2026-09-06-clean-final-integration-design.md) · [plan](docs/superpowers/plans/2026-09-06-clean-final-integration.md))
+- **clean-final** — integration branch for the five cleanup efforts; preproc, semantics, pointcloud and splats landed, mesh pending ([spec](docs/superpowers/specs/2026-09-06-clean-final-integration-design.md) · [plan](docs/superpowers/plans/2026-09-06-clean-final-integration.md))
 
 ## Recently Completed
 
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **splats-cleanup** (2026-09-06)
 - **pointcloud-cleanup** (2026-09-06)
-- **depth-align-affine-2dgs-surface** (2026-08-27)
-- **instantsfm-backend** (2026-08-23)
-- **preproc-cleanup** (2026-08-22)
-- **splats-module** (2026-08-22)
+- **semantics-cleanup** (2026-09-05)
+- **preproc-centralization** (2026-09-05)
+- **scaffold-gs** (2026-08-27)
 
 Known test failures: `docs/known-test-failures.md`
 
@@ -91,7 +90,7 @@ collab_splats/
     undistort.py           # calibrate_camera (pycolmap) + undistort_frames (pycolmap framing, cv2 pixels)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)
   mesh/                    # TSDF + Poisson meshing (base, poisson, tsdf, utils)
-  splats/                  # Gaussian-splat training on upstream gsplat: cameras, losses, rendering, trainer, outputs
+  splats/                  # gsplat training: trainer, gaussian, scaffold, losses, rendering, cameras, pgsr, utils
   wrapper/                 # stage orchestration: Reconstructor (config-driven pipeline), batch drivers
   remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed
   dashboard/               # interactive video/scene browser (reads the FLAT dashboard layout only)

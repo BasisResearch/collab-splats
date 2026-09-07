@@ -1,24 +1,24 @@
 """
-SplatsConfig validation, scene scale, Gaussian init, strategy choice and training-target preparation.
+SplatsConfig validation and the training loop.
 """
+
+import ast
+import itertools
+import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
-import zarr
-from gsplat.strategy import DefaultStrategy, MCMCStrategy
+from gsplat.strategy import MCMCStrategy
 
+import collab_splats.splats.gaussian as gaussian_module
 import collab_splats.splats.trainer as trainer_module
+from collab_splats.splats.gaussian import SH_C0
 from collab_splats.splats.trainer import (
-    SH_DC_NORMALISER,
+    MODEL_CLASSES,
+    REPRESENTATIONS,
     SplatsConfig,
-    ViewSampler,
-    compute_scene_scale,
-    downscale_factor,
-    downscale_view,
-    init_gaussians_from_points,
-    make_strategy,
-    prepare_training_target,
     train,
 )
 from tests.splats.synthetic import make_scene
@@ -75,83 +75,28 @@ def test_config_accepts_decay():
     assert cfg.losses["depth"]["end_weight"] == 0.001
 
 
+def test_config_densification_defaults_are_the_measured_good_ones():
+    # grow_grad2d 2e-4 is load-bearing: 8e-4 (4x gsplat's default) choked 2dgs to PSNR 17.95
+    cfg = SplatsConfig()
+    assert cfg.grow_grad2d == pytest.approx(2e-4)
+    assert cfg.cap_max == 1_000_000
+
+
+def test_config_rejects_an_unknown_representation():
+    # Nothing catches a WIDENED allow-list
+    # - narrowing it breaks 61 other tests incidentally; widening breaks none
+    # - a rejection test cannot see it either: a third name still rejects "octree"
+    # - so pin the allow-list to the two literals it may hold
+    assert set(REPRESENTATIONS) == {"vanilla", "scaffold"}
+    assert set(MODEL_CLASSES) == set(REPRESENTATIONS)
+
+    with pytest.raises(ValueError, match="representation must be one of"):
+        SplatsConfig.from_dict({"representation": "octree"})
+
+
 def test_config_rejects_zero_steps():
     with pytest.raises(ValueError, match="max_steps"):
         SplatsConfig(max_steps=0)
-
-
-def test_scene_scale_is_max_camera_spread_times_margin():
-    cam_to_world = np.tile(np.eye(4, dtype=np.float32), (3, 1, 1))
-    cam_to_world[:, 0, 3] = [-1.0, 0.0, 1.0]
-    scene_scale = compute_scene_scale(torch.from_numpy(cam_to_world))
-    assert scene_scale == pytest.approx(1.1)
-
-
-def test_strategy_follows_primitive():
-    mcmc = make_strategy(SplatsConfig(primitive="3dgs", cap_max=1234), n_views=300)
-    default = make_strategy(SplatsConfig(primitive="2dgs"), n_views=300)
-    assert isinstance(mcmc, MCMCStrategy) and mcmc.cap_max == 1234
-    assert isinstance(default, DefaultStrategy) and default.key_for_gradient == "gradient_2dgs"
-
-
-def test_make_strategy_2dgs_splatfacto_args():
-    cfg = SplatsConfig(primitive="2dgs")
-    strategy = make_strategy(cfg, n_views=300)
-
-    assert isinstance(strategy, DefaultStrategy)
-    # splatfacto (nerfstudio @ 50e0e3c) non-default args
-    assert strategy.prune_opa == 0.1
-    assert strategy.prune_scale3d == 0.5
-    assert strategy.refine_scale2d_stop_iter == 4000
-    assert strategy.pause_refine_after_reset == 400  # n_views + 100
-    # Measured-good pair kept (absgrad unusable on gradient_2dgs — see spec)
-    assert strategy.absgrad is False
-    assert strategy.grow_grad2d == pytest.approx(2e-4)
-    assert strategy.key_for_gradient == "gradient_2dgs"
-
-
-def test_make_strategy_2dgs_pause_capped_for_many_views():
-    # n_views + 100 >= reset_every would gate refine off forever; cap keeps it reachable
-    strategy = make_strategy(SplatsConfig(primitive="2dgs"), n_views=3000)
-    assert strategy.pause_refine_after_reset == strategy.reset_every - strategy.refine_every
-    assert strategy.pause_refine_after_reset < strategy.reset_every
-
-
-def test_make_strategy_3dgs_untouched():
-    strategy = make_strategy(SplatsConfig(primitive="3dgs"), n_views=300)
-    assert isinstance(strategy, MCMCStrategy)
-    assert strategy.cap_max == 1_000_000
-
-
-@cuda
-def test_init_gaussians_shapes_and_optimizers():
-    points = np.random.default_rng(0).uniform(-1, 1, (200, 3)).astype(np.float32)
-    colors = np.full((200, 3), 128, np.uint8)
-    cfg = SplatsConfig()
-    gaussians, optimizers = init_gaussians_from_points(cfg, points, colors, scene_scale=1.0, device="cuda")
-    assert gaussians["means"].shape == (200, 3) and gaussians["sh0"].shape == (200, 1, 3)
-    assert gaussians["shN"].shape == (200, 15, 3) and gaussians["opacities"].shape == (200,)
-
-    opacities = torch.sigmoid(gaussians["opacities"])
-    expected_opacity = torch.full((200,), cfg.init_opacity, device="cuda")
-    assert torch.allclose(opacities, expected_opacity)
-    assert set(optimizers) == {"means", "scales", "quats", "opacities", "sh0", "shN"}
-    means_lr = optimizers["means"].param_groups[0]["lr"]
-    assert means_lr == pytest.approx(cfg.means_lr)
-
-
-def test_prepare_training_target_scales_rgb_and_resizes_depth():
-    image = np.full((8, 8, 3), 255, np.uint8)
-    depth = np.array([[1.0, 0.0], [2.0, 3.0]], np.float32)
-    target = prepare_training_target(image, depth, device="cpu")
-    assert target["rgb"].shape == (1, 8, 8, 3) and target["rgb"].max() == 1.0
-    assert target["depth"].shape == (1, 8, 8, 1)
-    assert (
-        target["depth"][0, 0, 0, 0] == 1.0 and target["depth"][0, 0, 7, 0] == 0.0 and target["depth"][0, 7, 7, 0] == 3.0
-    )
-
-    no_depth = prepare_training_target(image, None, device="cpu")
-    assert no_depth["depth"] is None
 
 
 ########################################
@@ -161,44 +106,56 @@ def test_prepare_training_target_scales_rgb_and_resizes_depth():
 
 def _recorder(monkeypatch):
     """
-    Swap write_splat_outputs for a recorder; returns the list of captured call kwargs.
+    Swap write_outputs for a recorder; returns the list of captured calls.
     """
     calls = []
 
     def record(
         cfg,
-        gaussians,
-        pose_refiner,
-        appearance,
+        model,
+        refine,
         images,
+        image_ids,
         cam_to_world,
         intrinsics,
         out_dir,
-        train_seconds,
-        loss_values,
-        anchor_field=None,
+        seconds,
+        final_losses,
+        *,
+        training_cam_to_world,
     ):
+        # training_cam_to_world bound but not recorded: the raw-vs-corrected split is pinned at
+        # the real writer, in test_rendering.py
         calls.append(
             {
-                "gaussians": gaussians,
-                "anchor_field": anchor_field,
-                "pose_refiner": pose_refiner,
-                "appearance": appearance,
-                "train_seconds": train_seconds,
-                "loss_values": loss_values,
+                "model": model,
+                "refine": refine,
+                "image_ids": image_ids,
+                "cam_to_world": cam_to_world,
+                "seconds": seconds,
+                "loss_values": final_losses,
             }
         )
 
-    monkeypatch.setattr(trainer_module, "write_splat_outputs", record)
+    monkeypatch.setattr(trainer_module, "write_outputs", record)
     return calls
 
 
 def _assert_trained(calls, points):
+    """
+    Assert one recorded run actually trained, not just returned.
+
+    - means must have grown past the seed count and moved off the seed positions
+
+    Args:
+        calls: recorded calls from the writer stub.
+        points: the seed cloud handed to the trainer.
+    """
     assert len(calls) == 1
     call = calls[0]
-    assert call["train_seconds"] > 0
+    assert call["seconds"] > 0
     assert {"l1", "ssim"} <= set(call["loss_values"])
-    means = call["gaussians"]["means"].detach().cpu()
+    means = call["model"].params["means"].detach().cpu()
     seed = torch.from_numpy(points)
     assert means.shape[0] >= len(points)
     assert not torch.allclose(means[: len(points)], seed)
@@ -222,73 +179,31 @@ def test_train_short_run_moves_gaussians(monkeypatch, tmp_path, primitive, pose_
     )
     train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
     _assert_trained(calls, points)
-    assert (calls[0]["pose_refiner"] is not None) == pose_opt
-    assert (calls[0]["appearance"] is not None) == appearance_opt
+    refine = calls[0]["refine"]
+    assert refine.has_pose == pose_opt
+    assert refine.has_appearance == appearance_opt
     if appearance_opt:
+        # render["appearance"] must still be populated, or appearance_reg silently drops out
         assert "appearance_reg" in calls[0]["loss_values"]
-        assert calls[0]["appearance"].params.weight.abs().sum() > 0
+        assert refine.appearance.weight.abs().sum() > 0
 
 
 @cuda
 def test_train_refining_every_step_still_moves_gaussians(monkeypatch, tmp_path):
-    # Refine on EVERY step (start=-1 since the gate is step > start): with post_backward before optimizer.step,
-    # rebuilt params would carry .grad=None and never be optimized
+    # Refine on EVERY step (start=-1, the gate is step > start)
+    # - post_backward before optimizer.step would leave rebuilt params at .grad=None
     images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
     calls = _recorder(monkeypatch)
     strategy = MCMCStrategy(cap_max=300, refine_start_iter=-1, refine_every=1, verbose=False)
-    monkeypatch.setattr(trainer_module, "make_strategy", lambda cfg, n_views: strategy)
+    monkeypatch.setattr(gaussian_module, "make_strategy", lambda cfg, n_views: strategy)
     cfg = SplatsConfig(primitive="3dgs", max_steps=5, log_every=1, means_lr=1e-2)
     train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
     _assert_trained(calls, points)
 
     # MCMC noise moves means even without an optimizer step; sh0 only moves through the optimizer
-    sh0 = calls[0]["gaussians"]["sh0"].detach().cpu()
-    seed_sh0 = (torch.from_numpy(colors).float() / 255.0 - 0.5) / SH_DC_NORMALISER
+    sh0 = calls[0]["model"].params["sh0"].detach().cpu()
+    seed_sh0 = (torch.from_numpy(colors).float() / 255.0 - 0.5) / SH_C0
     assert not torch.allclose(sh0[: len(points), 0, :], seed_sh0)
-
-
-def test_view_sampler_covers_every_view_once_per_epoch():
-    sampler = ViewSampler(7, seed=42)
-    epoch1 = [sampler.next() for _ in range(7)]
-    epoch2 = [sampler.next() for _ in range(7)]
-
-    assert sorted(epoch1) == list(range(7))
-    assert sorted(epoch2) == list(range(7))
-    # Reshuffle across epochs: identical order for 7 views has p = 1/5040
-    assert epoch1 != epoch2
-
-
-def test_view_sampler_deterministic_for_seed():
-    a = ViewSampler(5, seed=42).next()
-    runs = [[ViewSampler(5, seed=42).next() for _ in range(15)] for _ in range(2)]
-    assert runs[0] == runs[1]
-    assert a == runs[0][0]
-
-
-def test_downscale_factor_boundaries():
-    # splatfacto defaults: num_downscales=2, resolution_schedule=3000
-    assert downscale_factor(0, 2, 3000) == 4
-    assert downscale_factor(2999, 2, 3000) == 4
-    assert downscale_factor(3000, 2, 3000) == 2
-    assert downscale_factor(5999, 2, 3000) == 2
-    assert downscale_factor(6000, 2, 3000) == 1
-    assert downscale_factor(29999, 2, 3000) == 1
-    # 0 disables the schedule entirely
-    assert downscale_factor(0, 0, 3000) == 1
-
-
-def test_downscale_view_scales_image_and_k():
-    image = np.zeros((480, 640, 3), dtype=np.uint8)
-    K = torch.tensor([[[500.0, 0, 320.0], [0, 500.0, 240.0], [0, 0, 1.0]]])
-
-    small, K_small = downscale_view(image, K, 4)
-    assert small.shape == (120, 160, 3)
-    assert torch.allclose(K_small[0, 0, 0], torch.tensor(125.0))
-    assert torch.allclose(K_small[0, 0, 2], torch.tensor(80.0))
-    assert torch.allclose(K_small[0, 2, 2], torch.tensor(1.0))
-
-    same, K_same = downscale_view(image, K, 1)
-    assert same is image and K_same is K
 
 
 def test_splats_config_accepts_downscale_fields():
@@ -299,72 +214,15 @@ def test_splats_config_accepts_downscale_fields():
     assert default.num_downscales == 2 and default.resolution_schedule == 3000
 
 
-def test_scene_normalization_centres_and_unit_cubes_cameras():
-    cam_to_world = np.tile(np.eye(4, dtype=np.float32), (3, 1, 1))
-    cam_to_world[:, :3, 3] = [[0, 0, 0], [4, 0, 0], [2, 6, -2]]
-    center, scale = trainer_module.scene_normalization(cam_to_world)
-
-    # Centre = mean position; scale = 1 / max |coord - centre| (L-inf, splatfacto auto_scale_poses)
-    np.testing.assert_allclose(center, [2, 2, -2 / 3], rtol=1e-6)
-    normalised = (cam_to_world[:, :3, 3] - center) * scale
-    assert np.isclose(np.abs(normalised).max(), 1.0)
-    with pytest.raises(ValueError, match="coincide"):
-        trainer_module.scene_normalization(np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)))
-
-
-def test_denormalize_outputs_round_trips_gaussians_cameras_and_pose_deltas():
-    from collab_splats.splats.cameras import CameraOptModule
-
-    rng = np.random.default_rng(0)
-    cam_to_world = np.tile(np.eye(4, dtype=np.float32), (4, 1, 1))
-    cam_to_world[:, :3, 3] = rng.normal(size=(4, 3)) * 5 + 10
-    center, scale = trainer_module.scene_normalization(cam_to_world)
-
-    # Gaussians and cameras in the normalised frame; refiner with a known camera-frame translation delta
-    world_means = rng.normal(size=(20, 3)).astype(np.float32) * 5 + 10
-    world_log_scales = np.log(rng.uniform(0.1, 2, size=(20, 3)).astype(np.float32))
-    gaussians = torch.nn.ParameterDict(
-        {
-            "means": torch.nn.Parameter(torch.from_numpy((world_means - center) * scale)),
-            "scales": torch.nn.Parameter(torch.from_numpy(world_log_scales + np.log(scale))),
-        }
-    )
-    normalised_cams = torch.from_numpy(cam_to_world.copy())
-    normalised_cams[:, :3, 3] = (normalised_cams[:, :3, 3] - torch.from_numpy(center)) * scale
-    refiner = CameraOptModule(4)
-    refiner.zero_init()
-    with torch.no_grad():
-        refiner.translation.weight[1] = torch.tensor([0.1, -0.2, 0.3])
-    refined_normalised = refiner(normalised_cams[1:2], torch.tensor([1]))[0]
-
-    trainer_module.denormalize_outputs(gaussians, refiner, normalised_cams, center, scale)
-
-    # Back in world units; the refined pose maps through the same Sim3 as the raw one
-    np.testing.assert_allclose(gaussians["means"].detach().numpy(), world_means, rtol=1e-4, atol=1e-4)
-    np.testing.assert_allclose(gaussians["scales"].detach().numpy(), world_log_scales, atol=1e-5)
-    np.testing.assert_allclose(normalised_cams[:, :3, 3].numpy(), cam_to_world[:, :3, 3], rtol=1e-4, atol=1e-4)
-    refined_world = refiner(normalised_cams[1:2], torch.tensor([1]))[0]
-    expected_t = refined_normalised[:3, 3] / scale + torch.from_numpy(center)
-    np.testing.assert_allclose(refined_world[:3, 3].detach().numpy(), expected_t.detach().numpy(), rtol=1e-4, atol=1e-4)
-    np.testing.assert_allclose(
-        refined_world[:3, :3].detach().numpy(), refined_normalised[:3, :3].detach().numpy(), atol=1e-6
-    )
-
-
 def test_config_normalize_scene_default_off_and_settable():
     assert SplatsConfig().normalize_scene is False
     assert SplatsConfig.from_dict({"enabled": True, "normalize_scene": True}).normalize_scene is True
 
 
-def test_pose_refiner_rotation_lr_follows_world_extent_translation_lr_follows_frame():
-    # Normalised scene: rotation keeps the world-extent lr, translation gets the unit-cube lr
-    cfg = SplatsConfig(pose_lr=1e-5, max_steps=100)
-    refiner, optimizer, _ = trainer_module.make_pose_refiner(
-        cfg, n_views=4, rotation_lr_scale=78.65, translation_lr_scale=1.0, lr_gamma=0.99, device="cpu"
-    )
-    lrs = {id(group["params"][0]): group["lr"] for group in optimizer.param_groups}
-    assert lrs[id(refiner.rotation.weight)] == pytest.approx(1e-5 * 78.65)
-    assert lrs[id(refiner.translation.weight)] == pytest.approx(1e-5)
+def test_config_appearance_fields():
+    cfg = SplatsConfig.from_dict({"appearance_opt": True, "appearance_lr": 2e-3})
+    assert cfg.appearance_opt and cfg.appearance_lr == 2e-3
+    assert SplatsConfig().appearance_opt is False
 
 
 def test_depth_ratio_accepted_on_normal_consistency_for_2dgs():
@@ -395,7 +253,7 @@ def test_depth_ratio_out_of_range_rejected(depth_ratio):
         )
 
 
-# I2: yaml parses `yes`/`on`/`true` to True, which a bare float() would accept as a full median blend
+# yaml parses `yes`/`on`/`true` to True, which a bare float() would take as a full median blend
 @pytest.mark.parametrize("depth_ratio", [True, False, None, "0.6", [0.6]])
 def test_depth_ratio_non_numeric_rejected(depth_ratio):
     with pytest.raises(ValueError, match=r"depth_ratio must be a number in \[0, 1\]"):
@@ -421,7 +279,9 @@ def test_depth_ratio_zero_is_allowed_on_3dgs():
 @cuda
 @pytest.mark.parametrize("primitive", ["3dgs", "2dgs"])
 def test_train_scaffold_runs_and_writes_outputs(tmp_path, primitive):
-    """A short scaffold run produces the same artifact set as a vanilla run."""
+    """
+    A short scaffold run produces the same artifact set as a vanilla run.
+    """
     images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
     cfg = SplatsConfig.from_dict(
         {
@@ -434,8 +294,9 @@ def test_train_scaffold_runs_and_writes_outputs(tmp_path, primitive):
     )
     train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
 
-    for name in ("splats.ply", "ckpt.pt", "splats.zarr", "splats_quality_report.json"):
+    for name in ("splats.ply", "ckpt.pt", "splats_quality_report.json"):
         assert (tmp_path / name).exists(), name
+    assert not (tmp_path / "splats.zarr").exists()
     checkpoint = torch.load(tmp_path / "ckpt.pt", weights_only=False)
     assert "anchors" in checkpoint["splats"]
     assert "mlps" in checkpoint
@@ -463,8 +324,232 @@ def test_scaffold_records_anchor_provenance(tmp_path):
     )
     train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
 
+    # Provenance used to live in the zarr attrs; ckpt.pt and the report carry it now
     checkpoint = torch.load(tmp_path / "ckpt.pt", weights_only=False)
-    store = zarr.open_group(tmp_path / "splats.zarr", mode="r")
-    assert store.attrs["representation"] == "scaffold"
-    assert store.attrs["ply_baked"] is True
-    assert store.attrs["n_anchors"] == len(checkpoint["splats"]["anchors"])
+    report = json.loads((tmp_path / "splats_quality_report.json").read_text())
+    assert checkpoint["config"]["representation"] == "scaffold"
+    assert report["summary"]["config"]["representation"] == "scaffold"
+    assert report["summary"]["n_gaussians"] == len(checkpoint["splats"]["anchors"])
+
+
+########################################
+# The model interface: train() must not ask which representation it is training
+########################################
+
+
+def _branch_test_names(node):
+    """
+    Every identifier, attribute name and string literal a branch's test condition mentions.
+    """
+    mentioned = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            mentioned.add(child.id)
+        elif isinstance(child, ast.Attribute):
+            mentioned.add(child.attr)
+        elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+            mentioned.add(child.value)
+    return mentioned
+
+
+# Every spelling that means "which representation is this"
+# - `primitive_unit`: the sanctioned discriminator, so the likeliest future violation
+# - lowercase literals: catch a comparison against the config value
+# - shared with the meta-test below, so narrowing this set cannot leave it green
+REPRESENTATION_NAMES = {
+    "Scaffold",
+    "Gaussians",
+    "representation",
+    "primitive_unit",
+    "anchor_field",
+    "AnchorStrategy",
+    "scaffold",
+    "vanilla",
+}
+
+
+def _representation_branches(node):
+    """
+    Line numbers of every branch under `node` whose condition mentions a representation name.
+    """
+    return [
+        child.lineno
+        for child in ast.walk(node)
+        if isinstance(child, (ast.If, ast.IfExp)) and REPRESENTATION_NAMES & _branch_test_names(child.test)
+    ]
+
+
+def test_trainer_has_no_representation_branches():
+    """
+    The trainer must not ask which model it is training.
+    """
+    # Over the `train` AST node, not the text after the `def`
+    # - a string denylist misses single quotes, `isinstance(model, Scaffold)`, and code above it
+    source = Path(trainer_module.__file__).read_text()
+    train_node = next(
+        node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.FunctionDef) and node.name == "train"
+    )
+
+    branches = _representation_branches(train_node)
+
+    assert branches == [], f"train() branches on the representation at line(s) {branches}"
+
+
+@pytest.mark.parametrize("structure", ("statement", "ternary"))
+@pytest.mark.parametrize("spelling", ("identifier", "attribute", "literal"))
+@pytest.mark.parametrize("name", sorted(REPRESENTATION_NAMES))
+def test_the_no_branch_check_sees_every_representation_name(name, spelling, structure):
+    # Plant a branch and run the SAME predicate over the SAME set, so a narrowed set turns red
+    # - one case per (name, spelling): `_branch_test_names` is a flat set of three clauses;
+    #   deleting the ast.Attribute clause with a real branch planted still gave 277 passed, RC=0
+    # - one case per structure: `_representation_branches` matches (ast.If, ast.IfExp); deleting
+    #   ast.IfExp still gave 293 passed, RC=0
+    # - the ternary plant sits inside an ast.Assign, so it also pins the walk's depth
+    condition = {
+        "identifier": f"isinstance(model, {name})",
+        "attribute": f"model.{name}",
+        "literal": f'cfg.unrelated_attr == "{name}"',
+    }[spelling]
+    body = {
+        "statement": f"    if {condition}:\n        pass\n",
+        "ternary": f"    unrelated = 1 if {condition} else 2\n",
+    }[structure]
+    planted = ast.parse(f"def train():\n{body}")
+
+    assert _representation_branches(planted.body[0]) == [2]
+
+
+def test_the_representation_name_set_is_not_narrowed():
+    # One case PER NAME above, so dropping a name deletes its case instead of failing one
+    # - measured: the earlier set of five, with THIS test deleted too, left 77 passed, 0 failed
+    #   (the count tracks the axes above: 52 at 8 cases, 77 at 48)
+    # - only an absolute literal pins the set; `primitive_unit` is the entry that matters most
+    assert REPRESENTATION_NAMES == {
+        "AnchorStrategy",
+        "Gaussians",
+        "Scaffold",
+        "anchor_field",
+        "primitive_unit",
+        "representation",
+        "scaffold",
+        "vanilla",
+    }
+
+
+@cuda
+def test_train_builds_a_gaussians_model_by_default(tmp_path):
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=32, width=32, n_points=200)
+    cfg = SplatsConfig.from_dict({"max_steps": 3, "cap_max": 500, "losses": {}})
+
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+
+    ckpt = torch.load(tmp_path / "ckpt.pt", weights_only=False)
+    assert set(ckpt["splats"]) == {"means", "scales", "quats", "opacities", "sh0", "shN"}
+
+
+@cuda
+def test_train_survives_non_square_frames(tmp_path):
+    """
+    A non-square frame survives training: 32x32 fixtures hide a transposed (width, height).
+    """
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=24, width=40, n_points=200)
+    cfg = SplatsConfig.from_dict({"max_steps": 2, "cap_max": 500, "num_downscales": 0, "losses": {}})
+
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+
+    ckpt = torch.load(tmp_path / "ckpt.pt", weights_only=False)
+    assert tuple(ckpt["image_size"]) == (24, 40)
+
+
+@cuda
+def test_train_builds_a_scaffold_model_when_asked(tmp_path):
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=32, width=32, n_points=200)
+    cfg = SplatsConfig.from_dict({"representation": "scaffold", "scaffold": {}, "max_steps": 3, "losses": {}})
+
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+
+    ckpt = torch.load(tmp_path / "ckpt.pt", weights_only=False)
+    assert "anchors" in ckpt["splats"]
+    assert "mlps" in ckpt
+    assert "voxel_size" in ckpt
+
+
+def test_train_takes_the_tuning_constants_keyword_only():
+    # `min_points` / `lr_decay` sit behind a bare `*`, after seven positionals
+    # - a dropped `*` would silently bind a ninth positional to min_points
+    # - match the message: the body raises its own TypeError, so a bare raises() passes either way
+    with pytest.raises(TypeError, match="takes from 7 to 8 positional arguments"):
+        train(None, None, None, None, None, None, None, None, 100)
+
+
+def test_train_refuses_too_few_seed_points(tmp_path):
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=32, width=32, n_points=200)
+    cfg = SplatsConfig.from_dict({"max_steps": 3, "losses": {}})
+
+    with pytest.raises(ValueError, match="need >= 100 seed points"):
+        train(cfg, images, world_to_cam, intrinsics, points[:50], colors[:50], tmp_path)
+
+
+def test_train_refuses_mismatched_per_view_arrays(tmp_path):
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=32, width=32, n_points=200)
+    cfg = SplatsConfig.from_dict({"max_steps": 3, "losses": {}})
+
+    with pytest.raises(ValueError, match="frames mismatch"):
+        train(cfg, images, world_to_cam[:2], intrinsics, points, colors, tmp_path)
+
+
+@cuda
+def test_neighbor_render_uses_the_neighbors_own_camera_id(monkeypatch, tmp_path):
+    """
+    The neighbor renders through its OWN camera id: appearance and pose deltas are per view.
+    """
+    images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
+    calls = _recorder(monkeypatch)
+
+    # Pin both halves of the pair: every step trains view 0, whose only neighbor is view 2
+    monkeypatch.setattr(trainer_module, "view_order", lambda n_views: itertools.repeat(0))
+    monkeypatch.setattr(trainer_module, "select_near_views", lambda *args, **kwargs: [[2], [3], [0], [1]])
+
+    real_render_neighbor = trainer_module.render_neighbor
+    seen = []
+
+    def record_neighbor(model, image, cam_to_world, near_intrinsics, camera_id):
+        seen.append(int(camera_id.item()))
+        return real_render_neighbor(model, image, cam_to_world, near_intrinsics, camera_id)
+
+    monkeypatch.setattr(trainer_module, "render_neighbor", record_neighbor)
+    cfg = SplatsConfig.from_dict(
+        {
+            "primitive": "3dgs",
+            "max_steps": 3,
+            "log_every": 1,
+            "appearance_opt": True,
+            "num_downscales": 0,
+            "losses": {"pgsr_multiview": {"weight": 0.1}},
+        }
+    )
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+
+    assert len(calls) == 1
+    assert seen and set(seen) == {2}
+
+
+########################################
+# Public API
+########################################
+
+
+def test_public_api_surface():
+    import collab_splats.splats as splats
+
+    # Exactly six: two model classes, the config, the entry point, the ckpt reader, the commit
+    assert set(splats.__all__) == {
+        "GSPLAT_COMMIT",
+        "Gaussians",
+        "Scaffold",
+        "SplatsConfig",
+        "load_checkpoint",
+        "train",
+    }
+    for name in splats.__all__:
+        assert hasattr(splats, name), name

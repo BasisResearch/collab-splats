@@ -1,9 +1,10 @@
 """Sanity-check splat renders (normals) and compare TSDF meshes fused from feedforward vs splat depth.
 
 Reports:
-  Table 1: per primitive, over pixels with alpha > 0.5 in <results>/<prim>/splats.zarr —
-           unit-norm fraction of the stored normal, and the angle between the stored normal
-           and a finite-difference normal of the rendered depth (camera frame, stored K).
+  Table 1: per primitive, over pixels with alpha > 0.5 in the renders of
+           <results>/<prim>/ckpt.pt — unit-norm fraction of the rendered normal, and the angle
+           between it and a finite-difference normal of the rendered depth (camera frame,
+           checkpoint K).
   Table 2: TSDF meshes (same mesher settings) from pointcloud.zarr and from each primitive's
            rendered depth — vertices, triangles, connected components, largest-component
            triangle fraction, wall seconds. PLYs land at <results>/mesh_<source>.ply.
@@ -23,7 +24,6 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
-import zarr
 
 from collab_splats.mesh.utils import (
     _feedforward_to_tsdf_inputs,
@@ -31,6 +31,7 @@ from collab_splats.mesh.utils import (
     mesh_from_tsdf_inputs,
 )
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.splats.rendering import load_checkpoint, render_views
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -93,16 +94,15 @@ def _angles_deg(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.degrees(np.arccos(dots))
 
 
-def analyze_normals(splats_zarr: Path, primitive: str) -> dict:
+def analyze_normals(ckpt_path: Path, primitive: str) -> dict:
     """
-    Table 1 statistics for one primitive's splats.zarr, streamed one view at a time.
+    Table 1 statistics for one primitive's checkpoint, rendered and scored one view at a time.
 
-    - Unit-norm fraction of the stored normal (and after alpha division, meaningful for 2DGS).
+    - Unit-norm fraction of the rendered normal (and after alpha division, meaningful for 2DGS).
     - Mean/median angle vs depth normals, raw and sign-folded (min(angle, 180 - angle)).
     """
-    store = zarr.open_group(str(splats_zarr), mode="r")
-    n_views = store["depth"].shape[0]
-    intrinsics_all = store["K"][:]
+    model, camera_opt, cam_to_world, intrinsics_all, image_ids, (height, width) = load_checkpoint(ckpt_path, "cuda")
+    n_views = len(image_ids)
 
     n_pixels = 0
     n_unit = 0
@@ -112,11 +112,13 @@ def analyze_normals(splats_zarr: Path, primitive: str) -> dict:
     angle_chunks = []
     folded_chunks = []
 
-    for view in range(n_views):
-        depth = store["depth"][view]
-        alpha = store["alpha"][view]
-        normal = store["normal"][view].astype(np.float64)
-        intrinsics = intrinsics_all[view].astype(np.float64)
+    # Renders stream one view at a time: the whole stack at 1080p is tens of GB
+    renders = render_views(model, camera_opt, cam_to_world, intrinsics_all, height, width)
+    for view, render in enumerate(renders):
+        depth = render["depth"][0, ..., 0].cpu().numpy().astype(np.float64)
+        alpha = render["alpha"][0, ..., 0].cpu().numpy().astype(np.float64)
+        normal = render["normal"][0].cpu().numpy().astype(np.float64)
+        intrinsics = intrinsics_all[view].cpu().numpy().astype(np.float64)
 
         # Opaque pixels only; depth normals are undefined on the one-pixel border
         mask = alpha > ALPHA_MIN
@@ -263,17 +265,17 @@ def main() -> None:
     parser.add_argument("--conf-percentile", type=float, default=20.0)
     args = parser.parse_args()
 
-    # Primitives whose renders exist; missing ones are skipped, not fatal
+    # Primitives whose checkpoints exist; missing ones are skipped, not fatal
     available = []
     for primitive in args.primitives:
-        splats_zarr = args.results / primitive / "splats.zarr"
-        if splats_zarr.exists():
-            available.append((primitive, splats_zarr))
+        ckpt_path = args.results / primitive / "ckpt.pt"
+        if ckpt_path.exists():
+            available.append((primitive, ckpt_path))
         else:
-            logger.warning("Skipping %s: %s missing", primitive, splats_zarr)
+            logger.warning("Skipping %s: %s missing", primitive, ckpt_path)
 
     # Table 1
-    normal_rows = [analyze_normals(splats_zarr, primitive) for primitive, splats_zarr in available]
+    normal_rows = [analyze_normals(ckpt_path, primitive) for primitive, ckpt_path in available]
 
     # Table 2: feedforward first, then each primitive's renders
     feedforward = FeedforwardResult.load_zarr(args.zarr, load_images=True)
@@ -284,10 +286,8 @@ def main() -> None:
             args.results,
         )
     ]
-    for primitive, splats_zarr in available:
-        mesh_rows.append(
-            build_mesh(primitive, _splats_to_tsdf_inputs(splats_zarr, args.conf_percentile), args.results)
-        )
+    for primitive, ckpt_path in available:
+        mesh_rows.append(build_mesh(primitive, _splats_to_tsdf_inputs(ckpt_path, args.conf_percentile), args.results))
 
     # Persist and print
     analysis = {

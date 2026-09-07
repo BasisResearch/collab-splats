@@ -10,7 +10,6 @@ import numpy as np
 import open3d as o3d
 import torch
 import torch.nn.functional as F
-import zarr
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
@@ -725,15 +724,18 @@ def _depth_edge_mask(depths: np.ndarray, max_grad: float) -> np.ndarray:
 
 
 def _splats_to_tsdf_inputs(
-    splats_zarr: Path,
+    ckpt_path: Path,
     conf_percentile: float | None = None,
     splat_depth: str = "expected",
     max_depth_frac: float | None = None,
     max_depth_grad: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Unpack splats.zarr (rendered views) into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
+    Render a trained splat checkpoint into (depths, rgbs, c2w, intrinsics) for TSDF fusion.
 
+    - Renders every training view from `ckpt.pt` rather than reading a stored render, so the
+      geometry fused is always the checkpoint's own. Views stream one at a time: 300 renders
+      at 1080p held together would be ~14 GB.
     - `alpha` is the confidence: pixels with alpha == 0 never reach Open3D, and
       `conf_percentile` drops the lowest-alpha percentile globally (same rule as the
       feedforward path's confidence gate). Note that a trained splat field renders alpha
@@ -746,48 +748,70 @@ def _splats_to_tsdf_inputs(
       surfaces. Turn one on only for a scene that shows the failure it names.
     - `splat_depth` picks which rendered depth to fuse: "expected" (alpha-weighted, the
       default) or "median" (RaDe-GS surface depth, 2dgs renders only).
-    - Poses are the zarr's `c2w` — what was actually rendered, including pose-opt deltas.
+    - Poses are the checkpoint's, which are the poses that were trained, pose-opt deltas
+      included.
     - Already native to the training frames, so there is no upsampling path.
+
+    Args:
+        ckpt_path: the splats stage's `ckpt.pt`.
+        conf_percentile: alpha percentile to drop, or None for the alpha > 0 gate alone.
+        splat_depth: "expected" or "median".
+        max_depth_frac: far cut as a fraction of the camera trajectory's extent, or None.
+        max_depth_grad: relative depth-gradient cut, or None.
+
+    Returns:
+        (depths (N, H, W) float32 with masked pixels zeroed, rgbs (N, H, W, 3) uint8,
+        c2w (N, 4, 4) float32, intrinsics (N, 3, 3) float32).
     """
-    # Value check before any IO so a typo fails on the config, not on a missing array
-    depth_arrays = {"expected": "depth", "median": "median_depth"}
-    if splat_depth not in depth_arrays:
+    # Local import: collab_splats.splats pulls in gsplat's CUDA extension, and mesh.utils is
+    # imported by the dashboard's fast-bind path, which must not pay for that.
+    from collab_splats.splats.rendering import load_checkpoint, render_views
+
+    # Value check before any IO so a typo fails on the config, not on a missing file
+    if splat_depth not in ("expected", "median"):
         raise ValueError(f"mesh.splat_depth must be 'expected' or 'median', got {splat_depth!r}")
 
-    # Loud failure before opening: the splats stage is never auto-run by mesh()
-    splats_zarr = Path(splats_zarr)
-    if not splats_zarr.exists():
-        raise FileNotFoundError(f"{splats_zarr} — run the splats stage first")
-    store = zarr.open_group(str(splats_zarr), mode="r")
+    # Loud failure before loading: the splats stage is never auto-run by mesh()
+    ckpt_path = Path(ckpt_path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"{ckpt_path} — run the splats stage first")
 
-    # median_depth only exists in 2dgs stores written by this version of the splats stage;
-    # 'depth' should always be there, so its absence means a truncated or foreign store
-    depth_array = depth_arrays[splat_depth]
-    if depth_array not in store:
-        hint = (
-            "mesh.splat_depth: median needs a 2dgs splats run from this version; re-run the "
-            "splats stage or use splat_depth: expected."
-            if splat_depth == "median"
-            else "every splats store writes 'depth' — this one is truncated or was not written " "by the splats stage."
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model, camera_opt, c2w_tensor, intrinsics_tensor, image_ids, (height, width) = load_checkpoint(ckpt_path, device)
+
+    # median_depth is a 2dgs render. Both model classes carry `primitive` (set from the config
+    # they were built with), so this is decided before rendering rather than by an array that
+    # turns out to be missing afterwards
+    if splat_depth == "median" and model.primitive != "2dgs":
+        raise ValueError(
+            f"{ckpt_path} is a {model.primitive} run — mesh.splat_depth: median needs a 2dgs "
+            "checkpoint; re-run the splats stage with primitive: 2dgs, or use "
+            "splat_depth: expected."
         )
-        raise ValueError(f"{splats_zarr} has no '{depth_array}' array — {hint}")
 
-    # Rendered uint8 RGB + the poses/intrinsics actually rendered, all native to the frames
-    depths = np.ascontiguousarray(store[depth_array][:], dtype=np.float32)
-    rgbs = np.ascontiguousarray(store["rgb"][:])
-    c2w = store["c2w"][:].astype(np.float32)
-    intrinsics = store["K"][:].astype(np.float32)
+    # Stream the renders into the stacked arrays TSDF fusion and the color-map optimizer take
+    n_views = len(image_ids)
+    depths = np.empty((n_views, height, width), dtype=np.float32)
+    rgbs = np.empty((n_views, height, width, 3), dtype=np.uint8)
+    alpha = np.empty((n_views, height, width), dtype=np.float32)
+    depth_key = "median_depth" if splat_depth == "median" else "depth"
+    renders = render_views(model, camera_opt, c2w_tensor, intrinsics_tensor, height, width)
+    for view, render in enumerate(renders):
+        depths[view] = render[depth_key][0, ..., 0].cpu().numpy()
+        rgbs[view] = (render["rgb"][0] * 255).round().byte().cpu().numpy()
+        alpha[view] = render["alpha"][0, ..., 0].cpu().numpy()
+    c2w = c2w_tensor.cpu().numpy().astype(np.float32)
+    intrinsics = intrinsics_tensor.cpu().numpy().astype(np.float32)
 
     # Alpha gate: zero alpha is "no surface rendered here"; the percentile cut mirrors the
     # feedforward path's confidence_mask so both sources filter by the same global rule
-    alpha = store["alpha"][:]
     keep = alpha > 0
     if conf_percentile is not None:
         keep &= confidence_mask(alpha, conf_percentile)
     logger.info(
         "Splat depth source '%s' (%s); alpha mask (p%s) drops %.1f%% of depth pixels",
         splat_depth,
-        depth_array,
+        depth_key,
         "none" if conf_percentile is None else f"{conf_percentile:.0f}",
         100.0 * float((~keep).mean()),
     )
@@ -975,9 +999,9 @@ def mesh_from_tsdf_inputs(
     **mesher_kwargs,
 ) -> MeshResult:
     """
-    Fuse pre-built (depths, rgbs, c2w, intrinsics) with any registered mesher; optional colour-map pass.
+    Fuse pre-built (depths, rgbs, c2w, intrinsics) with any registered mesher; optional color-map pass.
 
-    - Shared tail of both input adapters (pointcloud.zarr and splats.zarr).
+    - Shared tail of both input adapters (pointcloud.zarr and a splats ckpt.pt).
     - Raises ValueError when color_map_iterations > 0 with a non-TSDF method.
     """
     from collab_splats.mesh import get_mesh_creator

@@ -17,7 +17,7 @@ Three outcomes wanted, in one representation:
 
 1. **Surface/mesh quality** — via the eventual Scaffold-PGSR (stage 3); this stage lays the anchor layer.
 2. **Fewer primitives / lower memory** — one feature vector per anchor instead of per-Gaussian SH.
-3. **View-dependent robustness** — MLP-decoded colour and opacity conditioned on view direction.
+3. **View-dependent robustness** — MLP-decoded color and opacity conditioned on view direction.
 
 ## Feasibility verdict (why gsplat can host this)
 
@@ -93,7 +93,7 @@ splits into `scaffold_strategy.py`; not before.
 `render_view` currently activates raw parameters inline (`exp(scales)`, `sigmoid(opacities)`, SH concat)
 and rasterizes in the same function. Split those:
 
-- **`VanillaSource`** — today's activation, byte-identical behaviour.
+- **`VanillaSource`** — today's activation, byte-identical behavior.
 - **`ScaffoldSource`** — `AnchorField.decode(cam_to_world)`.
 
 `render_view` takes the produced Gaussian dict and rasterizes. `tests/splats/test_rendering.py` is the
@@ -113,7 +113,7 @@ Parameters:
 | `opacities` | `[A, 1]` | anchor-level opacity; feeds pruning statistics only |
 
 MLP heads (`mlps` section of the same file): `opacity: [F + view_dim] -> K`,
-`cov: [F + view_dim] -> 7K` (3 scale + 4 quat per offset), `colour: [F + view_dim (+ appearance_dim)] -> 3K`.
+`cov: [F + view_dim] -> 7K` (3 scale + 4 quat per offset), `color: [F + view_dim (+ appearance_dim)] -> 3K`.
 
 **Init.** Voxelize the seed points at `voxel_size = median kNN spacing x voxel_multiplier`, reusing the
 `NearestNeighbors` call already in `init_gaussians_from_points` (`trainer.py:255`). This is scale-free by
@@ -124,7 +124,7 @@ off by a large factor in our world-unit frame.
 **`decode(cam_to_world)`** per view:
 
 1. Frustum-filter anchors.
-2. Compute the unit view direction from each surviving anchor to the camera centre. The distance is
+2. Compute the unit view direction from each surviving anchor to the camera center. The distance is
    computed only to normalize it, and is NOT concatenated into the head input: upstream's
    `add_opacity_dist` / `add_cov_dist` / `add_color_dist` all default to `False`
    (`arguments/__init__.py`), so the shipped heads read `[anchor_feat, ob_view]` and
@@ -148,7 +148,7 @@ gradient norm back through `decode_index` into per-slot accumulators (gradient s
 Every `refine_every` steps inside `[update_from, update_until]`:
 
 - **Grow**: multi-level voxel candidate selection with `scatter_max` dedup against occupied cells; new
-  anchors initialise with zero offsets and aggregated features (Scaffold's `anchor_growing`).
+  anchors initialize with zero offsets and aggregated features (Scaffold's `anchor_growing`).
 - **Prune**: anchors whose accumulated opacity stays below `min_opacity` after enough visits.
 
 All tensor surgery goes through `gsplat.strategy.ops._update_param_with_optimizer`, which grows and
@@ -161,7 +161,7 @@ Two traps, recorded now:
    gsplat's 2dgs backward writes `.absgrad` on `means2d` only, never on that tensor
    (`trainer.py:333`). `AnchorStrategy` must select the matching key per primitive or it silently
    accumulates zeros and never grows.
-2. **Threshold units.** The raw `means2d.grad` is pixel-space, but `DefaultStrategy` renormalises it to
+2. **Threshold units.** The raw `means2d.grad` is pixel-space, but `DefaultStrategy` renormalizes it to
    [-1, 1] screen space before thresholding (`strategy/default.py:243-249`:
    `grads[..., 0] *= width / 2 * n_cameras`, likewise for height). `AnchorStrategy` copies those exact
    lines, after which Scaffold's published `grad_threshold` transfers directly with no conversion, and
@@ -186,18 +186,18 @@ splats:
     update_from: 1500
     update_until: 15000
     refine_every: 100
-    grad_threshold: 2e-4        # Scaffold's published value; screen space matches gsplat after renormalisation
+    grad_threshold: 2e-4        # Scaffold's published value; screen space matches gsplat after renormalization
     min_opacity: 0.005
     appearance_dim: 0        # Scaffold's own per-image embedding; 0 = off
     mlp_lr: 2e-3
 ```
 
-### Colour and appearance — both mechanisms ship
+### Color and appearance — both mechanisms ship
 
-Scaffold's `mlp_colour` emits RGB directly, so `sh_degree` and `sh_degree_interval` go inert under
+Scaffold's `mlp_color` emits RGB directly, so `sh_degree` and `sh_degree_interval` go inert under
 scaffold; config validation rejects them rather than silently ignoring them.
 
-Scaffold's own `embedding_appearance` (`scaffold.appearance_dim > 0`, concatenated into the colour MLP
+Scaffold's own `embedding_appearance` (`scaffold.appearance_dim > 0`, concatenated into the color MLP
 input) and our existing `AppearanceModule` (`appearance_opt`, per-image affine, train views only) are
 **independent toggles**. Neither is retired. Which one wins, and whether they are additive, is measured —
 see the sweep. This matters because every lever pair measured on this codebase so far has been
@@ -205,13 +205,13 @@ anti-additive.
 
 ### Other knock-ons
 
-- **`scale_reg`** currently penalises log-scale *parameters*. Under scaffold it reads the **decoded**
+- **`scale_reg`** currently penalizes log-scale *parameters*. Under scaffold it reads the **decoded**
   scales from the render instead. Same loss name, different source.
 - **`pose_opt`** keeps working and gains a second gradient path: view direction feeds the MLPs, so pose
-  deltas now move colour and opacity too. Harmless; gets a comment at the site.
+  deltas now move color and opacity too. Harmless; gets a comment at the site.
 - **`num_downscales`** (coarse-to-fine) stays at its default. Flagged, not solved: c2f already OOM'd 2dgs
-  under `DefaultStrategy`, and its behaviour under anchor growing is unmeasured.
-- MCMC-only regularisers (`opacity_reg`) are simply absent from scaffold defaults.
+  under `DefaultStrategy`, and its behavior under anchor growing is unmeasured.
+- MCMC-only regularizers (`opacity_reg`) are simply absent from scaffold defaults.
 
 ## Artifacts
 

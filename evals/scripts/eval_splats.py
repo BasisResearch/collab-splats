@@ -3,8 +3,8 @@ Train each splat primitive straight from a pointcloud.zarr and tabulate the trai
 
 Metric: the trainer's held-in PSNR / SSIM over the training views, Gaussian count and wall-clock,
 read back from splats_quality_report.json. No COLMAP is needed — the zarr carries poses, K,
-points, colours and depth. Optional GT depth error (--seq, 7-Scenes) scores the rendered
-splats.zarr depth where alpha > 0.5 after median alignment, via the eval_multiview_conf helpers.
+points, colors and depth. Optional GT depth error (--seq, 7-Scenes) re-renders ckpt.pt and
+scores its depth where alpha > 0.5 after median alignment, via the eval_multiview_conf helpers.
 
 Resolution: like the pipeline's splats stage, training uses the NATIVE frames from the scene's
 images/ directory (found beside pointcloud.zarr, or via --images-dir) with the zarr's model-res K
@@ -28,12 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import zarr
 from PIL import Image
 
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.preproc import frames as fr
+from collab_splats.splats.rendering import load_checkpoint, render_views
 from collab_splats.splats.trainer import SplatsConfig, train
 from evals.scripts.eval_multiview_conf import load_7scenes_depth, median_align, retained_error
 
@@ -63,7 +63,7 @@ def _model_res_images(result: FeedforwardResult) -> np.ndarray:
     """
     The zarr's own model-res images as (N, H, W, 3) uint8.
     """
-    # CHW float -> HWC uint8, normalising the [0,1] vs [0,255] backend drift first
+    # CHW float -> HWC uint8, normalizing the [0,1] vs [0,255] backend drift first
     images = result.images.numpy().transpose(0, 2, 3, 1)
     if images.max() <= 1.0:
         images = images * 255.0
@@ -191,10 +191,19 @@ def depth_vs_gt(out_dir: Path, seq: Path) -> dict:
     """
     Rendered-depth error against 7-Scenes GT where alpha > ALPHA_THRESHOLD, after median alignment.
     """
-    store = zarr.open(str(Path(out_dir) / "splats.zarr"), mode="r")
-    depth = store["depth"][:]
-    alpha = store["alpha"][:]
-    n_frames = depth.shape[0]
+    # Render rather than read a stored render: ckpt.pt is the only artifact the stage writes.
+    # Unlike the mesh adapter this one keeps the whole stack — the median alignment below is
+    # global across frames, so it cannot be computed one view at a time.
+    model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = load_checkpoint(
+        Path(out_dir) / "ckpt.pt", "cuda"
+    )
+    n_frames = len(image_ids)
+    depth = np.empty((n_frames, height, width), dtype=np.float32)
+    alpha = np.empty((n_frames, height, width), dtype=np.float32)
+    renders = render_views(model, camera_opt, cam_to_world, intrinsics, height, width)
+    for view, render in enumerate(renders):
+        depth[view] = render["depth"][0, ..., 0].cpu().numpy()
+        alpha[view] = render["alpha"][0, ..., 0].cpu().numpy()
 
     # GT on the rendered pixel grid (nearest — never interpolate across depth discontinuities)
     color_paths = sorted(seq.glob("*.color.png"))[:n_frames]

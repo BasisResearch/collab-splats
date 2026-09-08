@@ -208,6 +208,28 @@ def test_instantsfm_random_seed_reaches_runtime_options():
     assert "random_seed" not in RUNTIME_OPTIONS
 
 
+def test_instantsfm_min_num_view_per_track_defaults_to_none():
+    assert instantsfm.InstantSfMCreator().min_num_view_per_track is None
+
+
+def test_instantsfm_min_num_view_per_track_reaches_track_establishment_options():
+    pytest.importorskip("instantsfm")
+    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
+    from instantsfm.config.colmap import CONFIG
+
+    # Unset must leave the upstream cut of 3 in place — the knob is opt-in
+    assert instantsfm.InstantSfMCreator()._build_config().TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] == 3
+
+    # A set value must reach the option verbatim; FindTracksForProblem compares against it
+    cut = instantsfm.InstantSfMCreator(min_num_view_per_track=6)._build_config()
+    assert cut.TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] == 6
+
+    # Config aliases the module-level dict; the cut must not leak out of this instance
+    assert CONFIG["TRACK_ESTABLISHMENT_OPTIONS"]["min_num_view_per_track"] == 3
+    later = instantsfm.InstantSfMCreator()._build_config()
+    assert later.TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] == 3
+
+
 ########################################################
 ########## SIFT database validity ######################
 ########################################################

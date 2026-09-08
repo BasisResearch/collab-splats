@@ -82,9 +82,7 @@ def _patched_sfm(recon, *, depth_complete=True):
             f"{RECONSTRUCTOR}.importlib",
             SimpleNamespace(metadata=SimpleNamespace(version=lambda _package: "0.0.0")),
         ),
-        "result_from_reconstruction": patch(
-            f"{RECONSTRUCTOR}.result_from_reconstruction", return_value=(outputs, {})
-        ),
+        "result_from_reconstruction": patch(f"{RECONSTRUCTOR}.result_from_reconstruction", return_value=(outputs, {})),
     }
     return patches
 
@@ -215,3 +213,17 @@ def test_random_seed_accepts_null_and_an_in_range_int():
     assert _validated_sfm_config(random_seed=None)["pointcloud"]["instantsfm"]["random_seed"] is None
     assert _validated_sfm_config(random_seed=2**32 - 1)["pointcloud"]["instantsfm"]["random_seed"] == 2**32 - 1
 
+
+def test_min_num_view_per_track_below_two_is_rejected_at_config_load():
+    # A track needs two views to triangulate; 1 and 0 produce no geometry, and the value is
+    # read only after the SIFT + exhaustive-matching pass
+    for bad in (1, 0, -1, 2.5):
+        with pytest.raises(ValueError, match=r"min_num_view_per_track must be null or an int >= 2"):
+            _validated_sfm_config(min_num_view_per_track=bad)
+
+
+def test_min_num_view_per_track_accepts_null_and_an_int_at_or_above_two():
+    cfg = _validated_sfm_config(min_num_view_per_track=None)
+    assert cfg["pointcloud"]["instantsfm"]["min_num_view_per_track"] is None
+    assert _validated_sfm_config(min_num_view_per_track=2)["pointcloud"]["instantsfm"]["min_num_view_per_track"] == 2
+    assert _validated_sfm_config(min_num_view_per_track=6)["pointcloud"]["instantsfm"]["min_num_view_per_track"] == 6

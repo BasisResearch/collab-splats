@@ -97,8 +97,14 @@ from collab_splats.mesh.io import render_tsdf_inputs
 depths, rgbs, c2w, K = render_tsdf_inputs(scene_dir / "splats" / "ckpt.pt", images_dir)
 ```
 
-Depth is 2dgs's `median_depth` when the checkpoint has it and the alpha-weighted `depth`
-otherwise, zeroed where alpha is 0. Passing `images_dir` swaps the rendered RGB for the source
+Depth is zeroed where alpha is 0. `depth_source` picks which 2dgs render to fuse: `"expected"`
+(the default) takes the alpha-weighted `depth`, defined wherever anything contributes at all, at
+the cost of smearing across depth discontinuities; `"median"` takes `median_depth`, the ray's
+median-transmittance surface — sharper, but blank wherever no gaussian crosses the median, which
+is what opens holes on grazing ground. Measured on GH010229 (853 views, voxel 0.10) `"median"`
+fuses fewer vertices in far fewer components (3.02M / 94,937 against 4.0M / 426,695) yet the
+`"expected"` mesh is the better one to look at, so fragmentation is not the metric to pick on.
+A 3dgs checkpoint renders only `depth` and ignores the choice. Passing `images_dir` swaps the rendered RGB for the source
 keyframes matched by image id, which is what the pipeline does; omit it to fuse the render's
 own color. `gsplat` is imported inside the function, so `collab_splats.mesh.io` still loads on
 a machine without CUDA.

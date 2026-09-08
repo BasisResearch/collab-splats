@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 # SIFT feature database (system colmap)
 ########################################
 
+
 def _nudge_edge_keypoints(features: np.ndarray, width: int, height: int) -> np.ndarray:
     """
     Pull keypoints sitting exactly on the far image edge (x == width or y == height) inward.
@@ -359,6 +360,7 @@ class InstantSfMCreator:
       instantsfm/scripts/sfm.py::run_sfm at that version.
     - use_depths: feed depth_vda/ maps into the solve as depth priors.
     - retriangulation: GLOMAP-style retriangulate + re-BA after the global solve.
+    - min_num_view_per_track: track-establishment cut; None = upstream default (3).
     - random_seed: seeds InstantSfM's RUNTIME_OPTIONS; None = unseeded (upstream draws initial
       camera translations and track xyzs from an unseeded uniform, so runs differ).
     - reconstruct(data_dir): data_dir/images/ (+ depth_vda/) -> pycolmap.Reconstruction whose
@@ -373,11 +375,14 @@ class InstantSfMCreator:
     use_depths: bool = True
     retriangulation: bool = False
     random_seed: int | None = None
+    min_num_view_per_track: int | None = None
 
     def _build_config(self):
         """
-        Upstream Config with OPTIONS/RUNTIME_OPTIONS copied — Config.__init__
-        aliases module-level dicts, so in-place mutation leaks across instances.
+        Upstream Config with the option dicts copied before mutation.
+
+        - Config.__init__ aliases module-level dicts, so in-place mutation leaks across
+          instances; every dict this method writes to is copied first.
         """
         # Lazy heavy import — instantsfm is an optional dep (CUDA extensions)
         from instantsfm.controllers.config import Config
@@ -405,6 +410,18 @@ class InstantSfMCreator:
         # - neither we nor upstream's CLI sets it by default, so an absent key stays absent
         if self.random_seed is not None:
             config.RUNTIME_OPTIONS["random_seed"] = int(self.random_seed)
+
+        # Track-establishment cut — the memory lever for large image sets
+        # - FindTracksForProblem drops any track seen by fewer views
+        #   (cre185/InstantSfM @ 0.3.0, instantsfm/processors/track_establishment.py:109)
+        # - the BA normal equations scale with the surviving track count: 875 images at the
+        #   upstream default of 3 produced 486k tracks and exhausted 44 GiB in cuDSS (after a
+        #   20 GiB J^T J); 6 is the measured setting that fits
+        # - retriangulation is unaffected: it rebuilds density from the PRE-filter track set
+        #   through TRIANGULATOR_OPTIONS, whose own min_num_view_per_track stays 2
+        if self.min_num_view_per_track is not None:
+            config.TRACK_ESTABLISHMENT_OPTIONS = dict(config.TRACK_ESTABLISHMENT_OPTIONS)
+            config.TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] = int(self.min_num_view_per_track)
 
         return config
 

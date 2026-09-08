@@ -95,6 +95,12 @@ pointcloud:
     random_seed: null         # seed InstantSfM's RUNTIME_OPTIONS (numpy/random/torch/cuda).
                               # InitializeRandomPositions draws unseeded, so two runs of the
                               # same scene differ. null = upstream behavior (unseeded).
+    min_num_view_per_track: null  # drop tracks seen by fewer views before BA. null = upstream
+                                  # default (3). The BA normal equations scale with the
+                                  # surviving track count: 875 images at 3 gave 486k tracks and
+                                  # exhausted 44 GiB in cuDSS; 6 is the measured setting that
+                                  # fits. Retriangulation rebuilds density from the pre-filter
+                                  # set, so it is unaffected.
 
 semantics:
   enabled: true
@@ -114,8 +120,23 @@ semantics:
 mesh:
   enabled: true
   source: feedforward      # feedforward | splats
-  voxel_size: 0.0025       # TSDF voxel, world units; sdf_trunc = 4 x voxel_size
-  depth_trunc: 1.5         # ignore depth beyond this, world units
+  voxel_size: 0.0025       # TSDF voxel, world units. Ignored when bands is set.
+  sdf_trunc_mult: 4.0      # truncation band = this x voxel_size. Sets the thin-structure floor:
+                           # a TSDF cannot resolve anything thinner than 2 x sdf_trunc, and where
+                           # both the front and back surface fall inside one band they cancel and
+                           # the structure vanishes. 4.0 is Open3D's default for noisy sensor RGBD
+                           # and makes the band 8 voxels wide — 4x coarser than the grid itself.
+                           # Rendered splat depth is far cleaner, so 1.5-2.0 recovers thin geometry
+                           # (fence posts, railings) at the SAME voxel size and memory.
+  depth_trunc: 1.5         # ignore depth beyond this, world units. Ignored when bands is set.
+  bands: null              # null = one volume at voxel_size/depth_trunc above. Otherwise a list of
+                           # {depth_min, depth_trunc, voxel_size}, ascending and contiguous: the
+                           # views are fused once per band and merged. TSDF memory goes as surface
+                           # area / voxel^2 and far pixels cover most of the area, so a near band
+                           # can be several times finer for a fraction of what refining the whole
+                           # scene costs. Bands merge finest-first and a coarse vertex is
+                           # dropped only where a finer band already covers it, so overlaps
+                           # keep the finer copy and nothing a coarse band alone saw is lost.
   conf_percentile: 20      # drop depth below this confidence percentile (null = off); feedforward only
   texture: false           # decimate + UV atlas + project the fused views; writes mesh/texture/
 

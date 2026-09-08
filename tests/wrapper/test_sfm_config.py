@@ -62,7 +62,60 @@ def test_base_yaml_has_instantsfm_block():
     assert cfg["pointcloud"]["instantsfm"] == {
         "retriangulation": False,
         "random_seed": None,
+        "min_num_view_per_track": None,
     }
+
+
+def test_base_yaml_mesh_sdf_trunc_mult_default_is_four():
+    """
+    base.yaml carries mesh.sdf_trunc_mult at Open3D's noisy-sensor default.
+    """
+    assert _base_config()["mesh"]["sdf_trunc_mult"] == 4.0
+
+
+def test_sdf_trunc_mult_below_one_is_rejected_at_config_load():
+    """
+    A truncation band narrower than a voxel punctures the surface, so it is refused.
+    """
+    for bad in (0.9, 0, -1, "1.5", True):
+        cfg = _base_config()
+        cfg["mesh"]["sdf_trunc_mult"] = bad
+        with pytest.raises(ValueError, match=r"mesh.sdf_trunc_mult must be a number >= 1.0"):
+            Reconstructor.validate_config(cfg)
+
+    # 1.0 is the floor, and the thin-structure settings this key exists for are above it
+    for good in (1.0, 1.5, 2, 4.0):
+        cfg = _base_config()
+        cfg["mesh"]["sdf_trunc_mult"] = good
+        Reconstructor.validate_config(cfg)  # must not raise
+
+
+def test_base_yaml_mesh_bands_default_is_null():
+    """
+    base.yaml ships one TSDF volume; banding is opt-in.
+    """
+    assert _base_config()["mesh"]["bands"] is None
+
+
+def test_mesh_bands_that_do_not_partition_depth_are_rejected_at_config_load():
+    """
+    A gap between bands loses the geometry inside it and an overlap double-surfaces it.
+    """
+    gap = [
+        {"depth_min": 0, "depth_trunc": 2, "voxel_size": 0.01},
+        {"depth_min": 3, "depth_trunc": 8, "voxel_size": 0.04},
+    ]
+    for bad in ([], gap, [{"depth_min": 0, "depth_trunc": 2}], [{"depth_min": 0, "depth_trunc": 2, "voxel_size": 0}]):
+        cfg = _base_config()
+        cfg["mesh"]["bands"] = bad
+        with pytest.raises(ValueError, match=r"mesh.bands invalid"):
+            Reconstructor.validate_config(cfg)
+
+    # null and a contiguous ascending list both pass
+    for good in (None, [{"depth_min": 0, "depth_trunc": 2, "voxel_size": 0.01}], gap[:1] + [dict(gap[1], depth_min=2)]):
+        cfg = _base_config()
+        cfg["mesh"]["bands"] = good
+        Reconstructor.validate_config(cfg)  # must not raise
 
 
 def test_refine_poses_refuses_sfm_method(tmp_path):

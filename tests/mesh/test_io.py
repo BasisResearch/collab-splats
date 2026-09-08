@@ -126,7 +126,7 @@ def test_render_tsdf_inputs_stacks_views_and_zeroes_empty_pixels(tmp_path, monke
     assert c2w.dtype == np.float32 and K.dtype == np.float32
 
 
-def test_render_tsdf_inputs_prefers_median_depth(tmp_path, monkeypatch):
+def test_render_tsdf_inputs_defaults_to_the_expected_depth(tmp_path, monkeypatch):
     h, w = 4, 6
     monkeypatch.setitem(
         sys.modules,
@@ -134,7 +134,45 @@ def test_render_tsdf_inputs_prefers_median_depth(tmp_path, monkeypatch):
         _fake_rendering([_view(h, w, depth=9.0, median_depth=5.0)], [0], (h, w)),
     )
     depths, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu")
+    assert np.all(depths == 9.0)
+
+
+def test_render_tsdf_inputs_median_source_takes_the_median_depth(tmp_path, monkeypatch):
+    h, w = 4, 6
+    monkeypatch.setitem(
+        sys.modules,
+        "collab_splats.splats.rendering",
+        _fake_rendering([_view(h, w, depth=9.0, median_depth=5.0)], [0], (h, w)),
+    )
+    depths, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu", depth_source="median")
     assert np.all(depths == 5.0)
+
+
+def test_render_tsdf_inputs_expected_source_ignores_median_depth(tmp_path, monkeypatch):
+    h, w = 4, 6
+    monkeypatch.setitem(
+        sys.modules,
+        "collab_splats.splats.rendering",
+        _fake_rendering([_view(h, w, depth=9.0, median_depth=5.0)], [0], (h, w)),
+    )
+    depths, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu", depth_source="expected")
+    assert np.all(depths == 9.0)
+
+
+def test_render_tsdf_inputs_median_source_falls_back_on_a_3dgs_checkpoint(tmp_path, monkeypatch):
+    h, w = 4, 6
+    monkeypatch.setitem(
+        sys.modules,
+        "collab_splats.splats.rendering",
+        _fake_rendering([_view(h, w, depth=9.0)], [0], (h, w)),
+    )
+    depths, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu", depth_source="median")
+    assert np.all(depths == 9.0)
+
+
+def test_render_tsdf_inputs_rejects_an_unknown_depth_source(tmp_path):
+    with pytest.raises(ValueError, match="depth_source"):
+        render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu", depth_source="nearest")
 
 
 def test_render_tsdf_inputs_swaps_in_source_frames_by_image_id(tmp_path, monkeypatch):

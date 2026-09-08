@@ -694,6 +694,87 @@ def test_run_tsdf_mesh_fuses_colmap_intrinsics(tmp_path, monkeypatch):
     np.testing.assert_array_equal(fuse.call_args.args[3], result.intrinsics)
 
 
+def _tsdf_mesh_fuse_kwargs(tmp_path, monkeypatch, **overrides):
+    """
+    Run _run_tsdf_mesh over doubles and return the kwargs fuse_tsdf was called with.
+    """
+    result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
+    fuse = MagicMock(return_value=tmp_path / "mesh.ply")
+    monkeypatch.setattr(R, "fuse_tsdf", fuse)
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+
+    R._run_tsdf_mesh(
+        result=result,
+        pointcloud_zarr=tmp_path / "pointcloud.zarr",
+        output_dir=tmp_path,
+        images_dir=tmp_path / "images",
+        voxel_size=0.01,
+        depth_trunc=2.0,
+        **overrides,
+    )
+    return fuse.call_args.kwargs
+
+
+def test_run_tsdf_mesh_bands_fuse_per_band_and_drive_the_texture_voxel(tmp_path, monkeypatch):
+    """
+    mesh.bands routes to fuse_tsdf_bands, and texturing follows the finest band.
+    """
+    result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
+    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
+    single, banded, texture = (
+        MagicMock(return_value=tmp_path / "mesh.ply"),
+        MagicMock(return_value=tmp_path / "mesh.ply"),
+        MagicMock(),
+    )
+    monkeypatch.setattr(R, "fuse_tsdf", single)
+    monkeypatch.setattr(R, "fuse_tsdf_bands", banded)
+    monkeypatch.setattr(R, "texture_mesh", texture)
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+
+    bands = [
+        {"depth_min": 0.0, "depth_trunc": 2.0, "voxel_size": 0.005},
+        {"depth_min": 2.0, "depth_trunc": 8.0, "voxel_size": 0.02},
+    ]
+    R._run_tsdf_mesh(
+        result=result,
+        pointcloud_zarr=tmp_path / "pointcloud.zarr",
+        output_dir=tmp_path,
+        images_dir=tmp_path / "images",
+        voxel_size=0.01,
+        depth_trunc=2.0,
+        sdf_trunc_mult=1.5,
+        bands=bands,
+        texture=True,
+    )
+
+    # The scalar voxel_size/depth_trunc are the no-bands case and must not be fused as well
+    single.assert_not_called()
+    assert banded.call_args.kwargs == {"bands": bands, "sdf_trunc_mult": 1.5}
+    assert texture.call_args.kwargs["voxel_size"] == pytest.approx(0.005)
+
+
+def test_run_tsdf_mesh_sdf_trunc_mult_scales_the_truncation_band(tmp_path, monkeypatch):
+    """
+    sdf_trunc reaches fuse_tsdf as sdf_trunc_mult x voxel_size, defaulting to 4x.
+
+    - the multiplier, not voxel_size, sets the thin-structure floor: a TSDF cancels anything
+      thinner than 2 x sdf_trunc, so the default band is 8 voxels wide
+    - measured on GH010229 at voxel 0.2 (scene diagonal 262 world units): the default floor is
+      1.60 units, while the voxel grid alone would resolve 0.40
+    """
+    default = _tsdf_mesh_fuse_kwargs(tmp_path, monkeypatch)
+    assert default["sdf_trunc"] == pytest.approx(0.04)
+
+    narrow = _tsdf_mesh_fuse_kwargs(tmp_path, monkeypatch, sdf_trunc_mult=1.5)
+    assert narrow["sdf_trunc"] == pytest.approx(0.015)
+    assert narrow["voxel_size"] == pytest.approx(0.01)
+
+
 def test_run_tsdf_mesh_uses_colmap_poses(tmp_path, monkeypatch):
     """
     COLMAP stays the pose authority — BA and LC corrections land there, not in the zarr.
@@ -1366,14 +1447,16 @@ def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
 
 def test_base_yaml_mesh_has_fidelity_keys():
     """
-    The mesh block is six keys and nothing else — every knob a user can reach.
+    The mesh block is eight keys and nothing else — every knob a user can reach.
     """
     cfg = yaml.safe_load((Path(__file__).parents[2] / "configs" / "base.yaml").read_text())
     assert set(cfg["mesh"]) == {
         "enabled",
         "source",
         "voxel_size",
+        "sdf_trunc_mult",
         "depth_trunc",
+        "bands",
         "conf_percentile",
         "texture",
     }

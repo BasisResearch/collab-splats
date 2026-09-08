@@ -19,6 +19,16 @@ from collab_splats.preproc.frames import read_frames
 
 logger = logging.getLogger(__name__)
 
+# Which 2dgs depth render feeds the TSDF
+# - "expected" (default) is the alpha-weighted mean, defined wherever anything contributes
+# - "median" is the ray's median-transmittance surface: sharper, but blank wherever no
+#   gaussian crosses the median, which is what opens holes on grazing ground
+# - measured on GH010229 (853 views, voxel 0.10): median fused 3.02M vertices in 94,937
+#   components against expected's 3.95M in 426,695, so median wins on fragmentation and
+#   loses on coverage — expected is the visually better mesh, which is the criterion
+# - 3dgs renders only the expected depth and ignores the choice
+DEPTH_SOURCES = ("expected", "median")
+
 
 ######## Depth upsampling
 
@@ -144,7 +154,7 @@ def _to_numpy(t):
     return t.detach().cpu().numpy() if hasattr(t, "detach") else np.asarray(t)
 
 
-def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda"):
+def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda", depth_source="expected"):
     """
     Render depth (+ RGB) from a trained splat checkpoint at its training cameras.
 
@@ -153,11 +163,15 @@ def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda"):
         images_dir: keyframe directory (images/ + frames.json); when given, RGB comes from
             the source frames matched by image id instead of the render.
         device: torch device for rendering.
+        depth_source: which 2dgs depth to fuse, "expected" or "median"; 3dgs has only the
+            expected depth and ignores this.
 
     Returns:
-        depths (N, H, W) float32 (median depth for 2dgs, 0 where alpha is 0),
-        rgbs (N, H, W, 3) uint8, c2w (N, 4, 4) float32, K (N, 3, 3) float32.
+        depths (N, H, W) float32 (0 where alpha is 0), rgbs (N, H, W, 3) uint8,
+        c2w (N, 4, 4) float32, K (N, 3, 3) float32.
     """
+    if depth_source not in DEPTH_SOURCES:
+        raise ValueError(f"depth_source must be one of {DEPTH_SOURCES}, got {depth_source!r}")
     # Imported here: gsplat needs CUDA at import, and this module must load without it
     from collab_splats.splats.rendering import load_checkpoint, render_views
 
@@ -170,11 +184,11 @@ def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda"):
         if rgbs.shape[1:3] != (height, width):
             raise ValueError(f"{images_dir} frames are {rgbs.shape[1:3]} but the checkpoint renders {(height, width)}")
 
-    # Render every camera; 2dgs exposes median_depth, which is the sharper surface estimate
+    # Render every camera; only 2dgs offers a choice, so "median" falls back to "depth"
+    key = "median_depth" if depth_source == "median" else "depth"
     depths, rendered = [], []
     for view in render_views(model, camera_opt, cam_to_world, intrinsics, height, width):
-        source = view["median_depth"] if "median_depth" in view else view["depth"]
-        depth = _to_numpy(source).reshape(height, width, -1)[..., 0]
+        depth = _to_numpy(view[key] if key in view else view["depth"]).reshape(height, width, -1)[..., 0]
         alpha = _to_numpy(view["alpha"]).reshape(height, width, -1)[..., 0]
         depths.append(np.where(alpha > 0, depth, 0.0).astype(np.float32))
 

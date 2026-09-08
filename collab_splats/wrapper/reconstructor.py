@@ -23,8 +23,14 @@ from mergedeep import merge
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
 from collab_splats.geometry.transforms import invert_poses
-from collab_splats.mesh import clean_repair_mesh, fuse_tsdf, texture_mesh
+from collab_splats.mesh import (
+    clean_repair_mesh,
+    fuse_tsdf,
+    fuse_tsdf_bands,
+    texture_mesh,
+)
 from collab_splats.mesh.io import render_tsdf_inputs, upsample_depths
+from collab_splats.mesh.tsdf import check_bands
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.depth_align import result_from_reconstruction
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
@@ -579,6 +585,8 @@ def _run_tsdf_mesh(
     images_dir: Path,
     voxel_size: float,
     depth_trunc: float,
+    sdf_trunc_mult: float = 4.0,
+    bands: list[dict] | None = None,
     conf_percentile: float | None = None,
     source: str = "feedforward",
     splats_ckpt: Path | None = None,
@@ -592,8 +600,10 @@ def _run_tsdf_mesh(
         pointcloud_zarr: the scene's pointcloud.zarr; read on the feedforward path only.
         output_dir: receives mesh.ply, and texture/ when texture is set.
         images_dir: the scene's images/ directory of original-resolution keyframes.
-        voxel_size: TSDF voxel edge, world units; sdf_trunc = 4 x voxel_size.
-        depth_trunc: ignore depth beyond this, world units.
+        voxel_size: TSDF voxel edge, world units; ignored when bands is set.
+        depth_trunc: ignore depth beyond this, world units; ignored when bands is set.
+        sdf_trunc_mult: truncation band as a multiple of voxel_size; sets the thin-structure floor.
+        bands: list of {depth_min, depth_trunc, voxel_size} to fuse per band and merge (None = one volume).
         conf_percentile: drop depth below this confidence percentile (None = off); feedforward only.
         source: "feedforward" (zarr depth lifted to frame resolution) or "splats" (checkpoint renders).
         splats_ckpt: the splats stage's ckpt.pt; required when source is "splats".
@@ -640,18 +650,36 @@ def _run_tsdf_mesh(
         intrinsics = result.intrinsics
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    mesh_path = fuse_tsdf(
-        depths,
-        rgbs,
-        c2w,
-        intrinsics,
-        output_dir,
-        voxel_size=voxel_size,
-        depth_trunc=depth_trunc,
-    )
+
+    # Banded fusion runs one volume per depth range so the near field can be finer than the
+    # far field; the scalar voxel_size/depth_trunc are the single-volume case of the same thing
+    if bands:
+        mesh_path = fuse_tsdf_bands(
+            depths,
+            rgbs,
+            c2w,
+            intrinsics,
+            output_dir,
+            bands=bands,
+            sdf_trunc_mult=sdf_trunc_mult,
+        )
+        texture_voxel = min(band["voxel_size"] for band in bands)
+    else:
+        mesh_path = fuse_tsdf(
+            depths,
+            rgbs,
+            c2w,
+            intrinsics,
+            output_dir,
+            voxel_size=voxel_size,
+            depth_trunc=depth_trunc,
+            sdf_trunc=sdf_trunc_mult * voxel_size,
+        )
+        texture_voxel = voxel_size
+
     clean_repair_mesh(mesh_path)
     if texture:
-        texture_mesh(mesh_path, output_dir / "texture", rgbs, c2w, intrinsics, voxel_size=voxel_size)
+        texture_mesh(mesh_path, output_dir / "texture", rgbs, c2w, intrinsics, voxel_size=texture_voxel)
     return mesh_path
 
 
@@ -839,6 +867,29 @@ class Reconstructor:
                     f"pointcloud.instantsfm.random_seed must be null or an int in [0, 2**32), got {random_seed!r}"
                 )
 
+            # min_num_view_per_track is read at the same late point, and a track needs two
+            # views to triangulate at all — a sub-2 value cannot produce geometry
+            min_views = instantsfm.get("min_num_view_per_track")
+            if min_views is not None and not (isinstance(min_views, int) and min_views >= 2):
+                raise ValueError(
+                    f"pointcloud.instantsfm.min_num_view_per_track must be null or an int >= 2, got {min_views!r}"
+                )
+
+        # Mesh truncation band: a band narrower than a voxel leaves gaps between adjacent
+        # voxels' zero crossings, so the extracted surface is punctured rather than thin
+        sdf_mult = config.get("mesh", {}).get("sdf_trunc_mult")
+        if isinstance(sdf_mult, bool) or not isinstance(sdf_mult, (int, float)) or sdf_mult < 1.0:
+            raise ValueError(f"mesh.sdf_trunc_mult must be a number >= 1.0, got {sdf_mult!r}")
+
+        # Mesh bands: null keeps the single volume built from voxel_size/depth_trunc. A list has
+        # to partition depth — a gap loses the geometry inside it, an overlap double-surfaces it
+        bands = config.get("mesh", {}).get("bands")
+        if bands is not None:
+            try:
+                check_bands(bands)
+            except ValueError as exc:
+                raise ValueError(f"mesh.bands invalid: {exc}") from exc
+
         return config
 
     ########################################
@@ -1023,6 +1074,7 @@ class Reconstructor:
         creator = InstantSfMCreator(
             retriangulation=pc_cfg["instantsfm"]["retriangulation"],
             random_seed=pc_cfg["instantsfm"]["random_seed"],
+            min_num_view_per_track=pc_cfg["instantsfm"]["min_num_view_per_track"],
         )
         recon = creator.reconstruct(backend_dir, images_dir=images_dir)
         del creator
@@ -1249,6 +1301,8 @@ class Reconstructor:
             images_dir=self.images_dir,
             voxel_size=mesh_cfg["voxel_size"],
             depth_trunc=mesh_cfg["depth_trunc"],
+            sdf_trunc_mult=mesh_cfg["sdf_trunc_mult"],
+            bands=mesh_cfg["bands"],
             conf_percentile=mesh_cfg["conf_percentile"],
             source=source,
             splats_ckpt=splats_ckpt,

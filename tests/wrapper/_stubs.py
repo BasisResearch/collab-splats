@@ -29,6 +29,8 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "enabled": True,
             "source": "feedforward",
             "voxel_size": 0.01,
+            "sdf_trunc_mult": 4.0,
+            "bands": None,
             "depth_trunc": 1.0,
             "conf_percentile": 20,
             "texture": False,

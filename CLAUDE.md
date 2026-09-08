@@ -25,6 +25,7 @@ These tasks are started but not complete — do not assume their targets are don
 - **bae-vggt-parity** — verify BA matches upstream `zitongzhan/vggt --implementation bae` ([spec](docs/superpowers/specs/2026-05-20-bae-vggt-parity-design.md))
 - **loma-matcher** — LoMa local matcher for localization ([spec](docs/superpowers/specs/2026-07-08-loma-matcher-integration-design.md) · [plan](docs/superpowers/plans/2026-07-08-loma-matcher-integration.md))
 - **clean-final** — integration branch for the five cleanup efforts; all five landed (preproc, semantics, pointcloud, splats, mesh), not yet merged to trunk ([spec](docs/superpowers/specs/2026-09-06-clean-final-integration-design.md) · [plan](docs/superpowers/plans/2026-09-06-clean-final-integration.md))
+- **sky-mask** — ONNX sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 
 ## Recently Completed
 
@@ -79,7 +80,8 @@ collab_splats/
     features/              # BaseFeatureExtractor + RegistryMixin (base.py); registered
                            #   dinov2, maskclip, talk2dino — all ViT-width (384-1024D)
     compression.py         # FeatureAutoencoder: per-point encode/decode + recon_cosine
-    segmentation/          # BaseSegmentation; registered insid3, mobilesamv2, sam3
+    segmentation/          # BaseSegmentation; registered insid3, mobilesamv2, sam3,
+                           #   skywater (sky masks for mesh.mask_sky)
     utils.py               # compute_semantic_contrast, interpolate_to_patch_size;
                            #   re-exports collab_splats.utils.torch_utils helpers
   preproc/                 # video preprocessing: measure (qa) then select (sampling)

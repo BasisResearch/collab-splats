@@ -50,8 +50,8 @@ class BaseSegmentation(RegistryMixin, ABC):
 
         Returns:
             (masks, metadata) — masks rank and dtype are backend-specific: (H, W) bool
-            for insid3, (N, H, W) float32 for mobilesamv2, (N, 1, H, W) float32 for
-            sam3, and mobilesamv2 returns None outright when nothing is detected.
+            for insid3 and skywater, (N, H, W) float32 for mobilesamv2, (N, 1, H, W) float32
+            for sam3, and mobilesamv2 returns None outright when nothing is detected.
             metadata is backend-specific.
         """
 

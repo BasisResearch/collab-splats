@@ -168,7 +168,9 @@ def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda", depth_source="
 
     Returns:
         depths (N, H, W) float32 (0 where alpha is 0), rgbs (N, H, W, 3) uint8,
-        c2w (N, 4, 4) float32, K (N, 3, 3) float32.
+        c2w (N, 4, 4) float32, K (N, 3, 3) float32, image_ids list[int] — the source
+        frame_idx per row, which is the checkpoint's order and NOT the images/
+        directory's filename order.
     """
     if depth_source not in DEPTH_SOURCES:
         raise ValueError(f"depth_source must be one of {DEPTH_SOURCES}, got {depth_source!r}")
@@ -177,10 +179,13 @@ def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda", depth_source="
 
     model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = load_checkpoint(Path(ckpt_path), device)
 
+    # One int list for both the RGB lookup and the return
+    image_ids = [int(i) for i in image_ids]
+
     # Source frames replace rendered RGB when a keyframe directory is given
     rgbs = None
     if images_dir is not None:
-        rgbs = read_frames(images_dir, [int(i) for i in image_ids])
+        rgbs = read_frames(images_dir, image_ids)
         if rgbs.shape[1:3] != (height, width):
             raise ValueError(f"{images_dir} frames are {rgbs.shape[1:3]} but the checkpoint renders {(height, width)}")
 
@@ -200,7 +205,13 @@ def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda", depth_source="
         rgbs = np.stack(rendered)
 
     logger.info("render_tsdf_inputs: %d views at %dx%d from %s", len(depths), height, width, ckpt_path)
-    return np.stack(depths), rgbs, _to_numpy(cam_to_world).astype(np.float32), _to_numpy(intrinsics).astype(np.float32)
+    return (
+        np.stack(depths),
+        rgbs,
+        _to_numpy(cam_to_world).astype(np.float32),
+        _to_numpy(intrinsics).astype(np.float32),
+        image_ids,
+    )
 
 
 ######## Textured PLY

@@ -1447,7 +1447,7 @@ def test_run_pipeline_config_derived_stages_still_skip_silently(tmp_path):
 
 def test_base_yaml_mesh_has_fidelity_keys():
     """
-    The mesh block is eight keys and nothing else — every knob a user can reach.
+    The mesh block is nine keys and nothing else — every knob a user can reach.
     """
     cfg = yaml.safe_load((Path(__file__).parents[2] / "configs" / "base.yaml").read_text())
     assert set(cfg["mesh"]) == {
@@ -1458,6 +1458,7 @@ def test_base_yaml_mesh_has_fidelity_keys():
         "depth_trunc",
         "bands",
         "conf_percentile",
+        "mask_sky",
         "texture",
     }
     assert cfg["mesh"]["source"] == "feedforward"

@@ -383,6 +383,13 @@ def test_plane_path_does_not_perturb_the_ordinary_render():
 # Outputs
 ########################################
 
+# Source frame indices for the stub scene, deliberately NOT 0..n-1
+# - an fps-sampled scene never produces contiguous ids, and row-vs-id is the distinction
+#   `image_ids` exists to carry
+# - indexing the frame stack by one of these raises IndexError, so a writer that confuses
+#   the two cannot pass
+_STUB_IMAGE_IDS = [5, 8, 11, 14]
+
 
 def _train_stub(tmp_path, n_views=4, **overrides):
     """
@@ -402,7 +409,7 @@ def _train_stub(tmp_path, n_views=4, **overrides):
     images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=n_views, height=24, width=40)
     block = {"max_steps": 3, "cap_max": 500, "losses": {}, **overrides}
     cfg = SplatsConfig.from_dict(block)
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS[:n_views])
     return images
 
 
@@ -463,7 +470,7 @@ def test_checkpoint_is_self_contained(tmp_path):
     assert "pose_adjust" not in ckpt
     assert ckpt["cam_to_world"].shape == (4, 4, 4)
     assert ckpt["intrinsics"].shape == (4, 3, 3)
-    assert ckpt["image_ids"] == [0, 1, 2, 3]
+    assert ckpt["image_ids"] == _STUB_IMAGE_IDS
     assert tuple(ckpt["image_size"]) == (24, 40)
 
     # An ABSOLUTE guard on K, not a round trip
@@ -481,7 +488,7 @@ def test_checkpointed_poses_carry_the_pose_correction(tmp_path):
     # - three steps is enough to move them off zero
     images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=4, height=32, width=32)
     cfg = SplatsConfig.from_dict({"max_steps": 3, "cap_max": 500, "losses": {}, "pose_opt": True})
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS)
     stored = torch.load(tmp_path / "ckpt.pt", weights_only=False)["cam_to_world"]
 
     raw = torch.from_numpy(np.linalg.inv(world_to_cam)).float()
@@ -547,7 +554,7 @@ def test_the_scaffold_ply_bakes_against_the_uncorrected_training_poses(tmp_path,
     cfg = SplatsConfig.from_dict(
         {"max_steps": 3, "cap_max": 500, "losses": {}, "representation": "scaffold", "pose_opt": True}
     )
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS[:3])
 
     stored = torch.load(tmp_path / "ckpt.pt", weights_only=False)["cam_to_world"]
     exported = baked_against[0].cpu()
@@ -585,7 +592,7 @@ def test_load_checkpoint_round_trips_the_model_and_the_cameras(tmp_path):
     assert camera_opt.appearance is None and camera_opt.rotation is None
     assert cam_to_world.shape == (4, 4, 4)
     assert intrinsics.shape == (4, 3, 3)
-    assert image_ids == [0, 1, 2, 3]
+    assert image_ids == _STUB_IMAGE_IDS
     assert (height, width) == (24, 40)
 
 
@@ -735,17 +742,20 @@ def test_quality_report_scores_each_frame_against_its_own_image(tmp_path):
     # render_views yields views in order
     # - reversing either side of the zip pairs every render with a different view's photo
     # - every psnr/ssim wrong, every image_id mislabelled, and the report still well formed
+    # - _STUB_IMAGE_IDS is non-contiguous, so a writer that reported the row position instead
+    #   of the source frame index fails the id assertion below
     images = _train_stub(tmp_path)
     report = json.loads((tmp_path / "splats_quality_report.json").read_text())
     model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(tmp_path / "ckpt.pt", "cuda")
 
-    # Recompute each psnr from the render at that POSITION against the image at that position
-    # - indexing the target by the reported id would move with the mislabeling
+    # Recompute each psnr from the render at that ROW against the image at that row
+    # - the id is a frame index, not a row, so indexing `images` by it would IndexError here
+    #   and be a silent mismatch on a real scene
     renders = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))
     for view, (frame, render) in enumerate(zip(report["per_frame"], renders)):
         target = torch.from_numpy(images[view]).to(render["rgb"].device).float()[None] / 255.0
         mse = torch.nn.functional.mse_loss(render["rgb"], target).item()
-        assert frame["image_id"] == view
+        assert frame["image_id"] == _STUB_IMAGE_IDS[view]
         assert frame["psnr"] == pytest.approx(10 * np.log10(1.0 / max(mse, 1e-12)), rel=1e-4)
 
     # The frames are distinguishable, so that comparison is not vacuous
@@ -777,7 +787,7 @@ def test_the_scaffold_ply_holds_the_values_exported_at_the_frame_size(tmp_path, 
 
     images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=24, width=40)
     cfg = SplatsConfig.from_dict({"max_steps": 3, "cap_max": 500, "losses": {}, "representation": "scaffold"})
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS[:3])
 
     # Re-export the same model at the size the fixture built: 40 wide, 24 high
     # - the two literals are the independent guard; a swap at the call site cannot move them

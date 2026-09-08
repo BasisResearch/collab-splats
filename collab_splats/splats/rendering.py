@@ -320,7 +320,8 @@ def write_outputs(
         refine: the run's `CameraOpt`; only its color affine is checkpointed, the pose deltas are
             already folded into `cam_to_world`.
         images: (N, H, W, 3) uint8 training frames, scored against the re-renders.
-        image_ids: frame indices, in render order.
+        image_ids: SOURCE frame index per row, in render order — what `frames.read_frames`
+            takes, never a row position.
         cam_to_world: (N, 4, 4) pose-corrected, output world frame.
         intrinsics: (N, 3, 3) at the training resolution.
         out_dir: the stage's output directory; created if absent.
@@ -361,13 +362,16 @@ def write_outputs(
     # splats_quality_report.json: per-view psnr/ssim scored in memory as the renders stream past
     per_frame = []
     renders = render_views(model, refine, cam_to_world, intrinsics, height, width)
-    for view, render in zip(image_ids, progress(renders, desc="splats render", total=n_views)):
-        target = torch.from_numpy(images[view]).to(render["rgb"].device).float()[None] / 255.0
+    # images is indexed by ROW; image_ids carries the source frame index that row came from
+    # - the two coincide only when the scene was sampled contiguously from frame 0
+    # - so the loop enumerates rows and looks the id up, never the reverse
+    for row, render in enumerate(progress(renders, desc="splats render", total=n_views)):
+        target = torch.from_numpy(images[row]).to(render["rgb"].device).float()[None] / 255.0
         mse = F.mse_loss(render["rgb"], target).item()
         ssim_distance = ssim_loss(render["rgb"].permute(0, 3, 1, 2), target.permute(0, 3, 1, 2)).item()
         per_frame.append(
             {
-                "image_id": view,
+                "image_id": image_ids[row],
                 "psnr": 10 * np.log10(1.0 / max(mse, 1e-12)),
                 "ssim": 1.0 - ssim_distance,
                 **model.frame_report(render),

@@ -20,6 +20,7 @@ Gaussian-splat training on upstream gsplat.
 import logging
 import random
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -190,6 +191,7 @@ def train(
     out_dir: Path,
     depth_targets: np.ndarray | None = None,
     *,
+    image_ids: Sequence[int],
     min_points: int = 100,
     lr_decay: float = 0.01,
 ) -> None:
@@ -206,6 +208,9 @@ def train(
         colors: (P, 3) uint8 seed colors.
         out_dir: output directory; created if absent.
         depth_targets: optional (n_views, h, w) float32 depth at any resolution, 0 = no target.
+        image_ids: SOURCE frame index per row of `images`, checkpointed so a later stage can
+            find each view's file; a row-position default would silently mismatch any scene
+            not sampled contiguously from frame 0.
         min_points: fewest seed points that can produce a model.
         lr_decay: total decay of the position lr over the run, 0.01 = 100x down.
 
@@ -223,13 +228,14 @@ def train(
     n_poses = len(world_to_cam)
     n_intrinsics = len(intrinsics)
     n_depth = None if depth_targets is None else len(depth_targets)
-    per_view_counts = {n_views, n_poses, n_intrinsics}
+    n_ids = len(image_ids)
+    per_view_counts = {n_views, n_poses, n_intrinsics, n_ids}
     if n_depth is not None:
         per_view_counts.add(n_depth)
     if len(per_view_counts) != 1:
         raise ValueError(
             f"splats: frames mismatch — images {n_views}, world_to_cam {n_poses}, "
-            f"intrinsics {n_intrinsics}, depth_targets {n_depth}"
+            f"intrinsics {n_intrinsics}, image_ids {n_ids}, depth_targets {n_depth}"
         )
 
     # Cameras on the GPU, frames uint8 on the CPU one view at a time
@@ -397,7 +403,7 @@ def train(
         model,
         refine,
         images,
-        list(range(n_views)),
+        list(image_ids),
         corrected,
         intrinsics_gpu,
         out_dir,

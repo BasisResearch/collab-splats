@@ -51,6 +51,7 @@ from collab_splats.preproc.sampling import (
 )
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.segmentation import sky_masks
 from collab_splats.semantics.utils import (
     extract_feature_cache,
     lifted_store_path,
@@ -588,6 +589,7 @@ def _run_tsdf_mesh(
     sdf_trunc_mult: float = 4.0,
     bands: list[dict] | None = None,
     conf_percentile: float | None = None,
+    mask_sky: bool = False,
     source: str = "feedforward",
     splats_ckpt: Path | None = None,
     texture: bool = False,
@@ -605,6 +607,7 @@ def _run_tsdf_mesh(
         sdf_trunc_mult: truncation band as a multiple of voxel_size; sets the thin-structure floor.
         bands: list of {depth_min, depth_trunc, voxel_size} to fuse per band and merge (None = one volume).
         conf_percentile: drop depth below this confidence percentile (None = off); feedforward only.
+        mask_sky: zero out depth where the sky segmenter fires; applies to both sources.
         source: "feedforward" (zarr depth lifted to frame resolution) or "splats" (checkpoint renders).
         splats_ckpt: the splats stage's ckpt.pt; required when source is "splats".
         texture: also decimate, unwrap and project the fused views into output_dir/texture/.
@@ -614,7 +617,7 @@ def _run_tsdf_mesh(
     # Splats source: renders come out at frame resolution carrying the poses they were rendered
     # with, pose-opt deltas included, so nothing here has to be lifted or re-posed.
     if source == "splats":
-        depths, rgbs, c2w, intrinsics = render_tsdf_inputs(splats_ckpt, images_dir)
+        depths, rgbs, c2w, intrinsics, image_ids = render_tsdf_inputs(splats_ckpt, images_dir)
     else:
         ff = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
         if ff.depth is None:
@@ -648,6 +651,25 @@ def _run_tsdf_mesh(
         depths = upsample_depths(depth, rgbs, np.asarray(ff.original_coords)[:, :4])
         c2w = invert_poses(result.extrinsics)
         intrinsics = result.intrinsics
+
+        # read_frames above took filename order, which sky_masks defaults to
+        image_ids = None
+
+    # Sky fuses as a backdrop and seeds floaters; drop its depth after the arms converge
+    # - idxs follows the arm: the checkpoint's ids for splats, filename order for feedforward
+    # - the report is a fraction of pixels that HAD depth; a splats stack is mostly zero
+    #   already, so dividing by depths.size would understate the cut several-fold
+    if mask_sky:
+        sky = sky_masks(images_dir, idxs=image_ids)
+        if sky.shape != depths.shape:
+            raise ValueError(
+                f"Sky masks are {sky.shape} but depths are {depths.shape} — "
+                f"{images_dir} does not match the depth source."
+            )
+
+        dropped = np.count_nonzero(sky & (depths > 0)) / max(np.count_nonzero(depths), 1)
+        depths = np.where(sky, 0.0, depths)
+        logger.info("mesh.mask_sky: dropped %.2f%% of valid depth pixels as sky", 100 * dropped)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1304,6 +1326,7 @@ class Reconstructor:
             sdf_trunc_mult=mesh_cfg["sdf_trunc_mult"],
             bands=mesh_cfg["bands"],
             conf_percentile=mesh_cfg["conf_percentile"],
+            mask_sky=mesh_cfg["mask_sky"],
             source=source,
             splats_ckpt=splats_ckpt,
             texture=mesh_cfg["texture"],
@@ -1520,6 +1543,7 @@ class Reconstructor:
             result.colors,
             out_dir,
             depth_targets=depth_targets,
+            image_ids=frame_indices,
         )
         logger.info("Splats saved to %s", out_dir)
         return splats_ckpt

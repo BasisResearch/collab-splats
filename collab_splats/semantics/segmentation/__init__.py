@@ -3,6 +3,7 @@ Segmentation backends and mask utilities.
 
 - import from here; the submodule structure is an implementation detail
 """
+
 from __future__ import annotations
 
 # ── Abstract base and mask utilities ──────────────────────────────────────────
@@ -19,6 +20,7 @@ from .base import (
 from .mobile_sam import MobileSAMSegmentation, load_mobile_sam
 from .sam3 import SAM3Segmentation
 from .insid3 import INSID3Segmentation
+from .sky import SkyWaterSegmentation, sky_masks
 
 __all__ = [
     # abstract base
@@ -34,4 +36,6 @@ __all__ = [
     "load_mobile_sam",
     "SAM3Segmentation",
     "INSID3Segmentation",
+    "SkyWaterSegmentation",
+    "sky_masks",
 ]

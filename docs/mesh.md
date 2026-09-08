@@ -94,8 +94,12 @@ an input:
 ```python
 from collab_splats.mesh.io import render_tsdf_inputs
 
-depths, rgbs, c2w, K = render_tsdf_inputs(scene_dir / "splats" / "ckpt.pt", images_dir)
+depths, rgbs, c2w, K, image_ids = render_tsdf_inputs(scene_dir / "splats" / "ckpt.pt", images_dir)
 ```
+
+`image_ids` is the source frame index behind each row, in the checkpoint's own render order —
+the same values `frames.read_frames` takes, so anything wanting a per-view artifact (sky masks,
+per-frame scores) can line it up without assuming the rows are in filename order.
 
 Depth is zeroed where alpha is 0. `depth_source` picks which 2dgs render to fuse: `"expected"`
 (the default) takes the alpha-weighted `depth`, defined wherever anything contributes at all, at
@@ -108,6 +112,28 @@ A 3dgs checkpoint renders only `depth` and ignores the choice. Passing `images_d
 keyframes matched by image id, which is what the pipeline does; omit it to fuse the render's
 own color. `gsplat` is imported inside the function, so `collab_splats.mesh.io` still loads on
 a machine without CUDA.
+
+### Masking sky
+
+Sky has no surface, but every depth source assigns it one — so it fuses as a backdrop and
+seeds floaters. `mesh.mask_sky` zeroes depth wherever the sky segmenter fires, before fusion,
+on both mesh sources:
+
+```python
+from collab_splats.semantics.segmentation import sky_masks
+
+masks = sky_masks(images_dir, idxs=image_ids)   # (N, H, W) bool, True where sky
+depths[masks] = 0.0
+```
+
+`idxs` takes SOURCE frame indices in the order wanted, so the splats arm passes
+`render_tsdf_inputs`' `image_ids` and the feedforward arm passes nothing (filename order,
+what `frames.read_frames` gives). Masks cache as PNGs under `<scene>/sky/`, so a re-run of
+the stage pays for inference once.
+
+The backend is `skywater`, a SegFormer MiT-B2 registered as `BaseSegmentation.get("skywater")`.
+Masking applies to depth only, never to the splats stage's depth targets — that asymmetry with
+`mesh.conf_percentile` is deliberate.
 
 ---
 

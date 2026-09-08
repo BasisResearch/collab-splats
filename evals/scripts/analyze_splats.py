@@ -300,7 +300,7 @@ def main() -> None:
 
     # Splat renders leave the checkpoint at frame resolution carrying their own poses
     for primitive, ckpt_path in available:
-        mesh_rows.append(build_mesh(primitive, render_tsdf_inputs(ckpt_path), args.results))
+        mesh_rows.append(build_mesh(primitive, render_tsdf_inputs(ckpt_path)[:4], args.results))
 
     # Persist and print
     analysis = {

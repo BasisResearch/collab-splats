@@ -190,6 +190,7 @@ def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path):
         np.full((3, 4, 5, 3), 7, np.uint8),
         np.tile(np.eye(4, dtype=np.float32), (3, 1, 1)),
         np.tile(np.eye(3, dtype=np.float32), (3, 1, 1)),
+        [0, 1, 2],
     )
     with (
         patch("collab_splats.wrapper.reconstructor.render_tsdf_inputs", return_value=rendered) as render,

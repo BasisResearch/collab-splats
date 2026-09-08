@@ -138,6 +138,9 @@ mesh:
                            # dropped only where a finer band already covers it, so overlaps
                            # keep the finer copy and nothing a coarse band alone saw is lost.
   conf_percentile: 20      # drop depth below this confidence percentile (null = off); feedforward only
+  mask_sky: false          # zero depth where the `skywater` segmenter fires, before fusion; both
+                           # mesh sources. Unlike conf_percentile it does NOT mask the splats
+                           # stage's depth targets — see docs/mesh.md.
   texture: false           # decimate + UV atlas + project the fused views; writes mesh/texture/
 
 # Gaussian splats trained from the pointcloud stage (leaf stage `splats`, upstream gsplat).

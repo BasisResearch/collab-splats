@@ -19,30 +19,14 @@ from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import lift_features
 from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import Reconstructor, _run_tsdf_mesh
-
-
-def _result_no_confidence():
-    """Minimal FeedforwardResult with confidence=None: 2 frames, 8x8 model res."""
-    n, h, w = 2, 8, 8
-    return FeedforwardResult(
-        points=np.zeros((5, 3), dtype=np.float32),
-        colors=np.zeros((5, 3), dtype=np.uint8),
-        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
-        intrinsics=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], dtype=np.float32), (n, 1, 1)),
-        image_paths=[f"frame_{i:06d}.jpg" for i in range(n)],
-        original_coords=np.array([[0, 0, w, h, w, h]] * n, dtype=np.float32),
-        model_width=w,
-        model_height=h,
-        images=np.zeros((n, 3, h, w), dtype=np.float32),
-        depth=np.ones((n, h, w), dtype=np.float32),
-    )
+from tests.wrapper._stubs import minimal_feedforward_result
 
 
 def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
     """
     conf_percentile set + no confidence -> fuse unmasked with a log, not ValueError.
     """
-    result = _result_no_confidence()
+    result = minimal_feedforward_result()
     fused = {}
 
     def spy_fuse(depths, rgbs, c2w, K, out_dir, **kwargs):
@@ -87,7 +71,7 @@ def test_lift_features_uniform_weights_when_confidence_absent():
     weight 1.0, so the lifted feature must equal the plain mean of the two per-frame
     samples at that pixel, not a confidence-weighted average.
     """
-    result = _result_no_confidence()
+    result = minimal_feedforward_result()
     result.points = np.array([[0, 0, 1], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], dtype=np.float32)
     result.pixel_indices = np.zeros((5, 3), dtype=np.int32)
 

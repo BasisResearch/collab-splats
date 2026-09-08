@@ -26,6 +26,22 @@ from tests.splats.synthetic import make_scene
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")
 
 
+def _ids(images):
+    """
+    Source frame indices for a synthetic scene, deliberately not 0..n-1.
+
+    - an fps-sampled scene never yields contiguous ids, so a fixture that used them could not
+      tell a row position from a frame index
+
+    Args:
+        images: the scene's (N, H, W, 3) frame stack; only its length is read.
+
+    Returns:
+        One source frame index per row.
+    """
+    return [5 + 3 * row for row in range(len(images))]
+
+
 def test_config_from_dict_keeps_given_values_and_defaults():
     block = {"enabled": True, "primitive": "2dgs", "max_steps": 10, "losses": {"depth": {"weight": 0.1}}}
     cfg = SplatsConfig.from_dict(block)
@@ -177,7 +193,7 @@ def test_train_short_run_moves_gaussians(monkeypatch, tmp_path, primitive, pose_
         log_every=1,
         means_lr=1e-2,
     )
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths, image_ids=_ids(images))
     _assert_trained(calls, points)
     refine = calls[0]["refine"]
     assert refine.has_pose == pose_opt
@@ -197,7 +213,7 @@ def test_train_refining_every_step_still_moves_gaussians(monkeypatch, tmp_path):
     strategy = MCMCStrategy(cap_max=300, refine_start_iter=-1, refine_every=1, verbose=False)
     monkeypatch.setattr(gaussian_module, "make_strategy", lambda cfg, n_views: strategy)
     cfg = SplatsConfig(primitive="3dgs", max_steps=5, log_every=1, means_lr=1e-2)
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths, image_ids=_ids(images))
     _assert_trained(calls, points)
 
     # MCMC noise moves means even without an optimizer step; sh0 only moves through the optimizer
@@ -292,7 +308,7 @@ def test_train_scaffold_runs_and_writes_outputs(tmp_path, primitive):
             "scaffold": {"n_offsets": 4, "feat_dim": 8, "update_from": 20, "update_until": 50, "refine_every": 10},
         }
     )
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths, image_ids=_ids(images))
 
     for name in ("splats.ply", "ckpt.pt", "splats_quality_report.json"):
         assert (tmp_path / name).exists(), name
@@ -322,7 +338,7 @@ def test_scaffold_records_anchor_provenance(tmp_path):
             },
         }
     )
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths, image_ids=_ids(images))
 
     # Provenance used to live in the zarr attrs; ckpt.pt and the report carry it now
     checkpoint = torch.load(tmp_path / "ckpt.pt", weights_only=False)
@@ -441,7 +457,7 @@ def test_train_builds_a_gaussians_model_by_default(tmp_path):
     images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=32, width=32, n_points=200)
     cfg = SplatsConfig.from_dict({"max_steps": 3, "cap_max": 500, "losses": {}})
 
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_ids(images))
 
     ckpt = torch.load(tmp_path / "ckpt.pt", weights_only=False)
     assert set(ckpt["splats"]) == {"means", "scales", "quats", "opacities", "sh0", "shN"}
@@ -455,7 +471,7 @@ def test_train_survives_non_square_frames(tmp_path):
     images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=24, width=40, n_points=200)
     cfg = SplatsConfig.from_dict({"max_steps": 2, "cap_max": 500, "num_downscales": 0, "losses": {}})
 
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_ids(images))
 
     ckpt = torch.load(tmp_path / "ckpt.pt", weights_only=False)
     assert tuple(ckpt["image_size"]) == (24, 40)
@@ -466,7 +482,7 @@ def test_train_builds_a_scaffold_model_when_asked(tmp_path):
     images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=32, width=32, n_points=200)
     cfg = SplatsConfig.from_dict({"representation": "scaffold", "scaffold": {}, "max_steps": 3, "losses": {}})
 
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_ids(images))
 
     ckpt = torch.load(tmp_path / "ckpt.pt", weights_only=False)
     assert "anchors" in ckpt["splats"]
@@ -475,8 +491,9 @@ def test_train_builds_a_scaffold_model_when_asked(tmp_path):
 
 
 def test_train_takes_the_tuning_constants_keyword_only():
-    # `min_points` / `lr_decay` sit behind a bare `*`, after seven positionals
-    # - a dropped `*` would silently bind a ninth positional to min_points
+    # `image_ids` / `min_points` / `lr_decay` sit behind a bare `*`, after seven positionals
+    # - a dropped `*` would silently bind a ninth positional to image_ids, which is exactly the
+    #   confusion the parameter exists to end
     # - match the message: the body raises its own TypeError, so a bare raises() passes either way
     with pytest.raises(TypeError, match="takes from 7 to 8 positional arguments"):
         train(None, None, None, None, None, None, None, None, 100)
@@ -487,7 +504,7 @@ def test_train_refuses_too_few_seed_points(tmp_path):
     cfg = SplatsConfig.from_dict({"max_steps": 3, "losses": {}})
 
     with pytest.raises(ValueError, match="need >= 100 seed points"):
-        train(cfg, images, world_to_cam, intrinsics, points[:50], colors[:50], tmp_path)
+        train(cfg, images, world_to_cam, intrinsics, points[:50], colors[:50], tmp_path, image_ids=_ids(images))
 
 
 def test_train_refuses_mismatched_per_view_arrays(tmp_path):
@@ -495,7 +512,17 @@ def test_train_refuses_mismatched_per_view_arrays(tmp_path):
     cfg = SplatsConfig.from_dict({"max_steps": 3, "losses": {}})
 
     with pytest.raises(ValueError, match="frames mismatch"):
-        train(cfg, images, world_to_cam[:2], intrinsics, points, colors, tmp_path)
+        train(cfg, images, world_to_cam[:2], intrinsics, points, colors, tmp_path, image_ids=_ids(images))
+
+
+def test_train_refuses_an_image_ids_length_that_is_not_the_frame_count(tmp_path):
+    # image_ids joins the per-view count guard: one short and every row past it maps to the
+    # wrong file, which is silent at train time and only surfaces as a wrong mesh
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=32, width=32, n_points=200)
+    cfg = SplatsConfig.from_dict({"max_steps": 3, "losses": {}})
+
+    with pytest.raises(ValueError, match="frames mismatch"):
+        train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_ids(images)[:2])
 
 
 @cuda
@@ -528,7 +555,7 @@ def test_neighbor_render_uses_the_neighbors_own_camera_id(monkeypatch, tmp_path)
             "losses": {"pgsr_multiview": {"weight": 0.1}},
         }
     )
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths)
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths, image_ids=_ids(images))
 
     assert len(calls) == 1
     assert seen and set(seen) == {2}

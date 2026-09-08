@@ -650,3 +650,141 @@ def test_samplers_no_longer_take_search_radius():
     """
     for fn in (sampling.sample_uniform, sampling.sample_fps, sampling.sample_optical_flow):
         assert "search_radius" not in inspect.signature(fn).parameters, fn.__name__
+
+
+########################################################################
+# fps slot selection — sharpest in the slot, ties back to nearest
+########################################################################
+
+
+def _fps_fixture(monkeypatch, laplacian, total=60, fps=30.0):
+    """
+    Patch video IO so sample_fps runs off a synthetic report alone.
+    """
+    monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": total, "fps": fps})
+    monkeypatch.setattr(
+        sampling,
+        "iter_frames",
+        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
+    )
+    return _report(laplacian)
+
+
+def test_sample_fps_takes_the_sharpest_frame_in_the_slot(monkeypatch, tmp_path):
+    """
+    A sharper frame inside the slot wins over the one sitting exactly on the target.
+    """
+    # Flat 400 everywhere, except frame 13 which is much sharper. fps=3 -> targets 0, 10, 20...
+    laplacian = [400.0] * 60
+    laplacian[13] = 5000.0
+    report = _fps_fixture(monkeypatch, laplacian)
+
+    frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
+    picked = [r["frame_idx"] for r in records]
+
+    # Target 10's slot is [5, 15]; 13 is the sharpest in it, so 10 loses to 13
+    assert 13 in picked
+    assert 10 not in picked
+
+
+def test_sample_fps_ties_break_to_the_nearest_target(monkeypatch, tmp_path):
+    """
+    Flat sharpness leaves the constant-rate grid exactly where it was.
+    """
+    report = _fps_fixture(monkeypatch, [400.0] * 60)
+
+    frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
+
+    assert [r["frame_idx"] for r in records] == list(range(0, 60, 10))
+
+
+def test_sample_fps_slot_search_stays_within_half_a_period(monkeypatch, tmp_path):
+    """
+    A sharper frame beyond the slot is NOT reachable — spacing stays bounded.
+    """
+    # Frame 25 is the sharpest in the video but sits a full period from target 10
+    laplacian = [400.0] * 60
+    laplacian[25] = 9000.0
+    report = _fps_fixture(monkeypatch, laplacian)
+
+    frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
+    picked = [r["frame_idx"] for r in records]
+
+    # 25 wins its OWN slot [20, 30] but never drags target 10 or 40 out of theirs
+    assert 25 in picked
+    assert 10 in picked and 40 in picked
+
+
+def test_sample_fps_prefers_a_sharp_frame_over_a_condemned_neighbour(monkeypatch, tmp_path):
+    """
+    The eligibility gate still binds — a blurred frame cannot win its slot.
+    """
+    # Frame 10 sits on the target and is the "sharpest" number in the slot, but the
+    # global MAD cut condemns everything at 2.0, so it never enters the pool
+    laplacian = [400.0] * 60
+    laplacian[8:13] = [2.0] * 5
+    report = _fps_fixture(monkeypatch, laplacian)
+
+    frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
+    picked = [r["frame_idx"] for r in records]
+
+    assert not set(range(8, 13)) & set(picked)
+
+
+def test_sample_fps_falls_back_when_a_whole_slot_is_condemned(monkeypatch, tmp_path):
+    """
+    An excised slot snaps to the nearest survivor instead of dropping the frame.
+    """
+    # Kill the entire slot around target 10, i.e. [5, 15]
+    laplacian = [400.0] * 60
+    laplacian[5:16] = [2.0] * 11
+    report = _fps_fixture(monkeypatch, laplacian)
+
+    frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
+    picked = [r["frame_idx"] for r in records]
+
+    assert not set(range(5, 16)) & set(picked)
+    assert 4 in picked or 16 in picked
+
+
+def test_sample_fps_honours_a_clipping_override(monkeypatch, tmp_path):
+    """
+    max_clipped_frac reaches the eligibility gate from the caller.
+    """
+    # Flat sharpness, so ties keep the grid and frame 20 sits exactly on its target.
+    # Only its clipping decides whether it survives.
+    clipped_high = [0.0] * 60
+    clipped_high[20] = 0.3
+    report = _report([400.0] * 60, clipped_high=clipped_high)
+
+    monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": 60, "fps": 30.0})
+    monkeypatch.setattr(
+        sampling,
+        "iter_frames",
+        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
+    )
+
+    default = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)[1]
+    relaxed = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report, quality={"max_clipped_frac": 0.5})[1]
+
+    # 0.3 is over the 0.25 default and under the 0.5 override
+    assert 20 not in [r["frame_idx"] for r in default]
+    assert 20 in [r["frame_idx"] for r in relaxed]
+
+
+def test_sample_fps_honours_a_sharpness_override(monkeypatch, tmp_path):
+    """
+    A tighter sharpness_k shrinks the pool the slot search may pick from.
+    """
+    # A three-level ladder gives the MAD a non-zero spread to scale against
+    laplacian = [300.0, 400.0, 500.0] * 20
+    report = _fps_fixture(monkeypatch, laplacian)
+
+    lenient = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)[1]
+    strict = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report, quality={"sharpness_k": 0.3})[1]
+
+    # k=2.0 admits the 300s, k=0.3 does not; both arms still pick the 500s in each slot
+    assert _eligible(report, quality=None).size == 60
+    assert _eligible(report, quality={"sharpness_k": 0.3}).size == 40
+    assert all(laplacian[r["frame_idx"]] >= 400.0 for r in strict)
+    assert len(strict) == len(lenient)

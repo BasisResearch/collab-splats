@@ -41,6 +41,17 @@ preproc:
                               # win. images/ reuse is by EXISTENCE — toggling this on an
                               # existing scene needs preprocess(overwrite=True). Localization
                               # QUERY images are NOT undistorted (they never pass through here).
+  quality:                    # eligibility gate every selector samples from
+                              # (preproc.sampling.filter_frame_quality). Report-only columns
+                              # become a keep mask here and nowhere else.
+    sharpness_k: 2.0          # robust z-score cut on log(laplacian), MAD-scaled over the
+                              # WHOLE video. LARGER KEEPS MORE — lower it to cut harder.
+                              # 2.0 drops 5.1% of GH010229; 1.0 drops 15.1%, and the frames
+                              # it drops are measurably higher-motion than the median.
+    max_clipped_frac: 0.25    # ceiling on clipped_low_frac + clipped_high_frac. Absolute,
+                              # not robust: a pixel at 0 or 255 recorded nothing recoverable.
+                              # Inert on well-exposed footage — GH010229's worst frame is
+                              # 0.213, so this cut removes zero frames there.
 
 pointcloud:
   method: feedforward         # feedforward | sfm

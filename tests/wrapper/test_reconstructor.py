@@ -187,6 +187,7 @@ def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "min_frames": 5,
         "max_frames": 50,
         "report": report,
+        "quality": None,
     }
 
     # uniform: max_frames is the count, with no fps and no floor — it spreads exactly
@@ -196,11 +197,45 @@ def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "sampler": "uniform",
         "max_frames": 50,
         "report": report,
+        "quality": None,
     }
 
     # optical_flow: max_frames caps the selector
     R.extract_frames(video, out / "c" / "images", "optical_flow", None, 5, 50)
-    assert calls == {"sampler": "optical_flow", "max_frames": 50, "report": report}
+    assert calls == {"sampler": "optical_flow", "max_frames": 50, "report": report, "quality": None}
+
+
+def test_extract_frames_forwards_quality_overrides_to_every_sampler(tmp_path, monkeypatch):
+    """
+    preproc.quality is a shared knob: each branch hands it to its own sampler.
+    """
+    from collab_splats.wrapper import reconstructor as R
+
+    seen = []
+
+    def fake(path, **kwargs):
+        seen.append(kwargs.get("quality"))
+        return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
+
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
+    monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
+    for name in ("sample_fps", "sample_uniform", "sample_optical_flow"):
+        monkeypatch.setattr(R, name, fake)
+
+    # Plots are not under test here, and the stub report carries no columns to draw
+    monkeypatch.setattr(
+        R,
+        "preproc_viz",
+        types.SimpleNamespace(plot_photometric=lambda *a, **k: None, plot_motion=lambda *a, **k: None),
+    )
+
+    video = tmp_path / "v.mp4"
+    video.touch()
+    overrides = {"sharpness_k": 1.0, "max_clipped_frac": 0.1}
+    for i, selection in enumerate(("fps", "uniform", "optical_flow")):
+        R.extract_frames(video, tmp_path / str(i) / "images", selection, 2.0, 5, 50, quality=overrides)
+
+    assert seen == [overrides] * 3
 
 
 def test_extract_frames_rejects_unknown_selection(tmp_path, monkeypatch):

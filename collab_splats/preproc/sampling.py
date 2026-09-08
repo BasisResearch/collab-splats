@@ -395,7 +395,10 @@ def sample_fps(
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
-    One frame every 1/fps seconds, each snapped to the nearest eligible frame.
+    One frame every 1/fps seconds, each the sharpest eligible frame in its slot.
+
+    - the slot is +/- half the target spacing, so picks stay within half a period of the grid
+    - ties break to the frame nearest the target, keeping exact spacing where sharpness is flat
 
     Args:
         video_path: source video.
@@ -446,14 +449,37 @@ def sample_fps(
             (info["fps"] or 30.0) * len(targets) / total,
         )
 
-    # Snap each target to the nearest eligible frame, then dedup
-    # - two targets either side of an excised stretch can snap to the same survivor
-    # - clip to [1, pool.size - 1] keeps pos - 1 and pos in range for a one-frame pool
-    # - there they collapse onto one index, so the choice is the same either way
-    pos = np.clip(np.searchsorted(pool, targets), 1, pool.size - 1)
-    left, right = pool[pos - 1], pool[pos]
-    snapped = np.where(np.abs(targets - left) <= np.abs(right - targets), left, right)
-    chosen = sorted(set(snapped.tolist()))
+    # An empty pool is the caller's error to report, not ours to index into
+    if pool.size == 0:
+        return [], []
+
+    # Take the SHARPEST eligible frame in each target's slot, not merely the nearest
+    # - the eligibility gate is video-wide, so inside one slot every survivor ranks equal
+    # - nearest-in-time then picks an arbitrary one: measured on GH010229 the picks sat at
+    #   the 50th sharpness percentile of their own slot, a coin flip over 15 candidates
+    # - ties break to the nearest target, so a flat-sharpness stretch keeps the old spacing
+    targets = np.asarray(targets)
+    half = max(int(np.median(np.diff(targets)) // 2), 1) if targets.size > 1 else 1
+    laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
+
+    lo = np.searchsorted(pool, targets - half, side="left")
+    hi = np.searchsorted(pool, targets + half, side="right")
+
+    chosen = []
+    for target, start, stop in zip(targets.tolist(), lo.tolist(), hi.tolist()):
+        # Slot fully excised: fall back to the nearest survivor on either side
+        if start >= stop:
+            pos = int(np.clip(np.searchsorted(pool, target), 1, pool.size - 1))
+            left, right = int(pool[pos - 1]), int(pool[pos])
+            chosen.append(left if abs(target - left) <= abs(right - target) else right)
+            continue
+
+        candidates = pool[start:stop]
+        rank = np.lexsort((np.abs(candidates - target), -laplacian[candidates]))
+        chosen.append(int(candidates[rank[0]]))
+
+    # Two targets either side of an excised stretch can land on the same survivor
+    chosen = sorted(set(chosen))
 
     return _decode_selection(video_path, chosen, report=report, on_progress=on_progress, desc="fps sampling")
 

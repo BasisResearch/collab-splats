@@ -201,6 +201,7 @@ def _frames_from_video(
     min_frames: int | None,
     max_frames: int | None,
     report: dict,
+    quality: dict | None = None,
 ) -> tuple[list[np.ndarray], list[dict], dict]:
     """
     Frames selected from a video by one of the three sampling methods.
@@ -212,6 +213,7 @@ def _frames_from_video(
         min_frames: floor for the fps re-spread band.
         max_frames: cap; the contract for frame_selection="uniform".
         report: quality report, already measured by load_video_quality.
+        quality: overrides for filter_frame_quality's thresholds; None takes its defaults.
 
     Returns:
         (frames, records, provenance).
@@ -226,15 +228,19 @@ def _frames_from_video(
             min_frames=min_frames,
             max_frames=max_frames,
             report=report,
+            quality=quality,
         )
     elif frame_selection == "uniform":
         frame_arrays, records = sample_uniform(
             str(input_path),
             max_frames=max_frames,
             report=report,
+            quality=quality,
         )
     elif frame_selection == "optical_flow":
-        frame_arrays, records = sample_optical_flow(str(input_path), max_frames=max_frames, report=report)
+        frame_arrays, records = sample_optical_flow(
+            str(input_path), max_frames=max_frames, report=report, quality=quality
+        )
     else:
         raise ValueError(f"preproc.frame_selection must be 'fps', 'uniform' or 'optical_flow', got {frame_selection!r}")
 
@@ -244,6 +250,7 @@ def _frames_from_video(
         "method": frame_selection,
         "fps": fps,
         "max_frames": max_frames,
+        "quality": quality,
     }
     return frame_arrays, records, prov
 
@@ -257,6 +264,7 @@ def extract_frames(
     max_frames: int | None,
     n_workers: int = 1,
     undistort: bool = False,
+    quality: dict | None = None,
 ) -> int:
     """
     Extract frames from video or image dir into images/ (sole persistent store).
@@ -267,6 +275,8 @@ def extract_frames(
     beside it is the canonical decode-once keyframe store. Returns the number
     of frames stored.
 
+    - quality overrides filter_frame_quality's thresholds (the eligibility gate every
+      sampler selects from); None takes its defaults
     - undistort=True self-calibrates one shared OPENCV camera from the written frames
       and rewrites them undistorted (COLMAP's framing grows the canvas, so frame dims
       change; both cameras are stamped into provenance["undistort"]).
@@ -303,6 +313,7 @@ def extract_frames(
             min_frames=min_frames,
             max_frames=max_frames,
             report=report,
+            quality=quality,
         )
 
         # Every candidate failed the quality filter (or the selector rejected all) — refuse
@@ -968,6 +979,7 @@ class Reconstructor:
             max_frames=pre_cfg["max_frames"],
             n_workers=pre_cfg["n_workers"],
             undistort=pre_cfg["undistort"],
+            quality=pre_cfg["quality"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",

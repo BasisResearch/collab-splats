@@ -9,8 +9,14 @@ from collab_splats.semantics.utils import compute_semantic_contrast, pytorch_gc
 
 
 def test_maskclip_onnx_importable():
-    """maskclip_onnx must be installed — it is a required dependency."""
-    import maskclip_onnx  # raises ImportError if missing
+    """maskclip_onnx must import cleanly wherever it is installed.
+
+    It moved from base deps to the `splatting` extra, so a `collab_splats[semantics]`
+    env legitimately lacks it (MaskCLIPExtractor lazily imports it at construction).
+    Skip when absent; when present this still guards the real regression — the
+    `from pkg_resources import packaging` break on setuptools>=71.
+    """
+    pytest.importorskip("maskclip_onnx")
 
 
 def test_pytorch_gc_safe_on_cpu(monkeypatch):

@@ -11,7 +11,6 @@ from typing import Any
 
 import numpy as np
 import torch
-from mobile_sam import SamAutomaticMaskGenerator
 
 from collab_splats.semantics.utils import batch_iterator, load_torchhub_model
 
@@ -81,6 +80,13 @@ class MobileSAMSegmentation(BaseSegmentation):
 
     def _segment_auto(self, image) -> tuple[torch.Tensor, Any] | None:
         """Auto strategy: SAM automatic mask generator with no prompts."""
+        # Lazy import: mobile_sam is a git dep of the `splatting` extra and is absent
+        # from a `collab_splats[semantics]` install. Importing here keeps the module —
+        # and so `import collab_splats.semantics` — usable without it; the failure
+        # surfaces only when the 'auto' strategy is actually run. Same pattern as
+        # maskclip_onnx in ../features/maskclip.py.
+        from mobile_sam import SamAutomaticMaskGenerator  # noqa: PLC0415
+
         mask_generator = SamAutomaticMaskGenerator(model=self.seg_model)
         results = mask_generator.generate(image)
 

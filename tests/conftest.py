@@ -21,9 +21,16 @@ if str(_project_root) not in _sys.path:
 import importlib
 import sys
 
-import pkg_resources
+# pkg_resources ships with setuptools, which is only pinned (<70) by the `splatting`
+# extra. A `collab_splats[semantics]`-only env has no maskclip_onnx to patch and may
+# have a setuptools new enough to have dropped pkg_resources entirely, so treat the
+# shim as best-effort rather than letting conftest import-fail the whole suite.
+try:
+    import pkg_resources
+except ImportError:
+    pkg_resources = None
 
-if not hasattr(pkg_resources, "packaging"):
+if pkg_resources is not None and not hasattr(pkg_resources, "packaging"):
     import packaging as _packaging
     pkg_resources.packaging = _packaging
     # Also make `from pkg_resources import packaging` work via the module dict

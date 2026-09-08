@@ -54,7 +54,7 @@ jobs:
       # Install collab-splats with dev deps
       - name: Install collab-splats
         run: |
-          pip install --no-build-isolation -e .[dev]
+          pip install --no-build-isolation -e .[dev,semantics]
 
       # Run tests
       - name: Test

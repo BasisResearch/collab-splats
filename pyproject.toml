@@ -11,6 +11,65 @@ authors = [
 ]
 
 dependencies = [
+    # Cross-platform, pure-Python core shared by every entry point. Anything needing
+    # CUDA, a compiler, or the reconstruction stack now lives in an extra — see
+    # [project.optional-dependencies]. This is what makes `collab_splats[semantics]`
+    # installable on macOS/CPU, where no +cu121 wheel exists at all.
+    #
+    # NOTE: this list was previously the full CUDA stack. `uv sync --all-extras`
+    # (setup.sh) and the Docker build are unaffected — everything moved into the
+    # `splatting` extra below, and --all-extras selects it.
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pillow",
+    "pyyaml",
+    "tqdm",
+    "requests",
+    "python-dotenv",
+    "mergedeep",
+    "matplotlib",
+    "hydra-core",
+    "omegaconf",
+]
+
+[project.optional-dependencies]
+
+semantics = [
+    # Feature extraction (Talk2DINO / DINO / MaskCLIP), segmentation, and the
+    # FeatureAutoencoder — importable and runnable with no CUDA, no compiler, and no
+    # reconstruction stack — for downstream consumers that only need to extract and
+    # query features (e.g. on rendered views of an existing mesh).
+    #
+    # Deliberately accelerator-agnostic: plain `torch`, NOT the `torch==2.5.1+cu121`
+    # pin in `splatting`, so this resolves on macOS/MPS and CPU-only Linux. Selecting
+    # [semantics,splatting] together still resolves to the cu121 build (2.5.1 satisfies
+    # >=2.1), so the GPU path is unchanged.
+    #
+    # The heavy backends — mobile_sam, maskclip_onnx, sam3, sklearn — are deliberately
+    # NOT here. Each is imported lazily at first use, so `import collab_splats.semantics`
+    # succeeds without them and only the backend you actually construct needs its dep.
+    "torch>=2.1",
+    "torchvision",
+    "transformers>=4.30,<5.0",
+    "timm>=0.9,<2.0",
+    "huggingface_hub",
+    "zarr>=2.16",
+    "numcodecs",
+    "opencv-python",
+    "scikit-learn",
+    # OpenAI CLIP (git source below, NOT the unrelated PyPI `clip`). Required at model-load
+    # time: the Talk2DINOv3 HF repo ships remote code whose check_imports() hard-requires it,
+    # so AutoModel.from_pretrained fails without it. Pure Python (torch/ftfy/regex/tqdm).
+    "clip",
+    # einops: same story — required by the Talk2DINOv3 remote modeling file's check_imports().
+    "einops",
+]
+
+splatting = [
+    # The former contents of [project].dependencies: the CUDA / gaussian-splatting /
+    # reconstruction stack. Everything here was in base before and is unchanged —
+    # only its location moved, so `uv sync --all-extras` produces the same env.
+    #
     # setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,
     # which setuptools 70+ removed. See [build-system] comment.
     "setuptools<70.0",
@@ -24,16 +83,10 @@ dependencies = [
     "einops",
     "ftfy",
     "gdown",
-    "matplotlib",
-    "mergedeep",
-    "numpy>=1.26",
+    "lightning",
     "zarr>=2.16",
     "numcodecs",
-    "scipy>=1.11",
-    "lightning",
-    "pillow",
     "regex",
-    "tqdm",
     "huggingface_hub",
     "ultralytics",
     "gradio",
@@ -45,14 +98,9 @@ dependencies = [
     "trame-vuetify",
     "trame-vtk",
     "meshlib>=3.1",
-    "python-dotenv",
-    "hydra-core",
-    "omegaconf",
     "onnxruntime",
-    "requests",
     "trimesh",
     "pydantic==2.10.6",
-    "pyyaml",
     "pycolmap>=3.1",
     "transformers>=4.30,<5.0",
     "timm>=0.9,<2.0",
@@ -93,10 +141,12 @@ dependencies = [
     # @main tracks our fork's main branch — we control what lands there.
     "nerfstudio",
     "clip",
-    "collab_data @ file:///workspace/collab-data",
+    # NOTE: the `file:///workspace/...` local-path dependency that used to end this
+    # list was dropped. It is a Docker-image-absolute path that fails to resolve on
+    # any other machine, and setup.sh already installs that package explicitly
+    # post-sync ("kept out of the locked graph"). Keeping it here contradicted that
+    # comment and made the project uninstallable outside the image.
 ]
-
-[project.optional-dependencies]
 feedforward = [
     # vggt-x and mapanything — git deps, install via setup/feedforward.sh
     # vggt @ third_party/VGGT-X submodule (--no-deps, pinned commit)
@@ -228,8 +278,16 @@ skip_gitignore = true
 # Replaces the per-package `--no-deps` hacks in the old setup scripts:
 #   VGGT-X pinned torch==2.3.1; vggt-omega pinned numpy<2.
 override-dependencies = [
-    "torch==2.5.1+cu121",
-    "torchvision==0.20.1+cu121",
+    # Platform-split, like [tool.uv.sources] below. uv applies these overrides whenever the
+    # cwd is inside this project (even for `uv pip install` into another venv), and no
+    # +cu121 wheel exists for macOS, so an unconditional pin makes the `semantics` extra
+    # unresolvable there. An override REPLACES the requirement outright, so a marker that
+    # is false on a platform would drop torch from the resolve entirely — hence the
+    # complementary darwin entries rather than a single gated pin. Linux/Windows is unchanged.
+    "torch==2.5.1+cu121; sys_platform == 'linux' or sys_platform == 'win32'",
+    "torch>=2.1; sys_platform == 'darwin'",
+    "torchvision==0.20.1+cu121; sys_platform == 'linux' or sys_platform == 'win32'",
+    "torchvision; sys_platform == 'darwin'",
     "numpy>=2,<2.2",
     # lomatch declares the py3.6 `dataclasses` backport unconditionally; never install it.
     "dataclasses>=0.8; python_version < '3.7'",
@@ -243,8 +301,13 @@ url = "https://download.pytorch.org/whl/cu121"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu121" }
-torchvision = { index = "pytorch-cu121" }
+# Platform-gated: the cu121 index only publishes linux_x86_64 / win_amd64 wheels, so an
+# unconditional pin makes the project unresolvable on macOS — including for the CUDA-free
+# `semantics` extra, since uv honours [tool.uv.sources] when installing from a local path.
+# Gating by sys_platform leaves the Linux/Docker resolve byte-identical while letting
+# `collab_splats[semantics]` fall through to PyPI torch on macOS.
+torch = [{ index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+torchvision = [{ index = "pytorch-cu121", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
 gsplat = { git = "https://github.com/brian-xu/gsplat-rade.git" }
 mobile_sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
 maskclip_onnx = { git = "https://github.com/RogerQi/maskclip_onnx.git" }

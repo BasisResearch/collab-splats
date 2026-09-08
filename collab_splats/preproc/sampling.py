@@ -285,6 +285,31 @@ def context_indices(video_path: str | Path, *, target_fps: float, info: dict | N
 ########################################################################
 
 
+SLOT_POLICIES = ("rescue", "drop")
+
+
+def _split_quality(quality: dict | None) -> tuple[dict, str]:
+    """
+    Separate filter_frame_quality's thresholds from the empty-slot policy.
+
+    - the two travel together in one config block, but only the thresholds are filter args
+    - samplers without slots read the thresholds and ignore the policy
+
+    Args:
+        quality: the preproc.quality block, or None for defaults.
+
+    Returns:
+        (thresholds, policy) — kwargs for filter_frame_quality, and "rescue" or "drop".
+    """
+    thresholds = dict(quality or {})
+    policy = thresholds.pop("on_empty_slot", "rescue")
+
+    if policy not in SLOT_POLICIES:
+        raise ValueError(f"on_empty_slot must be one of {SLOT_POLICIES}, got {policy!r}")
+
+    return thresholds, policy
+
+
 def _eligible(report: dict, *, quality: dict | None) -> np.ndarray:
     """
     Source frame indices a sampler may select from.
@@ -296,7 +321,8 @@ def _eligible(report: dict, *, quality: dict | None) -> np.ndarray:
     Returns:
         (M,) int64, ascending.
     """
-    pool = np.flatnonzero(filter_frame_quality(report, **(quality or {})))
+    thresholds, _ = _split_quality(quality)
+    pool = np.flatnonzero(filter_frame_quality(report, **thresholds))
 
     if pool.size == 0:
         raise ValueError("no eligible frames: the quality filter rejected every frame")
@@ -399,6 +425,8 @@ def sample_fps(
 
     - the slot is +/- half the target spacing, so picks stay within half a period of the grid
     - ties break to the frame nearest the target, keeping exact spacing where sharpness is flat
+    - a slot with no eligible frame keeps its sharpest frame anyway, unless quality's
+      on_empty_slot is "drop"; picks never leave the slot
 
     Args:
         video_path: source video.
@@ -406,7 +434,7 @@ def sample_fps(
         report: a quality report from qa.compute_video_quality or qa.load_video_quality.
         min_frames: floor; a count below it re-spreads over the whole video.
         max_frames: ceiling; a count above it re-spreads over the whole video.
-        quality: overrides for filter_frame_quality's thresholds.
+        quality: filter_frame_quality threshold overrides, plus the on_empty_slot policy.
         on_progress: optional (done, total) callback.
 
     Returns:
@@ -422,6 +450,7 @@ def sample_fps(
         return [], []
 
     pool = _eligible(report, quality=quality)
+    _, policy = _split_quality(quality)
 
     # One source of truth for the stride: a context grid built at this same rate
     # contains these targets by construction, not by coincidence
@@ -467,11 +496,22 @@ def sample_fps(
 
     chosen = []
     for target, start, stop in zip(targets.tolist(), lo.tolist(), hi.tolist()):
-        # Slot fully excised: fall back to the nearest survivor on either side
+        # Slot holds no eligible frame
+        # - reaching outside it broke the spacing contract silently; the policy decides now
+        # - rescue: keep the slot's sharpest frame, gate or no gate
+        # - drop: emit nothing, accept the gap
+        # - coverage is unrecoverable later: on GH010229 dropping left 12.96 m of travel
+        #   with zero views, against a 0.58 m median baseline, and the ground holed there
         if start >= stop:
-            pos = int(np.clip(np.searchsorted(pool, target), 1, pool.size - 1))
-            left, right = int(pool[pos - 1]), int(pool[pos])
-            chosen.append(left if abs(target - left) <= abs(right - target) else right)
+            if policy == "drop":
+                continue
+
+            window = np.arange(max(target - half, 0), min(target + half + 1, laplacian.size))
+            if window.size == 0:
+                continue
+
+            rank = np.lexsort((np.abs(window - target), -laplacian[window]))
+            chosen.append(int(window[rank[0]]))
             continue
 
         candidates = pool[start:stop]

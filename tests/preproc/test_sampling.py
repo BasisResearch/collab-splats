@@ -731,20 +731,64 @@ def test_sample_fps_prefers_a_sharp_frame_over_a_condemned_neighbour(monkeypatch
     assert not set(range(8, 13)) & set(picked)
 
 
-def test_sample_fps_falls_back_when_a_whole_slot_is_condemned(monkeypatch, tmp_path):
+def test_sample_fps_rescues_a_condemned_slot_rather_than_leaving_a_gap(monkeypatch, tmp_path):
     """
-    An excised slot snaps to the nearest survivor instead of dropping the frame.
+    A slot whose every frame failed the gate still yields its sharpest frame.
     """
-    # Kill the entire slot around target 10, i.e. [5, 15]
+    # Kill the entire slot around target 10, i.e. [5, 15], leaving 12 the least bad in it
     laplacian = [400.0] * 60
     laplacian[5:16] = [2.0] * 11
+    laplacian[12] = 9.0
     report = _fps_fixture(monkeypatch, laplacian)
 
     frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
     picked = [r["frame_idx"] for r in records]
 
+    # The slot is covered, by its sharpest member, and the pick never leaves the slot
+    assert 12 in picked
+    assert not {4, 16} & set(picked)
+
+
+def test_sample_fps_drops_a_condemned_slot_under_the_drop_policy(monkeypatch, tmp_path):
+    """
+    on_empty_slot="drop" accepts the coverage gap instead of rescuing.
+    """
+    laplacian = [400.0] * 60
+    laplacian[5:16] = [2.0] * 11
+    laplacian[12] = 9.0
+    report = _fps_fixture(monkeypatch, laplacian)
+
+    frames, records = sampling.sample_fps(
+        str(tmp_path / "v.mp4"), fps=3.0, report=report, quality={"on_empty_slot": "drop"}
+    )
+    picked = [r["frame_idx"] for r in records]
+
+    # Nothing from the condemned slot, and no reach outside it either
     assert not set(range(5, 16)) & set(picked)
-    assert 4 in picked or 16 in picked
+    assert not {4, 16} & set(picked)
+
+
+def test_sample_fps_rejects_an_unknown_empty_slot_policy(monkeypatch, tmp_path):
+    """
+    A misspelled policy fails loudly rather than silently taking a default.
+    """
+    report = _fps_fixture(monkeypatch, [400.0] * 60)
+
+    with pytest.raises(ValueError, match="on_empty_slot"):
+        sampling.sample_fps(
+            str(tmp_path / "v.mp4"), fps=3.0, report=report, quality={"on_empty_slot": "keep"}
+        )
+
+
+def test_split_quality_keeps_the_policy_out_of_the_threshold_kwargs(monkeypatch, tmp_path):
+    """
+    on_empty_slot travels in the quality block but never reaches filter_frame_quality.
+    """
+    thresholds, policy = sampling._split_quality({"sharpness_k": 1.0, "on_empty_slot": "drop"})
+
+    assert thresholds == {"sharpness_k": 1.0}
+    assert policy == "drop"
+    assert sampling._split_quality(None) == ({}, "rescue")
 
 
 def test_sample_fps_honours_a_clipping_override(monkeypatch, tmp_path):

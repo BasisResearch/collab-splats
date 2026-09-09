@@ -54,8 +54,11 @@ dependencies = [
     # makes uv accept it without a global --prerelease flag.
     # nvdiffrast ships no wheel; it builds its CUDA extension at first use and so needs a real
     # nvcc on PATH (apt cuda-nvcc-12-1, installed by setup.sh — the pip wheels are ptxas-only).
+    # xatlas is the second unwrapper: UVAtlas shatters curved scenes into ~11k charts and
+    # packs them at ~62% fill, xatlas grows larger charts and packs them tighter.
     "warp-lang==1.14.0",
     "meshoptimizer==0.2.30a0",
+    "xatlas==0.0.11",
     "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast@253ac4fcea7de5f396371124af597e6cc957bfae",
     "python-dotenv",
     "hydra-core",

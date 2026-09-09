@@ -4,6 +4,7 @@ Array inputs for TSDF fusion, and textured-PLY output.
   - upsample_depths: model-res depth onto the original-res RGB grid (guided filter)
   - render_tsdf_inputs: depth + RGB + poses from a trained splat checkpoint
   - write_textured_ply: mesh + per-corner UVs + albedo atlas
+  - write_textured_obj: the same as OBJ + MTL + textures/, which any viewer opens
 """
 
 from __future__ import annotations
@@ -272,3 +273,60 @@ def write_textured_ply(mesh, uv, albedo, out_dir):
     cv2.imwrite(str(out_dir / "albedo.png"), np.ascontiguousarray(albedo[..., ::-1]))
     logger.info("write_textured_ply: %d faces, %dx%d atlas -> %s", len(faces), w, h, mesh_path)
     return mesh_path
+
+
+def write_textured_obj(mesh, uv, albedo, out_dir, name="mesh", jpeg_quality=95):
+    """
+    Write a mesh as OBJ + MTL + textures/, the layout every DCC tool and viewer reads.
+
+    Args:
+        mesh: open3d.geometry.TriangleMesh (legacy); vertices are split per face corner on write.
+        uv: (F, 3, 2) float texture coordinates per face corner, Open3D bake convention (v up).
+        albedo: (S, S, 3) uint8 base-color atlas.
+        out_dir: Path or str, directory to create; receives <name>.obj, <name>.mtl and textures/.
+        name: stem for the .obj and .mtl files.
+        jpeg_quality: int, quality for the written texture jpgs.
+    Returns:
+        Path to out_dir/<name>.obj.
+    """
+    out_dir = Path(out_dir)
+    tex_dir = out_dir / "textures"
+    tex_dir.mkdir(parents=True, exist_ok=True)
+
+    # Split per face corner first, so a corner carries its own uv across a chart seam
+    faces = np.asarray(mesh.triangles)
+    xyz = np.asarray(mesh.vertices)[faces].reshape(-1, 3)
+    if not mesh.has_vertex_normals():
+        mesh.compute_vertex_normals()
+    nrm = np.asarray(mesh.vertex_normals)[faces].reshape(-1, 3)
+    st = np.asarray(uv, dtype=np.float32).reshape(-1, 2)
+
+    # Weld corners agreeing in position, uv and normal back into one shared v/vt/vn index run.
+    # Leaving them split triples the file for nothing: only seam corners genuinely differ.
+    key = np.round(np.concatenate([xyz, st, nrm], axis=1).astype(np.float64), 6)
+    _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    order = np.argsort(first)
+    remap = np.empty(len(order), dtype=np.int64)
+    remap[order] = np.arange(len(order))
+    corner = remap[inv.ravel()]
+    keep = first[order]
+    xyz, st, nrm = xyz[keep], st[keep], nrm[keep]
+    logger.info("welded %d face corners into %d shared vertices", len(corner), len(keep))
+
+    # Textures are jpg: an 8192 atlas is ~180 MB as png and ~10 MB here
+    cv2.imwrite(str(tex_dir / "albedo.jpg"), np.ascontiguousarray(albedo[..., ::-1]), [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality])
+    (out_dir / f"{name}.mtl").write_text("newmtl Material\nmap_Kd textures/albedo.jpg\nPr 1.00\n")
+
+    # Blocks of v / vt / vn then faces indexing all three alike, 1-based
+    obj_path = out_dir / f"{name}.obj"
+    with open(obj_path, "w") as f:
+        f.write(f"mtllib {name}.mtl\n")
+        np.savetxt(f, xyz, fmt="v %.6f %.6f %.6f")
+        np.savetxt(f, st, fmt="vt %.6f %.6f")
+        np.savetxt(f, nrm, fmt="vn %.6f %.6f %.6f")
+        f.write("usemtl Material\n")
+        tri = corner.reshape(-1, 3) + 1
+        np.savetxt(f, np.repeat(tri, 3, axis=1), fmt="f %d/%d/%d %d/%d/%d %d/%d/%d")
+
+    logger.info("write_textured_obj: %d faces -> %s", len(faces), obj_path)
+    return obj_path

@@ -18,6 +18,7 @@ import numpy as np
 import nvdiffrast.torch as dr
 import open3d as o3d
 import torch
+import xatlas
 import warp as wp
 
 from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
@@ -198,7 +199,7 @@ def _make_manifold(mesh):
 ######## UV atlas
 
 
-def unwrap_mesh_uvs(mesh, tex_size, parallel_partitions=16, min_faces_per_partition=1000):
+def unwrap_mesh_uvs(mesh, tex_size, parallel_partitions=16, min_faces_per_partition=1000, max_stretch=0.1667):
     """
     Compute a UV atlas with Open3D's UVAtlas.
 
@@ -208,12 +209,67 @@ def unwrap_mesh_uvs(mesh, tex_size, parallel_partitions=16, min_faces_per_partit
         parallel_partitions: int, UVAtlas partitions run in parallel (1 = single-threaded, 20+ min at 500k faces).
         min_faces_per_partition: int, floor clamping the partition count (Open3D's PCA partition
             raises on an empty one).
+        max_stretch: float in [0, 1], distortion UVAtlas tolerates before cutting a new chart.
+            Low values shatter a curved mesh into thousands of tiny islands, each of which is a
+            seam; raising it trades parameterization accuracy for large continuous swaths.
     Returns:
         o3d.t.geometry.TriangleMesh with triangle.texture_uvs (F, 3, 2).
     """
     tm = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
     partitions = max(1, min(int(parallel_partitions), len(mesh.triangles) // min_faces_per_partition))
-    tm.compute_uvatlas(size=tex_size, parallel_partitions=partitions)
+    tm.compute_uvatlas(size=tex_size, max_stretch=float(max_stretch), parallel_partitions=partitions)
+    return tm
+
+
+def unwrap_mesh_uvs_xatlas(mesh, tex_size, max_cost=8.0, padding=2, max_iterations=2):
+    """
+    Compute a UV atlas with xatlas instead of UVAtlas, for large charts and tight packing.
+
+    - UVAtlas shatters this scene into ~11k charts and fills only ~62% of the atlas; the rest is
+      dead space between islands, so a third of the texel budget never reaches the surface
+    - max_cost is the distortion xatlas tolerates before cutting a new chart: raising it past the
+      2.0 default merges charts into continuous swaths
+
+    Args:
+        mesh: open3d.geometry.TriangleMesh.
+        tex_size: int, atlas edge in texels.
+        max_cost: float, chart-growth cost ceiling; higher means fewer, larger, more distorted charts.
+        padding: int, texels of empty space xatlas leaves between packed charts.
+        max_iterations: int, chart-refinement passes.
+    Returns:
+        o3d.t.geometry.TriangleMesh with triangle.texture_uvs (F, 3, 2).
+    """
+    verts = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.triangles, dtype=np.uint32)
+
+    atlas = xatlas.Atlas()
+    atlas.add_mesh(verts, faces)
+    chart_options = xatlas.ChartOptions()
+    chart_options.max_cost = float(max_cost)
+    chart_options.max_iterations = int(max_iterations)
+    pack_options = xatlas.PackOptions()
+    pack_options.resolution = int(tex_size)
+    pack_options.padding = int(padding)
+    pack_options.bruteForce = True
+    atlas.generate(chart_options=chart_options, pack_options=pack_options)
+
+    # xatlas splits vertices at seams, so it returns its own vertex list plus a map back to ours
+    vmapping, indices, uvs = atlas[0]
+    util = atlas.utilization
+    logger.info(
+        "xatlas: %d charts, %d atlas verts from %d, utilization %.1f%%",
+        atlas.chart_count, len(vmapping), len(verts),
+        100 * (util[0] if isinstance(util, (list, tuple)) else util),
+    )
+
+    # Rebuild in the split-vertex indexing xatlas produced, then hand back per-corner uvs
+    out = o3d.geometry.TriangleMesh()
+    out.vertices = o3d.utility.Vector3dVector(verts[vmapping].astype(np.float64))
+    out.triangles = o3d.utility.Vector3iVector(indices.astype(np.int32))
+    tm = o3d.t.geometry.TriangleMesh.from_legacy(out)
+    tm.triangle.texture_uvs = o3d.core.Tensor(
+        uvs.astype(np.float32)[indices.astype(np.int64)].reshape(-1, 3, 2)
+    )
     return tm
 
 
@@ -262,6 +318,80 @@ def bake_atlas_attributes(tm, tex_size):
 ######## Projection — NVIDIA Warp, one thread per texel
 
 
+@wp.func
+def _view_footprint(
+    p: wp.vec3,
+    n: wp.vec3,
+    cam: wp.vec3,
+    w2c: wp.mat44,
+    fx: float,
+    fy: float,
+    cx: float,
+    cy: float,
+    W: int,
+    H: int,
+    mesh_id: wp.uint64,
+    eps: float,
+):
+    """
+    World size one source pixel covers at this texel in this view, or -1 if the view cannot see it.
+
+    - footprint = dist / (fx * cos): grazing and distant views resolve the surface coarsely
+    - rejects back-faces, out-of-frustum texels and anything the mesh occludes
+    """
+    to_cam = cam - p
+    dist = wp.length(to_cam)
+    d = to_cam / dist
+    cos = wp.dot(n, d)
+    if cos <= 0.0:
+        return -1.0
+
+    # Project into the image; skip texels behind the camera or outside the frame
+    pc = wp.transform_point(w2c, p)
+    if pc[2] <= 0.0:
+        return -1.0
+    u = fx * pc[0] / pc[2] + cx
+    v = fy * pc[1] / pc[2] + cy
+    if u < 0.0 or v < 0.0 or u > float(W - 1) or v > float(H - 1):
+        return -1.0
+
+    # Occlusion: anything the ray from the camera hits before the texel hides it
+    q = wp.mesh_query_ray(mesh_id, cam, -d, dist - eps)
+    if q.result:
+        return -1.0
+
+    return dist / (fx * cos)
+
+
+@wp.kernel
+def _footprint_kernel(
+    positions: wp.array2d(dtype=wp.vec3),
+    normals: wp.array2d(dtype=wp.vec3),
+    w2c: wp.mat44,
+    fx: float,
+    fy: float,
+    cx: float,
+    cy: float,
+    cam: wp.vec3,
+    mesh_id: wp.uint64,
+    eps: float,
+    width: int,
+    height: int,
+    best_fp: wp.array2d(dtype=float),
+):
+    """
+    Pass one: record the finest footprint any view achieves on each texel.
+    """
+    i, j = wp.tid()
+    n = normals[i, j]
+    if wp.length(n) < 0.5:
+        return
+
+    fp = _view_footprint(positions[i, j], wp.normalize(n), cam, w2c, fx, fy, cx, cy, width, height, mesh_id, eps)
+    if fp > 0.0:
+        wp.atomic_min(best_fp, i, j, fp)
+
+
 @wp.kernel
 def _project_kernel(
     positions: wp.array2d(dtype=wp.vec3),
@@ -275,6 +405,8 @@ def _project_kernel(
     cam: wp.vec3,
     mesh_id: wp.uint64,
     eps: float,
+    best_fp: wp.array2d(dtype=float),
+    fp_ratio: float,
     rgb_acc: wp.array2d(dtype=wp.vec3),
     w_acc: wp.array2d(dtype=float),
 ):
@@ -285,31 +417,22 @@ def _project_kernel(
         return
     n = wp.normalize(n)
 
-    # Back-face and grazing rejection: weight is the cosine to the camera
-    to_cam = cam - p
-    dist = wp.length(to_cam)
-    d = to_cam / dist
-    cos = wp.dot(n, d)
-    if cos <= 0.0:
-        return
-
-    # Project into the image; skip texels behind the camera or outside the frame
-    pc = wp.transform_point(w2c, p)
-    if pc[2] <= 0.0:
-        return
-    u = fx * pc[0] / pc[2] + cx
-    v = fy * pc[1] / pc[2] + cy
     H = image.shape[0]
     W = image.shape[1]
-    if u < 0.0 or v < 0.0 or u > float(W - 1) or v > float(H - 1):
+    fp = _view_footprint(p, n, cam, w2c, fx, fy, cx, cy, W, H, mesh_id, eps)
+    if fp <= 0.0:
         return
 
-    # Occlusion: anything the ray from the camera hits before the texel hides it
-    q = wp.mesh_query_ray(mesh_id, cam, -d, dist - eps)
-    if q.result:
+    # Keep only views resolving this texel nearly as finely as the best one does. Averaging every
+    # view that can see a point drags a sharp close-up down to the blur of a hundred distant ones
+    if fp > best_fp[i, j] * fp_ratio:
         return
 
-    # Bilinear sample, cos-weighted accumulate
+    # Bilinear sample, weighted by how finely this view resolves the texel
+    pc = wp.transform_point(w2c, p)
+    u = fx * pc[0] / pc[2] + cx
+    v = fy * pc[1] / pc[2] + cy
+    weight = best_fp[i, j] / fp
     x0 = int(wp.floor(u))
     y0 = int(wp.floor(v))
     x1 = wp.min(x0 + 1, W - 1)
@@ -319,8 +442,8 @@ def _project_kernel(
     c = (image[y0, x0] * (1.0 - ax) + image[y0, x1] * ax) * (1.0 - ay) + (
         image[y1, x0] * (1.0 - ax) + image[y1, x1] * ax
     ) * ay
-    rgb_acc[i, j] = rgb_acc[i, j] + c * cos
-    w_acc[i, j] = w_acc[i, j] + cos
+    rgb_acc[i, j] = rgb_acc[i, j] + c * weight
+    w_acc[i, j] = w_acc[i, j] + weight
 
 
 def _dilate_texels(albedo, filled, gutter_px):
@@ -345,7 +468,38 @@ def _dilate_texels(albedo, filled, gutter_px):
     return out
 
 
-def project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps, gutter_px=4):
+def _fill_unseen(albedo, filled):
+    """
+    Push-pull pyramid fill so no texel stays black, however far it is from a seen one.
+
+    Args:
+        albedo: (S, S, 3) float atlas.
+        filled: (S, S) bool, texels some view colored.
+    Returns:
+        (S, S, 3) float32 atlas with every texel defined; unseen regions carry the smooth
+        low-frequency continuation of their surroundings rather than a hole.
+    """
+    # Pull: repeatedly halve colour-sum and weight-sum, so the coarsest level is never empty
+    cols = [np.ascontiguousarray(albedo * filled[..., None], dtype=np.float32)]
+    masks = [filled.astype(np.float32)]
+    while min(cols[-1].shape[:2]) > 1:
+        cols.append(cv2.pyrDown(cols[-1]))
+        masks.append(cv2.pyrDown(masks[-1]))
+
+    # Push: normalize each level and let the coarser result show through wherever weight is missing
+    out = cols[-1] / np.maximum(masks[-1][..., None], 1e-8)
+    for lvl in range(len(cols) - 2, -1, -1):
+        h, w = cols[lvl].shape[:2]
+        up = cv2.resize(out, (w, h), interpolation=cv2.INTER_LINEAR)
+        wt = np.clip(masks[lvl], 0.0, 1.0)[..., None]
+        cur = cols[lvl] / np.maximum(wt, 1e-8)
+        out = cur * wt + up * (1.0 - wt)
+    return out.astype(np.float32)
+
+
+def project_images_to_texture(
+    tm, rgbs, c2w, K, tex_size, occlusion_eps, gutter_px=4, occluder=None, fill_unseen=False, view_ratio=1.5
+):
     """
     Visibility-weighted projection of images into a mesh's UV atlas.
 
@@ -357,6 +511,11 @@ def project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps, gutter_
         tex_size: int, atlas edge in texels.
         occlusion_eps: float, ray-test tolerance in world units (≈ voxel size) so a surface never occludes itself.
         gutter_px: int, texels of color dilation around every chart.
+        occluder: optional (verts, faces) to ray-test against instead of `tm` itself. A hole-filled mesh
+            occludes its own observed surface with invented geometry, so pass the pre-fill mesh here.
+        fill_unseen: bool, push-pull fill every texel no view reached instead of leaving it black.
+        view_ratio: float, keep views whose pixel footprint is within this factor of the texel's best view.
+            1.0 is single-best-view (sharpest, seam-prone); large values fall back to averaging everything.
     Returns:
         (tex_size, tex_size, 3) uint8 albedo; texels no view saw are 0.
     """
@@ -367,16 +526,48 @@ def project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps, gutter_
     posw = wp.array(positions, dtype=wp.vec3)
     nrmw = wp.array(normals, dtype=wp.vec3)
 
-    # BVH over the mesh for the occlusion ray test
-    verts = tm.vertex.positions.numpy().astype(np.float32)
-    faces = tm.triangle.indices.numpy().astype(np.int32)
+    # BVH over the mesh for the occlusion ray test; a separate occluder wins when given
+    if occluder is None:
+        verts = tm.vertex.positions.numpy().astype(np.float32)
+        faces = tm.triangle.indices.numpy().astype(np.int32)
+    else:
+        verts = np.asarray(occluder[0], dtype=np.float32)
+        faces = np.asarray(occluder[1], dtype=np.int32)
+        logger.info("occlusion tested against a separate %d-triangle mesh", len(faces))
     wmesh = wp.Mesh(points=wp.array(verts, dtype=wp.vec3), indices=wp.array(faces.ravel(), dtype=wp.int32))
 
-    # Accumulate cos-weighted color over every view
-    rgb_acc = wp.zeros((tex_size, tex_size), dtype=wp.vec3)
-    w_acc = wp.zeros((tex_size, tex_size), dtype=float)
     c2w = np.asarray(c2w, dtype=np.float64)
     w2c = invert_poses(c2w)
+    height, width = int(rgbs[0].shape[0]), int(rgbs[0].shape[1])
+
+    # Pass one: the finest footprint any view achieves per texel. Nothing is sampled yet, this only
+    # establishes the resolution each texel is entitled to before pass two decides who may vote
+    best_fp = wp.full((tex_size, tex_size), value=1.0e30, dtype=float)
+    for i in range(len(rgbs)):
+        fx, fy, cx, cy = extract_intrinsics(K[i])
+        wp.launch(
+            _footprint_kernel,
+            dim=(tex_size, tex_size),
+            inputs=[
+                posw,
+                nrmw,
+                wp.mat44(w2c[i].astype(np.float32)),
+                fx,
+                fy,
+                cx,
+                cy,
+                wp.vec3(c2w[i, :3, 3].astype(np.float32)),
+                wmesh.id,
+                float(occlusion_eps),
+                width,
+                height,
+                best_fp,
+            ],
+        )
+
+    # Pass two: sample color from the views that resolve each texel within view_ratio of its best
+    rgb_acc = wp.zeros((tex_size, tex_size), dtype=wp.vec3)
+    w_acc = wp.zeros((tex_size, tex_size), dtype=float)
     for i in range(len(rgbs)):
         image = wp.array(np.ascontiguousarray(rgbs[i], dtype=np.float32) / 255.0, dtype=wp.vec3)
         fx, fy, cx, cy = extract_intrinsics(K[i])
@@ -395,6 +586,8 @@ def project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps, gutter_
                 wp.vec3(c2w[i, :3, 3].astype(np.float32)),
                 wmesh.id,
                 float(occlusion_eps),
+                best_fp,
+                float(view_ratio),
                 rgb_acc,
                 w_acc,
             ],
@@ -405,6 +598,18 @@ def project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps, gutter_
     w = w_acc.numpy()
     albedo = np.where(w[..., None] > 0, rgb / np.maximum(w[..., None], 1e-12), 0.0)
     albedo = _dilate_texels(albedo, w > 0, gutter_px)
+
+    # Two unrelated blacks: atlas space no chart claimed, and surface no camera ever reached
+    seen = w > 0
+    covered = np.linalg.norm(normals, axis=-1) > 0.5
+    logger.info(
+        "atlas %.1f%% surface texels | %.1f%% of surface unseen | %.1f%% of atlas blank",
+        100 * covered.mean(),
+        100 * float((covered & ~seen).sum()) / max(int(covered.sum()), 1),
+        100 * (~seen).mean(),
+    )
+    if fill_unseen:
+        albedo = _fill_unseen(albedo, seen)
     return (np.clip(albedo, 0, 1) * 255).astype(np.uint8)
 
 

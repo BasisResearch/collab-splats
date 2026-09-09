@@ -97,21 +97,87 @@ directory. Verify `tests/nerfstudio_methods/` is the only directory that becomes
 
 ### 2b. Migration-era gates
 
-| File | Lines | Why it goes |
+The first draft of this section proposed deleting three files outright. Enumerating their 31
+tests proved that wrong for two of them. Recorded here because the error is instructive: a
+file whose **title** names a finished migration can still hold the only coverage of a live
+invariant, and nothing about the filename says so.
+
+| File | Tests | Disposition |
 |---|---|---|
-| `tests/test_cu121_migration.py` | ~300 | "Import and environment gate for the cu121 + uv migration: any failure blocks the merge." That migration completed 2026-06-02. |
-| `tests/integration/test_pipeline_cu121.py` | ~285 | Docstring asserts "numpy 2.x + torch 2.4 + pycolmap 4.0.4" and instructs running under `/opt/conda/envs/nerfstudio/bin/python`. All three are wrong: the project pins torch 2.5.1+cu121 and `pycolmap>=3.1`, and the nerfstudio conda env is retired in favour of `/opt/venv/reconstruction`. |
-| `tests/test_bae_smoke.py` | 16 | Three trivial checks. `test_bae_imports` and `test_bae_cuda_version` duplicate `test_cu121_migration.py`'s `test_bae_installed_version` and `test_cuda_version`; `test_bundle_adjustment_module_loads` only imports `BundleAdjustmentConfig`, which `tests/geometry/test_bundle_adjustment.py` already does as a precondition of its real assertions. |
+| `tests/test_cu121_migration.py` | 22 | **Split, do not delete.** |
+| `tests/integration/test_pipeline_cu121.py` | 6 | **Rename and relocate, do not delete.** |
+| `tests/test_bae_smoke.py` | 3 | **Delete.** |
 
-A caveat worth stating plainly: `test_pipeline_cu121.py` is not purely an environment gate.
-It contains synthetic-data integration coverage (`test_build_pycolmap_reconstruction_roundtrip`
-and neighbours) that exercises `PointcloudResult` and `MultiviewConfidence` with `_forward`
-mocked. Before deleting the file, each test in it is classified as environment-assertion or
-behaviour-coverage. Behaviour-coverage tests are **moved** to the package-appropriate file
-under `tests/pointcloud/`, not deleted. Only the environment assertions go.
+#### `test_cu121_migration.py` — split
 
-Deleting a test whose subject still ships is how coverage is lost silently; the
-classification pass is what prevents it.
+Roughly half its tests are live invariants unrelated to the migration:
+
+- `test_import_all_modules` — every `collab_splats` submodule must import. Package-wide
+  import health; nothing else in the suite covers it.
+- `test_the_module_list_covers_every_splats_module` — a self-guarding meta-test. Its own
+  comment records it catching a real gap: "`collab_splats.splats.utils` was absent for two
+  plans while every entry present imported cleanly."
+- `test_gsplat_commit_constant_matches_pyproject` — asserts `collab_splats.splats.GSPLAT_COMMIT`
+  equals the `[tool.uv.sources]` gsplat rev. Exactly the manifest-drift guard this design
+  argues for elsewhere.
+- `test_pycolmap_api_surface` — constructs cameras, images and rigs against the real
+  pycolmap API.
+- `test_gtsam_sl4_manifold`, `test_bae_use_cudss`, `test_bae_cuda_backend`,
+  `test_bae_cudss_importable`, `test_collab_data_installed`.
+
+Rename the file to `tests/test_environment_contract.py`, rewrite the module docstring to
+describe a standing environment and manifest contract rather than a migration gate, and keep
+those tests. The version-pin tests (`test_python_version`, `test_torch_version`,
+`test_cuda_version`, `test_numpy_not_downgraded`, `test_scipy_version`,
+`test_pycolmap_version`, `test_bae_installed_version`, `test_viser_version`,
+`test_timm_version`, `test_flagged_package_imports`) also stay — they are the contract the
+new filename names — but their docstrings lose the migration framing.
+
+Delete exactly one test: **`test_mapanything_compat_patch_safe`**. Its docstring says
+"`_patch_mapanything_torch_compat` must not raise RuntimeError at import time", and that
+function no longer exists anywhere in `collab_splats/`. The body merely imports
+`MapAnythingCreator`, which does exist, so the test passes and the symbol sweep in Part 1
+cannot see it. Verify with `grep -rn _patch_mapanything_torch_compat collab_splats/`
+returning nothing before deleting, and confirm `MapAnythingCreator`'s import is already
+covered by `tests/pointcloud/feedforward/test_mapanything_creator.py`.
+
+This is the one case in the design where staleness lives in a **name and docstring** rather
+than in code. A reference sweep is structurally blind to it; only reading found it. Assume
+there are others and treat any test whose docstring names a symbol as worth a `grep` for
+that symbol.
+
+#### `test_pipeline_cu121.py` — rename and relocate
+
+Its docstring claims "numpy 2.x + torch 2.4 + pycolmap 4.0.4" and instructs running under
+`/opt/conda/envs/nerfstudio/bin/python`; all three are wrong (the project pins torch
+2.5.1+cu121 and `pycolmap>=3.1`, and the nerfstudio conda env is retired). But every one of
+its 6 tests is behaviour coverage with `_forward` mocked, and **none** is an environment
+assertion:
+
+| Test | Destination |
+|---|---|
+| `test_build_pycolmap_reconstruction_roundtrip` | `tests/pointcloud/test_base.py` |
+| `test_pointcloudresult_new_api` | `tests/pointcloud/test_base.py` |
+| `test_feedforward_result_save_load` | `tests/pointcloud/feedforward/test_feedforward_zarr.py` |
+| `test_vggtx_postprocess_pipeline` | `tests/pointcloud/feedforward/test_vggtx_creator.py` |
+| `test_mapanything_postprocess_pipeline` | `tests/pointcloud/feedforward/test_mapanything_creator.py` |
+| `test_tsdf_mesh_synthetic` | `tests/mesh/test_tsdf.py` |
+
+Move the module-level helpers (`_synthetic_extrinsics`, `_synthetic_intrinsics`,
+`_synthetic_vggtx_raw`, `N_FRAMES`, `H`, `W`) alongside whichever tests need them; where two
+destinations need the same helper, put it in the nearest shared `conftest.py` rather than
+duplicating it. Then delete the emptied file and `tests/integration/`.
+
+Destinations assume Part 5's moves have already landed, so sequence Part 5 before this step
+or the destination paths will not exist.
+
+#### `test_bae_smoke.py` — delete
+
+Three trivial checks, all duplicated. `test_bae_imports` and `test_bae_cuda_version` restate
+`test_environment_contract.py`'s `test_bae_installed_version` and `test_cuda_version`;
+`test_bundle_adjustment_module_loads` only imports `BundleAdjustmentConfig`, which
+`tests/geometry/test_bundle_adjustment.py` already does as a precondition of its real
+assertions.
 
 `tests/integration/` holds only `__init__.py` and `test_pipeline_cu121.py`, so the deletion
 empties it. Once the behaviour-coverage tests are relocated under `tests/pointcloud/`, remove

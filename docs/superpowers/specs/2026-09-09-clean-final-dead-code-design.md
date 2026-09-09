@@ -10,6 +10,10 @@ Remove deprecated and outdated code from `clean/final`: stale tests, orphaned re
 vendored `third_party/` clones that pip already provides, and the parked
 `geometry/global_alignment.py`.
 
+Then make the surviving tests match how the package is organised **today**. Passing is not
+the same as applying: a test can reference live symbols and still sit in a directory that
+stopped describing its subject three refactors ago. Part 5 covers that.
+
 Out of scope by explicit decision: `ColmapCreator` and `HlocCreator` stay. They are unwired
 into `_run_sfm` but are kept as working, unit-tested backends.
 
@@ -108,6 +112,11 @@ under `tests/pointcloud/`, not deleted. Only the environment assertions go.
 
 Deleting a test whose subject still ships is how coverage is lost silently; the
 classification pass is what prevents it.
+
+`tests/integration/` holds only `__init__.py` and `test_pipeline_cu121.py`, so the deletion
+empties it. Once the behaviour-coverage tests are relocated under `tests/pointcloud/`, remove
+the directory. Part 5f's exempt list therefore does **not** name `integration` — the
+directory will not exist.
 
 ### 2c. Marker registration
 
@@ -229,6 +238,108 @@ the effort now verifies only against upstream `zitongzhan/vggt --implementation 
 Recording it is what keeps a future reader from hunting for a module that was removed on
 purpose.
 
+## Part 5 — Structural realignment
+
+`CLAUDE.md` states that `tests/` mirrors `collab_splats/`. Five refactors later it does not.
+The broken-reference sweep in Part 1 proves tests point at **live symbols**; it says nothing
+about whether they sit in the **right directory**. This part closes that gap.
+
+### 5a. Measured drift
+
+Mapping every test file to the package directory its imports and patch targets dominantly
+exercise flags 40 files. Reading them splits into three classes.
+
+**Directory-level drift.** `collab_splats/semantics/segmentation/` is a package directory
+with **no corresponding test directory** — its tests sit flat in `tests/semantics/`.
+`tests/preproc/` and `tests/localization/` lack `__init__.py` while every sibling test
+package has one.
+
+`tests/{docs,evals,examples,scripts}` have no package counterpart by design — they mirror
+repo-root trees, not `collab_splats/`. They are correct and exempt. `tests/integration/` is
+not on that list because Part 2b empties and removes it.
+
+### 5b. Class A — unambiguous, 28 files
+
+Name and imports agree on a single subject. Move with `git mv`.
+
+| Destination | Count | Files |
+|---|---|---|
+| `tests/pointcloud/feedforward/` | 17 | `test_feature_lifting`, `test_feedforward_{density,intrinsics,preprocess_store,reproject,shared,zarr}`, `test_lc_collate_window`, `test_loger_creator`, `test_mapanything`, `test_mv_zarr_roundtrip`, `test_spark_mv_subprocess`, `test_vggt_omega_creator`, `test_vggt_spark_native_similarity`, `test_vggtx_creator`, `test_vggtx_preproc`, `test_zarr_attrs` (all from `tests/pointcloud/`) |
+| `tests/semantics/segmentation/` (new) | 3 | `test_insid3_segmentation` (19/19 refs), `test_segmentation` (10/10), `test_sky_segmentation` |
+| `tests/semantics/features/` | 5 | `test_extractor_preprocessing`, `test_features`, `test_positional_debiasing`, `test_query_api`, plus `tests/test_semantics_logging.py` |
+| `tests/utils/` | 2 | `tests/test_visualization.py` (15/15 refs), `tests/test_heatmap.py` — both target `collab_splats/utils/visualization.py` |
+| `tests/pointcloud/feedforward/` | 1 | `tests/test_feedforward_logging.py` (4/4 refs) |
+
+`tests/test_viewer.py` and `tests/test_docstring_contract.py` stay at top level and are
+correct there: `collab_splats/viewer.py` is a top-level module, and the docstring contract
+is a repo-wide meta-test.
+
+**Check while moving:** `tests/pointcloud/test_mapanything.py` and
+`tests/pointcloud/feedforward/test_mapanything_creator.py` both exist and will land in the
+same directory. Diff them for duplicated coverage before committing the move; merge rather
+than keep two files if they overlap.
+
+### 5c. Class B — heuristic wrong, do not move
+
+`tests/wrapper/test_{refine,sfm,splats,verify}_stage.py` import their domain package
+heavily, but their subject is `Reconstructor` stage orchestration, not the domain. They are
+correctly placed. These become the seed of the contract test's exemption list.
+
+### 5d. Class C — cross-cutting, read before placing, 6 files
+
+- `tests/geometry/loop_closure/test_verify_threshold_resolution.py` — 4/6 refs into
+  `pointcloud/feedforward`
+- `tests/pointcloud/feedforward/test_verify_lc_data.py` — 5/11 refs into
+  `geometry/loop_closure`
+
+These two are near mirror images: each lives in the tree the other predominantly exercises.
+At least one is misfiled; only reading them establishes which, and the answer may be that
+both test a genuine seam and neither should move.
+
+- `tests/pointcloud/test_mv_conf.py`, `tests/pointcloud/test_pose_extraction.py`
+- `tests/semantics/features/test_extract_from_zarr.py`,
+  `tests/semantics/test_features_guards.py`
+
+Each gets a decision recorded in the plan: move, or stay with a one-line justification that
+becomes its contract-test exemption.
+
+### 5e. Moving is not content-neutral
+
+Two hazards, both of which produce real state changes from a zero-diff move:
+
+- **conftest inheritance.** `tests/pointcloud/conftest.py` and
+  `tests/pointcloud/feedforward/conftest.py` both exist. `conftest.py` is hierarchical, so
+  moving *down* into `feedforward/` only adds fixtures and is safe; a move that leaves a
+  directory can drop a fixture the file depended on. That surfaces as a collection error,
+  which is loud and detectable.
+- **Execution order.** Moves change collection order, and this repo has a known class of
+  test that passes in-suite but fails under a direct nodeid because the global torch RNG is
+  unseeded. A move can therefore turn a test red with no content change.
+
+Treat a red test after a move as a **discovery of a pre-existing order dependency**, not as
+a regression introduced by the move. The protocol: run each moved file standalone by nodeid
+**before** the move and record the result. If it was already red standalone, the move merely
+exposed it — fix the seeding in a separate commit and say so. Use `git mv` throughout so
+history follows the file.
+
+### 5f. Enforcing test
+
+Extend the contract idea from Part 3e into `tests/test_layout_contract.py`:
+
+1. Every directory under `tests/` maps to a directory under `collab_splats/`, except an
+   explicit exempt list (`docs`, `evals`, `examples`, `scripts`, and fixture dirs such as
+   `preproc/data`). `integration` is absent from that list because Part 2b removes it.
+2. Every package directory under `collab_splats/` has a corresponding test directory. This
+   is the rule that catches `semantics/segmentation/`.
+3. Every test package directory contains `__init__.py`.
+4. No test file's dominant subject package differs from its own directory, except for an
+   explicit exemption list seeded with Class B and whatever Class C decides. Each exemption
+   carries a one-line reason in the source.
+
+Rule 4 is the one that decays without care: an exemption list is a place to hide misfiled
+tests. The plan should require that adding an exemption is a deliberate edit with a stated
+reason, and the test's own docstring should say so.
+
 ## Verification protocol
 
 The delete-then-run step is a check on the static read, not the source of it.
@@ -243,6 +354,14 @@ appear or disappear. Then run the full suite and compare against the Part 1 refe
   measurement that a green exit code will not give you.
 - **Collected count** must drop by exactly the number of tests in the deleted files, minus
   any moved out of `test_pipeline_cu121.py`. A larger drop means a file stopped collecting.
+
+For Part 5 the collected count is the primary gate, because a move should change **nothing
+else**. After the moves, the count must be identical to the pre-move count. A drop means a
+file stopped being collected at its new path — the most likely cause of a silently
+disappearing test, and one that no failure will report.
+
+Sequence the moves after the deletions, in their own commits, one destination directory per
+commit. A move commit that also changes file contents cannot be verified by count alone.
 
 Run the suite in chunks rather than one invocation: a full suite run under concurrent agent
 activity has previously invented failures here. Never pipe to `tail` without capturing the
@@ -264,9 +383,16 @@ distinguishes them.
 8. `tests/test_third_party_contract.py` added, passing on a bare checkout.
 9. `collab_splats/geometry/global_alignment.py` and all references removed.
 10. `CLAUDE.md` updated: architecture tree line dropped, bae-vggt-parity entry amended.
+11. 28 Class A test files relocated with `git mv`; `tests/semantics/segmentation/` created;
+    `__init__.py` added to `tests/preproc/` and `tests/localization/`.
+12. 6 Class C files read and placed, each with a recorded decision.
+13. `tests/test_layout_contract.py` added, with a justified exemption list seeded from
+    Class B.
+14. Collected-test count identical before and after every move commit.
 
 ## Open questions
 
-None. All four scope decisions are settled: unwired SfM backends stay, `global_alignment`
-goes, discovery is static with the run as confirmation, and the third_party reconcile ships
-with an enforcing test.
+None. All five scope decisions are settled: unwired SfM backends stay, `global_alignment`
+goes, discovery is static with the run as confirmation, the third_party reconcile ships with
+an enforcing test, and the test tree is realigned to the current package layout with a
+layout contract to hold it there.

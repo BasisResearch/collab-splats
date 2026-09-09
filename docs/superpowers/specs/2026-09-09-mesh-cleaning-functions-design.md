@@ -144,8 +144,12 @@ Decimate before widening the gate.
 
 Per-hole `fillHoleNicely` on the raw fused mesh (`mesh_v018/mesh_raw.ply`, 2,004,884 verts /
 2,753,909 tris; 1,674,848 tris after floaters, scene scale 181.414): **19,217 of 20,734 holes under a
-2.54 m perimeter gate, ~175 s total.** Per-hole cost drifts mildly with fill count (7.8 ms over the
+2.54 m perimeter gate, 173.8 s total.** Per-hole cost drifts mildly with fill count (7.8 ms over the
 first 1,000, 9.1 ms by 17,500) but stays bounded — the run is not quadratic.
+
+The result packs to 1,793,378 triangles against the batched path's 1,791,014 on the same input, a
+0.13% difference. The two fills are equivalent in geometry, so the switch buys curvature-aware
+patches at no cost in coverage.
 
 This settles the one open question in the design. `clean823` had noted that a per-hole
 fill/subdivide/smooth loop "does not finish at TSDF hole counts" and used a batched `fillHoles` plus

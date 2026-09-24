@@ -130,6 +130,59 @@ and stripping comments, plus one sanity mutation showing the check can fail.
 - Tutorial 01 notebook re-executed once at the end.
 - `tests/test_docstring_contract.py` keeps passing for `preproc`.
 
+## Consistency across modules
+
+Preproc is the first of several module cleanups. Consistency comes from three layers, each
+holding the rules it can hold; a prompt alone drifts by the third module.
+
+| Layer | Holds | Enforced by |
+|---|---|---|
+| Rules doc `docs/superpowers/decisions/017-release-cleanup-rules.md` | module-agnostic rules from this spec's Decisions + Round 1 Rules | every module spec links it, never restates it (016 is taken on another branch) |
+| Project skill `.claude/skills/release-cleanup/SKILL.md` | the process: read all files -> findings + verdict table -> user approval -> spec -> worktree -> round 1 -> round 2 -> gate | same steps, same output shape per agent |
+| `tests/test_docstring_contract.py` | the mechanical subset of the rules | failing test |
+
+### Contract test additions
+
+Run over every package in `PACKAGES`:
+
+- no module-level UPPER_CASE name bound to a bare number; allowlist for fixed facts
+  (`SCHEMA_VERSION`, lookup tables)
+- banned words in docstrings and comments: `measured`, `GH010229`, `HYPOTHESIS`,
+  `x faster`, `ffmpeg pipe`, `replaces the old`
+- caps: at most 6 bullets per docstring, at most 4 lines per comment run
+- no silent fallback idioms: `or <float literal>` on a probe value, bare
+  `except Exception:` without re-raise
+
+Each check is validated against a known-bad fixture before it is trusted. Preproc is the
+first package to pass all of them. Existing entries (`semantics`, `pointcloud`) are listed
+as known failures until their own cleanup, not silently exempted.
+
+### Verdict table (not lintable)
+
+Every module spec carries the table from Round 2 above: one row per function and
+module-level name, verdict in {keep, merge, inline, delete, make-kwarg, make-private,
+raise}, one-line why. The user approves the table before any code change.
+
+### Order
+
+1. Write `017-release-cleanup-rules.md` from this spec; replace this spec's Decisions and
+   Round 1 Rules with a link to it.
+2. Add the contract checks; run them on preproc before round 1 to measure the noise.
+3. Write the skill; preproc round 2 is its first real run.
+
+### Prompt for the next module
+
+```
+Run the release-cleanup skill on collab_splats/<module>/.
+Rules: docs/superpowers/decisions/017-release-cleanup-rules.md — do not restate or reinterpret.
+Reference: docs/superpowers/specs/2026-09-24-preproc-release-cleanup-design.md.
+Stop for approval after (1) findings + verdict table and (2) the spec.
+Then worktree .worktrees/<module>-release off clean/final; round 1 prose-only (docstring-stripped
+AST equality + one sanity mutation), round 2 one commit per change, gate prints collab_splats.__file__.
+Add <module> to PACKAGES in tests/test_docstring_contract.py; it must pass.
+Do not touch other packages. Verify callers yourself; do not trust claims in this prompt.
+```
+
 ## Out of scope
 
 - Readability rewrite of `tests/preproc/`.

@@ -202,6 +202,7 @@ def _frames_from_video(
     max_frames: int | None,
     report: dict,
     quality: dict | None = None,
+    on_empty_slot: str = "rescue",
 ) -> tuple[list[np.ndarray], list[dict], dict]:
     """
     Frames selected from a video by one of the three sampling methods.
@@ -214,6 +215,7 @@ def _frames_from_video(
         max_frames: cap; the contract for frame_selection="uniform".
         report: quality report, already measured by load_video_quality.
         quality: overrides for filter_frame_quality's thresholds; None takes its defaults.
+        on_empty_slot: empty-slot policy for frame_selection="fps".
 
     Returns:
         (frames, records, provenance).
@@ -229,6 +231,7 @@ def _frames_from_video(
             max_frames=max_frames,
             report=report,
             quality=quality,
+            on_empty_slot=on_empty_slot,
         )
     elif frame_selection == "uniform":
         frame_arrays, records = sample_uniform(
@@ -251,6 +254,7 @@ def _frames_from_video(
         "fps": fps,
         "max_frames": max_frames,
         "quality": quality,
+        "on_empty_slot": on_empty_slot,
     }
     return frame_arrays, records, prov
 
@@ -265,6 +269,7 @@ def extract_frames(
     n_workers: int = 1,
     undistort: bool = False,
     quality: dict | None = None,
+    on_empty_slot: str = "rescue",
 ) -> int:
     """
     Extract frames from video or image dir into images/ (sole persistent store).
@@ -277,8 +282,9 @@ def extract_frames(
 
     - quality overrides filter_frame_quality's thresholds (the eligibility gate every
       sampler selects from); None takes its defaults
+    - on_empty_slot reaches sample_fps only: "rescue" or "drop" for an all-ineligible slot
     - undistort=True self-calibrates one shared OPENCV camera from the written frames
-      and rewrites them undistorted (COLMAP's framing grows the canvas, so frame dims
+      and rewrites them undistorted (COLMAP's framing resizes the canvas, so frame dims
       change; both cameras are stamped into provenance["undistort"]).
     """
     input_path = Path(input_path)
@@ -287,14 +293,8 @@ def extract_frames(
     if input_path.is_dir():
         frame_arrays, records, prov = _frames_from_dir(input_path, max_frames=max_frames)
     else:
-        # Fail loud on an unreadable/empty video — 0 total frames means a bad path or a
-        # codec ffmpeg can't decode, which otherwise silently yields an empty store.
+        # Probe first: a bad path or undecodable file raises here, before any measuring
         total_frames = get_video_info(str(input_path))["total_frames"]
-        if total_frames == 0:
-            raise ValueError(
-                f"No frames decoded from {input_path} (0 total frames). "
-                "Check the path exists and is a video ffmpeg can read."
-            )
 
         # Measure before selecting. The report lands beside images/ and is reused by
         # existence, so a re-run never re-measures. Report-only: it carries no verdicts —
@@ -314,6 +314,7 @@ def extract_frames(
             max_frames=max_frames,
             report=report,
             quality=quality,
+            on_empty_slot=on_empty_slot,
         )
 
         # Every candidate failed the quality filter (or the selector rejected all) — refuse
@@ -980,6 +981,7 @@ class Reconstructor:
             n_workers=pre_cfg["n_workers"],
             undistort=pre_cfg["undistort"],
             quality=pre_cfg["quality"],
+            on_empty_slot=pre_cfg["on_empty_slot"],
         )
         logger.info(
             "Preprocessing complete: %d frames at %s",

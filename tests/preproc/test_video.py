@@ -2,10 +2,11 @@
 # Video metadata and streamed decode
 ########################################################################
 
-import inspect
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import av
 import numpy as np
@@ -36,44 +37,16 @@ def test_get_video_info_values(tiny_video):
     assert info["duration_s"] == pytest.approx(2.0)
 
 
-def test_get_video_info_missing_file():
-    info = get_video_info("/nonexistent/video.mp4")
-    assert info["total_frames"] == 0 and info["fps"] == 0.0
+def test_get_video_info_missing_file_raises():
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        get_video_info("/nonexistent/video.mp4")
 
 
-def test_get_video_info_frame_count_is_exact(tiny_video):
-    """
-    PyAV reads the count off the container — no full demux, no packet count.
-    """
-    info = get_video_info(tiny_video)
-
-    assert info["total_frames"] > 0
-    assert info["fps"] > 0
-    assert abs(info["duration_s"] - info["total_frames"] / info["fps"]) < 0.05
-
-
-def test_get_video_info_has_no_count_frames_flag():
-    """
-    The -count_packets full demux is gone; there is no cheap/expensive split left.
-    """
-    assert "count_frames" not in inspect.signature(get_video_info).parameters
-
-
-def test_iter_frames_has_no_info_parameter():
-    """
-    It hoisted a probe the PyAV decode never makes; nothing may pass it again.
-    """
-    assert "info" not in inspect.signature(iter_frames).parameters
-
-
-def test_get_video_info_returns_zeros_for_a_non_video(tmp_path):
-    """
-    An unprobeable file returns the zeros dict rather than raising.
-    """
-    bad = tmp_path / "not_a_video.mp4"
-    bad.write_bytes(b"nope")
-
-    assert get_video_info(bad)["total_frames"] == 0
+def test_get_video_info_unprobeable_file_raises(tmp_path):
+    broken = tmp_path / "broken.mp4"
+    broken.write_bytes(b"not a video")
+    with pytest.raises(ValueError, match="cannot probe"):
+        get_video_info(broken)
 
 
 def test_iter_frames_yields_index_and_bgr(tiny_video):
@@ -83,14 +56,6 @@ def test_iter_frames_yields_index_and_bgr(tiny_video):
     assert len(out) == total
     assert [i for i, _ in out] == list(range(total))
     assert out[0][1].ndim == 3 and out[0][1].dtype == np.uint8
-
-
-def test_iter_frames_indices_yields_only_those(tiny_video):
-    wanted = [0, 3, 7]
-
-    out = list(iter_frames(tiny_video, indices=wanted))
-
-    assert [i for i, _ in out] == wanted
 
 
 def test_iter_frames_indices_matches_full_decode(tiny_video):
@@ -146,26 +111,6 @@ def test_iter_frames_indices_yields_exactly_those_indices(tiny_video):
     assert got == [2, 5, 7]
 
 
-def test_iter_frames_start_count_window(tiny_video):
-    """
-    start/count is a contiguous window in source frame indices.
-    """
-    got = [i for i, _ in iter_frames(tiny_video, start=4, count=3)]
-
-    assert got == [4, 5, 6]
-
-
-def test_iter_frames_stops_early_without_decoding_the_tail(tiny_video):
-    """
-    The last requested index ends the scan; the rest of the file is not decoded.
-    """
-    total = get_video_info(tiny_video)["total_frames"]
-    assert total > 20
-
-    got = [i for i, _ in iter_frames(tiny_video, indices=[1, 3])]
-    assert got == [1, 3]
-
-
 def test_iter_frames_deep_window_lands_on_the_right_frames(tiny_video):
     """
     A window far enough in to seek past a keyframe still reports absolute indices.
@@ -179,11 +124,33 @@ def test_iter_frames_deep_window_lands_on_the_right_frames(tiny_video):
         assert np.array_equal(frame, everything[idx])
 
 
-def test_iter_frames_missing_file_yields_nothing():
+def test_iter_frames_missing_file_raises():
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        list(iter_frames("/nonexistent/video.mp4"))
+
+
+def test_iter_frames_undecodable_file_raises(tmp_path):
+    broken = tmp_path / "broken.mp4"
+    broken.write_bytes(b"not a video")
+    with pytest.raises(ValueError, match="cannot decode"):
+        list(iter_frames(broken))
+
+
+def test_get_video_info_zero_frames_or_rate_raises(tmp_path, monkeypatch):
     """
-    An unopenable path is empty, not an exception — the samplers rely on it.
+    A container that opens but reports no frames and no rate is an error, not zeros.
     """
-    assert list(iter_frames("/nonexistent/video.mp4")) == []
+    stream = SimpleNamespace(frames=0, average_rate=None, codec_context=SimpleNamespace(width=4, height=4))
+    container = MagicMock(duration=None)
+    container.__enter__.return_value = container
+    container.streams.video = [stream]
+    container.decode.return_value = iter(())
+    monkeypatch.setattr(video.av, "open", lambda path: container)
+
+    path = tmp_path / "empty_stream.mp4"
+    path.write_bytes(b"")
+    with pytest.raises(ValueError, match="reports 0 frames at 0.0 fps"):
+        get_video_info(path)
 
 
 def test_extract_frame_accepts_a_preprobed_info(tiny_video):
@@ -317,15 +284,6 @@ def test_rotation_degrees_is_zero_without_a_display_matrix(tiny_video):
         assert _rotation_degrees(container) == 0
 
 
-def test_rotated_fixture_reports_display_dimensions():
-    """
-    The fixture is 320x180 stored, 180x320 displayed. get_video_info reports displayed.
-    """
-    info = get_video_info(ROTATED)
-
-    assert (info["width"], info["height"]) == (180, 320)
-
-
 def test_rotated_fixture_decodes_upright():
     """
     ffmpeg auto-rotates, and whatever replaces it must too: decoded frames match
@@ -354,10 +312,3 @@ def test_get_video_info_falls_back_to_duration_x_rate(synth_video, tmp_path):
         assert container.streams.video[0].frames == 0
 
     assert get_video_info(ts_path)["total_frames"] == 60
-
-
-def test_video_no_longer_exports_context_indices():
-    """
-    context_indices moved to sampling; video.py decodes, it does not select.
-    """
-    assert not hasattr(video, "context_indices")

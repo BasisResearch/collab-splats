@@ -154,7 +154,7 @@ def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
 
     # The report is the samplers' shared input, not the dispatch under test — stub it
     # and assert every branch forwards the same object.
-    report = {"available": True, "frames": {}}
+    report = {"frames": {}}
     monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: report)
     monkeypatch.setattr(R, "sample_fps", _recorder("fps"))
     monkeypatch.setattr(R, "sample_uniform", _recorder("uniform"))
@@ -188,6 +188,7 @@ def test_extract_frames_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "max_frames": 50,
         "report": report,
         "quality": None,
+        "on_empty_slot": "rescue",
     }
 
     # uniform: max_frames is the count, with no fps and no floor — it spreads exactly
@@ -217,7 +218,7 @@ def test_extract_frames_forwards_quality_overrides_to_every_sampler(tmp_path, mo
         seen.append(kwargs.get("quality"))
         return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
 
-    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"frames": {}})
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
     for name in ("sample_fps", "sample_uniform", "sample_optical_flow"):
         monkeypatch.setattr(R, name, fake)
@@ -238,11 +239,40 @@ def test_extract_frames_forwards_quality_overrides_to_every_sampler(tmp_path, mo
     assert seen == [overrides] * 3
 
 
+def test_extract_frames_forwards_on_empty_slot_to_fps_only(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake(name):
+        def _f(path, **kwargs):
+            seen[name] = kwargs
+            return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
+
+        return _f
+
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"frames": {}})
+    monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
+    for name in ("sample_fps", "sample_uniform", "sample_optical_flow"):
+        monkeypatch.setattr(R, name, fake(name))
+
+    # Plots are not under test here, and the stub report carries no columns to draw
+    monkeypatch.setattr(
+        R, "preproc_viz", types.SimpleNamespace(plot_photometric=lambda *a, **k: None, plot_motion=lambda *a, **k: None)
+    )
+
+    video = tmp_path / "v.mp4"
+    video.touch()
+    for i, selection in enumerate(("fps", "uniform", "optical_flow")):
+        R.extract_frames(video, tmp_path / str(i) / "images", selection, 2.0, 5, 50, on_empty_slot="drop")
+
+    assert seen["sample_fps"]["on_empty_slot"] == "drop"
+    assert "on_empty_slot" not in seen["sample_uniform"] and "on_empty_slot" not in seen["sample_optical_flow"]
+
+
 def test_extract_frames_rejects_unknown_selection(tmp_path, monkeypatch):
     from collab_splats.wrapper import reconstructor as R
 
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
-    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"frames": {}})
     video = tmp_path / "v.mp4"
     video.touch()
     with pytest.raises(ValueError, match="frame_selection"):
@@ -251,7 +281,7 @@ def test_extract_frames_rejects_unknown_selection(tmp_path, monkeypatch):
 
 def test_extract_frames_records_fps_in_provenance(tmp_path, monkeypatch):
     """
-    frames.json must record the rate a scene was sampled at, not just the cap.
+    frames.json must record the rate and empty-slot policy a scene was sampled with, not just the cap.
     """
     from collab_splats.wrapper import reconstructor as R
 
@@ -260,7 +290,7 @@ def test_extract_frames_records_fps_in_provenance(tmp_path, monkeypatch):
         "sample_fps",
         lambda path, **kw: ([np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]),
     )
-    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
+    monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"frames": {}})
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
     # Plots are not the dispatch under test, and the stub report has no columns
     monkeypatch.setattr(
@@ -279,11 +309,12 @@ def test_extract_frames_records_fps_in_provenance(tmp_path, monkeypatch):
 
     video = tmp_path / "v.mp4"
     video.touch()
-    R.extract_frames(video, tmp_path / "out" / "images", "fps", 2.0, None, 50)
+    R.extract_frames(video, tmp_path / "out" / "images", "fps", 2.0, None, 50, on_empty_slot="drop")
 
     prov = fr.read_manifest(tmp_path / "out" / "images")["provenance"]
     assert prov["fps"] == 2.0
     assert prov["method"] == "fps"
+    assert prov["on_empty_slot"] == "drop"
 
 
 def test_from_config_file_removed():
@@ -1654,7 +1685,7 @@ def test_nerfstudio_method_rejected():
 
 def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):
     """
-    The video branch renders all five report PNGs beside images/; the dir branch none.
+    The video branch renders both report PNGs beside images/; the dir branch none.
     """
     from collab_splats.wrapper import reconstructor as R
 
@@ -1670,7 +1701,6 @@ def test_extract_frames_writes_video_quality_pngs(tmp_path, monkeypatch):
         "clipped_high_frac",
     )
     report = {
-        "available": True,
         "video": {"path": "/data/clip.mp4", "fps": 10.0, "total_frames": n, "width": 64, "height": 48},
         "params": {"motion_stride": 2},
         "frames": {"frame_idx": list(range(n)), **{k: rng.uniform(0, 1, n).tolist() for k in columns}},
@@ -1712,8 +1742,8 @@ def test_undistort_provenance_records_the_camera_not_a_profile(tmp_path, monkeyp
     # there is no crop offset left for a reader to reapply to the principal point.
     camera = pycolmap.Camera(model="OPENCV", width=64, height=48, params=[60.0, 60.0, 32.0, 24.0, -0.2, 0.0, 0.0, 0.0])
 
-    # autospec, not a bare lambda: calibrate_camera(images_dir, *, max_frames) takes a
-    # DIRECTORY now, and a signature-blind stub stays green through a wrong call site
+    # autospec, not a bare lambda: calibrate_camera takes the images DIRECTORY, and a
+    # signature-blind stub stays green through a wrong call site
     stub = create_autospec(calibrate_camera, return_value=camera)
     monkeypatch.setattr(R, "calibrate_camera", stub)
 

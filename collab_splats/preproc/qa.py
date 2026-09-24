@@ -1,19 +1,10 @@
 """
-Video capture quality: how good is the source footage, per frame and per pair.
+Capture quality report: per-frame photometry and per-pair motion.
 
-Two measurement families:
-
-- photometry, per frame — is this frame sharp and correctly exposed?
-  blur, laplacian, exposure_{mean,median,std}, clipped_{low,high}_frac
-- motion, per pair — how far did the camera move between two frames?
-  n_matches, translation_px, parallax
-
-REPORT-ONLY:
-
-- nothing here selects, rejects, ranks or scores a frame against a threshold
-- selection policy lives in preproc.sampling.filter_frame_quality
-- measured evidence for every column:
-  docs/superpowers/specs/2026-08-20-video-quality-report-measured.md
+- frames: blur, laplacian, exposure_{mean,median,std}, clipped_{low,high}_frac
+- pairs: n_matches, translation_px, parallax
+- report-only: thresholds live in preproc.sampling.filter_frame_quality
+- column evidence: docs/superpowers/specs/2026-08-20-video-quality-report-measured.md
 """
 
 import json
@@ -21,6 +12,7 @@ import logging
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import cv2
@@ -103,7 +95,6 @@ def compute_exposure(gray: np.ndarray) -> dict:
     Brightness distribution plus the fraction of pixels pinned at either end.
 
     - one 256-bin histogram serves all five numbers
-    - ~98x faster than the numpy path it replaces (0.34 ms vs 33.5 ms on 1920x1080), equal output
 
     Args:
         gray: (h, w) uint8 single-channel frame, NATIVE resolution — see compute_frame_quality.
@@ -124,9 +115,7 @@ def compute_exposure(gray: np.ndarray) -> dict:
     exposure_mean = float((hist * levels).sum() / n)
 
     # Histogram median must match np.median on an even pixel count
-    # - np.median averages the two central order statistics
-    # - searchsorted(cumulative, n/2) alone returns only the lower one
-    # - measured 127.5 off on a two-pixel frame, so take both and average
+    # - np.median averages the two central values; searchsorted alone gives the lower
     k_lo, k_hi = (int(n) - 1) // 2, int(n) // 2
     exposure_median = float(
         (np.searchsorted(cumulative, k_lo, side="right") + np.searchsorted(cumulative, k_hi, side="right")) / 2
@@ -153,15 +142,12 @@ def compute_frame_quality(bgr: np.ndarray, *, analysis_width: int = 480, blur_h_
     """
     Photometry for one BGR frame: blur and exposure together.
 
-    - **blur is NOT comparable across videos whose source width straddles `analysis_width`**
-    - wider sources are downscaled further and read sharper
-    - measured on data/tutorial: blur 0.2128 at 480 px against 0.2772 at 1024 px, 30% spread
-      on identical frames
-    - laplacian and exposure are native-resolution, so unaffected
+    - blur and laplacian read a gray downscaled to analysis_width; exposure reads native
+    - so blur and laplacian are not comparable across videos whose width straddles it
 
     Args:
         bgr: (H, W, 3) uint8 BGR frame.
-        analysis_width: width blur is measured at; exposure ignores it.
+        analysis_width: width blur and laplacian are computed at; exposure ignores it.
         blur_h_size: forwarded to compute_blur as `h_size`.
 
     Returns:
@@ -172,9 +158,7 @@ def compute_frame_quality(bgr: np.ndarray, *, analysis_width: int = 480, blur_h_
     gray_native = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     exposure = compute_exposure(gray_native)
 
-    # Blur reads the analysis-width gray, not native
-    # - 7.6x cheaper: 300.4 ms native vs 39.4 ms at 853x480, one 1080x1920 tutorial frame
-    # - paid for in cross-video comparability — see the docstring
+    # Blur and laplacian read the analysis-width gray: cheaper, tied to analysis_width
     gray_small = analysis_gray(bgr, width=analysis_width)
     blur = compute_blur(gray_small, h_size=blur_h_size)
 
@@ -190,10 +174,7 @@ def detect_orb(gray: np.ndarray, *, n_features: int = 1000) -> tuple[tuple, np.n
     """
     ORB keypoints and descriptors for one grayscale frame.
 
-    - split from matching so a video run detects each frame ONCE
-    - every frame is one pair's partner and the next pair's current frame, so a combined
-      detect-and-match ran ORB twice per frame
-    - measured 1.34x on the pair loop over 400 tutorial frames at stride 24, same matches
+    - split from matching so a video run detects each frame once
 
     Args:
         gray: (h, w) uint8 single-channel frame.
@@ -210,36 +191,20 @@ def compute_pair_motion(feat_a: tuple, feat_b: tuple, *, ransac_thresh_px: float
     """
     Match two frames' ORB features and measure the motion between them.
 
-    - both measures are in the pixels of whatever grid detect_orb ran on
-    - the report feeds analysis_gray output, so shipped columns are analysis-grid pixels:
-      comparable within a report, NOT across videos of differing width
-    - rescaling does NOT convert them — ORB detects different keypoints per resolution
-      (data/tutorial 1080x1920 at factor 2.25: native-over-analysis 2.37 on one pair, 3.28 on another)
-    - unmeasurable is nan, never 0.0 — 0.0 reads as "camera held perfectly still", the opposite
-      conclusion
-    - **crossCheck does not bound whether the two frames show the same scene.** Mutual-best returns
-      a full match set on unrelated frames: two independent noise images gave 373 matches at 92 px
-      median displacement against 539 at 17 px for a true 17 px shift, so a scene cut reads as large
-      CONFIDENT motion and neither n_matches nor a nan reveals it. Descriptor distance separates the
-      cases (median Hamming 80 against 32) and is not returned here.
+    - pixels are those of the grid detect_orb ran on (analysis_gray in the report)
+    - unmeasurable is nan, never 0.0, which would read as a still camera
+    - parallax in [0, 1]: one minus the homography/fundamental inlier ratio; ~0 = no depth
+    - crossCheck cannot detect unrelated frames: a scene cut reads as large motion
 
     Args:
-        feat_a: (keypoints, descriptors) from detect_orb for the EARLIER frame.
+        feat_a: (keypoints, descriptors) from detect_orb for the earlier frame.
         feat_b: (keypoints, descriptors) for the later frame.
-        ransac_thresh_px: inlier threshold shared by the homography and fundamental fits behind
-            parallax. A first-order lever, not a detail — over 99 tutorial pairs, 1.0 against 3.0
-            moves parallax by 0.19 on average and reorders the pairs (Spearman 0.708), while 3.0
-            against 5.0 barely does (0.053, 0.945). Looser lets a homography explain more, so
-            parallax falls monotonically.
+        ransac_thresh_px: inlier threshold for both fits; looser lowers parallax.
 
     Returns:
         {'n_matches': int, 'translation_px': float, 'parallax': float}. translation_px is the
-        median match displacement; parallax is one minus the homography/fundamental inlier ratio,
-        so near 0 means the pair carries no depth information. translation_px is nan with no
-        matches; parallax is additionally nan below 8 correspondences (the linear 8-point
-        minimum), when either fit raises (USAC asserts on configurations it cannot estimate at any
-        size — measured on a real 720-correspondence pair whose matches were 97.5%
-        zero-displacement), and when the fundamental fit finds no inliers at all.
+        median match displacement, nan with no matches; parallax is nan below 8 matches or
+        when either fit fails.
     """
     kp_a, desc_a = feat_a
     kp_b, desc_b = feat_b
@@ -300,22 +265,35 @@ def compute_pair_motion(feat_a: tuple, feat_b: tuple, *, ransac_thresh_px: float
 ########################################################################
 
 
-def _measure_photometry_and_motion(args: tuple) -> tuple[list[dict], list[dict]]:
+def _measure_photometry_and_motion(
+    args: tuple,
+    *,
+    analysis_width: int,
+    blur_h_size: int,
+    n_features: int,
+    ransac_thresh_px: float,
+) -> tuple[list[dict], list[dict]]:
     """
-    Measure one contiguous frame range in its own process; returns (frame rows, pair rows).
+    Measure one contiguous frame range; returns (frame rows, pair rows).
 
-    - Decoding starts `stride` frames before `emit_from` so the pairs straddling
-      the range boundary have their partner, but only rows from `emit_from` on
-      are returned. Ranges therefore tile the video exactly once and the caller
-      concatenates them — nothing to deduplicate.
-    - Runs at module scope because ProcessPoolExecutor pickles by qualified name.
+    - decodes `stride` lead-in frames before `emit_from` so boundary pairs have a partner
+    - emits rows from `emit_from` on only, so ranges tile the video exactly once
+    - module-level so ProcessPoolExecutor can pickle it
+
+    Args:
+        args: (video_path, start, count, emit_from, stride) for this range.
+        analysis_width: width blur, laplacian and ORB run at.
+        blur_h_size: Crete-Roffet re-blur kernel width.
+        n_features: ORB feature cap per frame.
+        ransac_thresh_px: inlier threshold for the parallax fits.
+
+    Returns:
+        (frame rows, pair rows) for the frames this range owns.
     """
     video_path, start, count, emit_from, stride = args
 
-    # THE THREAD PIN IS LOAD-BEARING
-    # - cv2 and numpy each fan out over every core
-    # - so the "serial" baseline is already parallel, and process fan-out oversubscribes
-    # - unpinned, this measured 0.67x — SLOWER than serial
+    # Pin cv2 and BLAS to one thread per worker
+    # - unpinned, process fan-out oversubscribes the cores and runs slower than serial
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     cv2.setNumThreads(1)
@@ -333,14 +311,16 @@ def _measure_photometry_and_motion(args: tuple) -> tuple[list[dict], list[dict]]
         # - decoded here only to be somebody's partner
         # - so skip the photometry rather than compute a row and drop it
         if idx >= emit_from:
-            frame_rows.append({"frame_idx": idx, **compute_frame_quality(bgr)})
+            frame_rows.append(
+                {"frame_idx": idx, **compute_frame_quality(bgr, analysis_width=analysis_width, blur_h_size=blur_h_size)}
+            )
 
         # Motion against the frame one stride back, once one exists
         # - first pair this can fire on is (emit_from - stride, emit_from)
         # - that is exactly the boundary pair the lead-in exists to reach
         # - so no pair owned by the previous range is emitted twice
-        gray_small = analysis_gray(bgr)
-        pending[idx] = detect_orb(gray_small)
+        gray_small = analysis_gray(bgr, width=analysis_width)
+        pending[idx] = detect_orb(gray_small, n_features=n_features)
         partner = idx - stride
 
         if partner in pending:
@@ -348,7 +328,7 @@ def _measure_photometry_and_motion(args: tuple) -> tuple[list[dict], list[dict]]
                 {
                     "frame_idx_a": partner,
                     "frame_idx_b": idx,
-                    **compute_pair_motion(pending[partner], pending[idx]),
+                    **compute_pair_motion(pending[partner], pending[idx], ransac_thresh_px=ransac_thresh_px),
                 }
             )
 
@@ -357,40 +337,63 @@ def _measure_photometry_and_motion(args: tuple) -> tuple[list[dict], list[dict]]
     return frame_rows, pair_rows
 
 
+def _ranges(total: int, *, workers: int, stride: int) -> list[tuple[int, int | None, int]]:
+    """
+    (start, count, emit_from) per worker; each range decodes a stride-frame lead-in.
+
+    Args:
+        total: frames in the video.
+        workers: ranges wanted; a short video gets one.
+        stride: pair spacing, the lead-in length.
+
+    Returns:
+        Ascending ranges that tile [0, total) exactly once by emit_from.
+        count is None on the single whole-video range: decode to the end.
+    """
+    if workers == 1 or total <= stride * 2:
+        return [(0, None, 0)]
+
+    per = total // workers
+    out = []
+    for k in range(workers):
+        emit_from = k * per
+        start = max(emit_from - stride, 0)
+        end = total if k == workers - 1 else (k + 1) * per
+        out.append((start, end - start, emit_from))
+    return out
+
+
 def compute_video_quality(
     video_path: str | Path,
     *,
-    output_path: str | Path | None = None,
     motion_stride: int | None = None,
     workers: int = 1,
+    analysis_width: int = 480,
+    blur_h_size: int = 11,
+    n_features: int = 1000,
+    ransac_thresh_px: float = 3.0,
 ) -> dict:
     """
-    Measure per-frame photometry and per-pair motion across a whole video.
+    Per-frame photometry and per-pair motion across a whole video.
 
-    - report-only: carries measurements, never verdicts
-    - filter_frame_quality is what turns these columns into a keep mask
-    - HYPOTHESIS, not a measurement: the shortfall against the standalone harness's 3.04x
-      prediction is likely ffmpeg — each worker pins cv2, OMP and OpenBLAS to one thread but
-      not ffmpeg's own decode threads, so the serial baseline already fans out over cores and
-      has less headroom to win back
+    - report-only: filter_frame_quality turns these columns into a keep mask
 
     Args:
-        video_path: source video, decoded in full — every frame is measured.
-        output_path: where to write the report as JSON; None returns it without
-            touching disk.
-        motion_stride: frames between the two members of each measured pair, >= 1.
-            None means round(fps) — one second of video, the pair spacing a
-            reconstruction sees under the shipping fps: 1.0 sampling rate.
-        workers: decode and measure this many contiguous frame ranges in parallel;
-            1 is serial. Measured end to end on a 2388-frame 1080x1920 video
-            (96-core host): 180.1 s at 1 against 93.9 s at 4, so 1.92x, with
-            byte-identical reports. NOT auto-derived — see the design doc, 5.2.
+        video_path: source video; every frame is decoded and scored.
+        motion_stride: frames between the two members of each pair, >= 1; None = round(fps).
+        workers: contiguous frame ranges processed in parallel; 1 is serial.
+        analysis_width: width blur, laplacian and ORB run at.
+        blur_h_size: Crete-Roffet re-blur kernel width.
+        n_features: ORB feature cap per frame.
+        ransac_thresh_px: inlier threshold for the parallax fits.
 
     Returns:
-        {"available": True, "video": {path, mtime, **get_video_info},
-        "params": {"motion_stride": int}, "frames": {column -> list, one entry per
-        source frame}, "pairs": {column -> list, one entry per measured pair}}.
-        An unreadable video gives {"available": False, "reason": str} instead.
+        {"video": {path, mtime, **get_video_info}, "params": {motion_stride and the four tuning kwargs},
+        "frames": {column: list per frame}, "pairs": {column: list per pair}}.
+
+    Raises:
+        FileNotFoundError: the video does not exist.
+        ValueError: the video cannot be probed or decodes no frames.
     """
     # `is not None`, not truthiness
     # - 0 is an explicit value; truthiness falls through to the fps default, stride 30
@@ -404,16 +407,15 @@ def compute_video_quality(
 
     video_path = Path(video_path)
     info = get_video_info(str(video_path))
-    stride = int(motion_stride) if motion_stride is not None else max(1, round(info["fps"] or 1))
+    stride = int(motion_stride) if motion_stride is not None else max(1, round(info["fps"]))
 
     # Announce the work before the first decode
     # - a multi-minute silent run is indistinguishable from a hung one
-    # - %s on the ints so a None from the probe cannot crash the log line
     logger.info(
         "video quality: %s — %s frames @ %.2f fps, %sx%s, stride %d",
         video_path.name,
         info["total_frames"],
-        info["fps"] or 0.0,
+        info["fps"],
         info["width"],
         info["height"],
         stride,
@@ -423,36 +425,38 @@ def compute_video_quality(
     # - each decodes a `stride`-frame lead-in from its predecessor for the boundary pairs
     # - nothing is emitted from the lead-in
     total = info["total_frames"]
+    ranges = [
+        (str(video_path), start, count, emit_from, stride)
+        for start, count, emit_from in _ranges(total, workers=workers, stride=stride)
+    ]
 
-    if workers == 1 or total <= stride * 2:
-        ranges = [(str(video_path), 0, None, 0, stride)]
-    else:
-        per = total // workers
-        ranges = []
-        for k in range(workers):
-            emit_from = k * per
-            start = max(emit_from - stride, 0)
-            end = total if k == workers - 1 else (k + 1) * per
-            ranges.append((str(video_path), start, end - start, emit_from, stride))
+    # Bind the tuning once; partial of a module-level function still pickles
+    tuning = {
+        "analysis_width": analysis_width,
+        "blur_h_size": blur_h_size,
+        "n_features": n_features,
+        "ransac_thresh_px": ransac_thresh_px,
+    }
+    measure = partial(_measure_photometry_and_motion, **tuning)
 
     started = time.perf_counter()
 
     if len(ranges) == 1:
-        results = [_measure_photometry_and_motion(ranges[0])]
+        results = [measure(ranges[0])]
     else:
         with ProcessPoolExecutor(len(ranges)) as pool:
-            results = list(pool.map(_measure_photometry_and_motion, ranges))
+            results = list(pool.map(measure, ranges))
 
     # pool.map yields in submission order, and the ranges were built in ascending
     # order, so concatenating is the whole merge.
     frame_rows = [row for rows, _ in results for row in rows]
     pair_rows = [row for _, rows in results for row in rows]
 
-    # Cheap integrity check on the seeks
-    # - input seek (-ss before -i) lands on a keyframe and counts forward
-    # - broken timestamps land it off by a few frames -> every report index quietly wrong
-    # - contiguity catches that as a gap, a repeat or a reordering
-    # - compared as ints, not measured floats, so rounding cannot false-alarm
+    if not frame_rows:
+        raise ValueError(f"video quality: no frames decoded from {video_path}")
+
+    # Contiguity check: a bad seek silently shifts every index
+    # - int comparison, so rounding cannot false-alarm
     idxs = [row["frame_idx"] for row in frame_rows]
 
     if len(ranges) > 1 and idxs != list(range(idxs[0], idxs[0] + len(idxs))):
@@ -475,46 +479,32 @@ def compute_video_quality(
     )
     frames = {k: [row[k] for row in frame_rows] for k in frame_keys}
 
-    if not frames["frame_idx"]:
-        # Name the actual condition. "no frames decoded" against a path that is
-        # not there sends a reader hunting a codec problem instead of a typo.
-        missing = "file does not exist" if not video_path.exists() else "no frames decoded"
-        report = {"available": False, "reason": f"{missing}: {video_path}"}
-    else:
-        report = {
-            "available": True,
-            "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
-            "params": {"motion_stride": stride},
-            "frames": frames,
-            "pairs": {
-                "frame_idx_a": [r["frame_idx_a"] for r in pair_rows],
-                "frame_idx_b": [r["frame_idx_b"] for r in pair_rows],
-                "n_matches": [r["n_matches"] for r in pair_rows],
-                # nan -> null on the only two columns that can be non-finite
-                # - json.dumps writes a bare NaN that no strict parser accepts
-                # - np.nan_to_num is not the fix: its 0.0 fill reads as "no motion"
-                # - that is the opposite of "this pair failed to match"
-                "translation_px": [None if np.isnan(r["translation_px"]) else r["translation_px"] for r in pair_rows],
-                "parallax": [None if np.isnan(r["parallax"]) else r["parallax"] for r in pair_rows],
-            },
-        }
-        # Throughput, not just a count: it is the number that tells a reader
-        # whether a long run is progressing or degrading.
-        elapsed = max(time.perf_counter() - started, 1e-9)
-        logger.info(
-            "video quality: %d frames, %d pairs, stride %d — %.1fs (%.1f frames/s)",
-            len(frames["frame_idx"]),
-            len(pair_rows),
-            stride,
-            elapsed,
-            len(frames["frame_idx"]) / elapsed,
-        )
+    # Pair columns; nan -> null on the only two that can be non-finite
+    # - json.dumps writes a bare NaN that no strict parser accepts
+    # - np.nan_to_num is not the fix: its 0.0 fill reads as "no motion"
+    pairs = {k: [r[k] for r in pair_rows] for k in ("frame_idx_a", "frame_idx_b", "n_matches")}
+    for k in ("translation_px", "parallax"):
+        pairs[k] = [None if np.isnan(r[k]) else r[k] for r in pair_rows]
 
-    if output_path is not None:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(report, indent=2))
-        logger.info("video quality: wrote %s (%.1f kB)", output_path, output_path.stat().st_size / 1000)
+    report = {
+        "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
+        "params": {"motion_stride": stride, **tuning},
+        "frames": frames,
+        "pairs": pairs,
+    }
+
+    # Throughput, not just a count: it is the number that tells a reader
+    # whether a long run is progressing or degrading.
+    elapsed = max(time.perf_counter() - started, 1e-9)
+    logger.info(
+        "video quality: %d frames, %d pairs, stride %d — %.1fs (%.1f frames/s)",
+        len(frames["frame_idx"]),
+        len(pair_rows),
+        stride,
+        elapsed,
+        len(frames["frame_idx"]) / elapsed,
+    )
+
     return report
 
 
@@ -529,26 +519,37 @@ def load_video_quality(
     The quality report at report_path, measuring and writing it first if absent.
 
     - reuse is by existence, the same rule images/ follows
-    - so a re-run of a scene never re-measures, and nothing needs a staleness check
+    - an existing file is reused, never recomputed; one without "frames" raises
 
     Args:
-        video_path: source video, measured only when report_path is missing.
+        video_path: source video, used only when report_path is missing.
         report_path: the JSON report; read as-is when it already exists.
         workers: parallel decode ranges, forwarded to compute_video_quality.
         motion_stride: pair spacing, forwarded to compute_video_quality.
 
     Returns:
         The report dict compute_video_quality produces.
+
+    Raises:
+        FileNotFoundError: no cached report and the video does not exist.
+        ValueError: a cached report without "frames", or compute_video_quality rejects the input.
     """
     report_path = Path(report_path)
 
     if report_path.exists():
         logger.info("video quality: reusing %s", report_path)
-        return json.loads(report_path.read_text())
+        report = json.loads(report_path.read_text())
 
-    return compute_video_quality(
-        video_path,
-        output_path=report_path,
-        motion_stride=motion_stride,
-        workers=workers,
-    )
+        if "frames" not in report:
+            raise ValueError(f"{report_path} is a stale video-quality report (no 'frames'); delete it and re-run")
+        return report
+
+    report = compute_video_quality(video_path, motion_stride=motion_stride, workers=workers)
+
+    # Write via a temp file so an interrupted run leaves no partial report
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = report_path.with_suffix(".json.tmp")
+    tmp_path.write_text(json.dumps(report, indent=2))
+    os.replace(tmp_path, report_path)
+    logger.info("video quality: wrote %s (%.1f kB)", report_path, report_path.stat().st_size / 1000)
+    return report

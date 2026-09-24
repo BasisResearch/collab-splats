@@ -2,6 +2,7 @@
 Tests for preproc calibration and undistortion: pycolmap camera, COLMAP framing, cv2 remap.
 """
 
+import inspect
 from pathlib import Path
 
 import cv2
@@ -10,11 +11,7 @@ import pycolmap
 import pytest
 
 from collab_splats.preproc import frames as fr
-from collab_splats.preproc.undistort import (
-    _SIFT_NUM_THREADS,
-    calibrate_camera,
-    undistort_frames,
-)
+from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.preproc.video import iter_frames
 from collab_splats.wrapper.reconstructor import _camera_provenance, extract_frames
 
@@ -50,6 +47,38 @@ def _write_textured_sequence(out_dir, *, n, width, height):
     for i in range(n):
         crop = canvas[2 * i : 2 * i + height, 2 * i : 2 * i + width]
         cv2.imwrite(str(out_dir / f"frame_{i:06d}.png"), crop)
+
+
+def _stub_pycolmap(monkeypatch, registered=None):
+    # Record the subset and thread counts; the mapper returns `registered` images or no model
+    captured = {}
+    camera = pycolmap.Camera(model="OPENCV", width=64, height=48, params=[60.0, 60.0, 32.0, 24.0, 0.0, 0.0, 0.0, 0.0])
+
+    class _Recon:
+        cameras = {1: camera}
+
+        def num_reg_images(self):
+            return registered
+
+    def fake_extract(database, image_dir, **kwargs):
+        captured["names"] = list(kwargs["image_names"])
+        captured["extract"] = kwargs["extraction_options"].num_threads
+
+    def fake_match(database, **kwargs):
+        captured["match"] = kwargs["matching_options"].num_threads
+
+    monkeypatch.setattr(pycolmap, "extract_features", fake_extract)
+    monkeypatch.setattr(pycolmap, "match_exhaustive", fake_match)
+    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: {} if registered is None else {0: _Recon()})
+    return captured
+
+
+def _touch_images(tmp_path, n):
+    images = tmp_path / "images"
+    images.mkdir()
+    for i in range(n):
+        (images / f"frame_{i:06d}.png").touch()
+    return images
 
 
 ########################################################################
@@ -103,31 +132,55 @@ def test_calibrate_camera_rejects_too_few_images(tmp_path):
         calibrate_camera(images)
 
 
-def test_calibrate_camera_caps_sift_threads(tmp_path, monkeypatch):
-    # The pycolmap wheel here is CPU-only, so an uncapped num_threads (-1) spawns one
-    # SIFT thread per host core and OOM-kills the container on 1080p frames.
-    captured = {}
+def test_calibrate_camera_tunable_defaults():
+    # tunable defaults are pinned
+    params = inspect.signature(calibrate_camera).parameters
+    assert params["max_frames"].default == 60 and params["min_images"].default == 8
+    assert params["num_threads"].default == 8 and params["min_registered_frac"].default == 0.6
 
-    def fake_extract(database, image_dir, **kwargs):
-        captured["extract"] = kwargs["extraction_options"].num_threads
 
-    def fake_match(database, **kwargs):
-        captured["match"] = kwargs["matching_options"].num_threads
-
-    monkeypatch.setattr(pycolmap, "extract_features", fake_extract)
-    monkeypatch.setattr(pycolmap, "match_exhaustive", fake_match)
-    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **kw: {})
-
-    images = tmp_path / "images"
-    images.mkdir()
-    for i in range(12):
-        (images / f"frame_{i:06d}.png").touch()
+def test_calibrate_camera_max_frames_sets_subset_size(tmp_path, monkeypatch):
+    # max_frames caps the evenly spaced subset handed to SIFT
+    captured = _stub_pycolmap(monkeypatch)
+    images = _touch_images(tmp_path, 12)
 
     with pytest.raises(RuntimeError, match="no model registered"):
-        calibrate_camera(images, max_frames=12)
+        calibrate_camera(images, max_frames=5)
 
-    assert captured == {"extract": _SIFT_NUM_THREADS, "match": _SIFT_NUM_THREADS}
-    assert 0 < _SIFT_NUM_THREADS <= 16
+    assert len(captured["names"]) == 5
+
+
+def test_calibrate_camera_min_images_lowers_the_floor(tmp_path, monkeypatch):
+    # Below the default floor but above min_images: no ValueError, calibration proceeds
+    _stub_pycolmap(monkeypatch)
+    images = _touch_images(tmp_path, 4)
+
+    with pytest.raises(RuntimeError, match="no model registered"):
+        calibrate_camera(images, min_images=3)
+
+
+@pytest.mark.parametrize("registered, frac, raises", [(6, 0.4, False), (9, 0.9, True)])
+def test_calibrate_camera_min_registered_frac_gates(tmp_path, monkeypatch, registered, frac, raises):
+    # 6/12 passes a 0.4 floor and 9/12 fails a 0.9 floor; the 0.6 default flips both
+    _stub_pycolmap(monkeypatch, registered=registered)
+    images = _touch_images(tmp_path, 12)
+
+    if raises:
+        with pytest.raises(RuntimeError, match="registered"):
+            calibrate_camera(images, max_frames=12, min_registered_frac=frac)
+    else:
+        assert calibrate_camera(images, max_frames=12, min_registered_frac=frac).model.name == "OPENCV"
+
+
+def test_calibrate_camera_num_threads_reaches_extract_and_match(tmp_path, monkeypatch):
+    # A caller's num_threads reaches both SIFT stages, not the default
+    captured = _stub_pycolmap(monkeypatch)
+    images = _touch_images(tmp_path, 12)
+
+    with pytest.raises(RuntimeError, match="no model registered"):
+        calibrate_camera(images, max_frames=12, num_threads=3)
+
+    assert (captured["extract"], captured["match"]) == (3, 3)
 
 
 @pytest.mark.slow

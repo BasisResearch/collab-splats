@@ -476,7 +476,7 @@ class LocalizePage(param.Parameterized):
                     video = self._ensure_local_query_video(query_scene)
                     from collab_splats.preproc import extract_frame, get_video_info
 
-                    total = int(get_video_info(str(video)).get("total_frames") or 1)
+                    total = get_video_info(str(video))["total_frames"]
                     frame = extract_frame(video, 0)
             except Exception as exc:
                 logger.warning("query video fetch/preview failed", exc_info=True)
@@ -484,7 +484,7 @@ class LocalizePage(param.Parameterized):
                 return
 
             def setter():
-                self.frame_slider.end = max(total - 1, 0)
+                self.frame_slider.end = total - 1
                 self.frame_slider.value = 0
                 self._show_frame(frame)
 

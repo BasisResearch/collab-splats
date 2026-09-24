@@ -14,49 +14,19 @@ input_path: null
 output_path: null
 
 preproc:
-  # Output: <output_path>/images/frame_NNNNNN.png (COLMAP-style image directory,
-  # lossless PNG) + <output_path>/frames.json (selection records + provenance).
-  #
-  # Each method has ONE density knob. max_frames is the frame budget: the target
-  # COUNT for 'uniform', a ceiling for 'fps' and 'optical_flow'.
+  # Output: images/frame_NNNNNN.png + frames.json beside it
   frame_selection: fps        # fps | uniform | optical_flow
-  fps: 2.0                    # 'fps' only: samples/second. Fixes the baseline between
-                              # consecutive frames regardless of video length — which a
-                              # count-based knob cannot do.
-  min_frames: null            # 'fps' only: floor on the resulting count. null = fps is
-                              # honoured literally (a floor would make it a hint).
-  max_frames: 300             # frame budget; vggt_omega OOMs above ~300 on a 44 GB GPU.
-                              # NOT a LoGeR limit — LoGeR is windowed and built for longer
-                              # sequences — but preproc runs first, so it binds LoGeR too.
-                              # See configs/README.md.
-  n_workers: 4                # quality report only: decode+measure this many frame ranges in
-                              # parallel. 1 = serial. Measured on a 2388-frame 1080x1920 video:
-                              # 2 -> 1.90x, 4 -> 3.04x (best), 6 -> 2.95x, 12 -> 2.06x. NOT
-                              # auto-derived — os.cpu_count() reports HOST cores inside a
-                              # container and ignores the cgroup quota. Set to 1 while a GPU
-                              # eval run is using the machine (CLAUDE.md: OOM risk).
-  undistort: false            # self-calibrate one shared OPENCV camera (pycolmap, <=60 frames)
-                              # and undistort every selected frame (cv2, alpha=0 crop) before
-                              # images/ is written. Off until the GH010229 A/B measures the
-                              # win. images/ reuse is by EXISTENCE — toggling this on an
-                              # existing scene needs preprocess(overwrite=True). Localization
-                              # QUERY images are NOT undistorted (they never pass through here).
-  quality:                    # eligibility gate every selector samples from
-                              # (preproc.sampling.filter_frame_quality). Report-only columns
-                              # become a keep mask here and nowhere else.
-    sharpness_k: 2.0          # robust z-score cut on log(laplacian), MAD-scaled over the
-                              # WHOLE video. LARGER KEEPS MORE — lower it to cut harder.
-                              # 2.0 drops 5.1% of GH010229; 1.0 drops 15.1%, and the frames
-                              # it drops are measurably higher-motion than the median.
-    on_empty_slot: rescue     # what fps sampling does with a slot whose every frame failed
-                              # the gate. rescue keeps that slot's sharpest frame anyway;
-                              # drop leaves a coverage gap. Coverage cannot be recovered by
-                              # any later stage — on GH010229, dropping left 12.96 m of
-                              # travel with zero views and holed the ground there.
-    max_clipped_frac: 0.25    # ceiling on clipped_low_frac + clipped_high_frac. Absolute,
-                              # not robust: a pixel at 0 or 255 recorded nothing recoverable.
-                              # Inert on well-exposed footage — GH010229's worst frame is
-                              # 0.213, so this cut removes zero frames there.
+  fps: 2.0                    # fps only: samples per second; fixes spacing, count floats
+  min_frames: null            # fps only: floor on the count; null honors fps literally
+  max_frames: 300             # frame budget: count for uniform, ceiling otherwise; also caps loger
+                              # vggt_omega OOMs above ~300
+  n_workers: 4                # quality report: parallel decode ranges; 1 = serial (use during GPU runs)
+  undistort: false            # self-calibrate, then rewrite images/ undistorted (COLMAP framing)
+                              # existing images/ needs overwrite=True; localize queries stay raw
+  on_empty_slot: rescue       # fps only: rescue keeps an all-ineligible slot's sharpest frame, drop skips it
+  quality:                    # eligibility gate every sampler picks from
+    sharpness_k: 2.0          # MAD z-score cut on log(laplacian); larger keeps more
+    max_clipped_frac: 0.25    # ceiling on clipped_low_frac + clipped_high_frac; larger keeps more
 
 pointcloud:
   method: feedforward         # feedforward | sfm

@@ -510,7 +510,7 @@ def test_load_video_single_decode(tmp_path, monkeypatch):
         return synthetic_frames[:max_frames], synthetic_records[:max_frames]
 
     monkeypatch.setattr("datasets.sample_uniform", mock_sample_uniform)
-    monkeypatch.setattr("datasets.load_video_quality", lambda *a, **k: {"available": True, "frames": {}})
+    monkeypatch.setattr("datasets.load_video_quality", lambda *a, **k: {"frames": {}})
 
     # Create a minimal fake video file to pass to _load_video
     video_path = tmp_path / "test_video.mp4"

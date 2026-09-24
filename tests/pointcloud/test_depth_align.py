@@ -226,7 +226,7 @@ def test_pixel_indices_clamped_to_grid():
 ########## result_from_reconstruction ##################
 ########################################################
 
-ORIG_W, ORIG_H = 64, 48  # frames.zarr resolution
+ORIG_W, ORIG_H = 64, 48  # original frame resolution (images/)
 # VDA depth grid. The x and y ratios differ on purpose (1/4 vs 1/6): at a common ratio a
 # swapped scale_x / scale_y is invisible in every assertion below.
 DEPTH_W, DEPTH_H = 16, 8

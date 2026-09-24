@@ -67,7 +67,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
 
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
-        patch.object(pl, "load_video_quality", return_value={"available": True, "frames": {}}),
+        patch.object(pl, "load_video_quality", return_value={"frames": {}}),
         patch.object(pl, "_write_images_dir") as wz,
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "fuse_tsdf") as mesh,
@@ -115,7 +115,7 @@ def test_run_pipeline_does_not_push_on_failure(tmp_path):
 
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
-        patch.object(pl, "load_video_quality", return_value={"available": True, "frames": {}}),
+        patch.object(pl, "load_video_quality", return_value={"frames": {}}),
         patch.object(pl, "_write_images_dir"),
         patch.object(pl, "_build_creator", side_effect=RuntimeError("boom")),
     ):

@@ -287,12 +287,14 @@ large, mutable, and reproducible from `run_config.yaml` — it doesn't belong in
 
 Preproc runs in two steps: **measure**, then **select**.
 
-1. **Measure.** `compute_video_quality` decodes the video once and writes
-   `video_quality_report.json` beside `images/` — per-frame photometry (blur,
-   exposure, clipping) and per-pair motion (matches, translation, parallax). The
-   report is **report-only**: it carries measurements, never thresholds and never
-   a usable/unusable verdict. It is reused **by existence** — if the file is
-   already there the decode pass is skipped, so delete it to re-measure.
+1. **Measure.** `load_video_quality` writes `video_quality_report.json` beside
+   `images/`, running `compute_video_quality` (one decode pass) to fill it —
+   per-frame photometry (blur, exposure, clipping) and per-pair motion (matches,
+   translation, parallax). The report is **report-only**: it carries measurements,
+   never thresholds and never a usable/unusable verdict. It is reused **by
+   existence** — if the file is already there the decode pass is skipped, so delete
+   it to re-measure. A report from an older schema (no `frames`) raises rather than
+   being silently re-measured.
    `extract_frames` also renders the report to two PNGs beside it
    (`photometric.png`, `motion.png`; plotters in `preproc/viz.py`), each panel with
    a marginal histogram and the kept frames marked by faint green lines. `motion.png`
@@ -327,8 +329,8 @@ order of magnitude between a 1-minute and a 20-minute video.
 evenly across the **whole** video and the effective fps is logged at WARNING —
 never truncated, which would hand the reconstructor a scene that stops halfway.
 
-**`max_frames` still dominates on long video.** At `fps: 1.0` the default
-`max_frames: 300` binds past ~5 minutes, and beyond that the spacing is whatever
+**`max_frames` still dominates on long video.** At `fps: 2.0` the default
+`max_frames: 300` binds past ~2.5 minutes, and beyond that the spacing is whatever
 300 frames over the whole video gives you. The cap is a measured GPU limit, not a
 preference — `fps` cannot route around it. That limit is `vggt_omega`'s, though, not
 the pipeline's: `loger` is windowed and is expected to run well past 300 frames, but
@@ -349,11 +351,14 @@ parameter and raises.
 | `input_path` | str | **set per run** | Absolute path to video (.MP4) or image directory |
 | `output_path` | str | **set per run** | Absolute path for outputs (created if absent) |
 | `preproc.frame_selection` | str | `fps` | Frame sampling: `fps`, `uniform`, or `optical_flow` |
-| `preproc.fps` | float | `1.0` | `fps` method only: samples per second |
+| `preproc.fps` | float | `2.0` | `fps` method only: samples per second |
 | `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
-| `preproc.undistort` | bool | `false` | Self-calibrate one shared OPENCV camera (pycolmap, ≤60 frames) and undistort every selected frame (cv2, alpha=0 crop) before `images/` is written. `images/` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
+| `preproc.undistort` | bool | `false` | After `images/` is written, self-calibrate one shared OPENCV camera from those frames (pycolmap, ≤60 of them) and rewrite `images/` undistorted. COLMAP framing: focal kept, canvas resized to the undistorted corners, so frame dims change. `images/` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
+| `preproc.on_empty_slot` | str | `rescue` | `fps` method only: a slot with no eligible frame keeps its sharpest frame (`rescue`) or is skipped (`drop`). A preproc-level key, not under `quality`. |
+| `preproc.quality.sharpness_k` | float | `2.0` | Eligibility gate for every sampler: MAD z-score cut on `log(laplacian)`; larger keeps more |
+| `preproc.quality.max_clipped_frac` | float | `0.25` | Eligibility gate for every sampler: ceiling on `clipped_low_frac + clipped_high_frac`; larger keeps more |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` only — `colmap`/`hloc` are rejected at config validation. `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm/` but nothing dispatches to them. |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
@@ -420,6 +425,9 @@ READ by the clean step" in `base.yaml` itself; `depth_align` chose between the `
 `features` had one supported value (`colmap`) and was validated but never dispatched on; and `single_camera` was an `InstantSfMCreator` field that was never set
 `False` — the sfm path stages one video, so the single-camera branch is now hard-coded
 (`pointcloud/sfm/instantsfm.py`).
+
+**Migration (2026-09-24):** `preproc.quality.on_empty_slot` moved to `preproc.on_empty_slot`;
+a `run_config.yaml` still setting the old key raises a `TypeError` from `filter_frame_quality`.
 
 ### Localization matchers
 

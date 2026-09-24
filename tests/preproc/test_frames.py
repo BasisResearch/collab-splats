@@ -2,26 +2,12 @@
 Directory-backed keyframe store: images/frame_NNNNNN.png + frames.json.
 """
 
-import importlib.util
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
-import zarr
 
 from collab_splats.preproc import frames as fr
-
-# scripts/migrate_frames_zarr.py is a CLI, not an installed module, and the name `scripts`
-# is contested: `tests/evals/test_datasets.py` puts `<repo>/evals` on sys.path[0], which makes
-# `evals/scripts/` win `import scripts` for the rest of the session, and MapAnything's
-# `uniception` ships its own top-level `scripts` in site-packages. Neither is winnable by path
-# order, so load the file directly — no package, no collision.
-_MIGRATE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "migrate_frames_zarr.py"
-_spec = importlib.util.spec_from_file_location("_migrate_frames_zarr", _MIGRATE_PATH)
-_migrate_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_migrate_mod)
-migrate_scene = _migrate_mod.migrate_scene
 
 
 def _frames(n=3, h=8, w=12):
@@ -128,34 +114,14 @@ def test_write_frames_rejects_a_length_mismatch(tmp_path):
         fr.write_frames(tmp_path / "images", _frames(3), _records([0]), {})
 
 
-def test_read_manifest_names_the_migration_script_when_absent(tmp_path):
+def test_read_manifest_raises_when_absent(tmp_path):
     (tmp_path / "images").mkdir()
-    with pytest.raises(FileNotFoundError, match="migrate_frames_zarr"):
+    with pytest.raises(FileNotFoundError, match="frames.json"):
         fr.read_manifest(tmp_path / "images")
 
 
-def test_migrate_converts_a_zarr_store_without_decoding(tmp_path):
-    """
-    The migration script reads frames.zarr and writes images/ + frames.json.
-    """
-    # Build a minimal frames.zarr by hand — the same shape the retired zarr store wrote
-    scene = tmp_path / "scene"
-    scene.mkdir()
-    imgs = np.stack(_frames(3))
-    store = zarr.open(str(scene / "frames.zarr"), mode="w")
-    store.create_array("images", data=imgs, chunks=(1, *imgs.shape[1:]))
-    store.create_array("frame_idx", data=np.array([0, 5, 11]))
-    store.create_array("blur_score", data=np.array([1.0, 2.0, 3.0]))
-    store.attrs["record_keys"] = ["blur_score", "frame_idx"]
-    store.attrs["provenance"] = {"method": "fps", "fps": 2.0}
-    store.attrs["schema_version"] = 1
+def test_write_frames_png_compression_is_a_kwarg(tmp_path):
+    def size(sub, **kw):
+        return fr.write_frames(tmp_path / sub / "images", _frames(1, 64, 64), _records([0]), {}, **kw)[0].stat().st_size
 
-    migrate_scene(scene)
-
-    out = fr.read_frames(scene / "images")
-    np.testing.assert_array_equal(out, imgs)
-
-    manifest = fr.read_manifest(scene / "images")
-    assert manifest["provenance"] == {"method": "fps", "fps": 2.0}
-    assert [r["frame_idx"] for r in manifest["frames"]] == [0, 5, 11]
-    assert manifest["frames"][1]["blur_score"] == 2.0
+    assert size("l0", png_compression=0) > size("default") > size("l9", png_compression=9)

@@ -1,20 +1,15 @@
 """
-Keyframe selection: which frames to keep, and the three methods that pick them.
+Keyframe selection from a quality report.
 
-- sample_fps, sample_uniform and sample_optical_flow each take a quality report from
-  preproc.qa and filter it through filter_frame_quality
-- filter_frame_quality is the one place a threshold meets the report: qa measures,
-  this module decides
-- context_indices builds the constant-rate grid both the fps sampler and the VDA
-  context stream select on
-- decoding and video metadata live in preproc.video
+- filter_frame_quality turns report columns into a keep mask; qa never decides
+- sample_fps fixes spacing, sample_uniform fixes count, sample_optical_flow follows motion
+- every sampler picks from frames the mask keeps; sample_fps's rescue is the one exception
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Callable
 
 import cv2
@@ -82,232 +77,141 @@ def filter_frame_quality(
 ########################################################################
 
 
-class OpticalFlowFrameSelector:
+class _OpticalFlowSelector:
     """
-    Streaming keyframe selector: motion (LK flow + rotation) and coverage scoring.
+    Streaming keyframe scorer: LK motion and histogram coverage against the last keyframe.
 
-    - holds the reference keyframe between calls — score with score_frame(), promote with
-      accept_frame()
-    - construct one per video
-    - no cv2/kornia/open3d equivalent exists for the streaming "is this frame different enough
-      from the last one I kept" policy
-    - the pieces it is built from are all cv2's: goodFeaturesToTrack, calcOpticalFlowPyrLK,
-      estimateAffinePartial2D, calcHist/compareHist
+    - score() a candidate; accept() it to make it the new reference
     """
 
     def __init__(
         self,
-        min_disparity: float = 50.0,
         *,
-        rotation_threshold_deg: float = 5.0,
-        lk_params: dict | None = None,
-        feature_params: dict | None = None,
+        min_disparity: float,
+        rotation_threshold_deg: float,
+        lk_window: int = 21,
+        lk_levels: int = 3,
+        max_corners: int = 1000,
+        min_inliers: int = 10,
+        hist_bins: int = 64,
+        motion_weight: float = 0.6,
     ):
+        """
+        Hold the scoring thresholds; no keyframe until the first accept().
+
+        Args:
+            min_disparity: mean LK displacement in pixels that scores a full translation.
+            rotation_threshold_deg: in-plane rotation in degrees that scores a full rotation.
+            lk_window: LK search window side in pixels.
+            lk_levels: LK pyramid levels above the base image.
+            max_corners: Shi-Tomasi corner cap per keyframe.
+            min_inliers: fewer tracked corners than this scores zero motion.
+            hist_bins: intensity-histogram bins for the coverage term.
+            motion_weight: weight of motion in the score; coverage gets the rest.
+        """
         self.min_disparity = min_disparity
         self.rotation_threshold_deg = rotation_threshold_deg
+        self.lk_window = lk_window
+        self.lk_levels = lk_levels
+        self.max_corners = max_corners
+        self.min_inliers = min_inliers
+        self.hist_bins = hist_bins
+        self.motion_weight = motion_weight
 
-        # Built here, not as defaults
-        # - a mutable dict default is shared across every instance in the process
-        # - Python trap, not a style call
-        # - params below are Lucas-Kanade sparse flow
-        self.lk_params = lk_params or dict(
-            winSize=(21, 21),
-            maxLevel=3,
-            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
+        # Reference keyframe, set by accept()
+        self.keyframe: np.ndarray | None = None
+        self.keyframe_pts: np.ndarray | None = None
+
+    def accept(self, gray: np.ndarray) -> None:
+        """
+        Make gray the reference keyframe and seed its Shi-Tomasi corners.
+        """
+        self.keyframe = gray.copy()
+        self.keyframe_pts = cv2.goodFeaturesToTrack(
+            gray, maxCorners=self.max_corners, qualityLevel=0.01, minDistance=8, blockSize=7
         )
 
-        # Shi-Tomasi corners, the seed points that flow tracks.
-        self.feature_params = feature_params or dict(maxCorners=1000, qualityLevel=0.01, minDistance=8, blockSize=7)
-
-        # Reference keyframe state, seeded on the first scored frame
-        self.last_keyframe_gray: np.ndarray | None = None
-        self.last_keyframe_pts: np.ndarray | None = None
-
-    def score_frame(self, gray: np.ndarray) -> tuple[float, dict]:
+    def score(self, gray: np.ndarray) -> tuple[float, dict]:
         """
-        Score a grayscale frame against the current keyframe.
-
-        - the first frame scores 1.0 and seeds the keyframe state
-
-        Args:
-            gray: (h, w) uint8 single-channel candidate frame.
-
-        Returns:
-            (score in [0, 1], components), where components is
-            {'disparity': median LK pixel motion since the last kept frame,
-            'rotation': in-plane rotation against it in degrees,
-            'histogram_similarity': intensity-histogram correlation with it}.
+        Score in [0, 1] against the keyframe, plus its components; 1.0 before any accept.
         """
-        if self.last_keyframe_gray is None:
-            self.accept_frame(gray)
+        if self.keyframe is None:
             return 1.0, {"disparity": 0.0, "rotation": 0.0, "histogram_similarity": 1.0}
 
-        # Motion signals from LK flow of keyframe corners into this frame
+        # Motion: mean LK displacement and in-plane rotation of the keyframe corners
         disparity, rotation = 0.0, 0.0
-        prev_pts, curr_pts = self._compute_flow(gray)
+        prev_pts, curr_pts = self._flow(gray)
         if prev_pts is not None:
             disparity = float(np.mean(np.linalg.norm(curr_pts - prev_pts, axis=1)))
-            rotation = self._estimate_rotation(prev_pts, curr_pts)
+            rotation = self._rotation(prev_pts, curr_pts)
 
-        # Coverage signal: histogram correlation vs the keyframe
-        hist_similarity = self._hist_similarity(gray)
+        similarity = self._hist_similarity(gray)
+        components = {"disparity": disparity, "rotation": rotation, "histogram_similarity": similarity}
+        return self._combine(disparity, rotation, similarity), components
 
-        components = {
-            "disparity": disparity,
-            "rotation": rotation,
-            "histogram_similarity": hist_similarity,
-        }
-
-        return self.combine(disparity, hist_similarity, rotation=rotation), components
-
-    def combine(self, disparity: float, histogram_similarity: float, *, rotation: float = 0.0) -> float:
+    def _combine(self, disparity: float, rotation: float, similarity: float) -> float:
         """
-        Weighted motion + coverage score in [0, 1]; >= select_threshold selects.
-
-        Args:
-            disparity: median LK pixel motion against the keyframe.
-            histogram_similarity: histogram correlation against the keyframe, 1.0 = identical.
-            rotation: in-plane rotation against the keyframe, degrees.
-
-        Returns:
-            Score in [0, 1], fixed 0.6 motion / 0.4 coverage weighting.
+        Weighted max(translation, rotation) motion plus (1 - similarity) coverage.
         """
-        # Fixed motion/coverage weighting
-        motion_weight, coverage_weight = 0.6, 0.4
-
-        # Motion: max of the normalized translation and rotation components
         translation_score = min(disparity / max(self.min_disparity, 1e-6), 1.0)
         rotation_score = min(rotation / self.rotation_threshold_deg, 1.0)
-        motion_score = max(translation_score, rotation_score)
+        motion = max(translation_score, rotation_score)
+        return self.motion_weight * motion + (1.0 - self.motion_weight) * (1.0 - similarity)
 
-        # Coverage: inverse histogram correlation vs the last keyframe
-        coverage_score = 1.0 - histogram_similarity
-
-        return (motion_weight * motion_score + coverage_weight * coverage_score) / (motion_weight + coverage_weight)
-
-    def accept_frame(self, gray: np.ndarray) -> None:
+    def _flow(self, gray: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None]:
         """
-        Make the given grayscale frame the new reference keyframe.
-
-        Args:
-            gray: (h, w) uint8 single-channel frame to promote.
+        LK-tracked (keyframe, current) corners; (None, None) below min_inliers.
         """
-        self.last_keyframe_gray = gray.copy()
-        self.last_keyframe_pts = cv2.goodFeaturesToTrack(gray, **self.feature_params)
-
-    def _compute_flow(self, gray: np.ndarray):
-        """
-        LK flow from keyframe corners; (None, None) if under 10 inliers survive.
-        """
-        if self.last_keyframe_pts is None or len(self.last_keyframe_pts) == 0:
+        if self.keyframe_pts is None or len(self.keyframe_pts) == 0:
             return None, None
 
         curr_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-            self.last_keyframe_gray, gray, self.last_keyframe_pts, None, **self.lk_params
+            self.keyframe,
+            gray,
+            self.keyframe_pts,
+            None,
+            winSize=(self.lk_window, self.lk_window),
+            maxLevel=self.lk_levels,
+            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
         )
         if curr_pts is None:
             return None, None
 
-        good_prev = self.last_keyframe_pts[status == 1]
-        good_curr = curr_pts[status == 1]
-
-        # Too few inliers -> tracking unreliable for motion estimation
-        if len(good_prev) < 10:
+        # (N, 1, 2) points indexed by the (N, 1) status mask -> (M, 2)
+        good = status == 1
+        if good.sum() < self.min_inliers:
             return None, None
 
-        return good_prev, good_curr
+        return self.keyframe_pts[good], curr_pts[good]
 
-    def _estimate_rotation(self, prev_pts: np.ndarray, curr_pts: np.ndarray) -> float:
+    def _rotation(self, prev_pts: np.ndarray, curr_pts: np.ndarray) -> float:
         """
-        Camera rotation angle (degrees) via RANSAC partial-affine fit.
+        In-plane rotation in degrees from a RANSAC partial-affine fit; 0.0 when unfittable.
         """
         if len(prev_pts) < 4:
             return 0.0
 
         try:
             M, _ = cv2.estimateAffinePartial2D(prev_pts, curr_pts, method=cv2.RANSAC)
-            if M is None:
-                return 0.0
-            return float(np.abs(np.degrees(np.arctan2(M[1, 0], M[0, 0]))))
-        except Exception:
-            logger.debug("Rotation estimation failed", exc_info=True)
+        except cv2.error:
             return 0.0
 
-    def _hist_similarity(self, gray: np.ndarray, bins: int = 64) -> float:
-        """
-        Histogram correlation vs the keyframe, clamped to [0, 1].
-        """
-        h1 = cv2.calcHist([self.last_keyframe_gray], [0], None, [bins], [0, 256])
-        h2 = cv2.calcHist([gray], [0], None, [bins], [0, 256])
+        return 0.0 if M is None else float(np.abs(np.degrees(np.arctan2(M[1, 0], M[0, 0]))))
 
+    def _hist_similarity(self, gray: np.ndarray) -> float:
+        """
+        Intensity-histogram correlation with the keyframe, clamped to [0, 1].
+        """
+        h1 = cv2.calcHist([self.keyframe], [0], None, [self.hist_bins], [0, 256])
+        h2 = cv2.calcHist([gray], [0], None, [self.hist_bins], [0, 256])
         h1 = cv2.normalize(h1, h1).flatten()
         h2 = cv2.normalize(h2, h2).flatten()
-
         return float(max(0.0, min(1.0, cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))))
-
-
-########################################################################
-# Selection grid — constant-rate source indices, shared by the keyframe
-# sampler and the VDA context stream so the two agree by construction.
-########################################################################
-
-
-def context_indices(video_path: str | Path, *, target_fps: float, info: dict | None = None) -> list[int]:
-    """
-    Source frame indices on a constant-rate grid at target_fps.
-
-    Args:
-        video_path: source video.
-        target_fps: grid rate; must be positive.
-        info: a get_video_info dict, to hoist the probe out of a loop.
-
-    Returns:
-        Ascending source frame indices. Stride floors at 1 — a rate above the
-        source rate cannot sample sub-frame.
-    """
-    # target_fps is the contract here, so an absent one is a config error, not a default
-    if target_fps is None or target_fps <= 0:
-        raise ValueError(f"context_indices needs a positive target_fps, got {target_fps!r}")
-
-    # Reuse a caller's probe when given — a fresh one costs a container parse
-    info = info if info is not None else get_video_info(video_path)
-    total = info["total_frames"]
-    if total == 0:
-        return []
-
-    native_fps = info["fps"] or 30.0
-    step = max(1, int(round(native_fps / target_fps)))
-    return list(range(0, total, step))
 
 
 ########################################################################
 # Report-driven samplers
 ########################################################################
-
-
-SLOT_POLICIES = ("rescue", "drop")
-
-
-def _split_quality(quality: dict | None) -> tuple[dict, str]:
-    """
-    Separate filter_frame_quality's thresholds from the empty-slot policy.
-
-    - the two travel together in one config block, but only the thresholds are filter args
-    - samplers without slots read the thresholds and ignore the policy
-
-    Args:
-        quality: the preproc.quality block, or None for defaults.
-
-    Returns:
-        (thresholds, policy) — kwargs for filter_frame_quality, and "rescue" or "drop".
-    """
-    thresholds = dict(quality or {})
-    policy = thresholds.pop("on_empty_slot", "rescue")
-
-    if policy not in SLOT_POLICIES:
-        raise ValueError(f"on_empty_slot must be one of {SLOT_POLICIES}, got {policy!r}")
-
-    return thresholds, policy
 
 
 def _eligible(report: dict, *, quality: dict | None) -> np.ndarray:
@@ -321,13 +225,44 @@ def _eligible(report: dict, *, quality: dict | None) -> np.ndarray:
     Returns:
         (M,) int64, ascending.
     """
-    thresholds, _ = _split_quality(quality)
-    pool = np.flatnonzero(filter_frame_quality(report, **thresholds))
+    pool = np.flatnonzero(filter_frame_quality(report, **(quality or {})))
 
     if pool.size == 0:
         raise ValueError("no eligible frames: the quality filter rejected every frame")
 
     return pool
+
+
+def _spread(pool: np.ndarray, n: int) -> list[int]:
+    """
+    n picks evenly spaced by position in pool; all of pool when n >= its size.
+
+    Args:
+        pool: ascending eligible source indices.
+        n: how many to pick.
+
+    Returns:
+        Ascending source indices.
+    """
+    if n >= pool.size:
+        return pool.tolist()
+    return pool[np.linspace(0, pool.size - 1, n).round().astype(int)].tolist()
+
+
+def _sharpest(candidates: np.ndarray, target: int, laplacian: np.ndarray) -> int:
+    """
+    Candidate with the highest laplacian; ties go to the one nearest target.
+
+    Args:
+        candidates: source indices to choose from, non-empty.
+        target: the grid index the slot is centered on.
+        laplacian: the report's per-frame laplacian column.
+
+    Returns:
+        One source index.
+    """
+    rank = np.lexsort((np.abs(candidates - target), -laplacian[candidates]))
+    return int(candidates[rank[0]])
 
 
 def _decode_selection(
@@ -353,18 +288,20 @@ def _decode_selection(
     """
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
-    # One ffmpeg select pass over exactly the frames we keep
+    # One decode pass over exactly the frames we keep
     decoded = dict(iter_frames(video_path, indices=list(chosen)))
+    missing = sorted(set(chosen) - decoded.keys())
+    if missing:
+        raise ValueError(
+            f"decode of {video_path} skipped frames {missing[:5]}; "
+            "the report may not match this video; delete it to recompute"
+        )
 
     frames: list[np.ndarray] = []
     records: list[dict] = []
 
     for idx in progress(chosen, total=len(chosen), desc=desc, on_progress=on_progress):
-        bgr = decoded.get(idx)
-        if bgr is None:
-            continue  # ffmpeg dropped the frame (should not happen)
-
-        frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+        frames.append(cv2.cvtColor(decoded[idx], cv2.COLOR_BGR2RGB))
 
         # blur_score comes from the report, not a recompute — same measurement,
         # and it is the column the record has always carried.
@@ -393,19 +330,20 @@ def sample_uniform(
 
     Returns:
         (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
+
+    Raises:
+        TypeError: quality names a key filter_frame_quality does not take.
+        ValueError: no eligible frames, or the decode skipped a selected frame.
     """
     if max_frames <= 0:
         return [], []
 
     pool = _eligible(report, quality=quality)
 
-    # Spacing is even in POOL index, not in time: budget is not spent inside
-    # footage the filter just condemned.
+    # Spacing is even in pool index, not time: no budget spent in condemned footage
     if pool.size <= max_frames:
         logger.warning("max_frames=%d but only %d eligible frames; keeping the whole pool", max_frames, pool.size)
-        chosen = pool.tolist()
-    else:
-        chosen = pool[np.linspace(0, pool.size - 1, max_frames).round().astype(int)].tolist()
+    chosen = _spread(pool, max_frames)
 
     return _decode_selection(video_path, chosen, report=report, on_progress=on_progress, desc="Uniform sampling")
 
@@ -418,6 +356,7 @@ def sample_fps(
     min_frames: int | None = None,
     max_frames: int | None = None,
     quality: dict | None = None,
+    on_empty_slot: str = "rescue",
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
@@ -425,8 +364,7 @@ def sample_fps(
 
     - the slot is +/- half the target spacing, so picks stay within half a period of the grid
     - ties break to the frame nearest the target, keeping exact spacing where sharpness is flat
-    - a slot with no eligible frame keeps its sharpest frame anyway, unless quality's
-      on_empty_slot is "drop"; picks never leave the slot
+    - a slot with no eligible frame is handled by on_empty_slot; picks never leave the slot
 
     Args:
         video_path: source video.
@@ -434,30 +372,37 @@ def sample_fps(
         report: a quality report from qa.compute_video_quality or qa.load_video_quality.
         min_frames: floor; a count below it re-spreads over the whole video.
         max_frames: ceiling; a count above it re-spreads over the whole video.
-        quality: filter_frame_quality threshold overrides, plus the on_empty_slot policy.
+        quality: overrides for filter_frame_quality's thresholds.
+        on_empty_slot: "rescue" keeps an all-ineligible slot's sharpest frame; "drop" skips it.
         on_progress: optional (done, total) callback.
 
     Returns:
         (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
+
+    Raises:
+        TypeError: quality names a key filter_frame_quality does not take.
+        ValueError: fps is not positive, on_empty_slot is unknown, no frame is eligible,
+            or the decode skipped a selected frame.
     """
     # fps is the contract here, so an absent one is a config error, not a default
     if fps is None or fps <= 0:
         raise ValueError(f"sample_fps needs a positive fps, got {fps!r}")
 
-    info = get_video_info(str(video_path))
-    total = info["total_frames"]
-    if total == 0:
-        return [], []
+    # Unknown empty-slot policy is a config error
+    if on_empty_slot not in ("rescue", "drop"):
+        raise ValueError(f"on_empty_slot must be 'rescue' or 'drop', got {on_empty_slot!r}")
 
+    native_fps = get_video_info(str(video_path))["fps"]
     pool = _eligible(report, quality=quality)
-    _, policy = _split_quality(quality)
+    laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
-    # One source of truth for the stride: a context grid built at this same rate
-    # contains these targets by construction, not by coincidence
-    targets = context_indices(video_path, target_fps=fps, info=info)
+    # Span is the report's length: metadata frame count can overcount, the report is what decoded
+    total = laplacian.size
 
-    # Clamp the floating count into the band by re-spreading over the pool, never by
-    # truncating — truncation would hand the reconstructor half a scene
+    # Constant-rate grid at fps; stride floors at 1
+    targets = list(range(0, total, max(1, int(round(native_fps / fps)))))
+
+    # Clamp the count into [min_frames, max_frames] by re-spreading, never truncating
     requested = len(targets)
     bounded = requested
     if max_frames is not None:
@@ -466,7 +411,7 @@ def sample_fps(
         bounded = max(bounded, min(min_frames, total))
 
     if bounded != requested:
-        targets = pool[np.linspace(0, pool.size - 1, min(bounded, pool.size)).round().astype(int)].tolist()
+        targets = _spread(pool, bounded)
         logger.warning(
             "fps=%.3f wanted %d frames, outside [min_frames=%s, max_frames=%s]; re-spread to "
             "%d frames over the whole video (effective %.3f fps)",
@@ -475,48 +420,24 @@ def sample_fps(
             min_frames,
             max_frames,
             len(targets),
-            (info["fps"] or 30.0) * len(targets) / total,
+            native_fps * len(targets) / total,
         )
 
-    # An empty pool is the caller's error to report, not ours to index into
-    if pool.size == 0:
-        return [], []
-
-    # Take the SHARPEST eligible frame in each target's slot, not merely the nearest
-    # - the eligibility gate is video-wide, so inside one slot every survivor ranks equal
-    # - nearest-in-time then picks an arbitrary one: measured on GH010229 the picks sat at
-    #   the 50th sharpness percentile of their own slot, a coin flip over 15 candidates
-    # - ties break to the nearest target, so a flat-sharpness stretch keeps the old spacing
+    # Sharpest eligible frame per slot, ties to the nearest target
+    # - the gate is video-wide, so nearest-in-time alone picks an arbitrary survivor
     targets = np.asarray(targets)
     half = max(int(np.median(np.diff(targets)) // 2), 1) if targets.size > 1 else 1
-    laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
-
     lo = np.searchsorted(pool, targets - half, side="left")
     hi = np.searchsorted(pool, targets + half, side="right")
 
     chosen = []
     for target, start, stop in zip(targets.tolist(), lo.tolist(), hi.tolist()):
-        # Slot holds no eligible frame
-        # - reaching outside it broke the spacing contract silently; the policy decides now
-        # - rescue: keep the slot's sharpest frame, gate or no gate
-        # - drop: emit nothing, accept the gap
-        # - coverage is unrecoverable later: on GH010229 dropping left 12.96 m of travel
-        #   with zero views, against a 0.58 m median baseline, and the ground holed there
-        if start >= stop:
-            if policy == "drop":
-                continue
-
+        if start < stop:
+            chosen.append(_sharpest(pool[start:stop], target, laplacian))
+        elif on_empty_slot == "rescue":
+            # Slot holds no eligible frame: keep its sharpest frame anyway
             window = np.arange(max(target - half, 0), min(target + half + 1, laplacian.size))
-            if window.size == 0:
-                continue
-
-            rank = np.lexsort((np.abs(window - target), -laplacian[window]))
-            chosen.append(int(window[rank[0]]))
-            continue
-
-        candidates = pool[start:stop]
-        rank = np.lexsort((np.abs(candidates - target), -laplacian[candidates]))
-        chosen.append(int(candidates[rank[0]]))
+            chosen.append(_sharpest(window, target, laplacian))
 
     # Two targets either side of an excised stretch can land on the same survivor
     chosen = sorted(set(chosen))
@@ -532,15 +453,13 @@ def sample_optical_flow(
     min_disparity: float = 50.0,
     select_threshold: float = 0.5,
     rotation_threshold_deg: float = 5.0,
-    lk_params: dict | None = None,
-    feature_params: dict | None = None,
     quality: dict | None = None,
     on_progress: Callable[[int, int], None] | None = None,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
     Keyframes by motion (LK disparity + rotation) and coverage (histogram diversity).
 
-    - runs its own decode pass: LK disparity is measured against a MOVING keyframe reference,
+    - runs its own decode pass: LK disparity is computed against a MOVING keyframe reference,
       which the report's fixed-stride pairs cannot supply
     - blur comes from the report, never a recompute
 
@@ -551,24 +470,22 @@ def sample_optical_flow(
         min_disparity: pixel motion scoring a full translation component.
         select_threshold: score at or above which a frame is selected.
         rotation_threshold_deg: rotation scoring a full rotation component.
-        lk_params: overrides for cv2.calcOpticalFlowPyrLK.
-        feature_params: overrides for cv2.goodFeaturesToTrack.
         quality: overrides for filter_frame_quality's thresholds.
         on_progress: optional (done, total) callback.
 
     Returns:
-        (frames, records) — (H, W, 3) uint8 RGB arrays and their per-frame score rows.
+        (frames, records) — (H, W, 3) uint8 RGB arrays and one record per kept frame:
+        {frame_idx, blur_score, score, disparity, rotation, histogram_similarity}.
+
+    Raises:
+        TypeError: quality names a key filter_frame_quality does not take.
+        ValueError: no eligible frames.
     """
     info = get_video_info(str(video_path))
     pool = set(_eligible(report, quality=quality).tolist())
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
-    selector = OpticalFlowFrameSelector(
-        min_disparity=min_disparity,
-        rotation_threshold_deg=rotation_threshold_deg,
-        lk_params=lk_params,
-        feature_params=feature_params,
-    )
+    selector = _OpticalFlowSelector(min_disparity=min_disparity, rotation_threshold_deg=rotation_threshold_deg)
 
     frames: list[np.ndarray] = []
     records: list[dict] = []
@@ -584,23 +501,15 @@ def sample_optical_flow(
         if idx not in pool:
             continue
 
-        score, components = selector.score_frame(analysis_gray(bgr))
+        # One gray per frame; a frame is accepted once, when it is selected
+        gray = analysis_gray(bgr)
+        score, components = selector.score(gray)
         if score < select_threshold:
             continue
 
-        selector.accept_frame(analysis_gray(bgr))
+        selector.accept(gray)
         frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-
-        # frame_idx is the SOURCE video index
-        records.append(
-            {
-                "frame_idx": int(idx),
-                "blur_score": float(laplacian[idx]),
-                "score": score,
-                "selected": True,
-                **components,
-            }
-        )
+        records.append({"frame_idx": int(idx), "blur_score": float(laplacian[idx]), "score": score, **components})
 
         if max_frames is not None and len(frames) >= max_frames:
             break

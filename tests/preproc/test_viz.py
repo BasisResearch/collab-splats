@@ -5,6 +5,7 @@ matplotlib.use("Agg")  # headless backend for tests
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
+from PIL import Image
 
 from collab_splats.preproc import viz as viz_module
 from collab_splats.preproc.viz import (
@@ -37,7 +38,6 @@ def _fake_records(n=30):
             "rotation": float(rng.random() * 3),
             "histogram_similarity": float(rng.random()),
             "score": float(rng.random()),
-            "selected": i % 5 == 0,
         }
         for i in range(n)
     ]
@@ -49,9 +49,10 @@ def test_plot_frame_grid_smoke():
     assert plt.gcf() is not None
 
 
-def test_plot_selection_both_sets():
-    plot_selection(100, fps_indices=[0, 10, 20], of_indices=[0, 5, 30])
-    assert len(plt.gcf().axes) == 2
+def test_plot_selection_one_panel_per_method():
+    plot_selection(100, {"fps": [0, 10, 20], "uniform": [0, 50], "optical_flow": [0, 5, 30]})
+    axes = plt.gcf().axes
+    assert [ax.get_title().split()[0] for ax in axes] == ["fps", "uniform", "optical_flow"]
 
 
 def test_plot_frame_scores_smoke():
@@ -61,16 +62,6 @@ def test_plot_frame_scores_smoke():
 
 def test_plot_frame_scores_empty_input():
     plot_frame_scores([])  # must not raise
-
-
-def test_dead_plots_are_gone():
-    """
-    Both were broken or approximate, and nothing outside the notebook called them.
-    """
-    from collab_splats.preproc import viz
-
-    assert not hasattr(viz, "plot_disparity_sensitivity")
-    assert not hasattr(viz, "plot_quality_examples")
 
 
 ########################################################################
@@ -108,7 +99,6 @@ def _fake_video_quality_report(n_frames=20, fps=10.0, stride=2, n_pairs=10):
         "parallax": parallax,
     }
     return {
-        "available": True,
         "video": {"path": "/data/clip.mp4", "fps": fps, "total_frames": n_frames, "width": 64, "height": 48},
         "params": {"motion_stride": stride},
         "frames": frames,
@@ -166,3 +156,30 @@ def test_plot_frame_extremes_writes_png(tmp_path, monkeypatch):
     blur = np.asarray(report["frames"]["blur"])
     assert set(seen) == set(np.argsort(blur)[-3:]) | set(np.argsort(blur)[:3])
     _assert_png(plot_frame_extremes(report, "fake.mp4", tmp_path, column="exposure_mean"), "extremes-exposure_mean.png")
+
+
+def _stub_decode(monkeypatch):
+    """
+    Stub video decode: plot_frame_extremes only needs an (H, W, 3) uint8 per frame.
+    """
+    monkeypatch.setattr(viz_module, "get_video_info", lambda path: {"fps": 10.0})
+    monkeypatch.setattr(viz_module, "extract_frame", lambda path, i, info=None: np.zeros((8, 6, 3), np.uint8))
+
+
+_PLOTTERS = {
+    "photometric": (lambda r, o, **kw: plot_photometric(r, o, **kw), 90),
+    "motion": (lambda r, o, **kw: plot_motion(r, o, **kw), 90),
+    "extremes": (lambda r, o, **kw: plot_frame_extremes(r, "fake.mp4", o, n=2, **kw), 150),
+    "correlation": (lambda r, o, **kw: plot_correlation(r, "n_matches", "parallax", o, **kw), 90),
+}
+
+
+@pytest.mark.parametrize("name", list(_PLOTTERS))
+def test_plotters_take_dpi(name, tmp_path, monkeypatch):
+    _stub_decode(monkeypatch)
+    plot, default_dpi = _PLOTTERS[name]
+    report = _fake_video_quality_report()
+    with Image.open(plot(report, tmp_path / "custom", dpi=40)) as img:
+        assert [round(d) for d in img.info["dpi"]] == [40, 40]
+    with Image.open(plot(report, tmp_path / "default")) as img:
+        assert [round(d) for d in img.info["dpi"]] == [default_dpi, default_dpi]

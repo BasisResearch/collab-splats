@@ -1,12 +1,8 @@
 """
-Canonical keyframe store: a COLMAP-style images/ directory plus frames.json.
+Keyframe store: a COLMAP-style images/ directory plus frames.json beside it.
 
-- the preprocess stage decodes a video once and writes images/frame_NNNNNN.png,
-  lossless at PNG compression 1
-- frames.json sits beside it, holding the selection records and provenance COLMAP has
-  no slot for
-- every pixel consumer reads the directory; path-locked consumers take the directory
-  itself, so nothing stages a second copy
+- images/frame_NNNNNN.png, lossless PNG, RGB at both boundaries
+- frames.json holds selection records and provenance COLMAP has no slot for
 """
 
 from __future__ import annotations
@@ -32,9 +28,6 @@ SCHEMA_VERSION = 2
 IMAGE_EXTS = (".png", ".jpg", ".jpeg")
 
 _MANIFEST_NAME = "frames.json"
-
-# OpenCV's default. Level 9 costs 10x the time for 11% of the size (measured, spec 2.2).
-_PNG_COMPRESSION = 1
 
 
 ########################
@@ -102,6 +95,8 @@ def write_frames(
     frames: Sequence[np.ndarray] | np.ndarray,
     records: Sequence[dict],
     provenance: dict,
+    *,
+    png_compression: int = 1,
 ) -> list[Path]:
     """
     Write frames as PNGs and the manifest beside them.
@@ -111,9 +106,13 @@ def write_frames(
         frames: RGB uint8 (H, W, 3) frames, one per record.
         records: selection records, each carrying an int 'frame_idx' (source index).
         provenance: descriptive dict stamped into frames.json.
+        png_compression: cv2 PNG level 0-9; higher is smaller and slower.
 
     Returns:
         Written image paths, in record order.
+
+    Raises:
+        ValueError: frames and records differ in length, or a record lacks 'frame_idx'.
     """
     dir = Path(dir)
     if len(frames) != len(records):
@@ -135,7 +134,7 @@ def write_frames(
         cv2.imwrite(
             str(path),
             cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
-            [cv2.IMWRITE_PNG_COMPRESSION, _PNG_COMPRESSION],
+            [cv2.IMWRITE_PNG_COMPRESSION, png_compression],
         )
         paths.append(path)
 
@@ -188,11 +187,14 @@ def read_manifest(dir: Path | str) -> dict:
 
     Returns:
         {'schema_version', 'provenance', 'frames'}.
+
+    Raises:
+        FileNotFoundError: frames.json is missing.
     """
     path = _manifest_path(dir)
     if not path.exists():
         raise FileNotFoundError(
-            f"read_manifest: {path} not found. A scene written before this format holds "
-            "frames.zarr — convert it with scripts/migrate_frames_zarr.py."
+            f"read_manifest: {path} not found; re-run the preproc stage to write images/ + frames.json "
+            "(a scene holding frames.zarr must be re-extracted)"
         )
     return json.loads(path.read_text())

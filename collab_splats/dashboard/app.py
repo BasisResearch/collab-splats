@@ -381,11 +381,11 @@ class SplatsApp(param.Parameterized):
             video = self._ensure_local_video(scene)  # no-op when already local
             from collab_splats.preproc import get_video_info
 
-            return int(get_video_info(str(video)).get("total_frames") or 0)
+            return get_video_info(str(video))["total_frames"]
 
         def apply(total: int) -> None:
             # Latest-wins: a slow probe for a superseded scene must not clobber the bound.
-            if self.scene_select.value != scene or total <= 0:
+            if self.scene_select.value != scene:
                 return
             self.max_frames.end = total
             self.max_frames.name = f"Max frames (video has {total})"

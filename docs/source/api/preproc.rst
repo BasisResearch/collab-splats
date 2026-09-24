@@ -1,7 +1,7 @@
 Preprocessing
 =============
 
-Video preprocessing: the canonical keyframe store (``frames``), ffmpeg decode and
+Video preprocessing: the canonical keyframe store (``frames``), PyAV decode and
 video metadata (``video``), capture-quality measurement (``qa``), and keyframe
 selection (``sampling``).
 
@@ -50,18 +50,8 @@ directory; it is used directly by mesh extraction, bundle adjustment, and point
 colorization at the model's inference resolution.
 
 See ``docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb`` for
-the full frame-selection walkthrough (uniform vs. optical-flow sampling,
+the full frame-selection walkthrough (fps vs. uniform vs. optical-flow sampling,
 blur/exposure gating).
-
-Migration
----------
-
-Scenes written before this format hold a ``frames.zarr`` store and no ``images/``
-directory. ``read_manifest`` raises ``FileNotFoundError`` on them rather than
-falling back to the old store. Convert one without re-decoding the video::
-
-   python scripts/migrate_frames_zarr.py <scene_dir> [<scene_dir> ...]
-   python scripts/migrate_frames_zarr.py --all <processed_root>
 
 Known limitations
 ------------------

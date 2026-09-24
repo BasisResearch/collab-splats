@@ -1,14 +1,8 @@
 """
-Camera calibration and undistortion at the images/ boundary.
+Camera self-calibration and undistortion for the images/ directory.
 
-- pycolmap self-calibrates one shared OPENCV camera from the scene's images; cv2 moves
-  the pixels
-- the camera IS a pycolmap.Camera — nothing round-trips through a local dataclass
-  mirroring the same numbers
-- every downstream consumer assumes pinhole (feedforward backbones, InstantSfM SIFT,
-  splat trainer, localization DB export), so undistorting once here fixes all of them
-- COLMAP picks the undistorted framing (pycolmap.undistort_camera) and there is no crop,
-  so the principal point cannot drift out of step with it
+- pycolmap self-calibrates one shared OPENCV camera; cv2 remaps the pixels
+- framing is COLMAP's (pycolmap.undistort_camera): focal kept, canvas resized to the corners
 """
 
 from __future__ import annotations
@@ -30,38 +24,36 @@ logger = logging.getLogger(__name__)
 # Calibration (pycolmap self-calibration)
 ########################################
 
-# CPU SIFT threads must be capped or calibration OOMs
-# - pycolmap 4.0.4 here is a CPU-only wheel (has_cuda False)
-# - default num_threads (-1) spawns one thread per HOST core, 96 on this machine
-# - per-thread RAM on 1920x1080 frames blows past the 46.6 GB container cgroup cap
-# - measured: SIGKILL during calibration on a 300-frame GoPro scene
-# - mirrors pointcloud/sfm/instantsfm.py::_generate_sift_database's num_threads default
-_SIFT_NUM_THREADS = 8
 
-# Below this share of the calibration subset the solve has not seen the lens
-_MIN_REGISTERED_FRACTION = 0.6
-
-# Two-view initialization plus a margin; fewer images cannot constrain k1 k2 p1 p2
-_MIN_CALIBRATION_IMAGES = 8
-
-
-def calibrate_camera(images_dir: Path, *, max_frames: int = 60) -> pycolmap.Camera:
+def calibrate_camera(
+    images_dir: Path,
+    *,
+    max_frames: int = 60,
+    min_images: int = 8,
+    min_registered_frac: float = 0.6,
+    num_threads: int = 8,
+) -> pycolmap.Camera:
     """
     Self-calibrate one shared OPENCV camera from a scene's images.
 
     Args:
         images_dir: the scene's images/ directory, read in place.
         max_frames: how many evenly spaced images to calibrate from.
+        min_images: fewer images cannot constrain k1 k2 p1 p2; raise below it.
+        min_registered_frac: share of the subset that must register; raise below it.
+        num_threads: SIFT threads; the pycolmap default (one per host core) can OOM.
 
     Returns:
         The pycolmap.Camera (model OPENCV) of the largest reconstruction, carrying
         fx fy cx cy and k1 k2 p1 p2 at the images' own resolution.
+
+    Raises:
+        ValueError: fewer than min_images images.
+        RuntimeError: no model, or too few images registered.
     """
     paths = frame_paths(images_dir)
-    if len(paths) < _MIN_CALIBRATION_IMAGES:
-        raise ValueError(
-            f"calibrate_camera needs at least {_MIN_CALIBRATION_IMAGES} images, found {len(paths)} in {images_dir}"
-        )
+    if len(paths) < min_images:
+        raise ValueError(f"calibrate_camera needs at least {min_images} images, found {len(paths)} in {images_dir}")
 
     # Evenly spaced subset: calibration wants baseline, not every frame
     idxs = np.unique(np.linspace(0, len(paths) - 1, min(max_frames, len(paths))).round().astype(int))
@@ -82,11 +74,11 @@ def calibrate_camera(images_dir: Path, *, max_frames: int = 60) -> pycolmap.Came
             image_names=names,
             camera_mode=pycolmap.CameraMode.SINGLE,
             reader_options=pycolmap.ImageReaderOptions(camera_model="OPENCV"),
-            extraction_options=pycolmap.FeatureExtractionOptions(num_threads=_SIFT_NUM_THREADS),
+            extraction_options=pycolmap.FeatureExtractionOptions(num_threads=num_threads),
         )
         pycolmap.match_exhaustive(
             database,
-            matching_options=pycolmap.FeatureMatchingOptions(num_threads=_SIFT_NUM_THREADS),
+            matching_options=pycolmap.FeatureMatchingOptions(num_threads=num_threads),
         )
         reconstructions = pycolmap.incremental_mapping(database, images_dir, sparse)
 
@@ -99,10 +91,10 @@ def calibrate_camera(images_dir: Path, *, max_frames: int = 60) -> pycolmap.Came
         # dict[int, Reconstruction] keyed by model id: take the largest, not key 0
         recon = max(reconstructions.values(), key=lambda r: r.num_reg_images())
         registered = recon.num_reg_images()
-        if registered < _MIN_REGISTERED_FRACTION * len(names):
+        if registered < min_registered_frac * len(names):
             raise RuntimeError(
                 f"calibrate_camera: only {registered} of {len(names)} images registered "
-                f"(need {_MIN_REGISTERED_FRACTION:.0%}); the distortion params are not trustworthy"
+                f"(need {min_registered_frac:.0%}); the distortion params are not trustworthy"
             )
 
         camera = next(iter(recon.cameras.values()))
@@ -132,8 +124,11 @@ def undistort_frames(frames_in: np.ndarray, camera: pycolmap.Camera) -> tuple[np
 
     Returns:
         - (N, H', W', 3) uint8, same channel order in as out.
-        - The PINHOLE camera for that canvas: focal preserved, canvas grown to hold
-          the corners, so the center stays 1:1 and nothing is resampled down to fit.
+        - The PINHOLE camera for that canvas: focal preserved, canvas resized to the
+          undistorted corners (grows for barrel distortion), so the center stays 1:1.
+
+    Raises:
+        ValueError: frames_in is not 4-D, or its H, W differ from the camera's.
     """
     frames_in = np.asarray(frames_in)
     if frames_in.ndim != 4 or frames_in.shape[1:3] != (camera.height, camera.width):

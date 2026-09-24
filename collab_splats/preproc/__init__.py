@@ -1,12 +1,9 @@
 """
-Video preprocessing: decode (video), capture quality (qa), frame selection (sampling).
+Video preprocessing: probe and decode, measure quality, select and store keyframes.
 
-- two steps: qa.compute_video_quality measures the whole video into a report, then the
-  samplers select from it
-- selected keyframes land in the canonical images/ directory via frames.py —
-  COLMAP-style frame_NNNNNN.png plus frames.json
-- plots live in collab_splats.preproc.viz, deliberately not re-exported, which keeps
-  matplotlib out of pipeline imports
+- measure then select: qa.load_video_quality measures and caches a report, the samplers pick from it
+- frames.write_frames stores picks as images/frame_NNNNNN.png plus frames.json
+- plots live in preproc.viz, not re-exported, so pipeline imports skip matplotlib
 """
 
 from collab_splats.preproc.frames import (

@@ -27,18 +27,17 @@ These tasks are started but not complete — do not assume their targets are don
 - **clean-final** — integration branch for the five cleanup efforts; all five landed (preproc, semantics, pointcloud, splats, mesh), not yet merged to trunk ([spec](docs/superpowers/specs/2026-09-06-clean-final-integration-design.md) · [plan](docs/superpowers/plans/2026-09-06-clean-final-integration.md))
 - **sky-mask** — ONNX sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
-- **preproc-release** — release cleanup of `preproc/`: brief docs, tunables as kwargs, silent fallbacks raise; round 1 prose, round 2 code ([spec](docs/superpowers/specs/2026-09-24-preproc-release-cleanup-design.md))
 
 ## Recently Completed
 
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **preproc-release** (2026-09-24)
 - **mesh-cleanup** (2026-09-07)
 - **splats-cleanup** (2026-09-06)
 - **pointcloud-cleanup** (2026-09-06)
 - **semantics-cleanup** (2026-09-05)
-- **preproc-centralization** (2026-09-05)
 
 Known test failures: `docs/known-test-failures.md`
 
@@ -89,7 +88,8 @@ collab_splats/
   preproc/                 # video preprocessing: measure (qa) then select (sampling)
     video.py               # PyAV decode: get_video_info, iter_frames, extract_frame
     qa.py                  # report-only capture quality: compute_video_quality, load_video_quality
-    sampling.py            # context_indices + sample_fps | sample_uniform | sample_optical_flow, all from filter_frame_quality's eligible pool
+    sampling.py            # sample_fps | sample_uniform | sample_optical_flow from filter_frame_quality's
+                           #   eligible pool; fps rescue may keep an ineligible frame
     frames.py              # images/frame_NNNNNN.png + frames.json: the COLMAP-style keyframe store
     undistort.py           # calibrate_camera (pycolmap) + undistort_frames (pycolmap framing, cv2 pixels)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)

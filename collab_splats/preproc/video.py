@@ -1,17 +1,11 @@
 """
-Video decode and probe.
+Video probe and decode, in-process via PyAV.
 
-- metadata comes from a PyAV container parse and every decode runs in-process: no
-  subprocess, no full demux, nothing required on PATH
-- holds no measurement logic and no quality-driven selection, so preproc.qa and
-  preproc.sampling can both depend on it without a cycle
-- the constant-rate index grid lives here rather than in sampling, because sampling
-  delegates to it
-- color convention: iter_frames yields BGR (what cv2 wants), extract_frame returns RGB
-  (what its consumers store); both uint8 HWC
+- iter_frames yields BGR (for cv2); extract_frame returns RGB; both uint8 HWC
+- frames come out in display orientation; get_video_info reports display dims
+- no selection logic here, so qa and sampling both import it without a cycle
 """
 
-import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
@@ -19,10 +13,9 @@ import av
 import cv2
 import numpy as np
 
-logger = logging.getLogger(__name__)
-
-# Clockwise display rotation -> the cv2 op that applies it. Keyed the way
-# _rotation_degrees reports, so 0 (and anything unrecognized) means "no rotate".
+# Clockwise display rotation -> the cv2 op that applies it
+# - keyed the way _rotation_degrees reports; 0 or unrecognized means "no rotate"
+# - PyAV's frame.rotation is counter-clockwise, hence the `-frame.rotation` negations
 _ROTATE_CODES = {
     90: cv2.ROTATE_90_CLOCKWISE,
     180: cv2.ROTATE_180,
@@ -39,11 +32,8 @@ def _rotation_degrees(container: av.container.InputContainer) -> int:
     """
     Clockwise display rotation, read off the first decoded frame.
 
-    - PyAV exposes no stream-level side data, so a container's display matrix only
-      reaches Python attached to a decoded frame.
-    - VideoFrame.rotation is counter-clockwise (ffprobe's side-data convention);
-      this returns clockwise, matching the legacy tags.rotate field.
-    - Decoding advances the container, so call this after reading stream metadata.
+    - PyAV exposes the display matrix only on decoded frames
+    - advances the container: call it after reading stream metadata
     """
     for frame in container.decode(video=0):
         return int(-frame.rotation) % 360
@@ -53,21 +43,23 @@ def _rotation_degrees(container: av.container.InputContainer) -> int:
 
 def get_video_info(video_path: str | Path) -> dict:
     """
-    Video metadata from a PyAV container parse.
-
-    - the count is exact and cheap: the container carries it
-    - so no cheap/expensive split, and no full demux to opt out of
+    Frame count, rate, duration and display size from a container parse.
 
     Args:
         video_path: source video.
 
     Returns:
-        {"total_frames": int, "fps": float, "duration_s": float, "width": int,
-        "height": int}. Width/height are DISPLAY dims (rotation applied), matching
-        what decode yields. Every value is zero if the container cannot be probed.
-    """
-    zeros = {"total_frames": 0, "fps": 0.0, "duration_s": 0.0, "width": 0, "height": 0}
+        {"total_frames", "fps", "duration_s", "width", "height"}; width/height are display
+        dims (rotation applied).
 
+    Raises:
+        FileNotFoundError: the path does not exist.
+        ValueError: the container cannot be probed or reports no frames or no rate.
+    """
+    if not Path(video_path).exists():
+        raise FileNotFoundError(f"get_video_info: {video_path} does not exist")
+
+    # IndexError is what streams.video[0] raises on a file with no video stream
     try:
         with av.open(str(video_path)) as container:
             stream = container.streams.video[0]
@@ -83,15 +75,16 @@ def get_video_info(video_path: str | Path) -> dict:
             if total == 0 and container.duration:
                 total = int(round(container.duration / av.time_base * fps))
 
-            # ffmpeg auto-rotates its decode output, so 90/270 swaps the display W/H
+            # Decode output is rotated to display orientation, so 90/270 swaps the display W/H
             if _rotation_degrees(container) in (90, 270):
                 width, height = height, width
-    except Exception:
-        logger.debug("PyAV could not probe %s", video_path, exc_info=True)
-        return zeros
+    except (av.error.FFmpegError, IndexError) as exc:
+        raise ValueError(f"get_video_info: cannot probe {video_path}: {exc}") from exc
 
-    duration_s = total / fps if fps > 0 else 0.0
-    return {"total_frames": total, "fps": fps, "duration_s": duration_s, "width": width, "height": height}
+    if total == 0 or fps == 0:
+        raise ValueError(f"get_video_info: {video_path} reports {total} frames at {fps} fps")
+
+    return {"total_frames": total, "fps": fps, "duration_s": total / fps, "width": width, "height": height}
 
 
 ########################################################################
@@ -101,28 +94,25 @@ def get_video_info(video_path: str | Path) -> dict:
 
 def _frame_index(frame: av.VideoFrame, stream: av.video.stream.VideoStream, fps: float) -> int:
     """
-    Source frame index of a decoded frame, read off its presentation timestamp.
+    Source frame index of a decoded frame, from its presentation timestamp.
 
-    - Only needed after a seek: the decoder resumes at the keyframe at or before
-      the target, so a count of decoded frames is no longer the absolute index.
-    - Assumes a constant frame rate — the same assumption the ffmpeg input seek
-      this replaces already made.
+    - needed after a seek, where the decode count is no longer the absolute index
+    - assumes a constant frame rate
     """
     if frame.pts is None:
         raise ValueError("iter_frames: cannot seek a stream whose frames carry no presentation timestamps")
 
-    return round(float((frame.pts - (stream.start_time or 0)) * stream.time_base) * fps)
+    # PyAV reports None when the container has no start time; ffmpeg treats that as 0
+    start_time = 0 if stream.start_time is None else stream.start_time
+
+    return round(float((frame.pts - start_time) * stream.time_base) * fps)
 
 
 def _upright(frame: av.VideoFrame) -> np.ndarray:
     """
-    Decoded frame as BGR uint8 HWC, turned to its display orientation.
+    Decoded frame as BGR uint8 HWC in display orientation.
 
-    - PyAV hands back the STORED orientation. The ffmpeg binary auto-rotated for
-      us, so the display matrix has to be applied here or a portrait clip comes
-      back landscape and contradicts the dims get_video_info reports.
-    - frame.rotation is counter-clockwise, so it is negated to index the
-      clockwise codes — the same convention _rotation_degrees returns.
+    - PyAV returns the stored orientation; the display rotation is applied here
     """
     bgr = frame.to_ndarray(format="bgr24")
     code = _ROTATE_CODES.get(int(-frame.rotation) % 360)
@@ -143,25 +133,28 @@ def iter_frames(
     - three modes, one decode loop
     - passed nothing, walks the whole video
     - `indices` and `start`/`count` each select a subset and are mutually exclusive
+    - a generator: every raise below surfaces at the first `next()`, not at the call
 
     Args:
-        video_path: source video. An unopenable path yields nothing rather than
-            raising — the samplers lean on that, the same way a zeros probe returns.
-        indices: only these source frames, deduped and ascending. One linear scan,
-            no seeking: a seek per index lands on a keyframe and re-decodes forward
-            from it, which is slower than reading straight through.
-        start: first frame of a contiguous window, reached by a container seek so
-            the demuxer skips everything before it. The mode range-parallel workers
-            use; scanning to the window instead would have every worker decode the
-            whole file.
+        video_path: source video.
+        indices: only these source frames, deduped and ascending; one linear scan, no seek.
+        start: first frame of a contiguous window, reached by a container seek.
         count: length of that window; None runs to the end of the video.
 
     Returns:
         An iterator of (frame_idx, (H, W, 3) uint8 BGR) in ascending frame_idx
         order, in display orientation.
+
+    Raises:
+        FileNotFoundError: the path does not exist.
+        ValueError: the file cannot be decoded, both modes are passed, or a window seek has
+            no fps to seek by.
     """
     if indices is not None and (start or count is not None):
         raise ValueError("iter_frames: pass either indices= or start=/count=, not both")
+
+    if not Path(video_path).exists():
+        raise FileNotFoundError(f"iter_frames: {video_path} does not exist")
 
     wanted = sorted({int(i) for i in indices}) if indices is not None else None
     if wanted is not None and not wanted:
@@ -175,16 +168,17 @@ def iter_frames(
     else:
         last = None
 
-    # An unopenable path yields nothing rather than raising — the ffmpeg pipe
-    # returned early on a zeros probe and the samplers still lean on that
     try:
         container = av.open(str(video_path))
-    except Exception:
-        logger.debug("PyAV could not open %s", video_path, exc_info=True)
-        return
+    except av.error.FFmpegError as exc:
+        raise ValueError(f"iter_frames: cannot decode {video_path}: {exc}") from exc
 
     with container:
-        stream = container.streams.video[0]
+        # IndexError is what streams.video[0] raises on a file with no video stream
+        try:
+            stream = container.streams.video[0]
+        except IndexError as exc:
+            raise ValueError(f"iter_frames: cannot decode {video_path}: {exc}") from exc
 
         # Decode is the whole cost here, so let PyAV use every core it is allowed
         stream.thread_type = "AUTO"
@@ -193,14 +187,14 @@ def iter_frames(
         cursor = 0
         resync = False
 
-        # Contiguous windows keep the input seek the ffmpeg pipe had
-        # - a backward seek (the default) lands on the keyframe at or before the target
-        # - the loop below drops whatever precedes `start`
+        # Contiguous window: seek to the keyframe at or before `start`
+        # - the loop below drops frames before `start`
         if wanted is None and start:
             if not fps:
                 raise ValueError(f"iter_frames: cannot seek {video_path} without fps")
 
-            container.seek(int(start / fps / stream.time_base) + (stream.start_time or 0), stream=stream)
+            start_time = 0 if stream.start_time is None else stream.start_time
+            container.seek(int(start / fps / stream.time_base) + start_time, stream=stream)
             resync = True
 
         pending = iter(wanted) if wanted is not None else None
@@ -241,11 +235,15 @@ def extract_frame(video_path: str | Path, frame_idx: int, *, info: dict | None =
 
     Returns:
         (H, W, 3) uint8 RGB, in display orientation.
+
+    Raises:
+        FileNotFoundError: the path does not exist (from the probe or the decode).
+        ValueError: the video cannot be probed or decoded, or frame_idx is out of range.
     """
     info = info if info is not None else get_video_info(video_path)
     total = info["total_frames"]
 
-    if frame_idx < 0 or (total and frame_idx >= total):
+    if frame_idx < 0 or frame_idx >= total:
         raise ValueError(f"extract_frame: frame {frame_idx} out of range for {video_path} ({total} frames)")
 
     # A one-frame window: iter_frames seeks to the keyframe at or before frame_idx and

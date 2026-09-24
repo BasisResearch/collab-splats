@@ -1,9 +1,7 @@
 """
-Matplotlib plots for frame sampling analysis — notebook use only.
+Matplotlib plots for keyframe sampling and the quality report.
 
-- deliberately NOT re-exported from collab_splats.preproc.__init__, so pipeline consumers
-  never import matplotlib
-- import explicitly: `from collab_splats.preproc.viz import plot_frame_scores`
+- not re-exported from collab_splats.preproc, so pipeline imports skip matplotlib
 """
 
 from __future__ import annotations
@@ -45,33 +43,22 @@ def plot_frame_grid(frames: list, title: str, n_cols: int = 6) -> None:
     plt.show()
 
 
-def plot_selection(
-    total_frames: int,
-    fps_indices: list | None = None,
-    of_indices: list | None = None,
-) -> None:
+def plot_selection(total_frames: int, selections: dict[str, Sequence[int]]) -> None:
     """
-    Vertical-line timeline of selected frame indices; two panels when both sets given.
+    Vertical-line timeline of selected frame indices, one panel per method.
 
     Args:
         total_frames: source frame count, setting the x extent.
-        fps_indices: indices chosen by fixed-rate sampling; None omits the panel.
-        of_indices: indices chosen by optical-flow sampling; None omits the panel.
+        selections: method name -> selected source frame indices; panels follow dict order.
     """
-    sets = [
-        (fps_indices, "Uniform", "steelblue"),
-        (of_indices, "Optical Flow", "darkorange"),
-    ]
-    active = [(idx, label, color) for idx, label, color in sets if idx is not None]
-    fig, axes = plt.subplots(len(active), 1, figsize=(12, 2 * len(active)), squeeze=False)
-    for ax, (indices, label, color) in zip(axes[:, 0], active):
-        if indices:
-            ax.vlines(indices, 0, 1, colors=color, linewidth=1.5, alpha=0.8)
+    fig, axes = plt.subplots(len(selections), 1, figsize=(12, 2 * len(selections)), squeeze=False)
+    for ax, (label, indices) in zip(axes[:, 0], selections.items()):
+        ax.vlines(indices, 0, 1, linewidth=1.5, alpha=0.8)
         ax.set_xlim(0, total_frames)
         ax.set_ylim(0, 1.2)
         ax.set_yticks([])
         ax.set_xlabel("Frame index")
-        ax.set_title(f"{label}  (n={len(indices) if indices else 0})", fontsize=10)
+        ax.set_title(f"{label}  (n={len(indices)})", fontsize=10)
     fig.tight_layout()
     plt.show()
 
@@ -80,17 +67,14 @@ def plot_frame_scores(frame_scores: list) -> None:
     """
     3-panel timeseries of per-frame signals: disparity / rotation / histogram similarity.
 
-    - selected frames are marked with vertical gray lines
-
     Args:
-        frame_scores: per-frame score records from sample_optical_flow.
+        frame_scores: records from sample_optical_flow, one per kept frame.
     """
     if not frame_scores:
         plt.subplots(3, 1, figsize=(12, 6))
         plt.show()
         return
     idxs = [d["frame_idx"] for d in frame_scores]
-    selected_idxs = [d["frame_idx"] for d in frame_scores if d["selected"]]
     panels = [
         ([d["disparity"] for d in frame_scores], "Disparity (px)", "steelblue"),
         ([d["rotation"] for d in frame_scores], "Rotation (deg)", "seagreen"),
@@ -98,46 +82,75 @@ def plot_frame_scores(frame_scores: list) -> None:
     ]
     fig, axes = plt.subplots(3, 1, figsize=(12, 6), sharex=True)
     for ax, (values, ylabel, color) in zip(axes, panels):
-        ax.plot(idxs, values, color=color, linewidth=0.8)
-        # Faint vertical line at each selected frame
-        for x in selected_idxs:
-            ax.axvline(x, color="gray", alpha=0.25, linewidth=0.6)
+        ax.plot(idxs, values, color=color, linewidth=0.8, marker="o", markersize=3)
         ax.set_ylabel(ylabel, fontsize=9)
     axes[-1].set_xlabel("Frame index")
-    fig.suptitle("Per-frame optical flow scores  (gray lines = selected frames)", fontsize=11)
+    fig.suptitle("Optical-flow scores of the kept frames (vs the previous keyframe)", fontsize=11)
     fig.tight_layout()
     plt.show()
 
 
 ########################################################################
-# Video quality report plots
-#
-# - one PNG per measurement family of qa.compute_video_quality's report
-# - every plotter draws EVERY frame / pair as shipped: raw columns, no
-#   thresholds, no verdicts
-# - `selected` only marks which frames made it into images/
-# - headless: save and close, never plt.show()
-# - title, overlay and save are inlined in each plotter on purpose — five
-#   short duplicates beat a helper layer
+# Video quality report plots: raw columns, no thresholds; saved, never shown
 ########################################################################
 
-_FIG_WIDTH_IN = 12
-_PANEL_HEIGHT_IN = 2.8
-_PNG_DPI = 90  # matches collab-data/track_reprojection/report.py
-_THUMB_DPI = 150  # frame montages: blur has to be visible in the thumbnails
-_HIST_BINS = 40
+
+def _mark_selected(axes: list[Axes], selected: Sequence[int] | None, fps: float) -> None:
+    """
+    Mark each selected frame with a 1 px green line on every axis.
+
+    - lines, never axvspan: a one-frame span is under a pixel on a long video and vanishes
+
+    Args:
+        axes: timeseries axes whose x axis is in seconds.
+        selected: source frame indices to mark; None marks none.
+        fps: source frame rate, converting indices to seconds.
+    """
+    if selected is None:
+        return
+    t_sel = np.asarray(list(selected), dtype=float) / fps
+    for ax in axes:
+        ax.vlines(t_sel, 0, 1, transform=ax.get_xaxis_transform(), color="green", alpha=0.15, linewidth=1)
 
 
-def _marginal_hist(ax_hist: Axes, values: np.ndarray) -> None:
+def _save(fig: Figure, out_dir: str | Path, name: str, *, title: str, dpi: int, tight_grid: bool = False) -> Path:
+    """
+    Title the figure, save it as out_dir/name and close it.
+
+    Args:
+        fig: the figure to save.
+        out_dir: directory the PNG is written into; created if absent.
+        name: PNG file name.
+        title: figure suptitle.
+        dpi: PNG resolution.
+        tight_grid: drop the horizontal gap between timeseries and marginal columns.
+
+    Returns:
+        Path to the written PNG.
+    """
+    fig.suptitle(title)
+    fig.tight_layout()
+    if tight_grid:
+        fig.subplots_adjust(wspace=0)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / name
+    fig.savefig(path, dpi=dpi)
+    plt.close(fig)
+    return path
+
+
+def _marginal_hist(ax_hist: Axes, values: np.ndarray, *, bins: int = 40) -> None:
     """
     Marginal distribution flush against a timeseries panel (shares its y axis), JointGrid style.
 
     Args:
         ax_hist: the marginal axis to draw into.
         values: the panel's y values; non-finite entries are dropped.
+        bins: histogram bin count.
     """
     finite = values[np.isfinite(values)]
-    sns.histplot(y=finite, bins=_HIST_BINS, ax=ax_hist, color="gray", edgecolor=None, alpha=0.6)
+    sns.histplot(y=finite, bins=bins, ax=ax_hist, color="gray", edgecolor=None, alpha=0.6)
     ax_hist.set_xlim(left=0)
     ax_hist.tick_params(axis="y", labelleft=False, left=False)
     ax_hist.set_xlabel("")
@@ -158,7 +171,7 @@ def _timeseries_grid(n_panels: int) -> tuple[Figure, list[Axes], list[Axes]]:
     fig, grid = plt.subplots(
         n_panels,
         2,
-        figsize=(_FIG_WIDTH_IN + 1.5, _PANEL_HEIGHT_IN * n_panels),
+        figsize=(13.5, 2.8 * n_panels),
         sharex="col",
         sharey="row",
         width_ratios=[8, 1],
@@ -170,7 +183,9 @@ def _timeseries_grid(n_panels: int) -> tuple[Figure, list[Axes], list[Axes]]:
     return fig, axes, hists
 
 
-def plot_photometric(report: dict, out_dir: str | Path, *, selected: Sequence[int] | None = None) -> Path:
+def plot_photometric(
+    report: dict, out_dir: str | Path, *, selected: Sequence[int] | None = None, dpi: int = 90
+) -> Path:
     """
     Per-frame photometry vs seconds: blur, laplacian variance, exposure, clipped fractions.
 
@@ -179,6 +194,7 @@ def plot_photometric(report: dict, out_dir: str | Path, *, selected: Sequence[in
         out_dir: directory the PNG is written into; created if absent.
         selected: source frame indices to mark; None marks none. Report-only — this marks
             which frames were kept, it does not judge them.
+        dpi: PNG resolution.
 
     Returns:
         Path to the written PNG.
@@ -223,25 +239,15 @@ def plot_photometric(report: dict, out_dir: str | Path, *, selected: Sequence[in
     _marginal_hist(hists[2], mean)
     _marginal_hist(hists[3], clip_lo + clip_hi)
 
-    # Selected-frame overlay: 1 px lines, never axvspan — a one-frame span is
-    # under a pixel on a long video and vanishes
-    if selected is not None:
-        t_sel = np.asarray(list(selected), dtype=float) / fps
-        for ax in axes:
-            ax.vlines(t_sel, 0, 1, transform=ax.get_xaxis_transform(), color="green", alpha=0.15, linewidth=1)
+    # Selected-frame overlay
+    _mark_selected(axes, selected, fps)
 
     # Title, save and close
-    fig.suptitle(
-        f"{Path(video['path']).name} — {len(report['frames']['frame_idx'])} frames @ {fps:.2f} fps, stride {report['params']['motion_stride']}"
+    title = (
+        f"{Path(video['path']).name} — {len(report['frames']['frame_idx'])} frames @ {fps:.2f} fps, "
+        f"stride {report['params']['motion_stride']}"
     )
-    fig.tight_layout()
-    fig.subplots_adjust(wspace=0)
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "photometric.png"
-    fig.savefig(path, dpi=_PNG_DPI)
-    plt.close(fig)
-    return path
+    return _save(fig, out_dir, "photometric.png", title=title, dpi=dpi, tight_grid=True)
 
 
 def plot_motion(
@@ -249,6 +255,7 @@ def plot_motion(
     out_dir: str | Path,
     *,
     selected: Sequence[int] | None = None,
+    dpi: int = 90,
 ) -> Path | None:
     """
     Per-pair motion vs seconds: translation, parallax (failed pairs as red ticks at 0), match count.
@@ -257,6 +264,7 @@ def plot_motion(
         report: a quality report carrying a "pairs" block.
         out_dir: directory the PNG is written into; created if absent.
         selected: source frame indices to mark; None marks none.
+        dpi: PNG resolution.
 
     Returns:
         Path to the written PNG, or None when the report has no pairs.
@@ -294,29 +302,19 @@ def plot_motion(
     _marginal_hist(hists[1], parallax)
     _marginal_hist(hists[2], n_matches)
 
-    # Selected-frame overlay: 1 px lines, never axvspan — a one-frame span is
-    # under a pixel on a long video and vanishes
-    if selected is not None:
-        t_sel = np.asarray(list(selected), dtype=float) / fps
-        for ax in axes:
-            ax.vlines(t_sel, 0, 1, transform=ax.get_xaxis_transform(), color="green", alpha=0.15, linewidth=1)
+    # Selected-frame overlay
+    _mark_selected(axes, selected, fps)
 
     # Title, save and close
-    fig.suptitle(
-        f"{Path(video['path']).name} — {len(report['frames']['frame_idx'])} frames @ {fps:.2f} fps, stride {report['params']['motion_stride']}"
+    title = (
+        f"{Path(video['path']).name} — {len(report['frames']['frame_idx'])} frames @ {fps:.2f} fps, "
+        f"stride {report['params']['motion_stride']}"
     )
-    fig.tight_layout()
-    fig.subplots_adjust(wspace=0)
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / "motion.png"
-    fig.savefig(path, dpi=_PNG_DPI)
-    plt.close(fig)
-    return path
+    return _save(fig, out_dir, "motion.png", title=title, dpi=dpi, tight_grid=True)
 
 
 def plot_frame_extremes(
-    report: dict, video_path: str | Path, out_dir: str | Path, *, column: str = "blur", n: int = 6
+    report: dict, video_path: str | Path, out_dir: str | Path, *, column: str = "blur", n: int = 6, dpi: int = 150
 ) -> Path:
     """
     The n highest and n lowest frames of one per-frame report column, decoded from the video.
@@ -324,14 +322,15 @@ def plot_frame_extremes(
     - top row = highest values, bottom row = lowest
     - each thumbnail is captioned with frame index, wall-clock time and the value, so a reader
       can judge what the number means on this footage
-    - one ffmpeg seek per thumbnail (2n decodes) — for notebooks and spot checks
+    - one seek per thumbnail (2n decodes) — for notebooks and spot checks
 
     Args:
         report: a quality report from qa.compute_video_quality or qa.load_video_quality.
-        video_path: the source video the report was measured on.
+        video_path: the source video the report was computed from.
         out_dir: directory the PNG is written into; created if absent.
         column: any key of report["frames"] except frame_idx — blur, laplacian, exposure_mean, ...
         n: thumbnails per row.
+        dpi: PNG resolution; blur has to stay visible in the thumbnails.
 
     Returns:
         Path to the written PNG.
@@ -357,17 +356,11 @@ def plot_frame_extremes(
         )
 
     # Title, save and close
-    fig.suptitle(f"{Path(video['path']).name} — {column} extremes ({len(idx)} frames @ {fps:.2f} fps)")
-    fig.tight_layout()
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"extremes-{column}.png"
-    fig.savefig(path, dpi=_THUMB_DPI)
-    plt.close(fig)
-    return path
+    title = f"{Path(video['path']).name} — {column} extremes ({len(idx)} frames @ {fps:.2f} fps)"
+    return _save(fig, out_dir, f"extremes-{column}.png", title=title, dpi=dpi)
 
 
-def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path) -> Path | None:
+def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path, *, dpi: int = 90) -> Path | None:
     """
     seaborn jointplot of two report columns, with r and rho in the corner.
 
@@ -381,6 +374,7 @@ def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path) -> Path 
         x: any column of report["frames"] or report["pairs"] — blur, translation_px, ...
         y: the column plotted against x.
         out_dir: directory the PNG is written into; created if absent.
+        dpi: PNG resolution.
 
     Returns:
         Path to the written PNG, or None when the two columns share no usable samples.
@@ -442,11 +436,5 @@ def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path) -> Path 
     )
 
     # Title, save and close
-    fig.suptitle(f"{Path(video['path']).name} — {y} vs {x}, stride {report['params']['motion_stride']}")
-    fig.tight_layout()
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"correlation-{x}-{y}.png"
-    fig.savefig(path, dpi=_PNG_DPI)
-    plt.close(fig)
-    return path
+    title = f"{Path(video['path']).name} — {y} vs {x}, stride {report['params']['motion_stride']}"
+    return _save(fig, out_dir, f"correlation-{x}-{y}.png", title=title, dpi=dpi)

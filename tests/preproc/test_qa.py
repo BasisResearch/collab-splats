@@ -62,10 +62,6 @@ def test_analysis_gray_downscales_to_width_and_never_upscales(clipped_bgr):
     assert analysis_gray(clipped_bgr, width=1024).shape == clipped_bgr.shape[:2]
 
 
-def test_compute_blur_keys(noise_gray):
-    assert set(compute_blur(noise_gray)) == {"blur", "laplacian"}
-
-
 def test_compute_blur_moves_in_opposite_directions(noise_gray):
     # blur is Crete-Roffet (high = blurrier); laplacian is variance (high = sharper).
     # Progressive Gaussian blur must raise one and lower the other, monotonically.
@@ -133,15 +129,6 @@ def test_compute_exposure_keys():
         "clipped_low_frac",
         "clipped_high_frac",
     }
-
-
-def test_compute_exposure_flat_image():
-    result = compute_exposure(np.full((10, 10), 128, np.uint8))
-    assert result["exposure_mean"] == pytest.approx(128.0)
-    assert result["exposure_median"] == pytest.approx(128.0)
-    assert result["exposure_std"] == pytest.approx(0.0)
-    assert result["clipped_low_frac"] == 0.0
-    assert result["clipped_high_frac"] == 0.0
 
 
 def test_compute_exposure_counts_clipping_at_both_ends():
@@ -368,14 +355,6 @@ def test_parallax_falls_as_the_ransac_threshold_loosens(synthetic_scenes):
     assert _pair_motion(pts_a, pts_b)["parallax"] == pytest.approx(ladder[1])
 
 
-def test_the_three_collapsed_helpers_are_gone():
-    """
-    match_descriptors/compute_translation/compute_parallax had one caller between them.
-    """
-    for dead in ("match_descriptors", "compute_translation", "compute_parallax"):
-        assert not hasattr(qa, dead), dead
-
-
 ########################################################################
 # Whole video
 ########################################################################
@@ -383,8 +362,7 @@ def test_the_three_collapsed_helpers_are_gone():
 
 def test_compute_video_quality_top_level_keys(tiny_video):
     report = compute_video_quality(tiny_video)
-    assert set(report) == {"available", "video", "params", "frames", "pairs"}
-    assert report["available"] is True
+    assert set(report) == {"video", "params", "frames", "pairs"}
 
 
 def test_compute_video_quality_video_block(tiny_video):
@@ -416,7 +394,13 @@ def test_compute_video_quality_pairs_use_the_default_stride(tiny_video):
     pairs = report["pairs"]
     assert set(pairs) == {"frame_idx_a", "frame_idx_b", "translation_px", "parallax", "n_matches"}
     # 30 fps rounds to a stride of 30, leaving 60 - 30 = 30 pairs
-    assert report["params"] == {"motion_stride": 30}
+    assert report["params"] == {
+        "motion_stride": 30,
+        "analysis_width": 480,
+        "blur_h_size": 11,
+        "n_features": 1000,
+        "ransac_thresh_px": 3.0,
+    }
     assert {len(v) for v in pairs.values()} == {30}
     assert pairs["frame_idx_a"][:3] == [0, 1, 2]
     assert pairs["frame_idx_b"][:3] == [30, 31, 32]
@@ -435,9 +419,9 @@ def test_compute_video_quality_keeps_n_matches_integral(tiny_video):
     assert min(n_matches) > 0
 
 
-def test_compute_video_quality_writes_json(tiny_video, tmp_path):
+def test_load_video_quality_writes_json(tiny_video, tmp_path):
     out = tmp_path / "nested" / "video_quality_report.json"
-    report = compute_video_quality(tiny_video, motion_stride=5, output_path=out)
+    report = load_video_quality(tiny_video, out, motion_stride=5)
     assert json.loads(out.read_text()) == report
 
 
@@ -452,7 +436,7 @@ def test_compute_video_quality_serializes_unmatched_pairs_as_null(tmp_path):
     writer.release()
 
     out = tmp_path / "flat.json"
-    report = compute_video_quality(path, motion_stride=5, output_path=out)
+    report = load_video_quality(path, out, motion_stride=5)
     assert report["pairs"]["n_matches"] == [0] * 15
     assert report["pairs"]["translation_px"] == [None] * 15
     assert report["pairs"]["parallax"] == [None] * 15
@@ -462,12 +446,17 @@ def test_compute_video_quality_serializes_unmatched_pairs_as_null(tmp_path):
     assert json.loads(out.read_text()) == report
 
 
-def test_compute_video_quality_reports_unavailable_for_an_undecodable_file(tmp_path):
+def test_compute_video_quality_raises_on_an_undecodable_file(tmp_path):
     broken = tmp_path / "broken.mp4"
     broken.write_bytes(b"")
-    report = compute_video_quality(broken)
-    assert report["available"] is False
-    assert "broken.mp4" in report["reason"]
+    with pytest.raises(ValueError, match="broken.mp4"):
+        compute_video_quality(broken)
+
+
+def test_compute_video_quality_raises_when_nothing_decodes(tiny_video, monkeypatch):
+    monkeypatch.setattr(qa, "iter_frames", lambda *a, **k: iter(()))
+    with pytest.raises(ValueError, match="no frames decoded"):
+        compute_video_quality(tiny_video)
 
 
 def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, caplog):
@@ -518,9 +507,8 @@ def test_compute_video_quality_rejects_a_stride_below_one(tiny_video):
 
 
 def test_compute_video_quality_names_a_missing_file_as_missing(tmp_path):
-    report = compute_video_quality(tmp_path / "nope.mp4")
-    assert report["available"] is False
-    assert "file does not exist" in report["reason"]
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        compute_video_quality(tmp_path / "nope.mp4")
 
 
 @pytest.mark.parametrize("kind", ["uniform", "constant", "bimodal", "narrow"])
@@ -553,6 +541,10 @@ def test_compute_exposure_matches_the_numpy_path(kind):
 
         # std differs only in summation order; measured max deviation 4.3e-14
         assert out["exposure_std"] == pytest.approx(float(gray.std()), abs=1e-9)
+
+        # A constant frame has no spread at all, so its std is exactly zero
+        if kind == "constant":
+            assert out["exposure_std"] == 0.0
 
 
 def test_detect_orb_is_deterministic_so_the_cached_pair_loop_is_safe(noise_gray):
@@ -602,7 +594,9 @@ def test_measure_photometry_and_motion_emits_only_the_frames_it_owns(tiny_video)
     """
     # A range owning frames 20-59, decoding from 18 so the pair straddling the
     # boundary has a partner: start=18, count=42, emit_from=20, stride=2.
-    frames, pairs = _measure_photometry_and_motion((tiny_video, 18, 42, 20, 2))
+    frames, pairs = _measure_photometry_and_motion(
+        (tiny_video, 18, 42, 20, 2), analysis_width=480, blur_h_size=11, n_features=1000, ransac_thresh_px=3.0
+    )
 
     # The two lead-in frames produce no photometry row
     assert [row["frame_idx"] for row in frames] == list(range(20, 60))
@@ -632,7 +626,7 @@ def test_video_quality_refuses_non_contiguous_ranges(tiny_video, monkeypatch):
             return [fn(item) for item in items]
 
     # One row per range instead of the whole range: indices 0 and 30, a gap
-    def one_row_per_range(args):
+    def one_row_per_range(args, **tuning):
         emit_from = args[3]
         return [{"frame_idx": emit_from, "blur": 1.0}], []
 
@@ -643,12 +637,35 @@ def test_video_quality_refuses_non_contiguous_ranges(tiny_video, monkeypatch):
         compute_video_quality(tiny_video, motion_stride=2, workers=2)
 
 
+@pytest.mark.parametrize(
+    "tuning, section, column",
+    [
+        ({"analysis_width": 240}, "frames", "laplacian"),
+        ({"analysis_width": 240}, "pairs", "n_matches"),
+        ({"blur_h_size": 3}, "frames", "blur"),
+        ({"n_features": 50}, "pairs", "n_matches"),
+        ({"ransac_thresh_px": 0.5}, "pairs", "parallax"),
+    ],
+)
+def test_compute_video_quality_threads_each_tuning_kwarg_to_its_column(tiny_video, tuning, section, column):
+    default = compute_video_quality(tiny_video, motion_stride=5)
+    tuned = compute_video_quality(tiny_video, motion_stride=5, **tuning)
+    assert tuned[section][column] != default[section][column]
+    assert tuned["params"] == {**default["params"], **tuning}
+
+
+def test_ranges_tile_the_video_once_with_a_lead_in():
+    assert qa._ranges(100, workers=1, stride=5) == [(0, None, 0)]
+    assert qa._ranges(100, workers=4, stride=5) == [(0, 25, 0), (20, 30, 25), (45, 30, 50), (70, 30, 75)]
+    assert qa._ranges(8, workers=4, stride=5) == [(0, None, 0)]
+
+
 def test_load_video_quality_writes_then_reuses(tiny_video, tmp_path):
     report_path = tmp_path / "video_quality_report.json"
 
     first = load_video_quality(tiny_video, report_path, motion_stride=2)
 
-    assert report_path.exists() and first["available"]
+    assert report_path.exists() and first["frames"]["frame_idx"]
 
     # Second call must read the file, not re-measure it
     stamp = report_path.stat().st_mtime_ns
@@ -656,3 +673,13 @@ def test_load_video_quality_writes_then_reuses(tiny_video, tmp_path):
 
     assert report_path.stat().st_mtime_ns == stamp
     assert second["frames"] == first["frames"]
+
+
+def test_load_video_quality_rejects_a_stale_report(tmp_path):
+    report_path = tmp_path / "video_quality_report.json"
+
+    # The retired no-frames sentinel an older run could have left on disk
+    report_path.write_text(json.dumps({"available": False, "reason": "x"}))
+
+    with pytest.raises(ValueError, match="stale"):
+        load_video_quality(tmp_path / "unused.mp4", report_path)

@@ -72,15 +72,9 @@ if [ ! -f "$COLLAB_DATA/setup.py" ]; then
     }
 fi
 
-# Sync in two passes: build deps first, then the no-build-isolation extensions
-# - --locked: fail if uv.lock is stale against pyproject.toml instead of re-resolving
-# - pass 1 skips the four source builds; they need setuptools + torch already in the venv
-# - pass 2 compiles them against that venv; a fresh venv fails in one pass
+# --locked: fail if uv.lock is stale against pyproject.toml instead of silently re-resolving
 echo "=== uv sync: full env (all extras incl. gpu toolkit + feedforward) ==="
 cd "$SCRIPT_DIR"
-/root/.local/bin/uv sync --locked --all-extras \
-    --no-install-package bae --no-install-package gsplat \
-    --no-install-package fused-ssim --no-install-package nvdiffrast
 /root/.local/bin/uv sync --locked --all-extras
 
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.

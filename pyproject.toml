@@ -3,7 +3,7 @@ name = "collab_splats"
 version = "0.0.1"
 description = "Feedforward reconstruction, Gaussian-splat training, meshing and localization pipeline"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 keywords = ["gaussian splatting", "depth rasterization", "mesh"]
 authors = [
@@ -130,7 +130,8 @@ feedforward = [
     "tensorboard",
     "python-box",
     "open3d",
-    "gtsam-develop",
+    # stable 4.3 carries SL4; gtsam-develop nightlies drop off PyPI after ~10 releases
+    "gtsam>=4.3.0",
     # salad (Dominic101/salad) source pinned via [tool.uv.sources].
     # pytorch-metric-learning is salad's only non-torch runtime dep.
     "pytorch-metric-learning",
@@ -257,6 +258,35 @@ override-dependencies = [
 ]
 # bae + gsplat + fused-ssim + nvdiffrast import torch at build time → must build without isolation.
 no-build-isolation-package = ["bae", "gsplat", "fused-ssim", "nvdiffrast"]
+
+# Static metadata: uv never builds these just to read their deps
+# - the four CUDA extensions need torch at build time (no-build-isolation), so a fresh venv
+#   cannot answer uv's resolve-time metadata query
+# - collab-data's setup.py changes per commit; only its core deps matter here
+[[tool.uv.dependency-metadata]]
+name = "bae"
+version = "0.2.4"
+requires-dist = ["torch", "torchvision", "warp-lang"]
+
+[[tool.uv.dependency-metadata]]
+name = "gsplat"
+version = "1.5.3"
+requires-dist = ["ninja", "numpy", "jaxtyping", "nvtx", "rich>=12", "torch>=2.0"]
+
+[[tool.uv.dependency-metadata]]
+name = "fused-ssim"
+version = "1.0.0"
+requires-dist = ["torch>=2.0.0"]
+
+[[tool.uv.dependency-metadata]]
+name = "nvdiffrast"
+version = "0.4.0"
+requires-dist = ["numpy"]
+
+[[tool.uv.dependency-metadata]]
+name = "collab-data"
+version = "0.0.1"
+requires-dist = ["gcsfs", "loguru"]
 
 [[tool.uv.index]]
 name = "pytorch-cu121"

@@ -230,7 +230,7 @@ def test_gsplat_commit_constant_matches_pyproject():
 
 
 def test_gtsam_sl4_manifold():
-    """gtsam-develop 4.3a1 provides SL4 manifold; PyPI gtsam 4.2.1 does not."""
+    """gtsam >= 4.3.0 provides the SL4 manifold; PyPI gtsam 4.2.1 does not."""
     from gtsam import SL4, BetweenFactorSL4, PriorFactorSL4  # noqa: F401
 
 

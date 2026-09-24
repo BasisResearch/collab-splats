@@ -165,10 +165,10 @@ raise}, one-line why. The user approves the table before any code change.
 
 ### Order
 
-1. Write `017-release-cleanup-rules.md` from this spec; replace this spec's Decisions and
-   Round 1 Rules with a link to it.
+1. DONE — `017-release-cleanup-rules.md` written; it wins where this spec disagrees.
 2. Add the contract checks; run them on preproc before round 1 to measure the noise.
-3. Write the skill; preproc round 2 is its first real run.
+3. DONE — skill written; `.gitignore` now tracks `.claude/skills/` (rest of `.claude/`
+   stays ignored) so worktrees see it. Preproc round 2 is its first real run.
 
 ### Prompt for the next module
 

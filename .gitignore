@@ -3,7 +3,8 @@ graphify-out/
 .env
 .worktrees/
 .superpowers/
-.claude/
+.claude/*
+!.claude/skills/
 third_party/*
 !third_party/README.md
 scratch/

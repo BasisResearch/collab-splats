@@ -1,23 +1,24 @@
 # syntax=docker/dockerfile:1
-# CUDA 12.1 + torch 2.5.1 + Python 3.11 + gsplat
-# Build: docker pull nvidia/cuda:12.1.1-devel-ubuntu22.04 && docker build --platform=linux/amd64 --progress=plain -t collab-env:cu121 .
-# After build: bash setup.sh  (installs bae + gsplat + collab-splats)
+# CUDA 12.1 + torch 2.5.1 + Python 3.11; the env is whatever setup.sh builds.
+# Build (from the collab-splats checkout, with collab-data cloned beside it):
+#   docker build --platform=linux/amd64 --progress=plain \
+#     --build-context collab-data=../collab-data \
+#     --build-arg MAX_JOBS=4 -t collab-env:cu121 .
+# - collab-data is private and locked as a path dep at /workspace/collab-data
+# - MAX_JOBS: pick from the build host's RAM (one cicc peaks ~7.3 GB), ceiling 6
 
 ARG UBUNTU_VERSION=22.04
 ARG NVIDIA_CUDA_VERSION=12.1.1
 ARG PYTHON_VERSION=3.11
-ARG CUDA_ARCHITECTURES="90;89;86;80;75;70"
 ARG TORCH_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
 
 ##################################################
-# Stage 1: Builder — uv + Python 3.11 + torch + gsplat
+# Stage 1: Builder — runs setup.sh (uv sync + AOT CUDA extensions)
 ##################################################
 
 FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
 ARG PYTHON_VERSION
 ARG TORCH_ARCH_LIST
-# Parallel compile jobs for bae/gsplat. Each cc1plus needs ~2-4 GB; default 4 fits a
-# ~16-20 GB Docker VM. Raise with --build-arg MAX_JOBS=N if the host has more RAM.
 ARG MAX_JOBS=4
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -28,15 +29,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsuitesparse-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# uv — fast Python package manager (replaces conda + pip)
+# uv manages the Python install and the venv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH=/root/.local/bin:${PATH}
 
-# Python 3.11 + isolated venv (uv manages the Python install)
 RUN uv python install ${PYTHON_VERSION} \
  && uv venv /opt/venv/reconstruction --python ${PYTHON_VERSION}
 
-# CUDA_HOME = system path (nvidia/cuda devel image ships nvcc + headers at /usr/local/cuda)
+# System toolkit from the devel image; nvcc cross-compiles to TORCH_CUDA_ARCH_LIST, no GPU needed
+# - CPATH is the toolkit's own include; never add the CCCL overlay here (setup.sh explains)
 ENV CUDA_HOME=/usr/local/cuda \
     CC=/usr/bin/gcc \
     CXX=/usr/bin/g++ \
@@ -45,18 +46,18 @@ ENV CUDA_HOME=/usr/local/cuda \
     LIBRARY_PATH=/usr/local/cuda/lib64:${LIBRARY_PATH} \
     CPATH=/usr/local/cuda/include:${CPATH} \
     CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-    TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST}
+    TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST} \
+    MAX_JOBS=${MAX_JOBS}
 
-# Build the full env at image-build time: copy the repo and run the single-source setup.
-# uv sync installs all deps, then compiles bae + gsplat with the base image's nvcc.
-# nvcc cross-compiles to TORCH_CUDA_ARCH_LIST; no GPU needed during build.
+# collab-data: only what its setup.py installs (never .git, notebooks or the config-local symlink)
+COPY --from=collab-data setup.py setup.cfg README.rst /workspace/collab-data/
+COPY --from=collab-data collab_data /workspace/collab-data/collab_data
+
+# Single source of truth: setup.sh syncs the lock, compiles bae/gsplat/fused-ssim/nvdiffrast AOT,
+# and clones the pinned third_party sources (VDA, LoGeR)
 WORKDIR /workspace/collab-splats
 COPY . /workspace/collab-splats
-ENV MAX_JOBS=${MAX_JOBS}
 RUN bash setup.sh
-
-# rclone
-RUN curl https://rclone.org/install.sh | bash
 
 ##################################################
 # Pre-built sources for runtime stage
@@ -65,7 +66,7 @@ RUN curl https://rclone.org/install.sh | bash
 FROM colmap/colmap:20240213.23 AS colmap-source
 
 ##################################################
-# Stage 2: Runtime
+# Stage 2: Runtime — no nvcc; every CUDA extension was built AOT above
 ##################################################
 
 FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runtime
@@ -85,17 +86,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends --no-install-su
 
 RUN curl https://rclone.org/install.sh | bash
 
-# uv — needed post-build for setup/vggt_slam.sh to create isolated venv
+# uv — needed post-build for setup/vggt_slam.sh to create its isolated venv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH=/root/.local/bin:${PATH}
 
-# Copy pre-built venv from builder (replaces full conda copy)
+# venv + the uv-managed interpreter it points at
 COPY --from=builder /opt/venv/reconstruction/ /opt/venv/reconstruction/
-# Copy uv-managed Python install so the interpreter is present at its canonical path
 COPY --from=builder /root/.local/share/uv/ /root/.local/share/uv/
 
-# Editable installs (collab_splats, vggt, vggt-omega) resolve against this path — it must
-# match the builder's /workspace/collab-splats where uv sync ran, or imports fail at runtime.
+# collab-splats is an editable install: its path must match the builder's
 COPY --from=builder /workspace/collab-splats /workspace/collab-splats
 
 # Colmap binary
@@ -106,23 +105,28 @@ ENV CUDA_HOME=/usr/local/cuda \
     CUDA_ROOT=/usr/local/cuda \
     PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
-    CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     TORCH_HOME=/workspace/models \
     HF_HOME=/workspace/models
 
-# Smoke test — verifies torch + venv importable after copy across stages
-# torch import only — no GPU exists during `docker build`, and importing the creators
-# triggers vggt's CUDA warmup kernel (torch.rand on cuda) which needs a driver. Verify the
-# full creator chain at container run-time (with --gpus), not at build.
-RUN python -c 'import torch; print(f"[Runtime] torch={torch.__version__}, cuda={torch.version.cuda}")' && \
-    echo '[Runtime] env verified'
+# Smoke test: torch imports and the AOT extensions survived the stage copy
+# - no GPU during build, so the creator chain is checked at run time (--gpus), not here
+# - a missing .so would JIT-compile on first use, and this stage has no nvcc
+RUN python - <<'EOF'
+import glob, sysconfig
+import torch
+
+site = sysconfig.get_paths()["purelib"]
+for pattern in ("gsplat/csrc*.so", "_nvdiffrast_c*.so", "bae/sparse/*.so"):
+    assert glob.glob(f"{site}/{pattern}"), f"missing AOT build: {pattern}"
+print(f"[Runtime] torch={torch.__version__} cuda={torch.version.cuda}; AOT extensions present")
+EOF
 
 # SSH
 RUN echo "PermitRootLogin yes"        >> /etc/ssh/sshd_config && \
     echo "PermitTTY yes"              >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication no"  >> /etc/ssh/sshd_config
 
-# Bashrc: activate venv in interactive sessions (replaces conda activate)
+# Bashrc: activate the venv in interactive sessions
 RUN { \
     echo 'export TORCH_HOME="/workspace/models"'; \
     echo 'export HF_HOME="/workspace/models"'; \
@@ -130,7 +134,6 @@ RUN { \
     echo 'export CUDA_ROOT=/usr/local/cuda'; \
     echo 'export PATH="/usr/local/cuda/bin:${PATH}"'; \
     echo 'export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"'; \
-    echo 'export CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc'; \
     echo 'source /opt/venv/reconstruction/bin/activate'; \
     } >> /root/.bashrc
 

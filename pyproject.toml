@@ -52,8 +52,8 @@ dependencies = [
     # per-texel projection kernel, meshoptimizer decimates.
     # meshoptimizer's only published wheel is a pre-release; the explicit ==a0 pin is what
     # makes uv accept it without a global --prerelease flag.
-    # nvdiffrast ships no wheel; it builds its CUDA extension at first use and so needs a real
-    # nvcc on PATH (apt cuda-nvcc-12-1, installed by setup.sh — the pip wheels are ptxas-only).
+    # nvdiffrast ships no wheel; at this rev it compiles its CUDA extension at INSTALL (AOT),
+    # so it needs nvcc at build time only (see setup.sh) and no build isolation (below).
     # xatlas is the second unwrapper: UVAtlas shatters curved scenes into ~11k charts and
     # packs them at ~62% fill, xatlas grows larger charts and packs them tighter.
     "warp-lang==1.14.0",
@@ -255,8 +255,8 @@ override-dependencies = [
     "uniception==0.1.7",
     "lightning>=2.6",
 ]
-# bae + gsplat + fused-ssim import torch at build time → must build without isolation.
-no-build-isolation-package = ["bae", "gsplat", "fused-ssim"]
+# bae + gsplat + fused-ssim + nvdiffrast import torch at build time → must build without isolation.
+no-build-isolation-package = ["bae", "gsplat", "fused-ssim", "nvdiffrast"]
 
 [[tool.uv.index]]
 name = "pytorch-cu121"

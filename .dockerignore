@@ -13,3 +13,14 @@
 evals/results/
 docs/superpowers/
 .venv/
+
+# Large local data and outputs, never part of the image
+data/
+evals/data/
+evals/baselines/
+graphify-out/
+
+# third_party/ is rebuilt by setup.sh at pinned commits (VDA, LoGeR); a local
+# copy would bake in whatever the host has, checkpoints included
+third_party/*
+!third_party/README.md

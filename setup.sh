@@ -152,7 +152,7 @@ print("[OK] gsplat + nvdiffrast AOT extensions present")
 try:
     from collab_splats.pointcloud import VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator
     print("[OK] full creator chain imports")
-except ImportError as e:
-    print(f"[WARN] creator import deferred to runtime (system lib absent in build stage): {e}")
+except Exception as e:  # OSError: missing X11/GL; RuntimeError: vggt touches CUDA at import
+    print(f"[WARN] creator import deferred to runtime (no GPU/system lib in build stage): {e}")
 PYEOF
 echo "=== setup complete ==="

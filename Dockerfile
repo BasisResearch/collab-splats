@@ -71,12 +71,6 @@ COPY --from=collab-data collab_data /workspace/collab-data/collab_data
 WORKDIR /workspace/collab-splats
 COPY pyproject.toml uv.lock README.md LICENSE setup.sh /workspace/collab-splats/
 RUN SETUP_DEPS_ONLY=1 bash setup.sh
-
-# X11/GL libs for setup.sh's creator-chain smoke test: open3d + cv2 dlopen them at import
-# - installed after pass 1 so adding them never invalidates the cached CUDA layer
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libx11-6 libgl1 libglib2.0-0 libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
 COPY . /workspace/collab-splats
 RUN bash setup.sh
 

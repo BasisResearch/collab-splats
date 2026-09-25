@@ -1,7 +1,7 @@
 """Thin wrapper around `evo` (Zhang & Scaramuzza) ATE/RPE.
 
-Both VGGT-SLAM and VGGT-Long publish numbers via evo, so we use it as the
-metric source of truth. All inputs are TUM trajectory files; conversion from
+VGGT-Long and VGGT-SLAM publish numbers via evo (see docs/parity.md), so we use
+it as the metric source of truth. All inputs are TUM trajectory files; conversion from
 KITTI 3×4-flat is handled by `trajectory_io.kitti_file_to_w2c` then
 `trajectory_io.write_tum`.
 
@@ -9,7 +9,7 @@ Alignment knob:
     "none"  — no alignment (use when both trajectories share a metric frame)
     "se3"   — rigid alignment (correct for our SE(3) baseline / BA conditions)
     "sim3"  — similarity alignment (correct for monocular Sim(3) outputs:
-              our LC condition, VGGT-Long, VGGT-SLAM)
+              our LC condition, VGGT-Long)
 
 The CLI equivalents are ``-a`` (se3) and ``-as`` (sim3).
 """
@@ -116,7 +116,7 @@ def compute_auc(
 
     Returns dict with 'auc_30' (float in [0,100]) and 'per_pair_err' (list[float]).
     """
-    from collab_splats.geometry.loop_closure.eval import auc_at_threshold
+    from trajectory_metrics import auc_at_threshold
 
     traj_ref, traj_est = _load_pair(pred_path, gt_path)
 

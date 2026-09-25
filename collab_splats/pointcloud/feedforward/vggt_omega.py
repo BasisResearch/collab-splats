@@ -138,11 +138,8 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     # - production token_offset=5 (inherited) technically miscounts Omega's 17 special
     #   tokens (1 camera + 16 register, patch-16 backbone), but the offset-17 re-sweep is
     #   near-identical at layer 13 (mid 1.5505), so the inherited offset is kept
-    # - max_jump_ratio=0.3 enables the geometric sanity check (default inf disables it)
-    #   for repetitive chess-texture scenes
     _lc_layer_index: ClassVar[int] = 13
     default_verify_match_ratio: ClassVar[float] = 1.55
-    default_max_jump_ratio: ClassVar[float] = 0.3
 
     camera_model: str = "PINHOLE"
     model_path: str | None = None

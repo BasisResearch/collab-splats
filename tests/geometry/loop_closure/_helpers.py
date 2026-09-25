@@ -13,7 +13,7 @@ def drive_pose_graph(
     total_frames,
     overlap_frames,
     conf_threshold=25.0,
-    scale_method="se3",
+    scale_method="rotation_only",
     debug_out=None,
 ):
     """Test driver: batch per-submap PGO cadence via the incremental PoseGraph API."""

@@ -55,15 +55,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from datasets import get_dataset
 from eval_compare import collect_grid_metrics, format_markdown_rows
-from trajectory_io import read_tum
+from trajectory_metrics import ate_translation, auc_at_threshold, rpe
 
 from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig
 from collab_splats.geometry.loop_closure import LoopClosureConfig
-from collab_splats.geometry.loop_closure.eval import (
-    ate_translation,
-    auc_at_threshold,
-    rpe,
-)
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 from collab_splats.pointcloud import get_creator
 from collab_splats.pointcloud.sfm import InstantSfMCreator
@@ -81,7 +76,6 @@ _COLORS = {
     "ba_coarse": "tab:olive",
     "ba_percam": "tab:purple",
     "lc": "tab:green",
-    "vggt_slam": "tab:orange",
     "instantsfm": "tab:brown",
     "instantsfm_nodepth": "tab:pink",
 }
@@ -229,7 +223,6 @@ _BACKBONE_PREFIX = {
     "vggt_omega": "omega",
     "vggtx": "vggtx",
     "mapanything": "mapanything",
-    "vggt_spark": "spark",
     "loger": "loger",
 }
 
@@ -557,10 +550,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--backbone",
-        choices=["vggtx", "vggt_omega", "mapanything", "vggt_spark", "loger"],
+        choices=["vggtx", "vggt_omega", "mapanything", "loger"],
         default="vggt_omega",
         help="Feedforward backbone. Output TUM files are prefixed: vggt_omega→omega_*, vggtx→vggtx_*, "
-        "mapanything→mapanything_*, vggt_spark→spark_*, loger→loger_*. Ignored by the instantsfm* "
+        "mapanything→mapanything_*, loger→loger_*. Ignored by the instantsfm* "
         "conditions (TUM named by the condition alone).",
     )
     parser.add_argument(
@@ -574,11 +567,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--lc_scale_method",
-        choices=["se3", "rotation_only", "pairwise_dist", "none"],
+        choices=["rotation_only", "none"],
         default="rotation_only",
         help="Inter-submap scale estimation method for lc condition. "
-        "rotation_only=VGGT-SLAM/parity default, se3=full SE3 (biased), "
-        "pairwise_dist=translation-invariant, none=skip scale (always 1.0).",
+        "rotation_only=default (matches VGGT-SLAM, see docs/parity.md), none=skip scale (always 1.0).",
     )
     parser.add_argument(
         "--lc_layer",
@@ -591,7 +583,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Override LoopClosureConfig.max_loops_per_submap (default None = keep class "
-        "default). Pass 1 for VGGT-SLAM parity runs (upstream caps at 1 loop/submap).",
+        "default). 1 matches VGGT-SLAM's 1 loop/submap cap, see docs/parity.md.",
     )
     parser.add_argument(
         "--loop_edge_timing",
@@ -599,23 +591,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default="deferred",
         help="Loop-edge insertion timing for the lc condition. deferred=all loop edges "
         "+ final solve after the window loop (repo default); live=insert each loop edge "
-        "during the window loop (VGGT-SLAM style). A/B knob.",
+        "during the window loop (matches VGGT-SLAM, see docs/parity.md). A/B knob.",
     )
     parser.add_argument(
         "--keyframe_list",
         type=Path,
         default=None,
-        help="Path to selected_frames.txt from run_vggt_slam.py (--max_loops >0). "
+        help="Path to a text file of keyframe paths, one per line. "
         "When set, filters the dataset to only these frames (matched by filename) "
-        "so all models run on the exact same keyframes as VGGT-SLAM.",
-    )
-    parser.add_argument(
-        "--slam_tum",
-        type=Path,
-        default=None,
-        help="Path to an upstream VGGT-SLAM TUM trajectory (e.g. .../slam/slam.tum). "
-        "When set, overlays it (label 'vggt_slam') in the 3D trajectory plot only "
-        "— excluded from ATE/RPE/AUC metrics and from trajectories.npz.",
+        "so every run uses the exact same keyframes.",
     )
     # Internal flag: run exactly one condition as a subprocess and write results
     # to --_result_file as JSON.  Not part of the public API.
@@ -769,17 +753,17 @@ def main() -> None:
         allowed_basenames = {Path(p).name for p in args.keyframe_list.read_text().splitlines() if p.strip()}
         indices = [i for i, p in enumerate(dataset.images) if Path(p).name in allowed_basenames]
         # Guard against a silent subset run: if the dataset loader dropped any requested
-        # keyframe (e.g. TUM's groundtruth-gap filter in datasets.py:_load_tum), SLAM's
-        # selected_frames.txt can name frames that never made it into `dataset.images`, and
-        # this filter would then silently run on fewer frames than SLAM did.
+        # keyframe (e.g. TUM's groundtruth-gap filter in datasets.py:_load_tum), the list
+        # can name frames that never made it into `dataset.images`, and this filter would
+        # then silently run on fewer frames than requested.
         loaded_basenames = {Path(p).name for p in dataset.images}
         missing = sorted(allowed_basenames - loaded_basenames)
         if missing:
             raise ValueError(
                 f"--keyframe_list requested {len(allowed_basenames)} keyframes but "
                 f"{len(missing)} are missing from the loaded dataset (first 5: {missing[:5]}) — "
-                "keyframes dropped by dataset loader (e.g. TUM GT-gap filter) — SLAM and ours "
-                "would run different frames; parity run aborted."
+                "keyframes dropped by dataset loader (e.g. TUM GT-gap filter) — the run would "
+                "use different frames than requested; aborted."
             )
         from datasets import EvalDataset
 
@@ -889,16 +873,6 @@ def main() -> None:
             continue
         stem = cond if cond in _INSTANTSFM_CONDITIONS else f"{prefix}_{cond}"
         _write_tum(args.output_dir / f"{stem}.tum", poses)
-
-    # Optional upstream SLAM reference — plot overlay only. Added after the TUM-write
-    # loop above (so it isn't re-serialized to its own <prefix>_vggt_slam.tum; the
-    # source file at --slam_tum is already on disk) and after the metrics loop (so it
-    # never enters ate/rpe/auc computation). _save_outputs' npz loop iterates `metrics`
-    # keys, not `trajectories` keys, so this extra entry is naturally excluded from
-    # trajectories.npz too — it only reaches _plot_trajectory's full trajectories dict.
-    if args.slam_tum is not None:
-        slam_poses, _ = read_tum(args.slam_tum)
-        trajectories["vggt_slam"] = slam_poses
 
     _save_outputs(
         metrics,

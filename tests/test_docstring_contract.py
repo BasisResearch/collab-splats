@@ -19,7 +19,7 @@ import tokenize
 
 import pytest
 
-PACKAGES = ("preproc", "semantics", "pointcloud")
+PACKAGES = ("preproc", "semantics", "pointcloud", "geometry")
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -191,7 +191,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 ########################################################################
 
 # Packages that finished their release cleanup; the rest xfail the release checks
-RELEASED: frozenset[str] = frozenset({"preproc", "semantics"})
+RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry"})
 
 # Module-level numbers that are facts, not tunables
 FIXED_FACTS = frozenset({"SCHEMA_VERSION"})

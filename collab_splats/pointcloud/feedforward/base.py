@@ -1087,7 +1087,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
     default_verify_match_ratio: ClassVar[float] = 0.85
 
     # Global block index to tap for Q/K in _verify_loop_candidate
-    # - VGGT-SPARK uses target_layer=20 of 24 global blocks
+    # - 20 of 24 global blocks: calibrated against VGGT-SPARK, see docs/parity.md
     # - -1 (last) gives systematically lower scores (~0.66 vs ~1.02): different attention
     #   distribution
     _lc_layer_index: ClassVar[int] = 20
@@ -1352,7 +1352,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator):
             verify_match_ratio:  Accept threshold. The signature default is always
                                  overridden in practice via the resolution chain:
                                  explicit config value → creator classvar
-                                 default_verify_match_ratio → LoopClosureConfig default.
+                                 default_verify_match_ratio.
             layer_index:         Transformer block to tap (default -1 = last).
             **kwargs:            Forwarded to extract_intermediate_features (e.g.
                                  minibatch_size=2 for MapAnything).

@@ -26,7 +26,7 @@ import numpy as np
 import pycolmap
 
 from collab_splats.geometry.verification import (
-    _pair_pose_errors,
+    pair_pose_errors,
     verify_reconstruction,
 )
 from collab_splats.localization.extractors import LocalMatcher
@@ -177,7 +177,7 @@ def main() -> None:
             )
             im1, im2 = name_to_image[p.name1], name_to_image[p.name2]
             model_rel = im2.cam_from_world() * im1.cam_from_world().inverse()
-            model_vs_gt.append(_pair_pose_errors(model_rel, gt_rel)[0])
+            model_vs_gt.append(pair_pose_errors(model_rel, gt_rel)[0])
             est_vs_model.append(p.rot_error_deg)
         # Two columns tell the story together: if estimated-vs-model tracks model-vs-GT
         # pair-by-pair, the epipolar estimate is seeing the same pose errors GT sees.

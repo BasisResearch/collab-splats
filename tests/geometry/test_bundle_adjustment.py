@@ -1,6 +1,9 @@
-"""Tests for collab_splats.geometry.bundle_adjustment.
+"""
+Tests for collab_splats.geometry.bundle_adjustment.
 
-bae and vggt may not be installed in CI; all heavy imports are mocked.
+- module-level import of bundle_adjustment: bae, pypose and vggt must be installed
+- selected tests swap bae / vggt for mocks via patch.dict(sys.modules) and reload
+- CUDA-dependent solves are skipped without CUDA + bae
 """
 
 from __future__ import annotations
@@ -8,16 +11,22 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
 
+from collab_splats.geometry.bundle_adjustment import (
+    BundleAdjustment,
+    BundleAdjustmentConfig,
+    _check_model_resolution,
+)
+
 
 # ---------------------------------------------------------------------------
-# Helpers — build a minimal mock hierarchy so the module can be imported
-# without bae / vggt present.
+# Helpers — mock bae / vggt package trees that tests swap into sys.modules
 # ---------------------------------------------------------------------------
 
 def _make_vggt_mock():
@@ -100,6 +109,8 @@ def test_extract_tracks_vggsfm_shape():
             world_points=None,
             max_query_pts=512,
             query_frame_num=2,
+            fine_tracking=True,
+            device=None,
         )
 
     assert tracks.shape == (N, P, 2), f"expected ({N},{P},2), got {tracks.shape}"
@@ -151,7 +162,15 @@ def test_extract_tracks_vggsfm_tensor_images_reach_target_device():
         side_effect=fake_predict,
     ):
         from collab_splats.geometry.bundle_adjustment import _extract_tracks_vggsfm
-        _extract_tracks_vggsfm(images_cpu, conf=None, world_points=None, device="cpu")
+        _extract_tracks_vggsfm(
+            images_cpu,
+            conf=None,
+            world_points=None,
+            max_query_pts=2048,
+            query_frame_num=5,
+            fine_tracking=True,
+            device="cpu",
+        )
 
     assert len(received_device) == 1, "predict_tracks must be called exactly once"
     # After fix: images.device always matches target_device regardless of input type.
@@ -196,7 +215,13 @@ def test_extract_tracks_vggsfm_conf_4d():
         importlib.reload(ba_mod)
 
         tracks, vis_scores, pts3d = ba_mod._extract_tracks_vggsfm(
-            images, conf=conf_4d, world_points=None
+            images,
+            conf=conf_4d,
+            world_points=None,
+            max_query_pts=2048,
+            query_frame_num=5,
+            fine_tracking=True,
+            device=None,
         )
 
     # Verify that conf passed to predict_tracks has shape (N,H,W), not (N,1,H,W)
@@ -253,8 +278,8 @@ def _build_synthetic_scene(N=4, P=50, H=128, W=128, seed=42):
 
 
 @pytest.mark.skipif(not _pypose_available(), reason="requires pypose")
-def test_optimize_early_exit_shape():
-    """_optimize returns correct shapes when inlier count is below threshold (early-exit path)."""
+def test_optimize_raises_below_inlier_threshold():
+    """_optimize raises when every frame falls below the inlier threshold after the reproj filter."""
     N, P, H, W = 4, 50, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
@@ -285,19 +310,17 @@ def test_optimize_early_exit_shape():
         sys.modules[_mod_name] = ba_mod
         spec.loader.exec_module(ba_mod)
 
-        ba = ba_mod.BundleAdjustment()
-        ref_pts, ref_ext, ref_intr = ba._optimize(
-            pts3d=pts3d,
-            extrinsics=extrinsics,
-            intrinsics=intrinsics,
-            tracks=tracks,
-            vis_scores=vis_mask.astype(np.float32),
-            max_reproj_error=4.0,
-        )
+        ba = ba_mod.BundleAdjustment(ba_mod.BundleAdjustmentConfig(max_reproj_error=4.0))
+        with pytest.raises(ValueError, match="too few active frames/points"):
+            ba._optimize(
+                pts3d=pts3d,
+                extrinsics=extrinsics,
+                intrinsics=intrinsics,
+                tracks=tracks,
+                vis_scores=vis_mask.astype(np.float32),
+            )
 
-    assert ref_pts.shape == (P, 3)
-    assert ref_ext.shape == (N, 3, 4)
-    assert ref_intr.shape == (N, 3, 3)
+    proj_mod.project_3D_points_np.assert_called_once()
 
 
 def _cuda_and_bae_available() -> bool:
@@ -317,7 +340,7 @@ def _cuda_and_bae_available() -> bool:
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
 def test_optimize_reduces_reproj_error():
     """With noisy initial poses and clean 2D observations, _optimize must reduce reprojection error."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     rng = np.random.default_rng(0)
     N, P, H, W = 5, 200, 256, 256
@@ -370,15 +393,13 @@ def test_optimize_reduces_reproj_error():
 
     err_before = mean_reproj_error(extrinsics_noisy)
 
-    ba = BundleAdjustment()
+    ba = BundleAdjustment(BundleAdjustmentConfig(max_reproj_error=None, lm_steps=20))
     _, ext_out, _ = ba._optimize(
         points3d.copy(),
         extrinsics_noisy,
         intrinsics,
         tracks,
         vis_mask.astype(np.float32),
-        max_reproj_error=None,
-        lm_steps=20,
     )
 
     err_after = mean_reproj_error(ext_out)
@@ -387,7 +408,7 @@ def test_optimize_reduces_reproj_error():
 
 @pytest.mark.skipif(not _pypose_available(), reason="requires pypose")
 def test_optimize_no_reproj_filter():
-    """Passing max_reproj_error=None skips reprojection filtering."""
+    """A config with max_reproj_error=None skips reprojection filtering."""
     N, P, H, W = 4, 50, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
@@ -416,20 +437,19 @@ def test_optimize_no_reproj_filter():
         sys.modules[_mod_name] = ba_mod
         spec.loader.exec_module(ba_mod)
 
-        ba = ba_mod.BundleAdjustment()
-        ref_pts, ref_ext, ref_intr = ba._optimize(
-            pts3d=pts3d,
-            extrinsics=extrinsics,
-            intrinsics=intrinsics,
-            tracks=tracks,
-            vis_scores=vis_mask.astype(np.float32),
-            max_reproj_error=None,
-        )
+        ba = ba_mod.BundleAdjustment(ba_mod.BundleAdjustmentConfig(max_reproj_error=None))
+
+        # P=50 is below min_inliers_per_frame, so the solve is refused after the (skipped) filter
+        with pytest.raises(ValueError, match="too few active frames/points"):
+            ba._optimize(
+                pts3d=pts3d,
+                extrinsics=extrinsics,
+                intrinsics=intrinsics,
+                tracks=tracks,
+                vis_scores=vis_mask.astype(np.float32),
+            )
 
     proj_mod.project_3D_points_np.assert_not_called()
-    assert ref_pts.shape == (P, 3)
-    assert ref_ext.shape == (N, 3, 4)
-    assert ref_intr.shape == (N, 3, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -550,7 +570,7 @@ def _make_ff_result_for_ba(N=2, H=8, W=8):
         extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
         image_paths=[Path(f"img{i}.jpg") for i in range(N)],
-        original_coords=None,
+        original_coords=np.tile(np.array([0, 0, W, H, W, H], np.float32), (N, 1)),
         model_width=W,
         model_height=H,
         images=torch.zeros(N, 3, H, W),
@@ -632,13 +652,11 @@ def test_optimize_rejects_cpu_device():
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
     # min_inliers_per_frame lowered so frames survive the filter and reach the device check
-    ba = BundleAdjustment(config=BundleAdjustmentConfig(device="cpu", min_inliers_per_frame=10))
+    ba = BundleAdjustment(
+        config=BundleAdjustmentConfig(device="cpu", min_inliers_per_frame=10, max_reproj_error=None)
+    )
     with pytest.raises(RuntimeError, match="CUDA"):
-        ba._optimize(
-            pts3d, extrinsics, intrinsics,
-            tracks, vis_mask.astype(np.float32),
-            max_reproj_error=None,
-        )
+        ba._optimize(pts3d, extrinsics, intrinsics, tracks, vis_mask.astype(np.float32))
 
 
 def test_ba_config_new_fields_default():
@@ -667,7 +685,7 @@ def test_bundle_adjustment_default_config():
     assert isinstance(ba.config, BundleAdjustmentConfig)
     assert ba.config.device is None
     assert ba.config.lm_steps == 40
-    assert ba._last_loss_history == []
+    assert ba.loss_history == []
 
 
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
@@ -679,13 +697,13 @@ def test_optimize_captures_loss_history_unconditionally():
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
     n_steps = 5
-    cfg = BundleAdjustmentConfig(lm_steps=n_steps, min_inliers_per_frame=10)
+    cfg = BundleAdjustmentConfig(lm_steps=n_steps, min_inliers_per_frame=10, max_reproj_error=None)
     ba = BundleAdjustment(config=cfg)
-    assert ba._last_loss_history == []
+    assert ba.loss_history == []
 
-    ba._optimize(pts3d, extrinsics, intrinsics, tracks, vis_mask.astype(np.float32), max_reproj_error=None)
+    ba._optimize(pts3d, extrinsics, intrinsics, tracks, vis_mask.astype(np.float32))
 
-    hist = ba._last_loss_history
+    hist = ba.loss_history
     assert isinstance(hist, list)
     assert len(hist) == 1, f"one _optimize call → one inner list; got {len(hist)}"
     assert len(hist[0]) == n_steps, (
@@ -915,7 +933,7 @@ def test_incremental_ba_warm_start_updates_registered_frames():
 
 
 def test_incremental_ba_loss_history_has_one_entry_per_step():
-    """_last_loss_history contains one inner list per incremental k-step."""
+    """loss_history contains one inner list per incremental k-step."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, H, W = 6, 8, 8
@@ -928,7 +946,7 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
 
     def mock_optimize_with_hist(self_ba, pts3d, extrinsics, intrinsics, tracks, vis_scores, **kwargs):
         k = len(tracks)
-        self_ba._last_loss_history.append([float(k) * 0.1])
+        self_ba.loss_history.append([float(k) * 0.1])
         return (fake_pts3d, extrinsics.copy(), intrinsics.copy())
 
     with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
@@ -940,81 +958,27 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
         ba.refine(result)
 
     # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls → 3 inner lists
-    assert len(ba._last_loss_history) == 3, (
-        f"expected 3 inner lists for 3 steps; got {len(ba._last_loss_history)}"
+    assert len(ba.loss_history) == 3, (
+        f"expected 3 inner lists for 3 steps; got {len(ba.loss_history)}"
     )
-    assert all(isinstance(entry, list) for entry in ba._last_loss_history)
+    assert all(isinstance(entry, list) for entry in ba.loss_history)
 
 
 # ---------------------------------------------------------------------------
-# Tests for _scale_intrinsics_to_model K-space guard
+# Tests for the model-resolution K guard and its metrics inverse
 # ---------------------------------------------------------------------------
 
-def _guard_intrinsics(cx, cy, f=10.0, N=2):
-    """(N, 3, 3) K with the given principal point."""
-    K = np.array([[f, 0.0, cx], [0.0, f, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
-    return np.tile(K, (N, 1, 1))
+def test_check_model_resolution_accepts_model_res_K():
+    K = np.tile(np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]]), (2, 1, 1))
+    coords = np.tile(np.array([11, 7, 59, 47, 64, 48], np.float32), (2, 1))
+    _check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)  # 2*cx == W_model: passes
 
 
-def test_scale_intrinsics_model_res_k_is_identity():
-    """K already at model res (cx≈W_model/2) must pass through unscaled — all creators
-    decode pose at model resolution now; scaling would double-apply the crop transform."""
-    from collab_splats.geometry.bundle_adjustment import _scale_intrinsics_to_model
-
-    images = torch.zeros(2, 3, 8, 8)  # model res 8x8
-    # original image 64x64, no crop: [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
-    original_coords = np.tile(np.array([0.0, 0.0, 64.0, 64.0, 64.0, 64.0], dtype=np.float32), (2, 1))
-    intr = _guard_intrinsics(cx=4.0, cy=4.0)  # model-res principal point
-
-    out, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(intr, images, original_coords)
-
-    np.testing.assert_array_equal(out, intr)
-    assert (sx, sy, tl_x, tl_y) == (1.0, 1.0, 0.0, 0.0)
-
-
-def test_scale_intrinsics_original_res_k_still_scaled():
-    """Legacy original-res K (cx≈orig_w/2) keeps the crop-aware scaling (regression)."""
-    from collab_splats.geometry.bundle_adjustment import _scale_intrinsics_to_model
-
-    images = torch.zeros(2, 3, 8, 8)
-    original_coords = np.tile(np.array([0.0, 0.0, 64.0, 64.0, 64.0, 64.0], dtype=np.float32), (2, 1))
-    intr = _guard_intrinsics(cx=32.0, cy=32.0)  # original-res principal point
-
-    out, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(intr, images, original_coords)
-
-    assert sx == pytest.approx(8.0 / 64.0)
-    assert sy == pytest.approx(8.0 / 64.0)
-    assert out[0, 0, 2] == pytest.approx(32.0 * sx)
-
-
-def test_scale_intrinsics_round_trips_through_its_own_inverse():
-    """model -> original -> model returns the original K, crop origin included.
-
-    The crop is OFF-CENTRE and NON-SQUARE ((11, 7) to (59, 47) of a 96x72 canvas) on purpose.
-    On a centred crop the + tl_x / + tl_y terms cancel algebraically, so dropping them is
-    invisible — measured, deleting both left the whole photometric suite passing, because
-    every fixture there was a fronto-parallel plane with identical K in both frames.
-    """
-    from collab_splats.geometry.bundle_adjustment import (
-        _scale_intrinsics_to_model,
-        _scale_intrinsics_to_original,
-    )
-
-    images = torch.zeros(2, 3, 8, 12)  # model res 8 rows x 12 cols
-    original_coords = np.tile(
-        np.array([11.0, 7.0, 59.0, 47.0, 96.0, 72.0], dtype=np.float32), (2, 1)
-    )
-    # Original-res K: cx is the crop centre (11 + 59) / 2, so the forward's K-space guard
-    # classifies it as original-res and actually scales it.
-    intr = _guard_intrinsics(cx=35.0, cy=27.0, f=57.0).astype(np.float64)
-
-    model_K, sx, sy, tl_x, tl_y = _scale_intrinsics_to_model(intr, images, original_coords)
-    assert (tl_x, tl_y) == (11.0, 7.0) and sx != sy  # non-square crop: the two scales differ
-    back = _scale_intrinsics_to_original(model_K, sx, sy, tl_x, tl_y)
-
-    np.testing.assert_allclose(back, intr, rtol=0, atol=1e-9)
-    # Anchor: the round trip is not the identity map — the model-res K really did move.
-    assert not np.allclose(model_K, intr)
+def test_check_model_resolution_rejects_original_res_K():
+    K = np.tile(np.array([[40.0, 0, 35.0], [0, 50.0, 27.0], [0, 0, 1]]), (2, 1, 1))
+    coords = np.tile(np.array([11, 7, 59, 47, 64, 48], np.float32), (2, 1))
+    with pytest.raises(ValueError, match="re-run the pointcloud stage"):
+        _check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)
 
 
 # ---------------------------------------------------------------------------
@@ -1155,11 +1119,9 @@ def test_optimize_carries_dropped_frame_and_shares_focal():
     intrinsics = intrinsics.copy()
     intrinsics[0, 0, 0] = intrinsics[0, 1, 1] = 50.0  # distinct focal on the dropped frame
 
-    cfg = BundleAdjustmentConfig(lm_steps=3, min_inliers_per_frame=10, shared_camera=True)
+    cfg = BundleAdjustmentConfig(lm_steps=3, min_inliers_per_frame=10, shared_camera=True, max_reproj_error=None)
     ba = BundleAdjustment(config=cfg)
-    _, ref_ext, ref_K = ba._optimize(
-        pts3d, extrinsics, intrinsics, tracks, vis, max_reproj_error=None
-    )
+    _, ref_ext, ref_K = ba._optimize(pts3d, extrinsics, intrinsics, tracks, vis)
 
     # shared_camera=True: the solved focal reaches the dropped frame too
     assert ref_K[0, 0, 0] == pytest.approx(ref_K[1, 0, 0], rel=1e-6), (
@@ -1177,3 +1139,93 @@ def test_optimize_carries_dropped_frame_and_shares_focal():
     assert np.allclose(c_out, s * (R_g @ c_in) + t_g, atol=1e-4), (
         f"dropped frame centre {c_out} is not the gauge-mapped {s * (R_g @ c_in) + t_g}"
     )
+
+
+def test_optimize_raises_when_too_few_observations_survive():
+    """All-zero visibility leaves no active frame: _optimize must raise, not return input poses."""
+    N, P = 3, 8
+    ba = BundleAdjustment(BundleAdjustmentConfig(max_reproj_error=None))
+    ext = np.tile(np.eye(3, 4, dtype=np.float32), (N, 1, 1))
+    intr = np.tile(np.diag([100.0, 100.0, 1.0]).astype(np.float32), (N, 1, 1))
+    with pytest.raises(ValueError, match=r"0 frames, 0 points"):
+        ba._optimize(np.zeros((P, 3)), ext, intr, np.zeros((N, P, 2), np.float32), np.zeros((N, P), np.float32))
+
+
+def test_incremental_steps_skip_single_frame_windows(monkeypatch):
+    """increment_size=1 must not hand _optimize a 1-frame window (it would now raise)."""
+    seen = []
+
+    def fake_optimize(self, pts3d, ext, intr, tracks, vis):
+        seen.append(len(ext))
+        return pts3d, ext, intr
+
+    monkeypatch.setattr(BundleAdjustment, "_optimize", fake_optimize)
+    N = 4
+    ba = BundleAdjustment(BundleAdjustmentConfig(increment_size=1))
+    result = SimpleNamespace(
+        images=np.zeros((N, 3, 8, 8), np.float32),
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (N, 1, 1)),
+    )
+    intr = np.tile(np.eye(3, dtype=np.float32), (N, 1, 1))
+    ba._refine_incremental(result, np.zeros((N, 5, 2)), np.zeros((N, 5)), np.zeros((5, 3)), intr, 1)
+    assert seen == [2, 3, 4]
+
+
+def _cache_ba(tmp_path):
+    """A cache-enabled BA whose extractor is counted, plus a result to feed it."""
+    result = _make_ff_result_for_ba(3, 8, 8)
+    ba = BundleAdjustment(config=BundleAdjustmentConfig(tracks_cache_dir=tmp_path))
+    calls = []
+
+    def fake_extract(images, confidence, world_points, max_query_pts, query_frame_num, fine_tracking, device):
+        calls.append(1)
+        return np.ones((3, 5, 2), np.float32), np.ones((3, 5), np.float32), np.ones((5, 3), np.float32)
+
+    return ba, result, calls, fake_extract
+
+
+def test_unreadable_track_cache_is_re_extracted(tmp_path):
+    """A cache dir that is not a zarr store is rebuilt, not fatal."""
+    ba, result, calls, fake_extract = _cache_ba(tmp_path)
+    (tmp_path / "tracks.zarr").mkdir()
+    (tmp_path / "tracks.zarr" / "zarr.json").write_text("not json")
+    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        ba._load_or_extract_tracks(result)
+    assert calls == [1]
+
+
+def test_unexpected_track_cache_error_propagates(tmp_path, monkeypatch):
+    """A bug inside the cache read is not an unreadable cache: it must surface."""
+    ba, result, calls, fake_extract = _cache_ba(tmp_path)
+    (tmp_path / "tracks.zarr").mkdir()
+
+    def broken_open(*args, **kwargs):
+        raise TypeError("bug")
+
+    monkeypatch.setattr("collab_splats.geometry.bundle_adjustment.zarr.open", broken_open)
+    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        with pytest.raises(TypeError, match="bug"):
+            ba._load_or_extract_tracks(result)
+
+    # zarr.open also backs the cache write, so only a zero extract count proves the read raised
+    assert calls == []
+
+
+def test_refine_rejects_original_res_k_before_track_extraction():
+    """An original-res K raises before the slow VGGSfM extraction runs."""
+    N, H, W = 3, 8, 8
+    result = _make_ff_result_for_ba(N, H, W)
+
+    # Original-res K: 64-px-wide source cropped to the 8-px model grid, cx at the source center
+    result.original_coords[:] = np.array([0, 0, 64, 64, 64, 64], np.float32)
+    result.intrinsics[:, 0, 2] = 32.0
+    calls = []
+
+    def fake_extract(*args, **kwargs):
+        calls.append(1)
+        return np.zeros((N, 5, 2), np.float32), np.ones((N, 5), np.float32), np.zeros((5, 3), np.float32)
+
+    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+        with pytest.raises(ValueError, match="original resolution"):
+            BundleAdjustment().refine(result)
+    assert calls == []

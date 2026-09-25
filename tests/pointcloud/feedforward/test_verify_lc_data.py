@@ -223,7 +223,7 @@ class _StubCreator(BaseFeedforwardCreator):
         depth_conf = np.tile(50.0 + rows + cols, (k, 1, 1)).astype(np.float32)
         return {
             "extrinsic": np.tile(np.eye(4)[:3], (k, 1, 1)).astype(np.float32),
-            "intrinsic": np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
+            "intrinsics": np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
             "depth": np.ones((k, h, w, 1), dtype=np.float32),
             "depth_conf": depth_conf,
         }
@@ -274,7 +274,6 @@ def _run_lc_with_verify_return(verify_return):
     with (
         patch("collab_splats.localization.BaseRetrievalExtractor.get") as mock_get,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=_fake_find_loops),
-        patch("collab_splats.geometry.loop_closure.wrapper.translation_jump_check", return_value=(True, 0.0)),
     ):
         mock_get.return_value = MagicMock(return_value=lambda frames: torch.zeros(frames.shape[0], 128))
         creator.run_inference()

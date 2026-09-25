@@ -22,10 +22,6 @@ from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 
-# Global alignment is parked; the call site below is disabled
-# - re-enable both when comparing VGGT-X native alignment against the LM bundle
-#   adjustment (bae-vggt-parity):
-#   from collab_splats.geometry.global_alignment import run_global_alignment
 from .base import (
     BaseFeedforwardCreator,
     FeedforwardResult,
@@ -187,7 +183,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
     # - layer 10 separates perfectly: AUC 1.000, positives min 1.2746, negatives max 1.0658
     # - threshold = midpoint 1.17 (±0.104 margin to both sides)
     # - the base-class layer 20 does NOT discriminate for VGGT-X (AUC 0.42 vs clean negatives)
-    # - VGGTSPARKCreator overrides both (native similarity)
     _lc_layer_index: ClassVar[int] = 10
     default_verify_match_ratio: ClassVar[float] = 1.17
 
@@ -239,7 +234,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
         """Preprocess in-memory frames using upstream VGGT crop mode.
 
         Resizes width to 518px then center-crops height to 518px when height > 518px.
-        Matches the training preprocessing used by VGGT and VGGT-SLAM/SPARK.
+        Matches the training preprocessing used by VGGT and VGGT-SLAM.
         Stores the crop window in original-image pixel coordinates in ``original_coords``
         so the TSDF RGB loader and COLMAP rescale can invert the transform.
 
@@ -340,13 +335,6 @@ class VGGTXCreator(BaseFeedforwardCreator):
         """
         extrinsic = raw_outputs["extrinsic"]
         intrinsic = raw_outputs.get("intrinsics_downsampled", raw_outputs.get("intrinsics"))
-
-        # Global alignment (feature matching + joint BA) is parked
-        # - re-enable with the import at the top of this file
-        # - purpose: compare against LM BA (bae-vggt-parity)
-        # extrinsic, intrinsic = run_global_alignment(
-        #     raw_outputs, extrinsic, intrinsic, self.image_paths,
-        # )
 
         # Optionally compute geometric cross-view depth consistency mask
         mv_mask = None
@@ -458,7 +446,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
         Args:
             frames:      (2, C, H, W) preprocessed frames (float16/32 on CPU or GPU).
-            layer_index: Which global attention block to tap. -1 = last, matching VGGT-SPARK.
+            layer_index: Which global attention block to tap. -1 = last.
                          Valid range [-len(blocks), len(blocks)-1].
             **kwargs:    Unused; kept for interface compatibility with MapAnything.
 

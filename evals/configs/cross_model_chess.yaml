@@ -8,13 +8,13 @@ output_dir: evals/results/cross_model_chess
 submap_size: 50
 max_frames: 500
 
-# Inter-submap scale estimation for the lc condition. rotation_only = the
-# VGGT-SLAM parity method the frozen cross_model baselines were measured with.
+# Inter-submap scale estimation for the lc condition. rotation_only matches
+# VGGT-SLAM (see docs/parity.md); the frozen cross_model baselines used it.
 scale_method: rotation_only
 
 datasets:
   - {name: chess, type: 7scenes, seq_dir: data/7scenes/chess/seq-01, keyframe_list: null}
 
-backbones: [vggt_spark, vggtx, vggt_omega, mapanything]
+backbones: [vggtx, vggt_omega, mapanything]
 
 conditions: [baseline, lc]

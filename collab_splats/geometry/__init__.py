@@ -1,4 +1,11 @@
-"""Geometry backend: loop closure, bundle adjustment, and SE(3)/pose transforms."""
+"""
+Pose and geometry backend: bundle adjustment, loop closure, verification, scene metrics.
+
+- transforms: pose conversions, Umeyama alignment, intrinsics from points
+- bundle_adjustment: LM refinement of a `pointcloud.zarr` result (feedforward only at refine)
+- verification / metrics: report-only geometric checks over a `pointcloud.zarr` result
+- loop_closure: submap pose graph around a feedforward creator's forward pass
+"""
 
 from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 from .loop_closure import PoseGraph, Submap
@@ -13,10 +20,10 @@ from .transforms import (
 )
 
 
-def __getattr__(name):
-    # Lazy import — loop_closure.wrapper imports collab_splats.pointcloud, which
-    # imports geometry.transforms; an eager import here would cycle at load time.
-    # Delegates to loop_closure's own lazy hook (one canonical lazy site).
+def __getattr__(name: str) -> type:
+    # Lazy import breaks a load-time cycle
+    # - loop_closure.wrapper -> collab_splats.pointcloud -> geometry.transforms
+    # - delegates to loop_closure's own lazy hook
     if name == "LoopClosure":
         from .loop_closure import LoopClosure
 
@@ -25,11 +32,6 @@ def __getattr__(name):
         from .loop_closure import LoopClosureConfig
 
         return LoopClosureConfig
-    if name == "run_global_alignment":
-        # Parked VGGT-X native alignment; lazy for consistency with the hook above.
-        from .global_alignment import run_global_alignment
-
-        return run_global_alignment
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -47,5 +49,4 @@ __all__ = [
     "invert_poses",
     "rotation_align_vectors",
     "rotation_angle_deg",
-    "run_global_alignment",
 ]

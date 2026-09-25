@@ -1222,7 +1222,7 @@ class Reconstructor:
             json.dumps(
                 {
                     "config": {k: str(v) if isinstance(v, Path) else v for k, v in dataclasses.asdict(cfg).items()},
-                    "loss_history": ba._last_loss_history,
+                    "loss_history": ba.loss_history,
                     "n_frames": len(ff.image_paths),
                 },
                 indent=2,
@@ -1563,20 +1563,22 @@ class Reconstructor:
         return splats_ckpt
 
     def reconstruction_quality_report(self, overwrite: bool = False) -> Path:
-        """Reference-free error report: three measurements, one reconstruction_quality_report.json.
+        """
+        Reference-free error report: three measurements, one reconstruction_quality_report.json.
 
-        Named for the artefact it produces, and to stay distinct from the video quality
-        report, which scores capture rather than reconstruction.
+        - named for the artifact it writes; distinct from the video quality report (capture)
+        - nothing to measure: that measurement records {"available": false, "reason": ...}
+        - a failing measurement or a malformed verification.json raises
+        - a failing verify() is caught; epipolar then reports no verification.json
+        - geometric_verification true, no verification.json: runs verify, which writes
+          colmap/verification.json, colmap/verified/, colmap/database.db and local_features
+        - geometric_verification false (default): writes only the report; no model or matcher runs
 
-        Never fails a reconstruction — a measurement that cannot run records
-        {"available": false, "reason": ...} and the rest still emit.
+        Args:
+            overwrite: rebuild the report even when it already exists on disk.
 
-        Not side-effect free. With `pointcloud.geometric_verification` true and no
-        verification.json on disk, this runs the verify stage, which writes
-        colmap/verification.json, colmap/verified/, colmap/database.db and populates
-        local_features in the zarr. With the flag false — the default — nothing outside
-        reconstruction_quality_report.json is written and the call is cheap: no model, no
-        matcher, one zarr read.
+        Returns:
+            Path to reconstruction_quality_report.json.
         """
         out_json = self.backend_dir / "reconstruction_quality_report.json"
         if not overwrite and self._stage_output_exists("reconstruction_quality_report"):
@@ -1585,11 +1587,10 @@ class Reconstructor:
         if self._resolve_result() is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        # The epipolar rows are loaded when verify has produced them, and reported unavailable
-        # when it has not. Building them here regardless would reach around an explicit
-        # `geometric_verification: false` and charge every default run verify's cost (measured
-        # 47.6 min and +6.29 GB RSS at 300 frames) for a stage that is always on. Degrading to
-        # {"available": false, "reason": ...} is the report-only outcome, not a failure.
+        # Epipolar rows: loaded when verify produced them, else reported unavailable
+        # - building them here would override an explicit `geometric_verification: false`
+        # - verify cost measured 47.6 min and +6.29 GB RSS at 300 frames; this stage always runs
+        # - {"available": false, "reason": ...} is the report-only outcome, not a failure
         verification_json = self.backend_dir / "colmap" / "verification.json"
         if self.config["pointcloud"]["geometric_verification"] and not verification_json.exists():
             try:

@@ -1,10 +1,9 @@
-"""Reference-free scene error metrics: depth cross-view, photometric, and verify's epipolar rows.
+"""
+Reference-free scene error metrics over a `pointcloud.zarr` result.
 
-Report-only. Nothing here feeds back into a reconstruction and nothing emits a verdict — the
-output is distributions and how they vary, for a reader to interpret.
-
-Every statistic comes from scipy or numpy. What lives here is the measurement those statistics
-are computed over, not a reimplementation of them.
+- depth cross-view residuals, photometric NCC, and verify's epipolar rows
+- report-only: distributions, no verdicts, nothing fed back into a reconstruction
+- reads the result of either pointcloud method (feedforward or sfm)
 """
 
 import json
@@ -12,6 +11,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy import stats
@@ -20,13 +20,15 @@ from tqdm.auto import tqdm
 from collab_splats.geometry.verification import clean_for_json
 from collab_splats.preproc import frames
 
+if TYPE_CHECKING:
+    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+
 logger = logging.getLogger(__name__)
 
-# The preprocess stage writes keyframes as frame_{idx:06d}. Matching that shape is the whole guard
-# on the source-frame join: frames.frame_idx_from_path is int(stem.split("_")[-1]), which happily
-# reads IMG_1234 as 1234 and 00019 as 19 — a confidently wrong index, which is worse here than a
-# missing one, because a downstream join silently pairs real frames with the wrong rows. Six or
-# more digits, so the contract does not break at a million frames.
+# Keyframe stem contract (frame_{idx:06d}) guarding the source-frame join
+# - frame_idx_from_path reads any numeric tail: IMG_1234 -> 1234, 00019 -> 19
+# - a wrong index silently pairs real frames with the wrong rows, worse than none
+# - six or more digits, so the contract holds past a million frames
 _FRAME_STEM_RE = re.compile(r"frame_\d{6,}$")
 
 ########################################
@@ -35,42 +37,38 @@ _FRAME_STEM_RE = re.compile(r"frame_\d{6,}$")
 
 
 def residual_bin_edges(n_samples: int) -> np.ndarray:
-    """Histogram edges for n_samples residuals. Nothing here is declared; both halves derive.
+    """
+    Histogram edges for n_samples bounded residuals, fixed before any residual is seen.
 
-    Per-pixel depth residuals are N^2*H*W values (2.4e10 at 300 frames), far too many to hold,
-    so they must accumulate into bins fixed BEFORE the loop starts. That rules out reading the
-    bins off the data — a pre-pass to find the range would double the most expensive stage in
-    the report. Bins need a range and a resolution, and both come from elsewhere:
+    - per-pixel residuals number N^2*H*W: too many to hold, and a range pre-pass would double the cost
+    - range (-1, 1) by construction: bounded_residual maps every residual into it, none clip
+    - bin count from Rice's rule, k = 2 * n**(1/3): more pixels justify finer bins
+    - below roughly 20 frames the pixel-level bins go coarse; per-pair medians are unaffected
+    - the bin count is always even, so the histogram folds to |r| by adding the two halves
 
-      range       (-1, 1) by construction, because bounded_residual maps every possible
-                  residual into it. No value can fall outside, so nothing is ever clipped.
-      resolution  Rice's rule, k = 2 * n**(1/3) — the standard bin count for a sample of size
-                  n. numpy implements it as np.histogram_bin_edges(a, bins="rice"), but that
-                  wants the array in memory, which is the one thing there is too much of.
+    Args:
+        n_samples: residual count the histogram will hold.
 
-    Rice couples the two quantities the right way round: more pixels justify finer bins.
-    Measured on a heavy-tailed population shaped like the real baseline, median recovery error
-    is 5.1% at 512 bins, 1.7% at 1024, 0.66% at 1560 (a 60-frame scene) and 0.08% at 4584 (300
-    frames). Below roughly 20 frames the bins do go coarse — 278 bins and 17% median error on
-    a 5-frame scene — but only the PIXEL-level distribution loses resolution there. Per-pair
-    medians ship as raw columns and are unaffected.
-
-    The bin count is always even, so the histogram folds to |r| by adding the two halves.
+    Returns:
+        k + 1 evenly spaced edges over [-1, 1], k even.
     """
     k = 2 * max(1, int(round(max(int(n_samples), 1) ** (1.0 / 3.0))))
     return np.linspace(-1.0, 1.0, k + 1)
 
 
-def bounded_residual(rel):
-    """Map a relative depth residual onto (-1, 1) so a fixed histogram can never miss it.
+def bounded_residual(rel: np.ndarray | float) -> np.ndarray:
+    """
+    Map a relative depth residual onto (-1, 1) so a fixed histogram can never miss it.
 
-    r / (1 + |r|) is monotone over all of R, so quantiles survive the map exactly: the qth
-    quantile of the transformed values inverts back to the qth quantile of the originals.
-    Invert with u / (1 - |u|).
+    - r / (1 + |r|) is monotone, so quantiles survive the map exactly
+    - invert with u / (1 - |u|)
+    - no chosen range: clipping piles the tail into end bins, and np.histogram drops out-of-range values
 
-    This exists so the histogram needs no chosen range and no clipping. A clipped range would
-    silently pile the tail into the end bins, and np.histogram drops out-of-range values
-    outright — either one makes a later "what fraction is above X" query quietly wrong.
+    Args:
+        rel: relative depth residuals, any shape.
+
+    Returns:
+        Float64 array of the same shape, in (-1, 1).
     """
     r = np.asarray(rel, dtype=np.float64)
     return r / (1.0 + np.abs(r))
@@ -82,40 +80,23 @@ def bounded_residual(rel):
 
 
 def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: float) -> float | None:
-    """How many pixels this pair's depth disagreement is EQUIVALENT to, at its own parallax.
+    """
+    Pixel equivalent of a pair's relative depth disagreement, at the pair's own parallax.
 
-    A derived quantity, not a measurement: nothing is tracked or matched in the image here.
-    It converts a depth residual into the pixel units a photometric or epipolar measurement
-    already reports, so the two can be divided. A measured pixel error is a different number.
+    - derived, not observed: states a depth residual in the units of pixel errors
+    - |r| * d with disparity d = f * alpha (alpha = parallax in radians); baseline cancels
+    - divide an observed pixel error by this: ~1 one error seen twice, >>1 pose or appearance
+    - <<1 means the error lies along the ray, where this pair's baseline cannot see it
+    - None under one pixel of disparity: the pair cannot see depth at all
 
-    For a pair with perpendicular baseline B, disparity is d = f*B/Z, and a depth error dZ at
-    depth Z moves the point in the image by f*B*dZ/Z^2. Substituting r = dZ/Z:
-
-        delta_d = r * d,   d = f * alpha
-
-    where alpha is the parallax angle in radians. Baseline cancels out of the relation; the
-    focal reappears only to state the answer in pixels.
-
-    Converting first and dividing second is the only fair way to compare a pixel error against
-    a depth error. The 1/Z hiding inside d is exactly why distant pixels disagree less in
-    pixel terms while disagreeing more in depth terms.
-
-    Divide a measured pixel error by this at the call site — no second function needed:
-      ~1   one underlying error, seen twice.
-      >>1  pixels moved more than any depth error explains, so the excess is pose (pose error
-           moves pixels while leaving depths mutually consistent) or appearance.
-      <<1  depth disagrees more than pixels do, so the error lies along the ray where this
-           pair's baseline cannot see it. Low observability, not necessarily bad depth.
-
-    Returns None when the pair carries under one pixel of disparity, because then it cannot
-    see depth at all. That floor is derived from the focal, not chosen: it is the same
-    quantity the return value is built from.
+    Args:
+        rel_residual: signed relative depth residual, dZ / Z.
+        parallax_deg: the pair's parallax angle, degrees.
+        focal_px: focal length, pixels.
 
     Returns:
-        A non-finite rel_residual propagates rather than becoming None: nan returns nan and
-        inf returns inf. None means "this pair has no parallax to see depth with"; a
-        non-finite value means "no data" — a different condition. Callers must filter the
-        two separately, e.g. with ``result is not None and np.isfinite(result)``.
+        Pixel-equivalent error, or None without parallax; a nan/inf rel_residual propagates
+        as nan/inf ("no data"), so filter with ``result is not None and np.isfinite(result)``.
     """
     disparity_px = np.deg2rad(parallax_deg) * focal_px
     if disparity_px < 1.0:
@@ -129,17 +110,20 @@ def depth_error_in_pixels(rel_residual: float, parallax_deg: float, focal_px: fl
 
 
 def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> dict:
-    """How much the views disagree about depth: scale bias, geometric noise, parallax.
+    """
+    How much the views disagree about depth: scale bias, geometric noise, parallax.
 
-    Evaluated at MODEL resolution on purpose. Depth values are identical under nearest
-    upsampling, so evaluating at original resolution returns the same number — but it would
-    sample a guided-FILTERED depth map, reporting less disagreement than the model produced.
-    That improvement belongs to the smoother, not the model.
+    - model resolution: original resolution would sample guided-filtered depth instead
+    - rows are ordered pair directions: (i, j) and (j, i) differ, occlusion is asymmetric
 
     Args:
-        collected:  the dict compute_multiview_depth_confidence(collect=...) filled.
-        focal_px:   mean focal in pixels, used only to state the residual in pixel units.
+        collected: the dict compute_multiview_depth_confidence(collect=...) filled.
+        focal_px: mean focal in pixels, used only to state the residual in pixel units.
         resolution: "WxH" of the grid, stamped into the output for the reader.
+
+    Returns:
+        Depth block with per-direction rows, the residual histogram and correlations;
+        {"available": False, "reason": ...} when no pair produced residuals.
     """
     pairs = collected["pairs"]
     if not pairs:
@@ -173,22 +157,22 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         for p in pairs
     ]
 
-    # Read the correlation columns back OFF the rows, never off `pairs` a second time: a
-    # second copy of `abs(p.idx1 - p.idx2)` is a copy that no row assertion can reach, and
-    # sign-flipping it there silently reverses the reversed-row separations.
+    # Read correlation columns off the rows, never off `pairs` again
+    # - a second copy of abs(p.idx1 - p.idx2) is out of reach of every row assertion
     abs_rel_depth_error = np.array([abs(r["median_rel_depth_error"]) for r in rows], dtype=np.float64)
     depths = np.array([r["median_depth"] for r in rows], dtype=np.float64)
     frame_seps = np.array([r["frame_separation"] for r in rows], dtype=np.float64)
     under_1px = sum(1 for r in rows if r["depth_error_px"] is None)
 
-    # Quantiles off a histogram of the BOUNDED residual, inverted back to real residuals.
-    # bounded_residual is monotone, so the qth quantile of the transformed values is the
-    # transform of the qth quantile — the inversion is exact, not an approximation.
+    # Quantiles off a histogram of the bounded residual, inverted back
+    # - bounded_residual is monotone, so the inversion is exact
     counts, edges = collected["rel_depth_error_counts"], collected["rel_depth_error_edges"]
     grid = (0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999)
 
-    def read_quantiles(hist_counts, hist_edges) -> dict:
-        """The grid, read off one histogram and inverted with the inverse of bounded_residual."""
+    def read_quantiles(hist_counts: np.ndarray, hist_edges: np.ndarray) -> dict:
+        """
+        The quantile grid, read off one histogram and inverted through bounded_residual.
+        """
         rv = stats.rv_histogram((hist_counts, hist_edges))
         out = {}
         for q in grid:
@@ -196,20 +180,17 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
             out[str(q)] = u / (1.0 - abs(u))
         return out
 
-    # Signed, then the same histogram folded to |r|. The edges are symmetric about zero and
-    # the bin count is always even, so bin j and bin k-1-j share |u| and the fold is exact
-    # rather than a re-binning. Signed quantiles answer "is there scale bias"; folded ones are
-    # the quantity every prior |rel| measurement in this repo reports, so they compare.
+    # Signed quantiles, then the same histogram folded to |r|
+    # - symmetric edges, even bin count: bins j and k-1-j share |u|, so the fold is exact
+    # - signed answers "is there scale bias"; folded compares with other |rel| reports
     half = (len(edges) - 1) // 2
     quantiles = read_quantiles(counts, edges)
     abs_quantiles = read_quantiles(counts[half:] + counts[:half][::-1], edges[half:])
 
-    # Two questions, one number each, straight from scipy — whatever it returns, unfiltered.
-    # A small sample makes rho meaningless (measured on scipy 1.17.1: n=2 gives
-    # 0.9999999999999999, n=1 gives nan, neither raises), which is publishable only because
-    # "n_pair_directions" ships right beside these numbers: a reader sees rho ~ 1.0 next to a
-    # count of 2 and discounts it. error_vs_depth has null_hypothesis below to read against;
-    # positive rho is expected, and near 0 or near 1 are the interesting outcomes.
+    # Two Spearman correlations, straight from scipy, unfiltered
+    # - a tiny sample makes rho meaningless: n=2 gives ~1.0, n=1 gives nan
+    # - publishable only because n_pair_directions ships beside it
+    # - error_vs_depth: positive rho expected; near 0 or near 1 is the interesting outcome
     correlations = {
         "error_vs_depth": float(stats.spearmanr(depths, abs_rel_depth_error).statistic),
         "error_vs_frame_separation": float(stats.spearmanr(frame_seps, abs_rel_depth_error).statistic),
@@ -217,9 +198,11 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
     }
 
     logger.info(
-        "Depth error: %d pair directions, %d residual samples over %d bins, "
-        "median |rel| %.4f, in %.2fs",
-        len(pairs), int(counts.sum()), len(counts), abs_quantiles.get("0.5", float("nan")),
+        "Depth error: %d pair directions, %d residual samples over %d bins, " "median |rel| %.4f, in %.2fs",
+        len(pairs),
+        int(counts.sum()),
+        len(counts),
+        abs_quantiles["0.5"],
         time.perf_counter() - t0,
     )
 
@@ -228,15 +211,12 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
         "grid": "model",
         "resolution": resolution,
         "units": "relative (dimensionless); parallax in degrees; pixel equivalent in px",
-        # DIRECTIONS, not pairs — which is why every key here says so. The mv loop is ordered:
-        # (i,j) and (j,i) are separate rows with genuinely different values, because occlusion
-        # is asymmetric — a pixel hidden looking one way is visible looking the other. The
-        # photometric measurement and verify's epipolar block both count UNORDERED pairs under
-        # the key "n_pairs", and a reader comparing the three would otherwise see a phantom 2x.
+        # Directions, not pairs: the multiview loop is ordered
+        # - (i, j) and (j, i) are separate rows, since occlusion is asymmetric
+        # - photometric and epipolar count unordered "n_pairs"; this key avoids a phantom 2x
         "n_pair_directions": len(pairs),
-        # The one pre-binned output, because it is the one per-pixel quantity. Counts plus
-        # edges keeps threshold queries exact: rv_histogram(...).cdf(bounded_residual(x))
-        # answers "what fraction of pixels fall below x" at any x.
+        # The one pre-binned output, for the one per-pixel quantity
+        # - rv_histogram(...).cdf(bounded_residual(x)) gives the pixel fraction below any x
         "residual_histogram": {
             "counts": counts.tolist(),
             "bin_edges": edges.tolist(),
@@ -256,6 +236,37 @@ def compute_depth_error(collected: dict, focal_px: float, resolution: str) -> di
 ########################################
 
 
+def _scale_intrinsics_to_original(
+    intrinsics: np.ndarray,
+    sx: float,
+    sy: float,
+    tl_x: float,
+    tl_y: float,
+) -> np.ndarray:
+    """
+    Map model-grid K back to original-image pixels.
+
+    - (sx, sy) is model/crop, derived by the caller from the crop box
+    - the crop origin is added after the scale is undone
+
+    Args:
+        intrinsics: (..., 3, 3) K on the model grid.
+        sx: model/crop scale along x, divided out here.
+        sy: model/crop scale along y, divided out here.
+        tl_x: crop top-left x in original pixels.
+        tl_y: crop top-left y in original pixels.
+
+    Returns:
+        (..., 3, 3) float64 K in original-image pixels.
+    """
+    intr = np.array(intrinsics, dtype=np.float64)
+    intr[..., 0, 0] = intr[..., 0, 0] / sx
+    intr[..., 1, 1] = intr[..., 1, 1] / sy
+    intr[..., 0, 2] = intr[..., 0, 2] / sx + tl_x
+    intr[..., 1, 2] = intr[..., 1, 2] / sy + tl_y
+    return intr
+
+
 def compute_photometric_ncc(
     images: np.ndarray,
     depth: np.ndarray,
@@ -265,91 +276,69 @@ def compute_photometric_ncc(
     max_separation: int = 2,
     min_samples: int = 32,
 ) -> dict:
-    """Warp each frame into its neighbours through pose+depth and correlate the RGB.
+    """
+    Warp each frame into its neighbors through pose + depth and correlate the RGB.
 
-    The measure is zero-mean normalised cross-correlation: 1.0 is perfect agreement, 0.0 is
-    none. np.corrcoef supplies it — NCC of two flattened patches IS their Pearson
-    correlation, so there is nothing to write.
-
-    Normalising buys two invariances a raw difference lacks: the [0, 255] (VGGT family) vs
-    [0, 1] (MapAnything) image-scale split, so one number compares across backbones; and
-    exposure or gain change, which would otherwise swamp the geometry being measured.
-
-    This is the only measurement that reads appearance, so disagreement it sees that the depth
-    and epipolar columns do not points at image formation rather than geometry.
-
-    Runs at ORIGINAL resolution on purpose: RGB detail exists only there, and unlike depth
-    this is a genuinely resolution-dependent quantity. When depth arrives on the smaller model
-    grid it is upsampled here rather than in a separate wrapper.
-
-    Rows are UNORDERED pairs, one per (i, j) with i < j, matching verification.py's epipolar
-    block — hence "n_pairs"/"pairs" rather than the depth block's "pair_directions".
-
-    The reported "resolution" is derived from `images` rather than passed in: a free-text
-    argument can disagree with the grid the numbers were actually measured on.
+    - zero-mean NCC via np.corrcoef: 1.0 is perfect agreement, 0.0 is none
+    - normalizing cancels the [0, 255] vs [0, 1] image-scale split and exposure or gain change
+    - the only appearance metric: disagreement seen only here points at image formation
+    - runs at original resolution; model-grid depth is upsampled here together with its K
+    - rows are unordered pairs (i < j), like verify's epipolar block, hence "n_pairs"/"pairs"
+    - "resolution" is derived from `images`, so it cannot disagree with the grid used
 
     Args:
-        images:          (N, H, W, 3) RGB, original resolution.
-        depth:           (N, h, w) Z-depth on the model grid, or on the image grid already.
-        intrinsics:      (N, 3, 3) K matching `depth`'s grid; rescaled here if depth is.
-        extrinsics:      (N, 4, 4) world-to-cam.
+        images: (N, H, W, 3) RGB, original resolution.
+        depth: (N, h, w) Z-depth on the model grid, or on the image grid already.
+        intrinsics: (N, 3, 3) K matching `depth`'s grid; rescaled here if depth is.
+        extrinsics: (N, 4, 4) world-to-cam.
         original_coords: (N, 6) crop rows, required only when depth needs upsampling.
-        max_separation:  pairs per frame. Appearance agreement between distant frames is
-                         dominated by lighting and viewpoint change, not by the error measured
-                         here, so this stays O(N*max_separation) rather than O(N^2).
-        min_samples:     floor on overlapping PIXELS, which is the quantity `n_pixels` ships.
-                         RGB is ravelled before correlating, so np.corrcoef actually sees
-                         3x this many values. A floor is needed either way — corrcoef on two
-                         values returns exactly +-1 whatever they are.
+        max_separation: pairs per frame; distant frames differ mostly by lighting and
+            viewpoint, so the cost stays O(N * max_separation) rather than O(N^2).
+        min_samples: floor on overlapping pixels (the `n_pixels` column); corrcoef on two
+            values returns exactly +-1 whatever they are.
+
+    Returns:
+        Photometric block with per-pair rows and the NCC-vs-separation correlation;
+        {"available": False, "reason": ...} when no pair produced a correlation.
+
+    Raises:
+        ValueError: depth needs upsampling but original_coords is missing or describes
+            another resolution.
     """
     t0 = time.perf_counter()
     N = len(depth)
     ih, iw = images.shape[1:3]
     logger.info("Photometric NCC: %d frames at %dx%d, max_separation=%d", N, iw, ih, max_separation)
 
-    # Depth on the model grid, images on the original grid: lift depth and its K to match.
-    # Pairing one grid's depth with the other grid's K is the 2026-08-11 mesh-collapse bug
-    # class, so both move together or neither does.
+    # Lift model-grid depth and its K to the image grid together
+    # - one grid's depth with the other grid's K collapses the geometry
     if depth.shape[1:] != (ih, iw):
         if original_coords is None:
             raise ValueError(
-                f"depth is {depth.shape[1:]} but images are {(ih, iw)}; "
-                "original_coords is required to upsample"
+                f"depth is {depth.shape[1:]} but images are {(ih, iw)}; " "original_coords is required to upsample"
             )
-        # The crop boxes are in ORIGINAL pixels, so `images` has to be the canvas they were
-        # computed against; a same-count set at another resolution misplaces every crop.
-        # Same check, same refusal, as the native-resolution mesh path (mesh/io.py).
+        # Crop boxes are in original pixels, so `images` must be that canvas
+        # - same check, same refusal as the native-resolution mesh path (mesh/io.py)
         expected_hw = (int(original_coords[0, 5]), int(original_coords[0, 4]))
         if (ih, iw) != expected_hw:
             raise ValueError(
                 f"images are {(ih, iw)} but original_coords say the original resolution is "
                 f"{expected_hw} — they are from different preprocessing runs."
             )
-        # Imported here, not at module top: collab_splats.mesh reaches Warp and meshoptimizer
-        # through texture.py, and collab_splats.geometry's own __init__ pulls bae/vggt/pypose.
-        # A depth metric must not pay either import cost.
-        from collab_splats.geometry.bundle_adjustment import _scale_intrinsics_to_original
+        # Imported here to keep this metric import-light
+        # - collab_splats.mesh reaches Warp and meshoptimizer through texture.py
         from collab_splats.mesh.io import upsample_depths
 
         model_h, model_w = depth.shape[1:]
 
-        # The guide is documented uint8 and upsample_depths divides it by 255 internally.
-        # FeedforwardResult.images is [0, 255] on VGGT-X but [0, 1] on MapAnything, so an
-        # uncoerced guide is ~255x too flat on one backbone (measured: 0.398 max depth shift)
-        # and float64 raises in OpenCV outright. That [0, 255] vs [0, 1] split is a property of
-        # the BACKBONE, not of a frame, so the scale is decided ONCE off the whole array. Deciding
-        # it per frame lets a nearly-black frame in a [0, 255] scene — a dark room, a tunnel, a
-        # lens-capped shot, every pixel under 1.0 — read as [0, 1] and get amplified 255x:
-        # measured 117.78/255 mean absolute guide error on such a frame, black turned near-white.
+        # Guide must be uint8 [0, 255]; the contract's `images` may be [0, 1] or [0, 255]
+        # - scale decided once over the whole array, never per frame
+        # - a per-frame decision would amplify a dark [0, 255] frame 255x
         rgb_scale = 255.0 if images.max() <= 1.0 else 1.0
         guides = np.clip(np.asarray(images) * rgb_scale, 0, 255).astype(np.uint8)
         lifted_d = upsample_depths(depth, guides, original_coords[:, :4])
 
-        # The CROP was resized to the model grid, so the scale is model/crop, not model/canvas,
-        # and the crop origin comes back onto the principal point. The K arithmetic that undoes
-        # both is the forward's inverse, shared via _scale_intrinsics_to_original; the scale
-        # itself is re-derived here because the forward's principal-point guard returns sx = 1.0
-        # on the model-res K we pass.
+        # Undo crop-then-resize on K: scale is model/crop, not model/canvas
         lifted_K = []
         for k in range(N):
             tlx, tly, crx, cry = (float(v) for v in original_coords[k][:4])
@@ -358,7 +347,7 @@ def compute_photometric_ncc(
         depth, intrinsics = lifted_d, np.stack(lifted_K)
 
     H, W = depth.shape[1:]
-    # Derived, never declared: the grid the numbers below are actually measured on.
+    # Derived, never declared: the grid the numbers below are computed on
     resolution = f"{iw}x{ih}"
     cam2world = np.linalg.inv(extrinsics)
     yy, xx = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
@@ -370,48 +359,45 @@ def compute_photometric_ncc(
     n_pairs_expected = sum(min(N, i + max_separation + 1) - (i + 1) for i in range(N))
     rows = []
     for i in tqdm(range(N), desc=f"Photometric NCC ({n_pairs_expected} pairs)", unit="frame"):
-        # Unproject frame i's pixels to world through its own K and pose. Local names follow
-        # the multiview loop in pointcloud/feedforward/base.py (cam2world, pts_world,
-        # pts_cam_j, proj_j, in_front) so the two warps read as the same operation.
+        # Unproject frame i's pixels to world through its own K and pose
+        # - names follow the multiview loop in pointcloud/feedforward/base.py
         pts_cam_i = (np.linalg.inv(intrinsics[i]) @ pix.T).T * depth[i].reshape(-1, 1)
         pts_world = (cam2world[i] @ np.concatenate([pts_cam_i, ones], axis=-1).T).T[:, :3]
         # Homogeneous once per i: the j loop re-projects the SAME world points.
         pts_world_h = np.concatenate([pts_world, ones], axis=-1)
 
         for j in range(i + 1, min(N, i + max_separation + 1)):
-            # Project them into frame j and look up the colour that landed there. No occlusion
-            # test, unlike the depth loop in pointcloud/feedforward/base.py: that one has
-            # frame j's own depth map to compare against, and here there is nothing to test a
-            # hidden pixel against. Occluded pixels stay in and read as disagreement.
+            # Project into frame j and look up the color that landed there
+            # - no occlusion test: unlike the depth loop, there is no frame-j depth to test
+            # - occluded pixels stay in and read as disagreement
             pts_cam_j = (extrinsics[j] @ pts_world_h.T).T[:, :3]
             proj_j = (intrinsics[j] @ pts_cam_j.T).T
             z = np.clip(proj_j[:, 2], 1e-6, None)
             # Nearest sampling, matching the depth pass: bilinear across a depth discontinuity
-            # blends two surfaces into a colour present on neither.
+            # blends two surfaces into a color present on neither.
             ui = np.round(proj_j[:, 0] / z).astype(np.int64)
             vi = np.round(proj_j[:, 1] / z).astype(np.int64)
             in_front = pts_cam_j[:, 2] > 0
-            # depth == 0 is "no observation", not a surface 0 away: unprojecting it puts the
-            # pixel at frame i's own camera centre, which can land somewhere real in frame j
-            # and contribute a colour that pixel never saw. in_front does not cover it —
-            # the centre is only behind frame j for some poses.
+            # Drop depth == 0: "no observation", not a surface at distance 0
+            # - unprojected, it sits at frame i's camera center, possibly visible in frame j
+            # - in_front does not cover it: the center is behind frame j only for some poses
             ok = in_front & (depth[i].ravel() > 0)
             ok &= (ui >= 0) & (ui < W) & (vi >= 0) & (vi < H)
             if ok.sum() < min_samples:
                 continue
             a = images[i].reshape(-1, 3)[ok].ravel().astype(np.float64)
             b = images[j][vi[ok], ui[ok]].ravel().astype(np.float64)
-            # A flat patch has no variance to correlate; corrcoef returns nan, which is
-            # dropped rather than counted as agreement. The isfinite check below catches the
-            # same rows, but only AFTER corrcoef has divided by zero — on a real scene with
-            # sky or a blank wall that is one RuntimeWarning per pair.
+            # Skip flat patches: no variance to correlate
+            # - corrcoef would return nan, but only after a divide-by-zero RuntimeWarning
+            # - sky or a blank wall would warn once per pair
             if a.std() < 1e-8 or b.std() < 1e-8:
                 continue
             ncc = float(np.corrcoef(a, b)[0, 1])
             if not np.isfinite(ncc):
                 continue
-            rows.append({"idx1": i, "idx2": j, "frame_separation": j - i,
-                         "photometric_ncc": ncc, "n_pixels": int(ok.sum())})
+            rows.append(
+                {"idx1": i, "idx2": j, "frame_separation": j - i, "photometric_ncc": ncc, "n_pixels": int(ok.sum())}
+            )
 
     if not rows:
         logger.info("Photometric NCC: unavailable — no view pair produced a correlation")
@@ -426,23 +412,23 @@ def compute_photometric_ncc(
     ncc = np.array([r["photometric_ncc"] for r in rows], dtype=np.float64)
     frame_seps = np.array([r["frame_separation"] for r in rows], dtype=np.float64)
 
-    # Straight from scipy, unfiltered, exactly as the depth block does it. A short scene or a
-    # heavily skipped one reaches two rows easily and scipy answers +-1.0 there by
-    # construction — which is safe to publish only because "n_pairs" below sits next to the
-    # number and the raw rows sit under it. Suppressing it would be a verdict, and this report
-    # does not make verdicts.
+    # Straight from scipy, unfiltered, as in the depth block
+    # - two rows give +-1.0 by construction; "n_pairs" and the raw rows ship beside it
+    # - suppressing it would be a verdict
     correlations = {"ncc_vs_frame_separation": float(stats.spearmanr(frame_seps, ncc).statistic)}
 
     logger.info(
         "Photometric NCC: %d pairs correlated, median NCC %.4f, in %.2fs",
-        len(rows), float(np.median(ncc)), time.perf_counter() - t0,
+        len(rows),
+        float(np.median(ncc)),
+        time.perf_counter() - t0,
     )
 
     return {
         "available": True,
         "grid": "original",
         "resolution": resolution,
-        "units": "zero-mean normalised cross-correlation; 1.0 = perfect agreement",
+        "units": "zero-mean normalized cross-correlation; 1.0 = perfect agreement",
         # UNORDERED, like verify's epipolar block: one row per pair, and the rho's sample size.
         "n_pairs": len(rows),
         "correlations": correlations,
@@ -450,51 +436,44 @@ def compute_photometric_ncc(
     }
 
 
-def extract_photometric(result, images_dir: Path, n: int) -> dict:
+def extract_photometric(result: "FeedforwardResult", images_dir: Path, n: int) -> dict:
     """
-    Extract the photometric channel from a scene: read the RGB, then correlate it.
+    Read a scene's RGB keyframes, then correlate them with compute_photometric_ncc.
 
-    The whole channel behind one call — unlike epipolar, whose numbers verify already computed,
-    this is where the photometric measurement actually happens, and the 0.6s read is a rounding
-    error against the correlation that follows it.
-
-    Never fatal. A report must not fail a reconstruction, so a missing image directory or any
-    exception below disables this one measurement and leaves the other two standing.
-
-    The correlation itself stays in compute_photometric_ncc, which takes plain arrays and is
-    pinned by 31 tests that must not need a scene on disk to run.
+    - a missing images dir disables only this metric; a failing measurement raises
+    - compute_photometric_ncc stays array-only, so its tests need no scene on disk
 
     Args:
-        result: the FeedforwardResult supplying depth, intrinsics, extrinsics and crop boxes.
+        result: the `pointcloud.zarr` result supplying depth, intrinsics, extrinsics, crop boxes.
         images_dir: the scene's images/ directory of original-resolution keyframes.
         n: reconstruction frame count; the read is capped at the first n frames.
 
     Returns:
-        The photometric measurement block, or {"available": False, "reason": ...} when the
-        images are missing or the measurement raises.
+        The photometric block, or {"available": False, "reason": ...} when the images are
+        missing.
     """
     if not frames.frame_paths(images_dir):
         logger.info("Photometric NCC: unavailable — no frame images at %s", images_dir)
-        return {"available": False, "grid": "original",
-                "reason": f"no frame images at {images_dir}"}
-    try:
-        # read_frames returns the selected frames in FILENAME order, which is the order the
-        # reconstruction indexes by. The frame_idx encoded in each name is NOT that — it holds
-        # source-video positions, so slicing by it would silently mispair depth with RGB.
-        t0 = time.perf_counter()
-        rgbs = frames.read_frames(images_dir)[:n].astype(np.float32)
-        m = len(rgbs)
-        logger.info("Photometric NCC: read %d original-resolution frames from %s in %.2fs",
-                    m, images_dir, time.perf_counter() - t0)
-        # No resolution argument: compute_photometric_ncc derives it from `rgbs` itself, so the
-        # stamped grid cannot disagree with the grid the numbers were measured on.
-        return compute_photometric_ncc(
-            rgbs, result.depth[:m], result.intrinsics[:m], result.extrinsics[:m],
-            original_coords=result.original_coords[:m],
-        )
-    except Exception as exc:  # noqa: BLE001 — a report must never fail a reconstruction
-        logger.warning("photometric measurement failed: %s", exc, exc_info=True)
-        return {"available": False, "grid": "original", "reason": f"{type(exc).__name__}: {exc}"}
+        return {"available": False, "grid": "original", "reason": f"no frame images at {images_dir}"}
+
+    # read_frames returns frames in filename order, the reconstruction's order
+    # - each name's frame_idx is a source-video position; slicing by it mispairs depth
+    t0 = time.perf_counter()
+    rgbs = frames.read_frames(images_dir)[:n].astype(np.float32)
+    m = len(rgbs)
+    logger.info(
+        "Photometric NCC: read %d original-resolution frames from %s in %.2fs", m, images_dir, time.perf_counter() - t0
+    )
+
+    # No resolution argument: compute_photometric_ncc derives it from `rgbs` itself, so the
+    # stamped grid cannot disagree with the grid the numbers were computed on.
+    return compute_photometric_ncc(
+        rgbs,
+        result.depth[:m],
+        result.intrinsics[:m],
+        result.extrinsics[:m],
+        original_coords=result.original_coords[:m],
+    )
 
 
 ########################################
@@ -503,25 +482,23 @@ def extract_photometric(result, images_dir: Path, n: int) -> dict:
 
 
 def _running_error(rows: list[dict], key: str) -> dict:
-    """Cumulative |step| along the trajectory, one step per consecutive-frame pair.
+    """
+    Cumulative |step| along the trajectory, one step per consecutive-frame pair.
 
-    Sequential pairs only: a separation-5 pair is a revisit, not a step, and summing it would
-    count the same ground twice. Absolute values, because signed steps cancel and would hide
-    the accumulation this exists to show.
+    - separation-1 rows only: a longer pair is a revisit, not a step
+    - rows grouped by unordered pair: the depth pass emits both (k, k+1) and (k+1, k)
+    - mean of |value| per group, never signed: +0.10 and -0.09 would read as agreement
 
-    Rows are grouped by UNORDERED pair before summing. The depth pass is an ordered loop, so
-    it emits both (k, k+1) and (k+1, k) — separation 1 in both directions, with genuinely
-    different values, because occlusion is asymmetric. Summing the raw rows would add every
-    trajectory step twice and repeat every frame_index. Epipolar rows are already one per
-    unordered pair, so their groups hold a single member and the mean is the identity: one
-    expression serves both channels with no per-channel branch.
+    Args:
+        rows: per-pair rows carrying idx1, idx2, frame_separation and `key`.
+        key: the column to accumulate.
 
-    The mean is over |value|, never over the signed value. +0.10 and -0.09 average to +0.005,
-    which reads as agreement when the two directions in fact disagree.
+    Returns:
+        {"frame_index": each step's later frame, "cumulative": running sum of step errors}.
     """
     grouped: dict[tuple[int, int], list[float]] = {}
     for x in rows:
-        if x.get("frame_separation") != 1 or x.get(key) is None or not np.isfinite(x[key]):
+        if x["frame_separation"] != 1 or x[key] is None or not np.isfinite(x[key]):
             continue
         lo, hi = sorted((int(x["idx1"]), int(x["idx2"])))
         grouped.setdefault((lo, hi), []).append(abs(float(x[key])))
@@ -533,24 +510,34 @@ def _running_error(rows: list[dict], key: str) -> dict:
     }
 
 
-def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path,
-                                        images_dir: Path, output_path: Path,
-                                        backend: str) -> dict:
-    """Run every measurement that can run and write reconstruction_quality_report.json.
-
-    Never raises on a dead measurement.
-
-    Measurements are attempted independently: a missing confidence array, an absent
-    verification.json or an unreadable images/ directory each disable exactly one of them.
-
-    Nothing here grades the scene, names a cause or flags a frame. Absolute thresholds that
-    would justify a verdict are exactly what this stage exists to inform, so inventing them
-    now would be a guess dressed as a finding.
-
-    A function, not a class: the report is built once and written once. Nothing mutates it,
-    queries it in memory or subclasses it, so a class would add a constructor, attributes and
-    a serialiser with no behaviour behind them.
+def build_reconstruction_quality_report(
+    zarr_path: Path,
+    verification_json: Path,
+    images_dir: Path,
+    output_path: Path,
+    backend: str,
+    rel_thresh: float = 0.05,
+) -> dict:
     """
+    Run every metric that can run and write reconstruction_quality_report.json.
+
+    - never raises on a dead metric: each missing input disables exactly one metric
+    - missing inputs: confidence array, verification.json, or the images/ dir
+    - a failing measurement, or a verification.json missing a key or row field, raises
+    - no grades, causes or flagged frames
+
+    Args:
+        zarr_path: the `pointcloud.zarr` result to report on.
+        verification_json: verify's verification.json; epipolar rows need it.
+        images_dir: original-resolution keyframes for the photometric metric.
+        output_path: where the report JSON is written.
+        backend: pointcloud backend name, stamped into the report's scene block.
+        rel_thresh: relative depth tolerance for the dense multiview pass.
+
+    Returns:
+        The report dict; the written JSON has every nan replaced by null.
+    """
+    # Deferred import: pointcloud.feedforward.base imports this module (cycle)
     from collab_splats.pointcloud.feedforward.base import (
         FeedforwardResult,
         compute_multiview_depth_confidence,
@@ -562,20 +549,17 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
     focal_px = float(r.intrinsics[:, 0, 0].mean() + r.intrinsics[:, 1, 1].mean()) / 2.0
     logger.info("Report on %s: %d frames, model resolution %s", zarr_path, n, model_res)
 
-    # One dense pass yields the depth residual, the scale split, the parallax angles and the
-    # per-pair depth. abs_thresh stays 0.0: scale invariance holds only there, and that is
-    # what lets one function serve backbones whose depth scales differ completely.
+    # One dense pass: depth residuals, scale split, parallax, per-pair depth
+    # - abs_thresh 0.0 keeps the pass scale-invariant across backbones
     collected: dict = {}
     compute_multiview_depth_confidence(
-        r.depth, r.intrinsics, r.extrinsics, abs_thresh=0.0, rel_thresh=0.05, collect=collected
+        r.depth, r.intrinsics, r.extrinsics, abs_thresh=0.0, rel_thresh=rel_thresh, collect=collected
     )
     depth_m = compute_depth_error(collected, focal_px, model_res)
 
-    # Epipolar: verify's tables, read off disk. NOT a measurement — verify made these rows and
-    # the matcher is never re-run here. They are the only rows that never touch depth, which is
-    # why attribution works at all: something that moves here but not in the depth rows is a
-    # pose error. Already original-resolution, since verify estimates from original-resolution
-    # keypoints.
+    # Epipolar: verify's tables read off disk; the matcher is not re-run
+    # - the only rows that never touch depth: moving here but not in depth rows is pose error
+    # - already original resolution, like verify's keypoints
     image_width = int(r.original_coords[0][4])
     verification_json = Path(verification_json)
     if not verification_json.exists():
@@ -584,35 +568,48 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
             "(set pointcloud.geometric_verification: true, or run --stages verify)",
             verification_json,
         )
-        epipolar_m = {"available": False, "grid": "original",
-                      "reason": f"no verification.json at {verification_json} — set "
-                      "pointcloud.geometric_verification: true or run --stages verify"}
+        epipolar_m = {
+            "available": False,
+            "grid": "original",
+            "reason": f"no verification.json at {verification_json} — set "
+            "pointcloud.geometric_verification: true or run --stages verify",
+        }
     else:
         t0 = time.perf_counter()
         logger.info("Epipolar: loading verify tables from %s", verification_json)
         data = json.loads(verification_json.read_text())
-        # inlier_ratio is the same expression verify already aggregates over at
-        # verification.py:363 (`p.num_inliers / p.num_matches ... if p.num_matches`) — per row
-        # here rather than collapsed to a distribution, so it joins against the depth rows.
+        # Per-row inlier_ratio, the same expression verify aggregates
+        # - kept per row, not as a distribution, so it joins against the depth rows
         epi_pairs = []
-        for s in data.get("pair_stats", []):
-            n_m, n_i = s.get("num_matches") or 0, s.get("num_inliers") or 0
-            epi_pairs.append({**s, "frame_separation": abs(s["idx1"] - s["idx2"]),
-                              "inlier_ratio": (n_i / n_m) if n_m else None})
+        for s in data["pair_stats"]:
+            n_m, n_i = s["num_matches"], s["num_inliers"]
+            epi_pairs.append(
+                {**s, "frame_separation": abs(s["idx1"] - s["idx2"]), "inlier_ratio": (n_i / n_m) if n_m else None}
+            )
         # A bare pixel count is not comparable across backbones (a 518 crop against 448x592),
         # so the fraction of image width ships alongside it.
         epi_frames = []
-        for name, fs in sorted(data.get("frame_stats", {}).items()):
-            px = fs.get("mean_reproj_error_px")
-            epi_frames.append({**fs, "name": name, "mean_reproj_error_frac_width":
-                               None if px is None else px / image_width})
-        logger.info("Epipolar: %d verified pairs, %d frame reprojection rows, in %.2fs",
-                    len(epi_pairs), len(epi_frames), time.perf_counter() - t0)
-        epipolar_m = {"available": True, "grid": "original",
-                      "resolution": f"width={image_width}",
-                      "units": "degrees; reprojection in px and as a fraction of image width",
-                      "source": str(verification_json), "n_pairs": len(epi_pairs),
-                      "pairs": epi_pairs, "frames": epi_frames}
+        for name, fs in sorted(data["frame_stats"].items()):
+            px = fs["mean_reproj_error_px"]
+            epi_frames.append(
+                {**fs, "name": name, "mean_reproj_error_frac_width": None if px is None else px / image_width}
+            )
+        logger.info(
+            "Epipolar: %d verified pairs, %d frame reprojection rows, in %.2fs",
+            len(epi_pairs),
+            len(epi_frames),
+            time.perf_counter() - t0,
+        )
+        epipolar_m = {
+            "available": True,
+            "grid": "original",
+            "resolution": f"width={image_width}",
+            "units": "degrees; reprojection in px and as a fraction of image width",
+            "source": str(verification_json),
+            "n_pairs": len(epi_pairs),
+            "pairs": epi_pairs,
+            "frames": epi_frames,
+        }
 
     photometric_m = extract_photometric(r, images_dir, n)
 
@@ -624,14 +621,10 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
         if v:
             per_frame[k] = float(np.median(v))
 
-    # Does the model know when it is wrong? Confidence is an INPUT being validated, not an
-    # error source, so it gets one correlation rather than a measurement of its own. Absent on
-    # older zarr stores, which are never backfilled. scipy unguarded, like the two above: no
-    # small-sample floor, because withholding a rho is a verdict and this report makes none.
-    # That is only defensible with the count nested WITH the rho, unreadable apart from it —
-    # and `frame_percentile_ranks` cannot supply it, being {} at len(ks) <= 1 while this
-    # sample is len(per_frame). Both stay None with no confidence array: never computed is
-    # not the same as computed over a tiny sample.
+    # Confidence vs error: does the model know when it is wrong?
+    # - confidence is an input being validated: one correlation, not a metric of its own
+    # - no small-sample floor; the sample count ships nested with the rho
+    # - both None without confidence: never computed differs from a tiny sample
     conf_rho, conf_n = None, None
     if r.confidence is not None:
         conf = np.asarray(r.confidence)
@@ -643,9 +636,8 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
             ).statistic
         )
 
-    # Where each frame sits in this scene's own distribution, 0..1. A NUMBER, never a label.
-    # Within-scene ranks need no absolute threshold, which sidesteps the fact that pixel and
-    # depth units are not comparable across backbones.
+    # Each frame's 0..1 rank in this scene's own distribution, never a label
+    # - within-scene ranks need no threshold comparable across backbones
     ks = list(per_frame)
     ranks = {}
     if len(ks) > 1:
@@ -653,44 +645,31 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
         ranks = {int(k): float(x) for k, x in zip(ks, rk)}
 
     # Does disagreement build along the trajectory?
-    # The row key differs by measurement: depth ships ORDERED directions under
-    # "pair_directions", epipolar ships unordered pairs under "pairs". _running_error groups by
-    # unordered key either way, so only the lookup name changes.
-    # A channel that never ran must say so. Without the availability guard a dead channel takes
-    # the .get default and ships {"frame_index": [], "cumulative": []} — indistinguishable from a
-    # channel that ran and accumulated nothing, which reads as "error stayed at zero". That is a
-    # verdict, and a false one.
+    # - depth rows live under "pair_directions", epipolar under "pairs"; only the key differs
+    # - a dead channel says so: an empty series would read as "error stayed at zero"
     running = {
-        name: (
-            _running_error(m.get(rows_key, []), key)
-            if m.get("available")
-            else {"available": False, "reason": m.get("reason", "measurement unavailable")}
-        )
+        name: (_running_error(m[rows_key], key) if m["available"] else {"available": False, "reason": m["reason"]})
         for name, rows_key, key, m in (
             ("depth", "pair_directions", "median_rel_depth_error", depth_m),
             ("epipolar", "pairs", "rot_error_deg", epipolar_m),
         )
     }
 
-    # Reconstruction index -> SOURCE video frame index. Every per-frame block above is keyed
-    # 0..N-1, which is not the source index once sampling skips frames, so without this map
-    # nothing keyed on the source video can be joined to this report at all. Derived from
-    # image_paths rather than the images/ filenames because image_paths is always on the
-    # result while the image directory is optional here. The stem must match the documented
-    # contract BEFORE it is parsed — frames.frame_idx_from_path guesses on any numeric tail, and
-    # a guessed index is worse than no index. A name off-contract yields None rather than killing
-    # the report: the join degrades per frame instead of disappearing.
+    # Reconstruction index -> source video frame index
+    # - per-frame blocks are keyed 0..N-1, not the source index once sampling skips frames
+    # - from image_paths (always present), parsed only when the stem matches _FRAME_STEM_RE
+    # - off-contract names yield None: the join degrades per frame, the report survives
     source_frame_indices: list[int | None] = []
     for p in r.image_paths:
         m = _FRAME_STEM_RE.fullmatch(Path(str(p)).stem)
         source_frame_indices.append(frames.frame_idx_from_path(p) if m else None)
 
     report = {
-        "scene": {"backend": backend, "n_frames": n, "model_resolution": model_res,
-                  "zarr": str(zarr_path)},
+        "scene": {"backend": backend, "n_frames": n, "model_resolution": model_res, "zarr": str(zarr_path)},
         "measurements_available": sorted(
-            k for k, m in (("epipolar", epipolar_m), ("depth", depth_m), ("photometric", photometric_m))
-            if m.get("available")
+            k
+            for k, m in (("epipolar", epipolar_m), ("depth", depth_m), ("photometric", photometric_m))
+            if m["available"]
         ),
         "measurements": {"epipolar": epipolar_m, "depth": depth_m, "photometric": photometric_m},
         "confidence_vs_error": {"spearman": conf_rho, "n_frames": conf_n},
@@ -699,21 +678,19 @@ def build_reconstruction_quality_report(zarr_path: Path, verification_json: Path
         "running_error": running,
         "frame_percentile_ranks": ranks,
         "source_frame_indices": source_frame_indices,
-        # Fraction of each ORIGINAL frame the model crop actually reconstructed. VGGTX resizes
-        # width to 518 and centre-crops height to 518, so a 16:9 source loses a band with no
-        # depth at all — and model-resolution evaluation is structurally blind to it, because
-        # the model grid IS the crop.
+        # Fraction of each original frame the model crop reconstructed
+        # - a center crop of a wide source loses a band with no depth at all
+        # - model-resolution metrics cannot see it: the model grid is the crop
         "crop_coverage": [
-            {"index": k, "covered_fraction": float(
-                max(c[2] - c[0], 0) * max(c[3] - c[1], 0) / max(c[4] * c[5], 1e-9))}
+            {"index": k, "covered_fraction": float(max(c[2] - c[0], 0) * max(c[3] - c[1], 0) / max(c[4] * c[5], 1e-9))}
             for k, c in enumerate(np.asarray(r.original_coords, dtype=np.float64))
         ],
         "notes": {
             "verdicts": "none by design — this describes distributions, it does not grade",
-            "units": "scale-free or normalised throughout; 1 recon unit is NOT 1 metre",
+            "units": "scale-free or normalized throughout; 1 recon unit is NOT 1 meter",
             "attribution": "measurements differ in what they depend on; read them against each other",
             "source_frame_indices": "position = reconstruction index, value = source video frame index; "
-                "null where the filename is not frame_{idx:06d}",
+            "null where the filename is not frame_{idx:06d}",
         },
     }
     # clean_for_json turns every nan into null. json.dumps otherwise writes a bare NaN, which no

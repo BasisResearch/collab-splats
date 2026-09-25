@@ -101,7 +101,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends --no-install-su
 
 RUN curl https://rclone.org/install.sh | bash
 
-# uv — needed post-build for setup/vggt_slam.sh to create its isolated venv
+# uv — manages the venv post-build (setup.sh reruns, uv pip into the venv)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH=/root/.local/bin:${PATH}
 

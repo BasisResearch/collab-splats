@@ -65,7 +65,7 @@ def test_image_retrieval_detects_identical_submaps():
         retrieval_vectors=base_vecs.clone(),  # identical → distance ≈ 0
         image_paths=[Path(f"f{i+3}.jpg") for i in range(3)],
     )
-    matches = find_loop_closures(s1, [s0], lc_threshold=0.01, max_loops=1)
+    matches = find_loop_closures(s1, [s0], lc_threshold=0.01, max_loops=1, nms_frame_distance=0)
     assert len(matches) == 1
     assert matches[0].detected_submap_id == 0
     assert matches[0].similarity_score < 1e-5

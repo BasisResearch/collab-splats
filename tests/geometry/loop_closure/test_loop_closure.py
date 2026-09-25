@@ -45,13 +45,8 @@ def test_loop_closure_config_defaults():
     assert cfg.min_submap_gap == 1
 
 
-def test_loop_closure_config_l2_property():
-    cfg = LoopClosureConfig(lc_retrieval_threshold=0.80)
-    assert abs(cfg.lc_threshold_l2 - 0.80) < 1e-9
-
-
 def test_loop_match_queue_keeps_top_k():
-    queue = LoopMatchQueue(max_size=2)
+    queue = LoopMatchQueue(max_size=2, nms_frame_distance=0)
     queue.push(LoopMatch(0.9, 0, 1, 0, 0))
     queue.push(LoopMatch(0.5, 0, 2, 0, 0))  # lower distance = better
     queue.push(LoopMatch(0.7, 0, 3, 0, 0))
@@ -73,7 +68,7 @@ def test_loop_match_dataclass():
 
 def test_loop_match_queue_equal_score_tiebreak():
     """Equal scores must not raise TypeError (dataclass lacks __lt__)."""
-    queue = LoopMatchQueue(max_size=5)
+    queue = LoopMatchQueue(max_size=5, nms_frame_distance=0)
     for i in range(3):
         queue.push(LoopMatch(0.5, query_submap_id=0, detected_submap_id=i, query_frame_idx=0, detected_frame_idx=0))
     matches = queue.get_matches()
@@ -120,6 +115,7 @@ def test_find_loop_closures_detects_similar():
         past_submaps=[past_similar, past_different],
         lc_threshold=0.5,
         max_loops=1,
+        nms_frame_distance=0,
     )
     assert len(matches) == 1
     assert matches[0].detected_submap_id == 0
@@ -145,7 +141,7 @@ def test_find_loop_closures_no_match():
         image_paths=[Path(f"g{i}.jpg") for i in range(2)],
     )
 
-    matches = find_loop_closures(query, [past], lc_threshold=0.001, max_loops=1)
+    matches = find_loop_closures(query, [past], lc_threshold=0.001, max_loops=1, nms_frame_distance=0)
     assert matches == []
 
 

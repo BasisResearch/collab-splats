@@ -253,9 +253,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
         # - the flag keeps the finally idempotent: without it a nested load would pop a
         #   path its caller installed
         # - sys.path is released before the download/checkpoint load below, not held across
-        #   them, matching the house pattern (the try/finally in
-        #   VGGTSparkCreator._load_model, feedforward/vggt_spark_creator.py), which closes
-        #   it right after the import + construction that actually need it
+        #   them: closed right after the import + construction that actually need it
         root = str(_LOGER_ROOT)
         _patched = root not in sys.path
         if _patched:

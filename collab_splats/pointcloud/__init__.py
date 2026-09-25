@@ -1,7 +1,7 @@
 """
 Pointcloud reconstruction: the creator registry and its two backend families.
 
-- feedforward backbones (vggtx, mapanything, vggt_omega, vggt_spark, loger) and sfm
+- feedforward backbones (vggtx, mapanything, vggt_omega, loger) and sfm
   backends (colmap, hloc) all resolve through get_creator / make_creator
 - the optional backbones register only when their dependencies import
 - every creator returns a PointcloudResult; see base.py for that contract
@@ -18,13 +18,6 @@ except ImportError:
     _OMEGA_AVAILABLE = False
 
 try:
-    from .feedforward import VGGTSPARKCreator
-
-    _SPARK_AVAILABLE = True
-except ImportError:
-    _SPARK_AVAILABLE = False
-
-try:
     from .feedforward import LoGeRCreator
 
     _LOGER_AVAILABLE = True
@@ -39,8 +32,6 @@ _REGISTRY: dict[str, type[BasePointcloudCreator]] = {
 }
 if _OMEGA_AVAILABLE:
     _REGISTRY["vggt_omega"] = VGGTOmegaCreator
-if _SPARK_AVAILABLE:
-    _REGISTRY["vggt_spark"] = VGGTSPARKCreator
 if _LOGER_AVAILABLE:
     _REGISTRY["loger"] = LoGeRCreator
 
@@ -53,7 +44,7 @@ def get_creator(name: str) -> type[BasePointcloudCreator]:
       Reconstructor.validate_config rejects them as sfm backends
 
     Args:
-        name: colmap, hloc, mapanything or vggtx, plus vggt_omega / vggt_spark / loger
+        name: colmap, hloc, mapanything or vggtx, plus vggt_omega / loger
             when their optional deps are installed.
 
     Returns:

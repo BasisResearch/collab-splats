@@ -1,4 +1,11 @@
-from .eval import capture_pose_graph_loss
+"""
+Submap pose-graph loop closure around a feedforward creator's forward pass.
+
+- wrapper: LoopClosure / LoopClosureConfig, the creator wrapper (lazy import)
+- submap / map / graph: per-submap state, submap collection, factor graph
+- matching: loop candidate retrieval
+"""
+
 from .graph import (
     PoseGraph,
     decompose_camera,
@@ -10,14 +17,12 @@ from .matching import (
     LoopMatch,
     LoopMatchQueue,
     find_loop_closures,
-    translation_jump_check,
 )
 from .submap import Submap, assert_world_to_cam
 
 
-def __getattr__(name):
-    # Lazy import — wrapper imports collab_splats.pointcloud (feedforward/base), which
-    # itself imports geometry.transforms; an eager import here would cycle at load time.
+def __getattr__(name: str) -> type:
+    # Lazy import: wrapper -> collab_splats.pointcloud -> geometry.transforms cycles
     if name == "LoopClosure":
         from .wrapper import LoopClosure
 
@@ -39,9 +44,7 @@ __all__ = [
     "LoopMatchQueue",
     "find_loop_closures",
     "dedup_overlap",
-    "translation_jump_check",
     "PoseGraph",
     "decompose_camera",
     "estimate_scale_pairwise",
-    "capture_pose_graph_loss",
 ]

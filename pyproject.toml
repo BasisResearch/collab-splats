@@ -112,10 +112,8 @@ dependencies = [
 
 [project.optional-dependencies]
 feedforward = [
-    # vggt-x and mapanything — git deps, install via setup/feedforward.sh
-    # vggt @ third_party/VGGT-X submodule (--no-deps, pinned commit)
-    # mapanything @ git+https://github.com/facebookresearch/map-anything.git (--no-deps)
-    # lightglue @ git+https://github.com/cvg/LightGlue.git (--no-deps, mapanything colmap extra)
+    # vggt (VGGT-X), vggt-omega, mapanything, lightglue, salad — git deps from
+    # [tool.uv.sources], installed by `uv sync` (setup.sh); lightglue is mapanything's colmap extra
     # InstantSfM backend deps (instantsfm, pyceres, scikit-sparse, easydict, VDA clone) are
     # installed by setup.sh with --no-deps — upstream pins numpy==1.26.4 which conflicts with
     # the lock. Plain `uv sync` prunes them; rerun setup.sh (or its InstantSfM block) after.

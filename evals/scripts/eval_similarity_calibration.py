@@ -2,15 +2,11 @@
 
 Runs cross_frame_attention_ratio on frame pairs using each available FF model
 (VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator) and reports scores under
-both aggregation methods — old np.percentile(90) vs new mean_top_quarter — to
-confirm the aggregation fix closes the gap with VGGT-SPARK (VGGT-1B, mean=1.025).
+both aggregation methods — old np.percentile(90) vs new mean_top_quarter.
 
 Two pair-selection modes:
   random    — temporal pairs with gap in [min_gap, max_gap] (diagnostic floor)
-  retrieved — DINO-SALAD top-1 nearest-neighbour pairs (matches VGGT-SLAM production use)
-
-The retrieved mode is the authoritative comparison against VGGT-SPARK's 1.025 reference,
-since that score was measured on DINO-SALAD retrieved candidates, not random pairs.
+  retrieved — DINO-SALAD top-1 nearest-neighbour pairs (the loop-closure candidate distribution)
 
 Usage (tmux — GPU required):
     python evals/scripts/eval_similarity_calibration.py \\
@@ -63,7 +59,7 @@ def percentile_90(ratio_np: np.ndarray) -> float:
 
 
 def mean_top_quarter(ratio_np: np.ndarray) -> float:
-    """New aggregation matching VGGT-SPARK get_similarity() / mean_top_quarter()."""
+    """New aggregation: mean of the top quarter (matches VGGT-SPARK get_similarity, see docs/parity.md)."""
     thresh = float(np.percentile(ratio_np, 75))
     top_vals = ratio_np[ratio_np >= thresh]
     return float(top_vals.mean()) if top_vals.size > 0 else 0.0
@@ -117,7 +113,7 @@ def _salad_input_transform(image_size: int = 224) -> T.Compose:
 
 
 def _load_salad_model(device: str):
-    """Load DINO-SALAD model (same ckpt path as VGGT-SLAM)."""
+    """Load DINO-SALAD model from the torch hub checkpoint dir."""
     from salad.eval import load_model
 
     ckpt_pth = os.path.join(torch.hub.get_dir(), "checkpoints/dino_salad.ckpt")
@@ -135,8 +131,7 @@ def retrieve_pairs(
     """Select pairs via DINO-SALAD nearest-neighbour retrieval.
 
     For each frame, finds its closest match (L2 distance on SALAD embeddings) among
-    frames with gap >= min_gap. Mirrors VGGT-SLAM's ImageRetrieval.find_loop_closures
-    logic — this is the pair distribution on which VGGT-SPARK's 1.025 was measured.
+    frames with gap >= min_gap — the candidate distribution loop closure scores.
     """
     log.info("Loading DINO-SALAD for pair retrieval...")
     salad = _load_salad_model(device)
@@ -309,8 +304,7 @@ def main() -> None:
         default="random",
         help=(
             "Pair selection: 'random' = temporal pairs with gap in [min_gap, max_gap] (diagnostic); "
-            "'retrieved' = DINO-SALAD nearest-neighbour pairs (matches VGGT-SLAM production, "
-            "authoritative comparison vs VGGT-SPARK 1.025 reference)."
+            "'retrieved' = DINO-SALAD nearest-neighbour pairs (loop-closure candidates)."
         ),
     )
     parser.add_argument(
@@ -339,21 +333,6 @@ def main() -> None:
     log.info("Selected %d pairs from %d frames (mode=%s)", len(pairs), len(frames), args.mode)
 
     results = []
-
-    # VGGT-SPARK reference scores (VGGT-1B, mean_top_quarter, from parity harness).
-    # These were measured on DINO-SALAD retrieved pairs — use retrieved mode to compare.
-    results.append(
-        {
-            "model": "vggt_spark_reference",
-            "note": "VGGT-1B via VGGT-SPARK, get_similarity = mean_top_quarter, chess_seq01, DINO-SALAD retrieved pairs",
-            "mean_top_quarter": {
-                "scores": [1.0321, 1.0432, 1.0359, 1.0278, 1.0205, 1.0016, 1.0222, 1.0223, 1.0147, 1.0181, 1.0246],
-                "mean": 1.025,
-                "min": 1.0016,
-                "max": 1.0432,
-            },
-        }
-    )
 
     if "vggtx" in args.models:
         try:
@@ -384,11 +363,7 @@ def main() -> None:
             log.error("vggt_omega failed: %s", exc)
 
     # Summary table
-    mode_note = (
-        "(retrieved pairs — compare vs VGGT-SPARK 1.025)"
-        if args.mode == "retrieved"
-        else "(random pairs — diagnostic floor only)"
-    )
+    mode_note = "(retrieved pairs)" if args.mode == "retrieved" else "(random pairs — diagnostic floor only)"
     print("\n" + "=" * 72)
     print(f"Mode: {args.mode} {mode_note}")
     if args.layer_index is not None:
@@ -408,23 +383,6 @@ def main() -> None:
             f" {mtq.get('max', float('nan')):>9.4f}"
         )
     print("=" * 72)
-    print(f"\nVGGT-SPARK threshold = 0.85  |  gap (mtq mean − 0.85):")
-    for r in results:
-        if r["model"] == "vggt_spark_reference":
-            continue
-        mean = r.get("mean_top_quarter", {}).get("mean", float("nan"))
-        gap = mean - 0.85
-        status = "✓ above" if gap >= 0 else f"✗ below by {abs(gap):.4f}"
-        print(f"  {r['model']:<22} {status}")
-
-    if args.mode == "retrieved":
-        vggtx = next((r for r in results if r["model"] == "vggtx"), None)
-        if vggtx:
-            mean = vggtx.get("mean_top_quarter", {}).get("mean", float("nan"))
-            if not np.isnan(mean):
-                delta = mean - 1.025
-                verdict = "PARITY CONFIRMED" if abs(delta) < 0.15 else "GAP REMAINS — investigate"
-                print(f"\n  VGGT-X vs VGGT-SPARK ref: Δ={delta:+.4f} → {verdict}")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     # Append mode and layer_index to output filename to avoid overwriting runs

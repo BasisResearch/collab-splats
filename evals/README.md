@@ -1,8 +1,7 @@
-# `evals/` — evaluation & parity harness
+# `evals/` — evaluation harness
 
 Compute scripts for reconstruction accuracy: ground-truth ATE/RPE evaluation of the
-collab-splats pipelines (feedforward → BA → LC) and parity checking against upstream
-**VGGT-SLAM**. **Compute runs in CLI/tmux only** — notebooks in `docs/` are for
+collab-splats pipelines (feedforward → BA → LC). **Compute runs in CLI/tmux only** — notebooks in `docs/` are for
 visualization. Heavy inference/eval → tmux, one model at a time (46 GB cgroup cap).
 
 ```bash
@@ -34,9 +33,9 @@ $PY scripts/eval.py \
     --submap_size 16 --max_frames 500 \
     --output_dir results/omega_chess
 ```
-- `--backbone`: `vggt_omega | vggtx | mapanything | vggt_spark`. Per-model LC layer + verify-threshold calibrations are applied automatically.
+- `--backbone`: `vggt_omega | vggtx | mapanything | loger`. Per-model LC layer + verify-threshold calibrations are applied automatically.
 - `--conditions`: `baseline | ba | lc | ba_track-density-N | incremental_ba-N`.
-- `--lc_scale_method` (default **`rotation_only`** = VGGT-SLAM parity method; also `se3 | pairwise_dist | none`). **Keep the default for parity-comparable numbers.**
+- `--lc_scale_method` (default **`rotation_only`**; also `none`). **Keep the default for numbers comparable to `baselines/`.**
 - `--submap_size` for >100-frame sequences (windowed); omit for single-pass short clips.
 
 **2 — compare across models and/or datasets (config-driven grid).**
@@ -56,15 +55,6 @@ Drop each method's `<name>.tum` (+ a `gt.tum`) into a dir; aggregate them into o
 $PY scripts/eval_compare.py --results-dir results/omega_chess --gt-path results/omega_chess/gt.tum
 ```
 
-**4 — VGGT-SLAM parity (historical / secondary).**
-Run the reference SLAM, then treat its trajectory as one more comparison row (its ATE is scored by `eval.py`, not by the wrapper). Needs the isolated env from `bash setup/vggt_slam.sh` (torch 2.3.1).
-
-```bash
-$PY scripts/run_vggt_slam.py --seq_dir data/7scenes/chess/seq-01 \
-    --out_tum results/parity/vggt_slam.tum --max_loops 0        # 0 = published no-LC baseline; >0 enables LC
-# then drop vggt_slam.tum into a results dir and run eval_compare.py (step 3).
-```
-
 **Datasets:** `$PY data/download_datasets.py <7scenes|co3dv2|kitti|tum|waymo>`.
 
 ---
@@ -74,7 +64,7 @@ $PY scripts/run_vggt_slam.py --seq_dir data/7scenes/chess/seq-01 \
 ```
 evals/
   *.py            library modules (see tables below)
-  scripts/        entry points: SLAM wrappers, benchmark drivers, parity/diagnostic tools
+  scripts/        entry points: eval runner, comparison, diagnostic tools
   baselines/      committed reference results (frozen; see below)
   results/        gitignored scratch output of eval_gt runs
   data/           datasets (7-Scenes etc; large, gitignored)
@@ -97,41 +87,16 @@ evals/
 | `datasets.py` | Dataset loaders: 7-Scenes, CO3Dv2, TUM association files. `get_dataset(name)`; GT-TUM/frame helpers (`write_tum_allowed_frames`, `collect_frames`). |
 | `metrics.py` | Thin `evo` ATE/RPE wrapper + `compute_auc` (TUM-file pose AUC). ATE/RPE source of truth. |
 | `trajectory_io.py` | Trajectory read/write (TUM etc). |
+| `trajectory_metrics.py` | In-memory pose-array ATE / RPE / pairwise AUC (`ate_translation`, `rpe`, `auc_at_threshold`, `umeyama_align`); ATE and AUC Umeyama-align first, RPE is alignment-free. |
+| `pose_graph_diagnostics.py` | Loop-closure pose-graph diagnostics: `capture_pose_graph_loss` (per-iteration LM cost, per-edge residuals). |
 
 ## Dataset downloaders (utility)
 
 `data/download_datasets.py <dataset>` — one consolidated CLI with a subcommand per dataset: `7scenes` (`--parity` for the LC-parity set), `co3dv2`, `kitti`, `tum`, `waymo`. `data/extract_waymo.py` converts a Waymo tfrecord → flat layout.
 
-## `scripts/` — SLAM wrappers, benchmark drivers, parity tools
+## Parity references
 
-**Active:**
-| file | role |
-|---|---|
-| `run_vggt_slam.py` | Subprocess wrapper around `third_party/VGGT-SLAM/main.py`. **Use its defaults for the published-matching anchor** (see handoff below). Loop closure via `--max_loops` (0 = published baseline; >0 also writes `selected_frames.txt` for `eval.py --keyframe_list` parity). ATE is scored downstream by `eval.py`/`eval_compare` — drop the TUM into a results dir as a comparison row. |
-| `compare_loop_edges.py` | Loop-edge composition diff (ours vs SLAM). Kept: `compose_slam_chain` imported by `tests/geometry/loop_closure/test_loop_edge_chain.py`. |
-
-### VGGT-SLAM parity workflow
-
-`run_vggt_slam.py` is the single VGGT-SLAM wrapper; loop closure is a flag, not a
-separate script:
-
-```bash
-# Published no-LC baseline (paper defaults: submap_size=16, min_disparity=50)
-$PY evals/scripts/run_vggt_slam.py \
-    --image_dir data/7scenes/chess/seq-01 \
-    --output evals/results/chess_seq01/vggt_slam.tum \
-    --max_loops 0
-
-# Loop-closure run (also writes selected_frames.txt + ATE + metrics.json next to the TUM)
-$PY evals/scripts/run_vggt_slam.py \
-    --image_dir data/7scenes/chess/seq-01 \
-    --output evals/results/chess_seq01/vggt_slam_lc.tum \
-    --max_loops 1
-```
-
-Drop the output TUM into a results dir; `eval.py` aggregation over that dir surfaces
-it as a comparison row against the reconstruction backbones. `--seq_dir`/`--out_tum`
-are accepted as aliases for `--image_dir`/`--output`.
+VGGT-SPARK / VGGT-SLAM parity (method, pinned commits, headline numbers): [`../docs/parity.md`](../docs/parity.md).
 
 ## Other eval tools (standalone)
 
@@ -146,51 +111,29 @@ are accepted as aliases for `--image_dir`/`--output`.
 
 | dir | what |
 |---|---|
-| `disparity_sweep/{slam,ours}_d{10,20,30,50}/` | VGGT-SLAM vs ours frozen baselines at min_disparity 10–50 (chess, max_frames 200). `slam_*/metrics.json` = SLAM ATE; `selected_frames.txt` = identical-frame lists. **plus** `slam_d5_long/` (384 frames, 21 loops — generated 2026-05-31). |
-| `cross_model/` | Cross-model benchmark (2026-05-31). One dir per `<backbone>__<frameset>__<sm>/` with `metrics.json` + `ate.json` + TUM. `_gate/` sanity gate, `_layersweep/` omega LC-layer sweep, `_core_matrix_table.md`. Heavy COLMAP/ply/plots/npz **gitignored** (see `.gitignore`). |
-| `vggt_slam/chess_seq01/` | Raw VGGT-SLAM run output (dense TUM, similarity scores). |
-| `results/parity_harness/` | Parity-trace intermediate dumps. |
+| `cross_model/` | Cross-model benchmark (2026-05-31, chess). One dir per `<backbone>__<frameset>__<sm>/` with `metrics.json` + `ate.json` + TUM; `slam_d*` framesets are fixed keyframe lists (the frames are the `gt.tum` timestamps). `_layersweep/` omega LC-layer sweep, `_core_matrix_table.md`. Heavy COLMAP/ply/plots/npz **gitignored** (see `.gitignore`). |
+| `lc_parity_d5/`, `lc_parity_d5_postfix/` | LC on chess d5 (384 keyframes), before and after the 2026-07 loop-edge fixes: `metrics.json` + `lc_decisions_*.json` per backbone (+ `loop_pr.json` post-fix). |
+| `lc_parity_matrix/` | LC on 7s office / redkitchen + TUM fr3_office (+ 25%/50% keyframe prefixes) per backbone: `loop_pr.json` (loop precision/recall), plus `metrics.json` on TUM. |
 
 ---
 
 ## Tests / benchmarks performed
 
-- **LC pose-extraction parity fix** (commit `1372ac2`): vggt_spark now matches VGGT-SLAM
-  baseline numerically. Trail: `docs/superpowers/specs/2026-05-31-vggt-spark-stage-parity-findings.md`.
-- **Cross-model LC benchmark** (chess, 2026-05-31): 4 backbones × {single-pass, windowed
-  baseline, lc} × {d10, d5_long}. Results + analysis:
-  `docs/superpowers/specs/2026-05-31-cross-model-benchmark-results.md`.
-  Headline: windowing is free; LC never helps on chess (no-op or catastrophic once real
-  loops close — mechanism-level, not layer-tunable); `vggt_omega` best baseline.
+- **Cross-model LC benchmark** (chess, 2026-05-31): backbones × {single-pass, windowed
+  baseline, lc} × {d10, d5_long}; numbers in `baselines/cross_model/_core_matrix_table.md`.
+  Headline then: windowing is free; `vggt_omega` best baseline. LC results predate the
+  2026-07 loop-edge fixes (see `lc_parity_d5_postfix/`).
 - **Unit tests:** `tests/evals/` (runner, table, eval_gt helpers, AUC) and
   `tests/pointcloud/` (AUC metric, LC eval). Run: `$PY -m pytest tests/`.
   Known pre-existing failures: `docs/known-test-failures.md`.
 
-## ⚠️ Before extending the benchmark
-
-This benchmark ran at **off-default** params (`min_disparity` 5/10/20, frame caps).
-VGGT-SLAM `main.py` default is `min_disparity=50` on the **full** folder. To compare to
-published numbers / issue [VGGT-SLAM#43], **first reproduce VGGT-SLAM defaults with
-VGGT-SPARK** (the anchor), then swap backbones on identical config. Full instructions:
-`docs/superpowers/specs/2026-05-31-cross-model-benchmark-handoff.md`.
-
----
-
 ## Investigations — scripts grouped by what they probed
 
-Grouped by topic so the "why" behind each investigation is discoverable. A and B are
-closed investigations (finding fixed / parameter absorbed elsewhere) whose scripts have
-been deleted — the outcome and trail are what has ongoing value. C and D's scripts are
-still retained and re-runnable; several compute paths from their directory depth
-(`Path(__file__).parents[N]`), so moving them would silently break path resolution
-(the same class of bug as the `_VGGT_SPARK_ROOT` off-by-one fixed 2026-05-31).
-
-### A. LC ↔ VGGT-SLAM parity (pose-extraction fix, commit `1372ac2`)
-Goal: find why our LC trajectory diverged 17× from VGGT-SLAM. Root cause = `R` vs `Rᵀ`
-in pose extraction. **Outcome:** fixed; vggt_spark baseline now matches SLAM. The
-investigation scripts (`parity_trace.py` and its solver-dump/comparison helpers) are
-deleted — bug fixed, no ongoing regen value. Trail:
-`docs/superpowers/specs/2026-05-31-vggt-spark-stage-parity-findings.md`.
+Grouped by topic so the "why" behind each investigation is discoverable. B is a
+closed investigation (parameter absorbed elsewhere) whose scripts have been deleted.
+C and D's scripts are still retained and re-runnable; several compute paths from their
+directory depth (`Path(__file__).parents[N]`), so moving them would silently break path
+resolution.
 
 ### B. Bundle-adjustment tuning
 Goal: pick BA track-density / increment params. **Outcome:** folded into `eval_gt` `ba`
@@ -204,16 +147,11 @@ so the sweep scripts are deleted. CO3Dv2 notes in `EVAL_NOTES.md`.
 | `eval_multiview_conf.py` | Multiview-confidence comparison across backbones. |
 
 ### D. Cross-model benchmark (2026-05-31)
-Goal: rank backbones; separate windowing cost from LC benefit. **Outcome:**
-`docs/superpowers/specs/2026-05-31-cross-model-benchmark-results.md`. The frozen
+Goal: rank backbones; separate windowing cost from LC benefit. The frozen
 2026-05-31 numbers live under `baselines/cross_model/`. The bespoke sweep/table
 drivers that generated them have been retired; reproduce or extend the matrix for a
 different backbone/frameset via `eval.py --config configs/7scenes.yaml` (or
-`configs/cross_model_chess.yaml`). The VGGT-SLAM comparison anchor remains:
-
-| script | what it probed |
-|---|---|
-| `scripts/run_vggt_slam.py` | VGGT-SLAM wrapper (anchor + long ref / loop probe; LC via `--max_loops`). |
+`configs/cross_model_chess.yaml`).
 
 > **Housekeeping:** if bundle-adjustment tuning is revisited, prefer writing
 > plots to the gitignored `results/` rather than the source tree.

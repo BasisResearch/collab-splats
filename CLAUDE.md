@@ -71,7 +71,6 @@ collab_splats/
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
     transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV (ex utils/geometry.py)
     bundle_adjustment.py   # Levenberg-Marquardt BA
-    global_alignment.py    # VGGT-X native feature-match + joint BA (parked; not wired into any creator)
     loop_closure/          # submap pose graph (SL4/SE3), DINO-SALAD retrieval gate, LoopClosure wrapper
   localization/            # camera localization: query image → pose in known reconstruction
     retrieval.py           # Stage 1: BaseRetrievalExtractor, DinoSalad/PECLIP (also used by loop closure)
@@ -140,7 +139,7 @@ evals/
       """
   ```
 
-  `tests/test_docstring_contract.py` enforces all of the above — docstrings, annotations and comment runs — for `preproc`, `semantics` and `pointcloud`. Add a package to its `PACKAGES` tuple as it is cleaned up.
+  `tests/test_docstring_contract.py` enforces all of the above — docstrings, annotations and comment runs — for `preproc`, `semantics`, `pointcloud` and `geometry`. Add a package to its `PACKAGES` tuple as it is cleaned up.
 - **Blank lines between blocks:** a run of statements that does one thing is separated from the next run, and every block comment gets a blank line above it. Walls of undifferentiated code are not human-readable.
 - **Don't over-complicate:** prefer the simplest implementation that solves the problem. No premature abstractions, no dead branches for hypothetical future use, no wrapper layers that add no value. If a param is always default, ask whether it should exist.
 - `logging` not `print()` — use `logger.debug()` / `logger.info()` throughout module code

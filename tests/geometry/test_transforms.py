@@ -8,6 +8,8 @@ from collab_splats.geometry.transforms import (
     extract_intrinsics,
     rotation_align_vectors,
     _compute_weighted_median,
+    umeyama_se3,
+    umeyama_sim3,
 )
 
 
@@ -350,14 +352,18 @@ def test_umeyama_sim3_recovers_known_similarity():
     assert np.allclose(t, t_true, atol=1e-4)
 
 
-def test_umeyama_sim3_too_few_points_returns_identity():
-    """Fewer than 3 correspondences cannot fix a Sim(3): identity is returned."""
-    from collab_splats.geometry.transforms import umeyama_sim3
+@pytest.mark.parametrize("fn", [umeyama_se3, umeyama_sim3])
+def test_umeyama_raises_on_fewer_than_three_points(fn):
+    with pytest.raises(ValueError, match="at least 3"):
+        fn(np.zeros((2, 3)), np.ones((2, 3)))
 
-    s, R, t = umeyama_sim3(np.zeros((2, 3)), np.ones((2, 3)))
-    assert s == 1.0
-    assert np.allclose(R, np.eye(3))
-    assert np.allclose(t, np.zeros(3))
+
+@pytest.mark.parametrize("fn", [umeyama_se3, umeyama_sim3])
+def test_umeyama_raises_on_zero_total_weight(fn):
+    rng = np.random.default_rng(0)
+    src = rng.normal(size=(5, 3))
+    with pytest.raises(ValueError, match="zero total weight"):
+        fn(src, src, weights=np.zeros(5))
 
 
 def test_umeyama_se3_recovers_known_rigid_transform():

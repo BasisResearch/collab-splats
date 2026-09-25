@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
+import pytest
+import torch
 from scipy.spatial.transform import Rotation as ScipyR
 
+from collab_splats.geometry.loop_closure import graph as graph_mod
 from collab_splats.geometry.loop_closure.graph import (
+    PoseGraph,
     decompose_camera,
     estimate_scale_pairwise,
 )
+from collab_splats.geometry.loop_closure.submap import Submap
+from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 
 def test_decompose_camera_round_trip():
@@ -48,10 +57,6 @@ def test_estimate_scale_pairwise_no_div_zero():
 ########################################
 ########## PoseGraph tests #############
 ########################################
-
-import gtsam
-
-from collab_splats.geometry.loop_closure.graph import PoseGraph
 
 
 def _identity_H() -> np.ndarray:
@@ -127,13 +132,6 @@ def test_get_homography_post_optimize():
 ####### incremental PoseGraph drive ####
 ########################################
 
-from pathlib import Path
-
-import torch
-
-from collab_splats.geometry.loop_closure.submap import Submap
-from tests.geometry.loop_closure._helpers import drive_pose_graph
-
 
 def _make_real_submap(submap_id: int, k: int = 4, frame_start: int = 0) -> Submap:
     rng = np.random.default_rng(submap_id)
@@ -164,3 +162,151 @@ def test_incremental_pose_graph_returns_correct_shape():
     )
     assert result.shape == (k * 2, 4, 4)
     assert np.isfinite(result).all()
+
+
+########################################
+####### error handling #################
+########################################
+
+
+def test_decompose_camera_rejects_bad_shape():
+    with pytest.raises(ValueError, match="expected"):
+        decompose_camera(np.ones((2, 4)))
+
+
+def _optimizer_raising(exc):
+    def build(*args, **kwargs):
+        raise exc
+
+    return build
+
+
+def test_optimize_keeps_initial_values_on_gtsam_runtime_error(monkeypatch):
+    pg = PoseGraph()
+    H0 = _translate_H(0.3, 0, 0)
+    pg.add_homography(0, H0)
+    before = pg.get_homography(0)
+    monkeypatch.setattr(
+        graph_mod,
+        "gtsam",
+        SimpleNamespace(
+            LevenbergMarquardtParams=lambda: None,
+            LevenbergMarquardtOptimizer=_optimizer_raising(RuntimeError("indeterminant system")),
+        ),
+    )
+    pg.optimize()
+    monkeypatch.undo()
+    assert np.array_equal(pg.get_homography(0), before)
+
+
+def test_optimize_propagates_non_gtsam_errors(monkeypatch):
+    pg = PoseGraph()
+    pg.add_homography(0, _identity_H())
+    monkeypatch.setattr(
+        graph_mod,
+        "gtsam",
+        SimpleNamespace(
+            LevenbergMarquardtParams=lambda: None,
+            LevenbergMarquardtOptimizer=_optimizer_raising(TypeError("bad argument")),
+        ),
+    )
+    with pytest.raises(TypeError, match="bad argument"):
+        pg.optimize()
+
+
+########################################
+####### confidence-mask floor ##########
+########################################
+
+
+# Three confidence groups, each voting a different scale
+# - A (20 pts): both sides confident, scale 2 -> the joint mask
+# - B (60 pts): prior side confident only, scale 4 -> A+B is the prior-only mask
+# - C (120 pts): low but positive confidence on both sides, scale 8 -> everything
+N_A, N_B, N_C = 20, 60, 120
+
+
+def _conf_group_points() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Curr/prior camera-local points plus confidences for the three groups.
+
+    Returns:
+        curr points, prior points (both (N, 3)), curr confidence, prior confidence (both (N,)).
+    """
+    rng = np.random.default_rng(7)
+    n = N_A + N_B + N_C
+    prior = rng.standard_normal((n, 3)) + np.array([0, 0, 5.0])
+    scale = np.concatenate([np.full(N_A, 2.0), np.full(N_B, 4.0), np.full(N_C, 8.0)])
+    curr = prior / scale[:, None]
+
+    # Joint confidence on A only; prior confidence on A+B; C passes only a `> 0` test
+    curr_conf = np.concatenate([np.full(N_A, 50.0), np.zeros(N_B), np.ones(N_C)]).astype(np.float32)
+    prior_conf = np.concatenate([np.full(N_A + N_B, 50.0), np.ones(N_C)]).astype(np.float32)
+    return curr, prior, curr_conf, prior_conf
+
+
+def _submap_pair_with_conf_groups():
+    """Two submaps whose single overlap frame carries the three confidence groups."""
+    curr, prior, curr_conf, prior_conf = _conf_group_points()
+    k = 2
+    s0 = _make_real_submap(0, k=k, frame_start=0)
+    s1 = _make_real_submap(1, k=k, frame_start=k - 1)
+    s0.poses = np.tile(np.eye(4, dtype=np.float32), (k, 1, 1))
+    s1.poses = np.tile(np.eye(4, dtype=np.float32), (k, 1, 1))
+    s1.poses[1, 0, 3] = 0.1  # a baseline inside s1, so its scale shows in frame 2
+    s0.world_points = np.tile(prior, (k, 1, 1)).astype(np.float32)
+    s1.world_points = np.tile(curr, (k, 1, 1)).astype(np.float32)
+    s0.world_points_conf = np.tile(prior_conf, (k, 1))
+    s1.world_points_conf = np.tile(curr_conf, (k, 1))
+    return s0, s1
+
+
+def _drive(pg, submaps):
+    for s in submaps:
+        pg.add_submap(s, 1, 25.0, "rotation_only")
+        pg.optimize()
+    return pg.extract_extrinsics(3)
+
+
+def test_min_conf_points_sets_the_confidence_mask_floor():
+    """
+    Each floor picks its own mask on the sequential edge.
+
+    - 100 (default): joint 20 and prior 80 both fall short -> every point
+    - 30: joint falls short, prior clears -> the prior-only mask
+    - 10: joint clears -> the joint mask
+    """
+    s0, s1 = _submap_pair_with_conf_groups()
+    default = _drive(PoseGraph(), [s0, s1])
+    explicit = _drive(PoseGraph(min_conf_points=100), [s0, s1])
+    prior_only = _drive(PoseGraph(min_conf_points=30), [s0, s1])
+    joint = _drive(PoseGraph(min_conf_points=10), [s0, s1])
+    assert np.array_equal(default, explicit)
+    assert not np.allclose(default, prior_only)
+    assert not np.allclose(prior_only, joint)
+    assert not np.allclose(default, joint)
+
+
+def _single_frame_submap(sid: int, points: np.ndarray, conf: np.ndarray, is_lc: bool) -> Submap:
+    """One-frame submap at the identity pose with identity intrinsics."""
+    return Submap(
+        submap_id=sid,
+        frames=None,
+        poses=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32)[None],
+        retrieval_vectors=np.zeros((1, 8), dtype=np.float32),
+        image_paths=[f"s{sid}_f0.jpg"],
+        is_lc_submap=is_lc,
+        world_points=points[None].astype(np.float32),
+        world_points_conf=conf[None],
+    )
+
+
+@pytest.mark.parametrize("min_conf_points, expected", [(100, 8.0), (30, 4.0), (10, 2.0)])
+def test_lc_anchor_scale_confidence_floor_picks_the_mask(min_conf_points, expected):
+    """100: prior > 0 fallback (all); 30: prior-only mask (A+B); 10: joint mask (A)."""
+    curr, prior, curr_conf, prior_conf = _conf_group_points()
+    lc = _single_frame_submap(9, curr, curr_conf, is_lc=True)
+    reg = _single_frame_submap(0, prior, prior_conf, is_lc=False)
+    s = graph_mod._lc_anchor_scale(lc, 0, reg, 0, 25.0, "rotation_only", min_conf_points)
+    assert s == pytest.approx(expected, rel=1e-5)

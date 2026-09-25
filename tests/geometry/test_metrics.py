@@ -5,13 +5,16 @@ import math
 import warnings
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 from scipy import stats
 
+from collab_splats.geometry import metrics
 from collab_splats.geometry.metrics import (
     _running_error,
+    _scale_intrinsics_to_original,
     bounded_residual,
     build_reconstruction_quality_report,
     compute_depth_error,
@@ -20,6 +23,7 @@ from collab_splats.geometry.metrics import (
     residual_bin_edges,
 )
 from collab_splats.geometry.verification import PairStats, _distribution, clean_for_json
+from collab_splats.pointcloud.feedforward import base as ff_base
 from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import LEAF_STAGES, _STAGE_DEPS, _STAGE_ORDER
 
@@ -517,7 +521,7 @@ def test_ncc_is_invariant_to_image_scale_convention():
     """[0,255] VGGT vs [0,1] MapAnything must not change the number.
 
     Frame 1 is noised so the correlation sits near 0.5 rather than at 1.0. At 1.0 both an
-    un-normalised covariance and a raw difference read the same under either scaling — the
+    un-normalized covariance and a raw difference read the same under either scaling — the
     invariance would be asserted against a case that cannot distinguish them.
     """
     rng = np.random.default_rng(11)
@@ -648,7 +652,7 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
     the K arithmetic, and a constant depth is what keeps the warp an exact integer map and the
     1.0-vs-0 margin clean; a depth edge would zoom each half by a different factor and force
     resampling for no gain. The guided filter's use of its guide is pinned separately, by
-    test_the_upsample_guide_is_normalised... and _scene_with_a_dark_frame, both of which do
+    test_the_upsample_guide_is_normalized... and _scene_with_a_dark_frame, both of which do
     carry an edge because there the guide IS the subject.
     """
     rng = np.random.default_rng(7)
@@ -674,7 +678,7 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
     assert m["pairs"][0]["n_pixels"] == 16 * 32
 
 
-def test_the_upsample_guide_is_normalised_whatever_the_backbones_image_scale(monkeypatch):
+def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(monkeypatch):
     """upsample_depths documents a uint8 guide and divides it by 255 internally.
 
     FeedforwardResult.images is [0, 255] on VGGT-X and [0, 1] on MapAnything, so an uncoerced
@@ -881,6 +885,30 @@ def test_nothing_in_the_photometric_output_grades_the_scene():
     assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pairs"][0]))
     strings = " ".join(v for v in m.values() if isinstance(v, str))
     assert not any(w in strings.lower() for w in ("good", "bad", "poor", "acceptable", "fail"))
+
+
+def test_extract_photometric_propagates_measurement_errors(tmp_path, monkeypatch):
+    """A failure inside the correlation raises; only missing images return unavailable."""
+    monkeypatch.setattr(metrics.frames, "frame_paths", lambda d: [d / "frame_000000.png"])
+    monkeypatch.setattr(metrics.frames, "read_frames", lambda d: np.zeros((1, 4, 4, 3), np.uint8))
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("correlation failed")
+
+    monkeypatch.setattr(metrics, "compute_photometric_ncc", boom)
+    result = SimpleNamespace(
+        depth=np.ones((1, 4, 4)), intrinsics=np.tile(np.eye(3), (1, 1, 1)),
+        extrinsics=np.tile(np.eye(4), (1, 1, 1)), original_coords=np.zeros((1, 6)),
+    )
+    with pytest.raises(RuntimeError, match="correlation failed"):
+        metrics.extract_photometric(result, tmp_path, 1)
+
+
+def test_extract_photometric_without_images_is_unavailable(tmp_path):
+    """Nothing to measure is the one case that returns unavailable instead of raising."""
+    out = metrics.extract_photometric(SimpleNamespace(), tmp_path / "no_images", 1)
+    assert out["available"] is False
+    assert "no frame images" in out["reason"]
 
 
 ########################################
@@ -1112,6 +1140,59 @@ def test_running_error_says_unavailable_rather_than_shipping_empty_arrays(tmp_pa
     assert written["running_error"]["depth"]["cumulative"]
 
 
+def test_epipolar_row_missing_num_inliers_raises(tmp_path):
+    """verify always writes num_matches and num_inliers; a row without one is corrupt."""
+    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
+    vj = tmp_path / "verification.json"
+    vj.write_text(json.dumps({"pair_stats": [
+        {"idx1": 0, "idx2": 1, "num_matches": 10, "rot_error_deg": 1.0},
+    ]}))
+    with pytest.raises(KeyError, match="num_inliers"):
+        build_reconstruction_quality_report(
+            zarr_path, vj, tmp_path / "no_images", tmp_path / "report.json", "vggtx"
+        )
+
+
+def test_verification_json_missing_pair_stats_raises(tmp_path):
+    """verify always writes pair_stats; a file without it is malformed, not zero verified pairs."""
+    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
+    vj = tmp_path / "verification.json"
+    vj.write_text(json.dumps({"frame_stats": {}}))
+    with pytest.raises(KeyError, match="pair_stats"):
+        build_reconstruction_quality_report(
+            zarr_path, vj, tmp_path / "no_images", tmp_path / "report.json", "vggtx"
+        )
+
+
+def test_available_channel_without_rows_raises(tmp_path, monkeypatch):
+    """A channel that claims available must ship its rows; a missing key is a bug, not zero."""
+    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
+    monkeypatch.setattr(metrics, "compute_depth_error", lambda *a, **k: {"available": True})
+    with pytest.raises(KeyError, match="pair_directions"):
+        build_reconstruction_quality_report(
+            zarr_path, tmp_path / "none.json", tmp_path / "no_images",
+            tmp_path / "report.json", "vggtx",
+        )
+
+
+def test_rel_thresh_reaches_depth_confidence(tmp_path, monkeypatch):
+    """rel_thresh is a kwarg on the report, threaded to the dense confidence pass."""
+    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
+    seen = {}
+    real = ff_base.compute_multiview_depth_confidence
+
+    def spy(*args, **kwargs):
+        seen["rel_thresh"] = kwargs["rel_thresh"]
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ff_base, "compute_multiview_depth_confidence", spy)
+    build_reconstruction_quality_report(
+        zarr_path, tmp_path / "none.json", tmp_path / "no_images",
+        tmp_path / "report.json", "vggtx", rel_thresh=0.2,
+    )
+    assert seen["rel_thresh"] == 0.2
+
+
 def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):
     """No verification.json and no images/: depth still ships, the other two say why not."""
     report = _build(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
@@ -1154,3 +1235,10 @@ def test_crop_coverage_is_measured_against_the_ORIGINAL_canvas_not_the_model_gri
     fractions = [c["covered_fraction"] for c in report["crop_coverage"]]
     assert fractions == pytest.approx([1.0 / 3.0, 1.0 / 3.0])
     assert [c["index"] for c in report["crop_coverage"]] == [0, 1]
+
+
+def test_scale_intrinsics_to_original_known_answer():
+    """Crop (11,7)-(59,47) resized to 12x8: sx=0.25, sy=0.2."""
+    K = np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]])
+    out = _scale_intrinsics_to_original(K, 0.25, 0.2, 11.0, 7.0)
+    assert np.allclose(out, [[40.0, 0, 35.0], [0, 50.0, 27.0], [0, 0, 1]])

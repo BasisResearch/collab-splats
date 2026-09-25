@@ -8,7 +8,6 @@ import pytest
 import torch
 
 from collab_splats.geometry.loop_closure.submap import Submap
-from collab_splats.geometry.loop_closure.wrapper import _trim_forward_outputs
 from collab_splats.pointcloud.feedforward import FeedforwardResult
 
 
@@ -271,24 +270,6 @@ def test_loop_closure_run_returns_feedforward_result():
     mock_base.postprocess.assert_called_once()
 
 
-def test_loop_closure_run_no_dedup_when_raw_outputs_empty():
-    """When raw_outputs has no _dedup_rows key, result passes through unchanged."""
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
-
-    N, H, W = 2, 8, 8
-    images = torch.zeros(N, 3, H, W)
-    result = _make_ff_result(images=images)
-    mock_base = _make_mock_creator(result)
-    mock_base.raw_outputs = {}
-    mock_base.views = torch.zeros(N, 3, H, W)
-
-    lc = LoopClosure(mock_base)
-    returned = lc.run(Path("/fake/dir"))
-
-    # images tensor unchanged — same object
-    assert returned.images is images
-
-
 ########################################################
 ########## LoopClosure.reproject() tests ##############
 ########################################################
@@ -308,47 +289,6 @@ def test_loop_closure_reproject_delegates_to_base():
 
     mock_base.reproject.assert_called_once_with(result)
     assert out is reprojected
-
-
-########################################################
-########## _trim_forward_outputs tests ###############
-########################################################
-
-
-def test_trim_forward_outputs_dict_trims_arrays():
-    raw = {
-        "extrinsic": np.zeros((7, 3, 4)),
-        "intrinsics": np.zeros((7, 3, 3)),
-        "depth": np.zeros((7, 64, 64, 1)),
-        "depth_conf": np.zeros((7, 64, 64)),
-        "world_points": np.zeros((7, 100, 3)),
-        "world_points_conf": np.zeros((7, 100)),
-        "images": np.zeros((7, 3, 64, 64)),
-    }
-    trimmed = _trim_forward_outputs(raw, 6)
-    for key, val in trimmed.items():
-        assert isinstance(val, np.ndarray)
-        assert val.shape[0] == 6, f"{key}: expected 6, got {val.shape[0]}"
-
-
-def test_trim_forward_outputs_list_trims_list():
-    raw = [{"extrinsic": np.zeros((1, 3, 4))} for _ in range(7)]
-    trimmed = _trim_forward_outputs(raw, 6)
-    assert len(trimmed) == 6
-
-
-def test_trim_forward_outputs_no_op_when_short():
-    raw = {"extrinsic": np.zeros((5, 3, 4)), "scalar": 1.0}
-    trimmed = _trim_forward_outputs(raw, 6)
-    assert trimmed["extrinsic"].shape[0] == 5
-    assert trimmed["scalar"] == 1.0
-
-
-def test_trim_forward_outputs_preserves_non_array_values():
-    raw = {"extrinsic": np.zeros((7, 3, 4)), "label": "keep", "count": 42}
-    trimmed = _trim_forward_outputs(raw, 6)
-    assert trimmed["label"] == "keep"
-    assert trimmed["count"] == 42
 
 
 ########################################################
@@ -632,7 +572,7 @@ def test_lc_output_assembled_from_graphmap():
     """LC output (base.outputs) is assembled from the GraphMap dense cloud, not the old merge.
 
     Uses the strengthened harness (non-identity geometry, dense depth, >=1 driven loop).
-    Asserts points/colors == map.get_world_pointcloud, extrinsics == map.get_corrected_extrinsics,
+    Asserts points/colors == map.get_world_pointcloud, extrinsics == graph.extract_extrinsics,
     intrinsics (N,3,3), and len(image_paths) == N.
     """
     from collab_splats.geometry.loop_closure.matching import LoopMatch
@@ -715,7 +655,7 @@ def test_lc_output_assembled_from_graphmap():
     np.testing.assert_array_equal(out.colors, exp_cols)
 
     # extrinsics == the graph-corrected (N,4,4); intrinsics/image_paths sized to N.
-    np.testing.assert_allclose(out.extrinsics, lc.map.get_corrected_extrinsics(lc.graph, n_frames))
+    np.testing.assert_allclose(out.extrinsics, lc.graph.extract_extrinsics(n_frames))
     assert out.extrinsics.shape == (n_frames, 4, 4)
     assert out.intrinsics.shape == (n_frames, 3, 3)
     assert len(out.image_paths) == n_frames
@@ -841,12 +781,8 @@ def test_assemble_result_caps_cloud_to_max_points():
     assert out.colors.shape[0] == 4  # colors stay index-aligned with points
 
 
-def test_lc_frees_raw_outputs_after_unproject_keeps_frames():
-    """Per-submap raw_outputs is freed once dense points are unprojected (VGGT-SLAM
-    memory profile: raw_outputs — full depth+images+conf per frame — is the OOM
-    driver). frames must stay resident for loop verify, and freeing raw_outputs
-    must not change the assembled LC output.
-    """
+def test_lc_submaps_keep_frames_after_unproject():
+    """frames stay resident on every submap after dense unprojection (loop verify reads them)."""
     from collab_splats.geometry.loop_closure.matching import LoopMatch
     from collab_splats.geometry.loop_closure.wrapper import (
         LoopClosure,
@@ -912,17 +848,45 @@ def test_lc_frees_raw_outputs_after_unproject_keeps_frames():
     # A loop edge must have actually driven the graph, else the harness has no teeth.
     assert len(lc._last_lc_submaps) >= 1
 
-    # raw_outputs freed on every submap (window + loop-closure); frames retained.
+    # frames retained on every submap (window + loop-closure)
     for s in lc.map.ordered_submaps_by_key():
-        assert s.raw_outputs is None, f"submap {s.submap_id} still retains raw_outputs"
         assert s.frames is not None, f"submap {s.submap_id} lost frames (needed for loop verify)"
 
-    # Freeing raw_outputs must not break output assembly.
+    # Output assembly still runs
     assert lc.base.outputs.points.shape[0] > 0
 
 
+def _run_one_window(raw: dict, window):
+    """Drive LoopClosure.run_predictions over one window with a stub forward."""
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+
+    base = MagicMock()
+    base._forward = lambda model, views, **kwargs: raw
+    base.image_paths = [f"img_{i}.png" for i in range(3)]
+    lc = LoopClosure(base)
+    return lc.run_predictions(
+        window, 0, 0, [], [], lambda frames: torch.zeros(frames.shape[0], 8), MagicMock()
+    )
+
+
+def test_run_predictions_requires_intrinsics_key():
+    raw = _make_raw_nontrivial(3, 8, 8)
+    raw["intrinsic"] = raw.pop("intrinsics")
+    with pytest.raises(KeyError, match="intrinsics"):
+        _run_one_window(raw, torch.zeros(3, 3, 8, 8))
+
+
+def test_run_predictions_rejects_unknown_window_shape():
+    with pytest.raises(TypeError, match="LC window"):
+        _run_one_window(_make_raw_nontrivial(3, 8, 8), [0, 1, 2])
+
+
 def test_assemble_result_raises_on_empty_cloud():
-    """_assemble_result fails fast (clear ValueError) when no submap carries dense points."""
+    """
+    Pins the empty-cloud raise when no submap carries dense points.
+
+    - the `model_height is None` arm has no independent trigger: no dense points is an empty cloud
+    """
     from collab_splats.geometry.loop_closure.graph import PoseGraph
     from collab_splats.geometry.loop_closure.map import GraphMap
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
@@ -950,8 +914,6 @@ def test_assemble_result_raises_on_empty_cloud():
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.image_paths = [f"img_{i}.png" for i in range(n_frames)]
     base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
-    base.model_width = 0
-    base.model_height = 0
 
     lc = LoopClosure(base)
     lc.map = GraphMap()
@@ -1061,6 +1023,193 @@ def test_lc_loop_pushes_to_viz_when_set():
     assert len(viz.point_names) >= n_submaps
     assert len(viz.frustum_names) > 0
     assert len(viz.line_names) >= 1
+
+
+def _make_real_submap_for_viz() -> Submap:
+    """Two-frame dense submap whose confidence mask keeps about 75% of its 32x32 pixels."""
+    H = W = 32
+    sm = Submap(
+        submap_id=0,
+        frames=torch.zeros(2, 3, H, W),
+        poses=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
+        intrinsics=np.tile(np.eye(3, dtype=np.float32), (2, 1, 1)),
+        retrieval_vectors=np.zeros((2, 8), dtype=np.float32),
+        image_paths=["a.jpg", "b.jpg"],
+        frame_start=0,
+    )
+    sm.set_dense_points(
+        np.random.RandomState(0).rand(2, H, W, 3).astype(np.float32),
+        np.zeros((2, H, W, 3), np.uint8),
+        # varied conf: a constant one puts every point at the 25th-percentile cutoff, masking all
+        np.random.RandomState(1).uniform(1.0, 100.0, (2, H, W)).astype(np.float32),
+    )
+    return sm
+
+
+def test_viz_max_points_caps_the_viewer_push():
+    """LoopClosureConfig.viz_max_points is the per-submap viewer point cap."""
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+
+    sm = _make_real_submap_for_viz()
+
+    class _SizedViz(_RecordingViz):
+        def add_points(self, name, points, colors, **kwargs):
+            self.n_points = points.shape[0]
+
+    lc = LoopClosure(MagicMock(), config=LoopClosureConfig(viz_max_points=100))
+    lc.graph.add_submap(sm, 1)
+    lc.graph.optimize()
+    lc.viz = _SizedViz()
+    lc._viz_push_submap(sm)
+    assert lc.viz.n_points == 100
+
+
+class _FailingViz(_RecordingViz):
+    def __init__(self, exc):
+        super().__init__()
+        self.exc = exc
+
+    def add_points(self, name, points, colors, **kwargs):
+        raise self.exc
+
+    def add_lines(self, name, segments, **kwargs):
+        raise self.exc
+
+
+def _accepted_match():
+    from collab_splats.geometry.loop_closure.matching import LoopMatch
+
+    m = LoopMatch(
+        similarity_score=0.1, query_submap_id=0, detected_submap_id=0, query_frame_idx=0, detected_frame_idx=0
+    )
+    m.accepted = True
+    return m
+
+
+def _lc_with_one_submap():
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+
+    sm = _make_real_submap_for_viz()
+    lc = LoopClosure(MagicMock())
+    lc.graph.add_submap(sm, 1)
+    lc.graph.optimize()
+    return lc, sm
+
+
+def test_viz_draw_loops_swallows_viewer_errors():
+    lc, sm = _lc_with_one_submap()
+    lc.viz = _FailingViz(OSError("socket closed"))
+    lc._viz_draw_loops([_accepted_match()], [sm])  # logged, not raised
+
+
+def test_viz_draw_loops_propagates_programming_errors():
+    lc, sm = _lc_with_one_submap()
+    lc.viz = _FailingViz(AttributeError("no such method"))
+    with pytest.raises(AttributeError):
+        lc._viz_draw_loops([_accepted_match()], [sm])
+
+
+def test_viz_draw_loops_skips_rejected_matches():
+    """A loop match that failed verification draws no line."""
+    lc, sm = _lc_with_one_submap()
+    lc.viz = _RecordingViz()
+    rejected = _accepted_match()
+    rejected.accepted = False
+    lc._viz_draw_loops([rejected], [sm])
+    assert lc.viz.line_names == []
+
+
+def test_viz_push_submap_logs_viewer_io_errors(caplog):
+    lc, sm = _lc_with_one_submap()
+    lc.viz = _FailingViz(OSError("socket closed"))
+    with caplog.at_level("WARNING", logger="collab_splats.geometry.loop_closure.wrapper"):
+        lc._viz_push_submap(sm)  # logged, not raised
+    assert "viewer submap push failed" in caplog.text
+    assert "socket closed" in caplog.text
+
+
+def test_viz_push_submap_propagates_programming_errors():
+    lc, sm = _lc_with_one_submap()
+    lc.viz = _FailingViz(TypeError("bad argument"))
+    with pytest.raises(TypeError, match="bad argument"):
+        lc._viz_push_submap(sm)
+
+
+def test_dino_salad_load_failure_falls_back_to_full_inference():
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+
+    base = MagicMock()
+    base.views = torch.zeros(6, 3, 8, 8)
+    lc = LoopClosure(base, config=LoopClosureConfig(submap_size=3))
+    with patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as r:
+        r.get.side_effect = OSError("weights missing")
+        lc.run_inference()
+    base._forward.assert_called_once()
+
+
+def test_dino_salad_unexpected_error_propagates():
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+
+    base = MagicMock()
+    base.views = torch.zeros(6, 3, 8, 8)
+    lc = LoopClosure(base, config=LoopClosureConfig(submap_size=3))
+    with patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as r:
+        r.get.side_effect = TypeError("bad kwarg")
+        with pytest.raises(TypeError, match="bad kwarg"):
+            lc.run_inference()
+
+
+def test_lc_rejects_non_finite_loop_pose():
+    """A NaN loop relative is rejected before it reaches the graph."""
+    from collab_splats.geometry.loop_closure.matching import LoopMatch
+    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+
+    H = W = 32
+    n_frames = 9
+    cfg = LoopClosureConfig(submap_size=3, submap_overlap=1, min_submap_gap=0)
+
+    def fake_forward(model, views, **kwargs):
+        sz = views.shape[0] if hasattr(views, "shape") else len(views)
+        return _make_raw_nontrivial(sz, H, W)
+
+    def fake_verify(q_frame, d_frame, verify_match_ratio=None):
+        poses = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+        poses[1, 0, 3] = np.nan
+        wp = np.zeros((2, H, W, 3), np.float32)
+        return True, {"poses": poses, "world_points": wp, "conf": np.full((2, H, W), 100.0, np.float32)}
+
+    def fake_find(submap, past, *args, **kwargs):
+        if past:
+            return [
+                LoopMatch(
+                    similarity_score=0.1,
+                    query_submap_id=submap.submap_id,
+                    detected_submap_id=0,
+                    query_frame_idx=1,
+                    detected_frame_idx=1,
+                )
+            ]
+        return []
+
+    base = MagicMock()
+    base.max_points = 500_000
+    base.views = torch.full((n_frames, 3, H, W), 0.5)
+    base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
+    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base._forward = fake_forward
+    base._lc_collate_outputs = lambda r: r
+    base._verify_loop_candidate = fake_verify
+
+    lc = LoopClosure(base, config=cfg)
+    with (
+        patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
+        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+    ):
+        mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
+        lc.run_inference()
+
+    assert lc._last_lc_submaps == []
+    assert np.isfinite(base.outputs.extrinsics).all()
 
 
 def _run_lc_harness_with_timing(loop_edge_timing):

@@ -34,7 +34,7 @@ class _StubCreator(BaseFeedforwardCreator):
         depth_conf = np.tile(50.0 + 0.1 * (rows + cols), (k, 1, 1)).astype(np.float32)
         return {
             "extrinsic": np.tile(np.eye(4)[:3], (k, 1, 1)).astype(np.float32),
-            "intrinsic": np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
+            "intrinsics": np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
             "depth": np.ones((k, h, w, 1), dtype=np.float32),
             "depth_conf": depth_conf,
         }

@@ -9,13 +9,7 @@ import pytest
 # mirrors the retired tests/evals/test_lc_parity_common.py).
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
 
-from datasets import (  # noqa: E402
-    _load_video,
-    collect_frames,
-    filter_images_to_list,
-    list_scene_images,
-    write_tum_allowed_frames,
-)
+from datasets import _load_video  # noqa: E402
 
 
 def _make_seq(tmp_path: Path, n_frames: int, poses: list[np.ndarray] | None = None) -> Path:
@@ -203,7 +197,7 @@ def test_load_7scenes_dtype(tmp_path):
 def test_load_7scenes_works_for_any_scene_name(tmp_path):
     """Loader is scene-name-agnostic: only the flat seq-NN/{frame-*.color.png,frame-*.pose.txt}
     layout matters. Documents the multi-scene contract used by the download script
-    (chess/fire/office validated for VGGT-SLAM-comparable evals).
+    (chess/fire/office).
     """
     import sys
 
@@ -401,92 +395,6 @@ def test_load_kitti_missing_poses_raises(tmp_path):
     msg = str(ei.value)
     assert "poses.txt" in msg
     assert "00.txt" in msg
-
-
-# ------------------- SLAM frame selection helpers (ex lc_parity_common) ------------------- #
-
-
-def _make_fake_tum_seq(root: Path) -> Path:
-    """Minimal TUM seq: 3 rgb frames, GT covers only the first two (third is a GT gap)."""
-    seq = root / "tum" / "rgbd_dataset_freiburg3_long_office_household"
-    (seq / "rgb").mkdir(parents=True)
-    for ts in ("10.000000", "10.050000", "99.000000"):
-        (seq / "rgb" / f"{ts}.png").touch()
-    rgb_lines = ["# color images"] + [f"{ts} rgb/{ts}.png" for ts in ("10.000000", "10.050000", "99.000000")]
-    (seq / "rgb.txt").write_text("\n".join(rgb_lines))
-    gt_lines = ["# gt"] + [f"{ts} 0 0 0 0 0 0 1" for ts in ("10.001", "10.049")]
-    (seq / "groundtruth.txt").write_text("\n".join(gt_lines))
-    return seq
-
-
-def test_list_scene_images_7scenes_layout(tmp_path):
-    # 7-Scenes: color frames directly in seq dir
-    for i in range(3):
-        (tmp_path / f"frame-{i:06d}.color.png").touch()
-    (tmp_path / "frame-000000.pose.txt").touch()  # must be excluded
-    imgs = list_scene_images(tmp_path)
-    assert len(imgs) == 3
-    assert all(p.suffix == ".png" and "color" in p.name for p in imgs)
-
-
-def test_list_scene_images_tum_layout(tmp_path):
-    # TUM: images under rgb/
-    rgb = tmp_path / "rgb"
-    rgb.mkdir()
-    for ts in ("1305031102.175304", "1305031102.211214"):
-        (rgb / f"{ts}.png").touch()
-    (tmp_path / "groundtruth.txt").touch()
-    imgs = list_scene_images(tmp_path)
-    assert len(imgs) == 2
-    assert imgs[0].parent.name == "rgb"
-    assert imgs == sorted(imgs)
-
-
-def test_filter_images_to_list_keeps_only_listed(tmp_path):
-    # Matching is by basename: absolute frame paths vs a bare-basename allow list
-    frames = [str(tmp_path / "rgb" / f"frame-{i}.png") for i in range(5)]
-    allow = tmp_path / "allowed_frames.txt"
-    allow.write_text("frame-0.png\nframe-2.png\nframe-4.png\n")
-    kept = filter_images_to_list(frames, allow)
-    assert [Path(p).name for p in kept] == ["frame-0.png", "frame-2.png", "frame-4.png"]
-
-
-def test_write_tum_allowed_frames_drops_gt_gap(tmp_path):
-    # The GT-gap frame (no groundtruth within 0.02 s) must not appear in the allow list
-    seq = _make_fake_tum_seq(tmp_path)
-    out = tmp_path / "allowed_frames.txt"
-    write_tum_allowed_frames(seq, out)
-    assert out.read_text().splitlines() == ["10.000000.png", "10.050000.png"]
-
-
-def test_collect_frames_no_list_is_raw_sorted_listing(tmp_path):
-    # Without image_list the frame universe is the raw dir listing (7-Scenes path)
-    for i in range(4):
-        (tmp_path / f"frame-{i:06d}.color.png").touch()
-    frames = collect_frames(tmp_path)
-    assert [Path(p).name for p in frames] == [f"frame-{i:06d}.color.png" for i in range(4)]
-
-
-def test_collect_frames_respects_image_list(tmp_path):
-    # image_list restricts by basename; order of survivors is preserved
-    rgb = tmp_path / "rgb"
-    rgb.mkdir()
-    for name in ("10.0.png", "10.5.png", "99.0.png"):
-        (rgb / name).touch()
-    allow = tmp_path / "allowed_frames.txt"
-    allow.write_text("10.0.png\n10.5.png")
-    frames = collect_frames(tmp_path, image_list=allow)
-    assert [Path(p).name for p in frames] == ["10.0.png", "10.5.png"]
-
-
-def test_collect_frames_max_frames_applies_after_filter(tmp_path):
-    # max_frames caps the FILTERED sequence
-    for i in range(6):
-        (tmp_path / f"f{i}.png").touch()
-    allow = tmp_path / "allowed_frames.txt"
-    allow.write_text("\n".join(f"f{i}.png" for i in (0, 2, 4)))
-    frames = collect_frames(tmp_path, image_list=allow, max_frames=2)
-    assert [Path(p).name for p in frames] == ["f0.png", "f2.png"]
 
 
 # ------------------- Video loading via the images/ store (single decode) ------------------- #

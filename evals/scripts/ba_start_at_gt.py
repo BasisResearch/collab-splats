@@ -28,13 +28,13 @@ sys.path.insert(0, str(Path("evals").resolve()))
 sys.path.insert(0, str(Path("evals/scripts").resolve()))
 
 from datasets import get_dataset  # noqa: E402
+from trajectory_metrics import ate_translation  # noqa: E402
 
 from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig  # noqa: E402
 from collab_splats.geometry.bundle_adjustment import (  # noqa: E402
+    _check_model_resolution,
     _compute_tracks_cache_key,
-    _scale_intrinsics_to_model,
 )
-from collab_splats.geometry.loop_closure.eval import ate_translation  # noqa: E402
 from collab_splats.geometry.transforms import umeyama_sim3  # noqa: E402
 from collab_splats.pointcloud import get_creator  # noqa: E402
 
@@ -135,12 +135,12 @@ def main() -> None:
         logger.info("adopted existing track cache (%d frames, %d points) from %s",
                     n_src, src["tracks"].shape[1], SRC_TRACKS)
 
-    # Dump BA's exact inputs so a points-only evaluation uses the real model-resolution K
-    # and pose arrays rather than reconstructing them. _scale_intrinsics_to_model is a
-    # no-op for backends that already store model-res K, but read it, never assume it.
+    # Dump BA's exact inputs so a points-only evaluation uses the real model-res K and poses
+    # - the guard raises on a pre-contract original-res K, before extraction, as refine() does
+    _check_model_resolution(result.intrinsics, result.images, result.original_coords)
+    intr_model = result.intrinsics
     ba_probe = BundleAdjustment(cfg)
     tracks, vis_scores, pts3d_tracks = ba_probe._load_or_extract_tracks(result)
-    intr_model, *_ = _scale_intrinsics_to_model(result.intrinsics, result.images, result.original_coords)
     np.savez(
         OUT / "ba_inputs.npz",
         poses_model=model_poses, poses_gt_recon=gt_recon, intrinsics_model=intr_model,
@@ -158,7 +158,7 @@ def main() -> None:
         logger.info("=== %s === starting ATE %.6f", name, ate_start["rmse"])
 
         refined = ba.refine(start)
-        hist = ba._last_loss_history[-1] if ba._last_loss_history else []
+        hist = ba.loss_history[-1] if ba.loss_history else []
         ate_end = ate_translation(refined.extrinsics.astype(np.float32), ds.gt_poses)
 
         # Pose movement from the starting point, in camera-centre distance

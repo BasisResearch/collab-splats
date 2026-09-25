@@ -917,8 +917,7 @@ def _call_run_feedforward(tmp_path, *, n_frames=10, **overrides):
 
 
 def test_loger_is_a_recognized_feedforward_backend():
-    # vggt_spark is in _REGISTRY but absent here, so it is unreachable from
-    # Reconstructor. loger must be in both.
+    # loger must be in both _REGISTRY and the Reconstructor's backend list
     assert "loger" in _FEEDFORWARD_BACKENDS
 
 

@@ -18,6 +18,7 @@ Driver flags, output layout, and the processed-scene contract: [../configs/READM
 - [semantics/](semantics/) — feature extraction, MaskCLIP, Talk2DINO
 - [mesh.md](mesh.md) — TSDF fusion, cleaning, texturing, vertex features
 - [splats.md](splats.md) — Gaussian-splat training on upstream gsplat
+- [parity.md](parity.md) — loop-closure parity vs VGGT-SLAM / VGGT-SPARK (references removed)
 
 ## Internal
 

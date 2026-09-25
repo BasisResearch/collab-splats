@@ -20,7 +20,6 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.geometry.loop_closure.edge_trace import compose_slam_chain
 from collab_splats.geometry.loop_closure.graph import (
     _lc_anchor_scale,
     _loop_chain_relatives,
@@ -230,8 +229,8 @@ def test_chain_relatives_compose_to_direct_for_identity_anchors(gt):
     """With sA=sB=1 and K=I the composed chain equals P_lc0 @ inv(P_lc1)."""
     P0 = np.eye(4)
     P1 = gt[D_GLOBAL] @ np.linalg.inv(gt[Q_GLOBAL])
-    h_a, h_inner, h_b = _loop_chain_relatives(P0, P1, 1.0, 1.0)
-    composed = compose_slam_chain(h_a, h_inner, h_b)
+    h_a, h_inner, h_b = _loop_chain_relatives(P0, P1, 1.0, 1.0, np.eye(4), np.eye(4), np.eye(4), np.eye(4))
+    composed = h_a @ h_inner @ h_b  # SLAM's 3-edge chain as one relative
     np.testing.assert_allclose(composed, P0 @ np.linalg.inv(P1), atol=1e-12)
     # each anchor is pure identity here; the inner edge carries the whole relative
     np.testing.assert_allclose(h_a, np.eye(4), atol=1e-12)
@@ -244,8 +243,8 @@ def test_chain_relatives_scale_reconciliation_cancels_lc_scale(gt):
     Sk = np.diag([k, k, k, 1.0])
     P1_metric = gt[D_GLOBAL] @ np.linalg.inv(gt[Q_GLOBAL])
     P0_k, P1_k = np.eye(4), Sk @ P1_metric @ np.linalg.inv(Sk)
-    h_a, h_inner, h_b = _loop_chain_relatives(P0_k, P1_k, 1.0 / k, k)
-    composed = compose_slam_chain(h_a, h_inner, h_b)
+    h_a, h_inner, h_b = _loop_chain_relatives(P0_k, P1_k, 1.0 / k, k, np.eye(4), np.eye(4), np.eye(4), np.eye(4))
+    composed = h_a @ h_inner @ h_b  # SLAM's 3-edge chain as one relative
     np.testing.assert_allclose(composed, np.eye(4) @ np.linalg.inv(P1_metric), atol=1e-10)
 
 
@@ -258,8 +257,8 @@ def test_anchor_scale_recovers_2x_lc_scale(gt, consistent_submaps):
     """Pixel-aligned anchors: sA = 1/2 (LC→query units), sB = 2 (detected→LC units)."""
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, scale=2.0)
     sub_q, sub_d = consistent_submaps[1], consistent_submaps[0]
-    s_a = _lc_anchor_scale(lc, 0, sub_q, Q_GLOBAL - 3, 25.0, "rotation_only")
-    s_b = _lc_anchor_scale(sub_d, D_GLOBAL, lc, 1, 25.0, "rotation_only")
+    s_a = _lc_anchor_scale(lc, 0, sub_q, Q_GLOBAL - 3, 25.0, "rotation_only", 100)
+    s_b = _lc_anchor_scale(sub_d, D_GLOBAL, lc, 1, 25.0, "rotation_only", 100)
     assert s_a == pytest.approx(0.5, rel=1e-6)
     assert s_b == pytest.approx(2.0, rel=1e-6)
 
@@ -268,7 +267,7 @@ def test_anchor_scale_resamples_lc_grid_pixel_aligned(gt, consistent_submaps):
     """Off-stride LC pixels are garbage: correct only if resampled on the stride grid."""
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, scale=2.0, garbage_offgrid=True)
     sub_q = consistent_submaps[1]
-    s_a = _lc_anchor_scale(lc, 0, sub_q, Q_GLOBAL - 3, 25.0, "rotation_only")
+    s_a = _lc_anchor_scale(lc, 0, sub_q, Q_GLOBAL - 3, 25.0, "rotation_only", 100)
     assert s_a == pytest.approx(0.5, rel=1e-6)
 
 
@@ -279,13 +278,13 @@ def test_anchor_scale_with_conf_joint_mask(gt):
         _make_regular_submap(gt, 3, 7, submap_id=1, with_conf=True),
     ]
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, scale=2.0, with_conf=True)
-    s_b = _lc_anchor_scale(submaps[0], D_GLOBAL, lc, 1, 25.0, "rotation_only")
+    s_b = _lc_anchor_scale(submaps[0], D_GLOBAL, lc, 1, 25.0, "rotation_only", 100)
     assert s_b == pytest.approx(2.0, rel=1e-6)
 
 
 def test_anchor_scale_none_when_lc_points_missing(gt, consistent_submaps):
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, no_points=True)
-    s_a = _lc_anchor_scale(lc, 0, consistent_submaps[1], Q_GLOBAL - 3, 25.0, "rotation_only")
+    s_a = _lc_anchor_scale(lc, 0, consistent_submaps[1], Q_GLOBAL - 3, 25.0, "rotation_only", 100)
     assert s_a is None
 
 
@@ -295,7 +294,7 @@ def test_anchor_scale_none_when_lc_points_nonfinite(gt, consistent_submaps):
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, poison_inf=True)
     # s_b pairs finite detected-frame norms (X) against inf/NaN LC norms (Y):
     # the median ratio is non-finite and must be rejected by the guard.
-    s_b = _lc_anchor_scale(consistent_submaps[0], D_GLOBAL, lc, 1, 25.0, "rotation_only")
+    s_b = _lc_anchor_scale(consistent_submaps[0], D_GLOBAL, lc, 1, 25.0, "rotation_only", 100)
     assert s_b is None
     # End-to-end: fallback keeps the graph finite and at GT (consistent fixture)
     out = _run(consistent_submaps, [lc])

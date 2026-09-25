@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+from collab_splats.geometry.loop_closure import LoopClosureConfig
+from collab_splats.geometry.loop_closure import graph as graph_mod
 from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.submap import Submap
 from tests.geometry.loop_closure._helpers import drive_pose_graph
@@ -75,11 +77,11 @@ def _submap_nonident_K(sid: int, k: int, seed: int) -> Submap:
     )
 
 
-@pytest.mark.parametrize("scale_method", ["se3", "rotation_only", "pairwise_dist"])
+@pytest.mark.parametrize("scale_method", ["rotation_only", "none"])
 def test_incremental_matches_monolith_nonident_K(scale_method):
     """Non-identity K + translated poses exercise the inter-submap scale estimator,
     so incremental/monolith parity here actually covers scale_method regressions
-    (with identity K, T=inv(K_prev)@K_curr=I and se3/rotation_only are indistinguishable)."""
+    (with identity K, T=inv(K_prev)@K_curr=I and the 3x3 K-ratio block is a no-op)."""
     subs = [_submap_nonident_K(0, 4, 1), _submap_nonident_K(1, 4, 2)]
     golden = drive_pose_graph(subs, lc_submaps=[], total_frames=8, overlap_frames=1, scale_method=scale_method)
     pg = PoseGraph()
@@ -120,3 +122,57 @@ def test_add_loop_edge_matches_monolith(two_submaps):
     incremental = pg.extract_extrinsics(total_frames=8)
 
     np.testing.assert_allclose(incremental, golden, atol=1e-6)
+
+
+def test_add_loop_edge_passes_min_conf_points_to_both_anchors(two_submaps, monkeypatch):
+    """PoseGraph(min_conf_points=...) reaches both loop-anchor scale fits."""
+    seen = []
+    real = graph_mod._lc_anchor_scale
+
+    def spy(*args):
+        seen.append(args[-1])
+        return real(*args)
+
+    monkeypatch.setattr(graph_mod, "_lc_anchor_scale", spy)
+    lc = _lc_submap(99, "s1_f1.jpg", "s0_f1.jpg")
+    pg = PoseGraph(min_conf_points=10)
+    for s in two_submaps:
+        pg.add_submap(s, overlap_frames=1)
+        pg.optimize()
+    pg.add_loop_edge(lc, self_submaps=two_submaps, conf_threshold=25.0, scale_method="rotation_only")
+    assert seen == [10, 10]
+
+
+@pytest.mark.parametrize("scale_method", ["se3", "pairwise_dist", "bogus"])
+def test_add_submap_rejects_unknown_scale_method(two_submaps, scale_method):
+    """Retired or unknown scale_method raises before the graph is touched."""
+    pg = PoseGraph()
+    with pytest.raises(ValueError, match="scale_method"):
+        pg.add_submap(two_submaps[0], overlap_frames=1, scale_method=scale_method)
+    assert pg._submaps_seen == []
+    assert pg._frame_to_node == {}
+
+
+@pytest.mark.parametrize("scale_method", ["se3", "pairwise_dist", "bogus"])
+def test_add_loop_edge_rejects_unknown_scale_method(two_submaps, scale_method):
+    """Retired or unknown scale_method raises from add_loop_edge, even for a skippable LC."""
+    pg = PoseGraph()
+    for s in two_submaps:
+        pg.add_submap(s, overlap_frames=1)
+
+    # 2-frame LC that resolves: would add edges
+    lc = _lc_submap(99, "s1_f1.jpg", "s0_f1.jpg")
+    with pytest.raises(ValueError, match="scale_method"):
+        pg.add_loop_edge(lc, self_submaps=two_submaps, scale_method=scale_method)
+
+    # unresolvable LC: would return early, still must raise
+    lc_bad = _lc_submap(98, "nope_a.jpg", "nope_b.jpg")
+    with pytest.raises(ValueError, match="scale_method"):
+        pg.add_loop_edge(lc_bad, self_submaps=two_submaps, scale_method=scale_method)
+
+
+@pytest.mark.parametrize("scale_method", ["se3", "pairwise_dist", "bogus"])
+def test_loop_closure_config_rejects_unknown_scale_method(scale_method):
+    """LoopClosureConfig fails at construction, before any model loads."""
+    with pytest.raises(ValueError, match="scale_method"):
+        LoopClosureConfig(scale_method=scale_method)

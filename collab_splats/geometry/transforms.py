@@ -1,8 +1,8 @@
-"""Pure-numpy camera geometry utilities shared across the pipeline.
+"""
+Pure-numpy camera geometry shared across the pipeline.
 
-Conventions:
-  OpenCV camera axes:  X right, Y down,  Z forward  (COLMAP, VGGT-X, BA)
-  OpenGL camera axes:  X right, Y up,    Z backward  (nerfstudio / OpenGL convention)
+- OpenCV camera axes: X right, Y down, Z forward (COLMAP, VGGT-X, BA)
+- OpenGL camera axes: X right, Y up, Z backward (nerfstudio)
 """
 
 from __future__ import annotations
@@ -23,9 +23,14 @@ OPENGL_TO_OPENCV: np.ndarray = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1,
 
 
 def extrinsics_to_homogeneous(extrinsics: np.ndarray) -> np.ndarray:
-    """Append [0,0,0,1] row to convert (N,3,4)→(N,4,4) or (3,4)→(4,4).
+    """
+    Append a [0, 0, 0, 1] row: (N, 3, 4) -> (N, 4, 4) or (3, 4) -> (4, 4).
 
-    Output dtype matches input dtype.
+    Args:
+        extrinsics: (N, 3, 4) or (3, 4) pose matrices.
+
+    Returns:
+        (N, 4, 4) or (4, 4) homogeneous poses, same dtype as the input.
     """
     single = extrinsics.ndim == 2  # (3,4) → (4,4)
     if single:
@@ -37,11 +42,17 @@ def extrinsics_to_homogeneous(extrinsics: np.ndarray) -> np.ndarray:
 
 
 def invert_poses(poses: np.ndarray) -> np.ndarray:
-    """Closed-form SE3 inverse: (...,4,4) → (...,4,4).
+    """
+    Closed-form SE(3) inverse via R^T and -R^T t.
 
-    Works on any leading batch shape: (4,4), (N,4,4), (B,N,4,4).
-    Uses R^T, -R^T@t — numerically exact for valid rotation matrices and
-    faster than np.linalg.inv. Assumes poses are valid rigid-body transforms.
+    - any leading batch shape: (4, 4), (N, 4, 4), (B, N, 4, 4)
+    - assumes valid rigid-body transforms; no general matrix inverse
+
+    Args:
+        poses: (..., 4, 4) rigid-body transforms.
+
+    Returns:
+        (..., 4, 4) inverse transforms.
     """
     R = poses[..., :3, :3]
     t = poses[..., :3, 3:]
@@ -55,7 +66,15 @@ def invert_poses(poses: np.ndarray) -> np.ndarray:
 
 
 def extract_intrinsics(K: np.ndarray) -> tuple[float, float, float, float]:
-    """Extract (fx, fy, cx, cy) from a (3,3) camera intrinsics matrix."""
+    """
+    Focal lengths and principal point as Python floats.
+
+    Args:
+        K: (3, 3) camera intrinsics matrix.
+
+    Returns:
+        (fx, fy, cx, cy) in pixels.
+    """
     return float(K[0, 0]), float(K[1, 1]), float(K[0, 2]), float(K[1, 2])
 
 
@@ -65,26 +84,25 @@ def extract_intrinsics(K: np.ndarray) -> tuple[float, float, float, float]:
 
 
 def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int = 50_000) -> float | None:
-    """Confidence-weighted median, subsampled above ``max_n`` with a seeded RNG.
+    """
+    Confidence-weighted median, subsampled above `max_n` with a seeded RNG.
 
-    Textbook definition — sort by value, walk the cumulative weight, return the value
-    at half the total mass.  Prior art for using one to reduce per-pixel focal
-    estimates: github.com/PolyCam/LoGeR @ 5d7c1a7, ``run_loger.py:167``.  Returns
-    ``None`` for an empty input, or for weights carrying no positive mass, so the
-    caller can raise rather than invent a value.
+    - values must be finite; a non-finite entry skews the result without showing
+    - prior art: github.com/PolyCam/LoGeR @ 5d7c1a7, `run_loger.py:167`
 
-    Values must be finite, and callers filter them before calling.  A non-finite entry
-    does not poison the result visibly, it skews it: ``np.argsort`` sorts ``+inf`` and
-    ``NaN`` to the tail (biasing the result upward) and ``-inf`` to the head (biasing
-    it downward), so either way the return is a plausible finite number that a
-    downstream ``np.isfinite`` check waves through.
+    Args:
+        values: (M,) finite samples.
+        weights: (M,) non-negative weights.
+        max_n: sample count above which values are subsampled.
+
+    Returns:
+        The value at half the cumulative weight, or None for empty input or zero total weight.
     """
     if len(values) == 0:
         return None
 
-    # A weighted median needs a full argsort, and the pooled per-pixel population is
-    # H*W*N — 76.5M values at 300 frames, 255M at the 1000-frame sequences the LoGeR
-    # backend exists for.  The cap bounds that; the fixed seed keeps it reproducible.
+    # Cap the argsort over the pooled H*W*N population
+    # - fixed seed keeps the subsample reproducible
     if len(values) > max_n:
         idx = np.random.default_rng(42).choice(len(values), max_n, replace=False)
         values, weights = values[idx], weights[idx]
@@ -94,8 +112,7 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     values, weights = values[order], weights[order]
     cumw = np.cumsum(weights, dtype=np.float64)
 
-    # All-zero weights carry no mass to bisect; searchsorted would return index 0 and
-    # hand back the smallest value as if it were an estimate. Report "no estimate".
+    # Zero total weight has no midpoint; report no estimate
     if cumw[-1] <= 0:
         return None
     return float(values[np.searchsorted(cumw, cumw[-1] / 2.0)])
@@ -104,69 +121,34 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
 def estimate_intrinsics_from_points(
     local_points: np.ndarray, conf: np.ndarray, conf_threshold: float = 0.1
 ) -> np.ndarray:
-    """Fit one shared pinhole K to a camera-frame pointmap by confidence-weighted median.
+    """
+    Fit one shared pinhole K to a camera-frame pointmap by confidence-weighted median.
 
-    This is a **fit**, not a readout: the pointmap is not guaranteed to be consistent
-    with any single pinhole camera, so the returned K is the best shared pinhole
-    explanation of it rather than a recovered ground truth.  Callers that need to know
-    how good that explanation is should measure the reprojection residual.
-
-    For backends whose model emits no intrinsics head.  Invert the pinhole model at
-    every pixel — ``u_c = fx * X / Z``, so ``fx = u_c * Z / X`` — and reduce the pooled
-    per-pixel estimates with a confidence-weighted median.  One K is returned for the
-    whole batch, which is correct when every frame comes from the same physical camera
-    at the same resolution.
-
-    Prior art for the same approach: github.com/PolyCam/LoGeR @ 5d7c1a7,
-    ``run_loger.py``, ``estimate_focal_lengths`` at :206 over ``_focal_from_frame`` at
-    :180.  That fork also has ``_snap_square_pixels`` at :195, which we deliberately do
-    **not** do — it would merge fx and fy, and a caller that rescales the two axes
-    separately then un-merges the average incorrectly.
-
-    The *vendored* fork recovers a focal too, by a different method, and is cited here so
-    the PolyCam reference above is not mistaken for the only upstream precedent:
-    github.com/Junyi42/LoGeR @ 7685b7a calls dust3r's ``estimate_focal_knowing_depth``
-    with ``focal_mode="weiszfeld"`` and ``pp = (W // 2, H // 2)``
-    (``eval/relpose/launch.py:528-534``) — one focal for both axes, unweighted IRLS rather
-    than a confidence-weighted median.  It appears in the eval scripts only; the demo path
-    fits nothing and hardcodes a 60 degree FOV (``loger/utils/viser_utils.py:445-449``).
-    Measured on the LoGeR parity fixture, that estimator lands within 0.29% of this one
-    and reproduces the model's own points slightly *worse* (see open item 3 of
-    ``docs/superpowers/specs/2026-08-13-loger-feedforward-backend-design.md``).
+    - for backends with no intrinsics head; a best-fit pinhole, not a recovered ground truth
+    - per pixel fx = u_c * Z / X (fy likewise), pooled over all frames
+    - one K for the batch (one camera, one resolution); fx and fy distinct, principal point centered
+    - prior art: github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:180-192 (_focal_from_frame),
+      :206-254 (estimate_focal_lengths); not done: its _snap_square_pixels (:195)
+    - vendored fork differs: github.com/Junyi42/LoGeR @ 7685b7a, eval/relpose/launch.py:528-534
+      (dust3r weiszfeld, one focal)
+    - fit is approximate: ray field, github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:772-775
 
     Args:
-        local_points: (N, H, W, 3) camera-frame points, channel 2 being depth.  Note
-            that a pointmap head is free to emit a per-pixel ray field not constrained
-            to any pinhole K — LoGeR's, for instance, is built as ``cat([xy * z, z])``
-            (github.com/Junyi42/LoGeR @ 7685b7a, ``loger/models/pi3.py:772-775``) —
-            which is the reason this is an approximation.
-        conf: (N, H, W) or (N, H, W, 1) per-pixel confidence, **already activated into
-            [0, 1]**.  ``conf_threshold`` compares against a probability, so passing raw
-            logits does not merely shift the gate — a head whose logits are all negative
-            (LoGeR's measured range is -4.257..-2.019) admits *no* pixels at all and the
-            fit raises.
-        conf_threshold: minimum confidence for a pixel to contribute.  0.1 is a
-            reasonable floor for a calibrated head and is deliberately NOT tuned to any
-            one backend, but an uncalibrated head can put its whole band underneath it:
-            LoGeR's measured post-sigmoid range is [0.0140, 0.1172], where 0.1 is the
-            92nd percentile and keeps only 7.9% of pixels.  Callers wrapping an
-            uncalibrated head should measure their own band and pass an explicit value
-            rather than inherit this default.
+        local_points: (N, H, W, 3) camera-frame points, channel 2 being depth.
+        conf: (N, H, W) or (N, H, W, 1) confidence already activated into [0, 1], not logits.
+        conf_threshold: minimum confidence for a pixel to contribute; lower admits more pixels.
 
     Returns:
-        (3, 3) float32 K, shared across frames, centre-principal by construction.
+        (3, 3) float32 K with principal point ((W - 1) / 2, (H - 1) / 2).
 
     Raises:
-        RuntimeError: if too few pixels survive to fit either focal.  There is no
-            fallback focal on purpose.
+        RuntimeError: too few pixels survive to fit either focal; there is no fallback.
     """
     n, h, w, _ = local_points.shape
     if conf.ndim == 4:
         conf = conf.squeeze(-1)
 
-    # Centred pixel grid.  This line is why the function returns K and not (fx, fy):
-    # every per-pixel focal below is conditioned on cx=(W-1)/2, cy=(H-1)/2, so the
-    # principal point is already decided here and must not be re-chosen by a caller.
+    # Centered pixel grid: fixes the principal point, so return K, not (fx, fy)
     uu, vv = np.meshgrid(
         np.arange(w, dtype=np.float32) - (w - 1) / 2.0,
         np.arange(h, dtype=np.float32) - (h - 1) / 2.0,
@@ -182,27 +164,14 @@ def estimate_intrinsics_from_points(
     fx_vals, fy_vals = fx_per_pixel[valid], fy_per_pixel[valid]
     weights = conf[valid]
 
-    # Sanity bounds before the median, derived from field of view: f = 0.1 * W is a
-    # ~157 degree horizontal FOV and f = 10 * W is ~6 degrees.  Real cameras live well
-    # inside that; values outside it are degenerate inversions from pixels near the
-    # principal axis, where X or Y is small enough that u_c * Z / X explodes.
-    #
-    # These bounds are also what enforce _compute_weighted_median's finite precondition,
-    # and that is not incidental: the `valid` mask above cannot do it, because inf passes
-    # `z > 1e-3`.  A surviving non-finite value would not poison the median visibly, it
-    # would skew it — argsort sorts +inf and NaN to the tail (biasing the focal upward)
-    # and -inf to the head (biasing it downward), and `u_c * Z / X` produces -inf as
-    # readily as +inf as X approaches zero from below.  Either way the result stays
-    # finite enough for the np.isfinite check below to wave it through.  BOTH bounds are
-    # load-bearing: the upper rejects +inf, the lower rejects -inf, and NaN fails both.
-    # Do not loosen either to a one-sided test without adding an explicit isfinite mask.
+    # Bounds keep focals in a 157-6 degree FOV band; X or Y near 0 makes u_c * Z / X explode
+    # - both sides load-bearing: upper drops +inf, lower drops -inf, NaN fails both
     ok_fx = (fx_vals > w * 0.1) & (fx_vals < w * 10)
     ok_fy = (fy_vals > h * 0.1) & (fy_vals < h * 10)
     fx = _compute_weighted_median(fx_vals[ok_fx], weights[ok_fx])
     fy = _compute_weighted_median(fy_vals[ok_fy], weights[ok_fy])
 
-    # Fail loudly.  Upstream falls back to 1.2 * max(W, H); we do not, because a
-    # plausible-but-wrong K fails silently all the way through to the mesh.
+    # Fail loudly: a plausible-but-wrong fallback K fails silently downstream
     if fx is None or fy is None or not np.isfinite(fx) or not np.isfinite(fy) or fx <= 0 or fy <= 0:
         raise RuntimeError(
             f"Pinhole intrinsics fit failed over {n} frames: "
@@ -212,9 +181,7 @@ def estimate_intrinsics_from_points(
             f"(fx={fx}, fy={fy}). No fallback focal is applied by design."
         )
 
-    # fx and fy stay distinct.  Callers whose preprocessing rounds the two axes
-    # independently (LoGeR's does, to multiples of 14) produce genuinely non-square
-    # pixels, and that anisotropy belongs in K rather than being averaged away.
+    # Keep fx and fy distinct: per-axis resizing yields non-square pixels
     return np.array(
         [[fx, 0.0, (w - 1) / 2.0],
          [0.0, fy, (h - 1) / 2.0],
@@ -224,18 +191,31 @@ def estimate_intrinsics_from_points(
 
 
 def rotation_angle_deg(R: np.ndarray) -> float:
-    """Geodesic angle of a single 3x3 rotation matrix in degrees (trace formula)."""
+    """
+    Geodesic rotation angle from the trace formula.
+
+    Args:
+        R: (3, 3) rotation matrix.
+
+    Returns:
+        Rotation angle in degrees, in [0, 180].
+    """
     return float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
 
 
 def rotation_align_vectors(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
-    """Return 3x3 rotation matrix R such that R @ src ≈ dst.
+    """
+    Rotation R with R @ src ≈ dst, by Rodrigues' formula.
+
+    - inputs are normalized first
+    - antiparallel inputs give a 180 degree turn about an arbitrary perpendicular axis
 
     Args:
-        src: (3,) unit vector to rotate from.
-        dst: (3,) unit vector to rotate to.
+        src: (3,) vector to rotate from.
+        dst: (3,) vector to rotate to.
+
     Returns:
-        (3, 3) rotation matrix. Identity if src ≈ dst or antiparallel fallback.
+        (3, 3) rotation matrix; identity when src and dst are parallel.
     """
     # Normalize inputs to ensure unit vectors
     src = src / np.linalg.norm(src)
@@ -272,7 +252,8 @@ def umeyama_se3(
     target: np.ndarray,
     weights: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Closed-form SE(3) alignment via SVD (no scale).
+    """
+    Closed-form rigid alignment of point sets by weighted SVD, without scale.
 
     Args:
         source: (M, 3) points in source frame.
@@ -281,13 +262,20 @@ def umeyama_se3(
 
     Returns:
         (4, 4) float32 homogeneous T such that target ≈ T @ source.
+
+    Raises:
+        ValueError: fewer than 3 correspondences, or zero total weight.
     """
+    # Reject degenerate input; normalize the weights
     M = source.shape[0]
+    if M < 3:
+        raise ValueError(f"Umeyama alignment needs at least 3 correspondences, got {M}")
     w = np.ones(M, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
     w_sum = w.sum()
     if w_sum < 1e-9:
-        return np.eye(4, dtype=np.float32)
+        raise ValueError("Umeyama alignment got zero total weight")
     w = w / w_sum
+
     src = source.astype(np.float64)
     tgt = target.astype(np.float64)
     mu_src = (w[:, None] * src).sum(axis=0)
@@ -311,7 +299,10 @@ def umeyama_sim3(
     target: np.ndarray,
     weights: np.ndarray | None = None,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    """Closed-form Sim(3) alignment via Umeyama (with scale).
+    """
+    Closed-form similarity alignment of point sets by weighted Umeyama, with scale.
+
+    - coincident source points give scale 1 by design: a stationary camera has one center
 
     Args:
         source: (M, 3) float32/64 points in source frame.
@@ -319,17 +310,20 @@ def umeyama_sim3(
         weights: optional (M,) non-negative weights; uniform if None.
 
     Returns:
-        (s, R, t): float scale, (3,3) float32 rotation, (3,) float32 translation
-                   such that target ≈ s * R @ source + t.
+        (s, R, t): float scale, (3, 3) float32 rotation, (3,) float32 translation
+        such that target ≈ s * R @ source + t.
+
+    Raises:
+        ValueError: fewer than 3 correspondences, or zero total weight.
     """
+    # Reject degenerate input; normalize the weights
     M = source.shape[0]
     if M < 3:
-        return 1.0, np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
-
+        raise ValueError(f"Umeyama alignment needs at least 3 correspondences, got {M}")
     w = np.ones(M, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
     w_sum = w.sum()
     if w_sum < 1e-9:
-        return 1.0, np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
+        raise ValueError("Umeyama alignment got zero total weight")
     w = w / w_sum
 
     src = source.astype(np.float64)

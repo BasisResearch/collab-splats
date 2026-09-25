@@ -223,7 +223,7 @@ relative-pose stats, per-frame track survival and reprojection error), and `data
   **Report-only: nothing here feeds back into the reconstruction.** No verdict,
   no grade, no cause — distributions and cumulative error only. Every block
   stamps its `grid` (`model` or `original`) and `resolution`; units are
-  scale-free or normalised throughout, because 1 recon unit is not 1 metre and
+  scale-free or normalized throughout, because 1 recon unit is not 1 meter and
   the factor differs per scene and per backbone. Pixel counts are not comparable
   across backbones, so reprojection is reported in px *and* as a fraction of
   image width.

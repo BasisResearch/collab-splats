@@ -42,10 +42,10 @@ pointcloud:
     enabled: true
     submap_size: 64           # frames per window — larger = stronger per-submap geometry
     submap_overlap: 1         # shared frames between windows — MORE = sturdier registration
-                              # (1 = VGGT-SLAM parity, a single-frame hinge; fragile)
+                              # (1 = matches VGGT-SLAM, see docs/parity.md; a single-frame hinge; fragile)
     lc_retrieval_threshold: 0.95  # DINO-SALAD loop gate; lower = stricter acceptance
     max_loops_per_submap: 2
-    scale_method: rotation_only    # rotation_only | se3 | pairwise_dist | none
+    scale_method: rotation_only    # rotation_only | none
   viz:
     enabled: true             # live viser Viewer during loop closure
     port: 8080

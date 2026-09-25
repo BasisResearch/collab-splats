@@ -4,8 +4,6 @@ import importlib
 
 import pytest
 
-# VGGT-SPARK is deliberately absent: it inherits the mv machinery but is not wired into
-# the reconstructor's creator_map, so it has no mv fields of its own to check.
 CREATORS = [
     ("collab_splats.pointcloud.feedforward.vggtx", "VGGTXCreator"),
     ("collab_splats.pointcloud.feedforward.vggt_omega", "VGGTOmegaCreator"),

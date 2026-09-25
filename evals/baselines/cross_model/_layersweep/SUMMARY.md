@@ -11,4 +11,4 @@
 loop-edge / pose-graph corruption, NOT verify-layer calibration: the layer only
 gates which candidates pass, so its best-case outcome is reject-all (LC->no-op),
 never improvement. Omega lc != baseline => loops ARE applied and wreck the graph
-(contrast spark/mapanything: 0 loops applied => no-op).
+(contrast mapanything: 0 loops applied => no-op).

@@ -1,5 +1,5 @@
 """
-Feedforward pointcloud creators: VGGT-X, MapAnything, VGGT-Omega, VGGT-SPARK, LoGeR.
+Feedforward pointcloud creators: VGGT-X, MapAnything, VGGT-Omega, LoGeR.
 
 - import from here; the submodule layout is an implementation detail
 - vggt-omega is optional and re-exported only when its package is present
@@ -20,7 +20,6 @@ from .base import (
 # ── Concrete creators ─────────────────────────────────────────────────────────
 from .vggtx import VGGTXCreator
 from .mapanything import MapAnythingCreator
-from .vggt_spark_creator import VGGTSPARKCreator
 
 # vggt-omega is an optional backend
 # - present only if setup/feedforward.sh ran with the vggt-omega submodule initialized
@@ -57,7 +56,6 @@ __all__ = [
     "VGGTXCreator",
     "MapAnythingCreator",
     "VGGTOmegaCreator",
-    "VGGTSPARKCreator",
     "LoGeRCreator",
     "unproject_and_filter_points",
     "MultiviewConfidence",

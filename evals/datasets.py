@@ -10,8 +10,6 @@ from collab_splats.preproc import frames as fr
 from collab_splats.preproc.qa import load_video_quality
 from collab_splats.preproc.sampling import sample_uniform
 
-_IMG_EXTS = (".png", ".jpg", ".jpeg")
-
 
 @dataclass
 class EvalDataset:
@@ -284,42 +282,3 @@ def get_dataset(name: str) -> Callable[..., EvalDataset]:
     if name not in _REGISTRY:
         raise KeyError(f"unknown dataset '{name}'. Available: {sorted(_REGISTRY)}")
     return _REGISTRY[name]
-
-
-########## SLAM frame selection (7-Scenes flat vs TUM rgb/) ##########
-
-
-def list_scene_images(seq_dir: Path) -> list[Path]:
-    """Sorted source images for a scene; handles 7-Scenes flat and TUM rgb/ layouts."""
-    rgb = seq_dir / "rgb"
-    root = rgb if rgb.is_dir() else seq_dir
-    return sorted(p for p in root.iterdir() if p.suffix.lower() in _IMG_EXTS and ".depth" not in p.name)
-
-
-def filter_images_to_list(images: list, list_file: Path) -> list:
-    """Keep only images whose basename appears in list_file (one path/basename per line)."""
-    allowed = {Path(line).name for line in Path(list_file).read_text().splitlines() if line.strip()}
-    return [p for p in images if Path(str(p)).name in allowed]
-
-
-def collect_frames(seq_dir: Path, image_list: Path | None = None, max_frames: int | None = None) -> list[str]:
-    """Source frames for a SLAM run: sorted scene images, optionally restricted to
-    image_list (basename match — TUM GT-gap parity), then capped at max_frames."""
-    images = list_scene_images(seq_dir)
-    if image_list is not None:
-        images = filter_images_to_list(images, image_list)
-    frames = [str(p) for p in images]
-    return frames[:max_frames] if max_frames is not None else frames
-
-
-def write_tum_allowed_frames(seq_dir: Path, out_file: Path) -> Path:
-    """Write GT-filtered TUM frame basenames (one per line) for --image_list restriction.
-
-    Uses `_load_tum` (max_frames=100_000, mirroring eval_gt.py's --keyframe_list load
-    path) so the SLAM reference only ever sees frames the ours-side dataset loader
-    keeps — eval_gt's parity guard aborts otherwise (TUM GT-gap filter).
-    """
-    ds = _load_tum(seq_dir, max_frames=100_000)
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text("\n".join(Path(p).name for p in ds.images))
-    return out_file

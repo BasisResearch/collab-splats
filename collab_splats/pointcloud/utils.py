@@ -418,7 +418,7 @@ def cross_frame_attention_ratio(
     """
     How hard frame B attends to frame A, against A's own self-attention peak.
 
-    - port of VGGT-SPARK get_similarity()
+    - port of VGGT-SPARK get_similarity(); see docs/parity.md
     - gates loop-closure candidates: high ratio = coherent overlapping geometry
 
     Args:
@@ -430,8 +430,8 @@ def cross_frame_attention_ratio(
 
     Returns:
         Scalar in [0, inf): mean of the top-25% normalized cross-frame attention values
-        (mean_top_quarter, matching VGGT-SPARK). >= 0.85 is the VGGT-SPARK acceptance
-        threshold calibrated on VGGT-1B. 0.0 when token_offset >= tokens_per_img.
+        (mean_top_quarter, as upstream). >= 0.85 is the upstream acceptance threshold
+        calibrated on VGGT-1B. 0.0 when token_offset >= tokens_per_img.
     """
     tokens_per_img = q.shape[2] // 2
     # Slice only the patch tokens from frame A (skip camera+register tokens)
@@ -454,7 +454,7 @@ def cross_frame_attention_ratio(
     normalized = attn_to_second / (max_self.unsqueeze(-1) + 1e-8)
     ratio = normalized.max(dim=1)[0]  # (B, N_second)
 
-    # Aggregate: mean of top-25% values, matching VGGT-SPARK mean_top_quarter()
+    # Aggregate: mean of top-25% values, port of VGGT-SPARK mean_top_quarter()
     # - np.percentile(90) was used before and gives a lower scalar
     # - that dropped VGGT-X scores (~0.74) below the 0.85 threshold calibrated for VGGT-1B
     ratio_np = ratio.cpu().float().numpy().ravel()

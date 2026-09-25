@@ -11,7 +11,7 @@ def test_load_config_flat(tmp_path):
     cfg_file.write_text(
         "name: t\n"
         "datasets:\n  - {name: 7scenes, seq_dir: /d/seq, keyframe_list: null}\n"
-        "backbones: [vggt_omega, vggt_spark]\n"
+        "backbones: [vggt_omega, vggtx]\n"
         "conditions: [baseline, lc]\n"
         "submap_size: 50\n"
         "max_frames: 200\n"
@@ -19,7 +19,7 @@ def test_load_config_flat(tmp_path):
     )
     cfg = load_eval_config(cfg_file)
     assert cfg.name == "t"
-    assert cfg.backbones == ["vggt_omega", "vggt_spark"]
+    assert cfg.backbones == ["vggt_omega", "vggtx"]
     assert cfg.submap_size == 50
 
 
@@ -28,11 +28,11 @@ def test_build_grid_product(tmp_path):
     cfg_file.write_text(
         "name: t\n"
         "datasets:\n  - {name: 7scenes, seq_dir: /d/seq, keyframe_list: null}\n"
-        "backbones: [vggt_omega, vggt_spark]\n"
+        "backbones: [vggt_omega, vggtx]\n"
         "conditions: [baseline, lc]\n"
         "output_dir: /out\n"
     )
     cfg = load_eval_config(cfg_file)
     grid = build_grid(cfg)
     assert len(grid) == 4
-    assert {c.backbone for c in grid} == {"vggt_omega", "vggt_spark"}
+    assert {c.backbone for c in grid} == {"vggt_omega", "vggtx"}

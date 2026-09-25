@@ -3,7 +3,7 @@
 New: local_proj @ inv(H_opt) then decompose.
 Old: decompose(H_opt) directly.
 
-VGGT-SLAM: projection_mat = proj_mats[idx] @ inv(homography_world).
+Matches VGGT-SLAM (see docs/parity.md): projection_mat = proj_mats[idx] @ inv(homography_world).
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
         intrinsics=np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
         retrieval_vectors=np.zeros((k, 64), dtype=np.float32),
         image_paths=[f"frame_{i:04d}.png" for i in range(k)],
-        raw_outputs={},
         frame_start=submap_id * k,
         world_points=world_points.astype(np.float32),
         world_points_conf=None,

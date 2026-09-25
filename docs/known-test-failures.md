@@ -144,8 +144,7 @@ simply not executed until gsplat is rebuilt from the pinned rev.
 `::test_compute_video_quality_survives_a_pair_opencv_cannot_fit` fail identically on the base
 branch (`compute_parallax` returns a finite value, 0.0123, where the test expects NaN) — not a
 splats-module regression; owed to the preproc-cleanup owner. Seen in the same run and also
-NOT regressions: `tests/evals/test_run_vggt_slam.py` ×2 (gitignored `third_party/VGGT-SLAM`
-absent in a git worktree — env, pass in the main checkout) and
+NOT regressions:
 `tests/examples/test_run_pipeline_remote.py::test_main_rejects_a_scene_id_that_is_not_a_curated_dir_name`
 ×2 (the fix lives in a concurrent session's **uncommitted** edit to that test + `remote/rerun.py`
 on the base checkout; committed HEAD fails).
@@ -326,8 +325,6 @@ Pass count dropped from ~1200 (pre-cleanup) to 1121 **entirely by retiring scrip
 
 Known flaky (pre-existing, unrelated): `tests/dashboard/test_viz_utils.py::test_view_transform_scales_to_target_radius` — nondeterministic, fails ~1/3 of runs on identical code; surfaces intermittently, not a regression.
 
-`evals/scripts/run_vggt_slam.py` no longer computes its own ATE — it emits the SLAM TUM (+ `selected_frames.txt` when `--max_loops >0`); `eval.py`/`eval_compare` scores it against GT downstream.
-
 ---
 
 # Known Test Failures — 2026-06-01 (GREEN)
@@ -377,7 +374,7 @@ Three structural unblocks (deps-by-default, `tests/nerfstudio_methods` rename, t
   `_no_loss_history_by_default`: real bae/pypose `RobustModel.forward(target)` bug, deferred. Only
   run when CUDA+bae present.
 - **2 skipped** — environment-gated (e.g. ffmpeg / evo_ape CLI not installed).
-- **1 flagged docstring** (no test impact) — `loop_closure/eval.py:18` `_classify_edges` still claims
+- **1 flagged docstring** (no test impact) — `evals/pose_graph_diagnostics.py:20` `_classify_edges` still claims
   "Loop edges use Robust(Huber)"; post-`011c56f` loop and sequential edges use identical Gaussian
   noise so the function can no longer separate them. Instrumentation degraded by design; fixing
   needs a production change to track edge provenance. Owner's call.

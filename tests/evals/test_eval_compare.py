@@ -89,11 +89,11 @@ def test_compare_records_pending_status(tmp_path):
     gt = _random_w2c(10, seed=2)
     pred = gt.copy()
     results_dir = _seed_dir(tmp_path, gt, {"ours_baseline": pred})
-    (results_dir / "vggt_slam.pending").write_text("queued\n")
+    (results_dir / "omega_lc.pending").write_text("queued\n")
 
     _run_main(["--results-dir", str(results_dir)])
     payload = json.loads((results_dir / "metrics.json").read_text())
-    assert payload["methods"]["vggt_slam"] == {"status": "pending"}
+    assert payload["methods"]["omega_lc"] == {"status": "pending"}
     assert payload["methods"]["ours_baseline"]["status"] == "ok"
 
 

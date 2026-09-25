@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Phase-2 unified comparison runner for the GT eval harness.
 
-Phase-1 runners (``eval.py`` for our methods, ``run_vggt_long.py`` /
-``run_vggt_slam.py`` for external baselines) drop a per-method TUM trajectory
+Phase-1 runners (``eval.py`` for our methods, or any external baseline) drop a
+per-method TUM trajectory
 into ``evals/results/<dataset_seq>/`` next to a ``gt.tum`` reference. This
 phase-2 runner ingests that directory and emits a single ``metrics.json``
 holding ATE + RPE for every method, plus a Markdown summary on stdout.
@@ -18,7 +18,6 @@ Default alignment per method (override via ``--align-overrides``):
     omega_lc         sim3  (VGGT-Omega + loop closure, monocular Sim(3))
     vggtx_baseline   sim3  (VGGT-X baseline, monocular Sim(3))
     vggtx_lc         sim3  (VGGT-X + loop closure, monocular Sim(3))
-    vggt_slam        sim3  (VGGT-SLAM internal LC, monocular)
     <unknown>        sim3  (mono assumption + warning)
 
 A method that is queued but not yet computed appears as a sentinel
@@ -41,14 +40,13 @@ from metrics import compute_ate, compute_rpe, compute_auc
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ALIGN: dict[str, str] = {
-    # All monocular feedforward methods use sim3 — matches VGGT-SLAM's evo_ape -as protocol.
+    # All monocular feedforward methods use sim3 — matches VGGT-SLAM's evo_ape -as protocol (docs/parity.md).
     # Even baseline/BA have scale ambiguity; SE(3) alignment would be unfair.
     "omega_baseline": "sim3",
     "omega_ba": "sim3",
     "omega_lc": "sim3",
     "vggtx_baseline": "sim3",
     "vggtx_lc": "sim3",
-    "vggt_slam": "sim3",
     "vggt_long": "sim3",
     # legacy names (backward compat)
     "ours_baseline": "sim3",

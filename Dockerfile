@@ -5,12 +5,23 @@
 #     --build-context collab-data=../collab-data \
 #     --build-arg MAX_JOBS=4 -t collab-env:cu121 .
 # - collab-data is private and locked as a path dep at /workspace/collab-data
-# - MAX_JOBS: pick from the build host's RAM (one cicc peaks ~7.3 GB), ceiling 6
+# - MAX_JOBS: Docker memory GB / 8 (one cicc peaks ~7.3 GB), ceiling 6
+#
+# Apple Silicon: every nvcc call runs under amd64 emulation
+# - Docker Desktop > General: enable "Use Rosetta for x86_64/amd64 emulation"; QEMU is far slower
+# - Docker Desktop > Resources: raise memory, then set MAX_JOBS from it
+# - first build still takes hours; the CUDA layer is then cached until pyproject.toml/uv.lock change
+#
+# GPU support: TORCH_ARCH_LIST="8.0+PTX" (fused-ssim: CUDA_ARCHITECTURES="80;90", set in setup.sh)
+# - native: Ampere + Ada, sm_80/86/89 (A100, A40, A6000, A10, L4, L40, RTX 3090, RTX 4090)
+# - JIT on first launch: Hopper, sm_90 (H100, H200); cached per container via CUDA_CACHE_MAXSIZE
+# - NOT supported: Volta/Turing (V100, T4, RTX 2080); add "7.0;7.5" to TORCH_ARCH_LIST
+# - NOT supported: Blackwell (B200, RTX 5090); torch 2.5.1+cu121 itself ships no kernels for it
 
 ARG UBUNTU_VERSION=22.04
 ARG NVIDIA_CUDA_VERSION=12.1.1
 ARG PYTHON_VERSION=3.11
-ARG TORCH_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
+ARG TORCH_ARCH_LIST="8.0+PTX"
 
 ##################################################
 # Stage 1: Builder — runs setup.sh (uv sync + AOT CUDA extensions)
@@ -55,7 +66,11 @@ COPY --from=collab-data collab_data /workspace/collab-data/collab_data
 
 # Single source of truth: setup.sh syncs the lock, compiles bae/gsplat/fused-ssim/nvdiffrast AOT,
 # and clones the pinned third_party sources (VDA, LoGeR)
+# - pass 1 sees only the lock: the slow CUDA compiles stay cached across source edits
+# - pass 2 installs the project itself and the non-lock extras
 WORKDIR /workspace/collab-splats
+COPY pyproject.toml uv.lock README.md LICENSE setup.sh /workspace/collab-splats/
+RUN SETUP_DEPS_ONLY=1 bash setup.sh
 COPY . /workspace/collab-splats
 RUN bash setup.sh
 
@@ -106,7 +121,8 @@ ENV CUDA_HOME=/usr/local/cuda \
     PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
     TORCH_HOME=/workspace/models \
-    HF_HOME=/workspace/models
+    HF_HOME=/workspace/models \
+    CUDA_CACHE_MAXSIZE=4294967296
 
 # Smoke test: torch imports and the AOT extensions survived the stage copy
 # - no GPU during build, so the creator chain is checked at run time (--gpus), not here

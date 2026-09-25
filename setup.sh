@@ -54,11 +54,18 @@ else
     exit 1
 fi
 
-export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0;8.9;8.6;8.0;7.5;7.0}"
+# GPU targets: sm_80 SASS runs natively on all of 8.x, PTX JITs forward to Hopper
+# - bae, gsplat, nvdiffrast read TORCH_CUDA_ARCH_LIST
+# - fused-ssim ignores it: reads CUDA_ARCHITECTURES, SASS only, no PTX
+# - supported/unsupported GPU table: Dockerfile header
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0+PTX}"
+export CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-80;90}"
 # Cap parallel compile jobs by RAM, not cores
 # - torch's cpp_extension defaults to one job per CPU and ignores the cgroup cap
 # - one cicc peaks ~7.3 GB; 6 is the ceiling on a 46.6 GB host
+# - uv builds every source package at once, multiplying MAX_JOBS; build them one at a time
 export MAX_JOBS="${MAX_JOBS:-2}"
+export UV_CONCURRENT_BUILDS="${UV_CONCURRENT_BUILDS:-1}"
 
 # collab-data: private repo, locked as a path dependency at /workspace/collab-data
 # - uv sync cannot resolve without it, so it must exist first
@@ -75,6 +82,15 @@ fi
 # --locked: fail if uv.lock is stale against pyproject.toml instead of silently re-resolving
 echo "=== uv sync: full env (all extras incl. gpu toolkit + feedforward) ==="
 cd "$SCRIPT_DIR"
+
+# Dependency-only pass: Docker caches the slow CUDA compiles in their own layer
+# - needs only pyproject.toml + uv.lock, so source edits never invalidate it
+if [ "${SETUP_DEPS_ONLY:-0}" = 1 ]; then
+    /root/.local/bin/uv sync --locked --all-extras --no-install-project
+    echo "=== setup complete (dependencies only) ==="
+    exit 0
+fi
+
 /root/.local/bin/uv sync --locked --all-extras
 
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.

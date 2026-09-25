@@ -85,8 +85,8 @@ def test_metrics_survive_save_load(tmp_path):
     assert loaded.epochs_run == ae.epochs_run
 
 
-def test_load_legacy_checkpoint_without_metrics(tmp_path):
-    """A checkpoint already on disk still loads: literal keys, no metrics, two dead payload keys."""
+def test_load_checkpoint_with_literal_keys(tmp_path):
+    """A checkpoint's literal keys still load; two dead payload keys are ignored."""
     # Hand-written, NOT built from the current class: state_dict keys are spelled out so merging
     # decoder_hidden/decoder_out, or changing the derived width, fails here instead of on a user's
     # weights file. hidden_dim and regularization_kwargs are keys the old save() wrote and load ignores.
@@ -95,6 +95,9 @@ def test_load_legacy_checkpoint_without_metrics(tmp_path):
         "latent_dim": 8,
         "hidden_dim": 64,
         "regularization_kwargs": {},
+        "recon_cosine": 0.5,
+        "recon_mse": 0.25,
+        "epochs_run": 3,
         "state_dict": {
             "encoder.0.weight": torch.zeros(64, 32),
             "encoder.0.bias": torch.zeros(64),
@@ -109,8 +112,17 @@ def test_load_legacy_checkpoint_without_metrics(tmp_path):
     weights = tmp_path / "talk2dino_ae.pt"
     torch.save(payload, weights)
 
-    # The three metric keys are absent, so they must default to the untrained values
     loaded = FeatureAutoencoder.load(weights)
-    assert loaded.recon_cosine == 0.0
-    assert loaded.recon_mse == 0.0
-    assert loaded.epochs_run == 0
+    assert loaded.recon_cosine == 0.5
+    assert loaded.recon_mse == 0.25
+    assert loaded.epochs_run == 3
+
+
+def test_load_raises_without_metric_keys(tmp_path):
+    """A checkpoint without fit metrics raises instead of reporting an untrained fit."""
+    ae = FeatureAutoencoder(input_dim=32, latent_dim=8)
+    payload = {"input_dim": 32, "latent_dim": 8, "state_dict": ae.state_dict()}
+    weights = tmp_path / "old_ae.pt"
+    torch.save(payload, weights)
+    with pytest.raises(KeyError, match="recon_cosine"):
+        FeatureAutoencoder.load(weights)

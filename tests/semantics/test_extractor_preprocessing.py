@@ -1,6 +1,7 @@
 """Tests for unified extractor preprocessing utilities and interface."""
 
 import inspect
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,12 +9,13 @@ import torch
 import torchvision.transforms as T
 from PIL import Image
 
+from collab_splats.semantics.features import dino as dino_mod
 from collab_splats.semantics.features import talk2dino as t2d_mod
 from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.semantics.features.dino import DINOFeatureExtractor
 from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
 from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
-from collab_splats.semantics.utils import tokens_to_feature_map
+from collab_splats.semantics.utils import _tokens_to_feature_map
 
 
 def test_tokens_to_feature_map_shape():
@@ -22,7 +24,7 @@ def test_tokens_to_feature_map_shape():
     D = 8
     ph, pw = H // patch_size, W // patch_size
     tokens = torch.randn(ph * pw, D)
-    out = tokens_to_feature_map(tokens, H, W, patch_size)
+    out = _tokens_to_feature_map(tokens, H, W, patch_size)
     assert out.shape == (D, ph, pw)
 
 
@@ -32,15 +34,15 @@ def test_tokens_to_feature_map_l2_normalized():
     D = 8
     ph, pw = H // patch_size, W // patch_size
     tokens = torch.randn(ph * pw, D) * 10  # large values
-    out = tokens_to_feature_map(tokens, H, W, patch_size)
-    # tokens_to_feature_map L2-normalizes along the channel dim per spatial position
+    out = _tokens_to_feature_map(tokens, H, W, patch_size)
+    # _tokens_to_feature_map L2-normalizes along the channel dim per spatial position
     norms = out.norm(dim=0)  # (H_p, W_p)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-5)
 
 
 def test_tokens_to_feature_map_wrong_count_raises():
-    with pytest.raises(AssertionError):
-        tokens_to_feature_map(torch.randn(99, 8), 196, 196, 14)
+    with pytest.raises(ValueError, match="Expected 196 tokens"):
+        _tokens_to_feature_map(torch.randn(99, 8), 196, 196, 14)
 
 
 def _make_fake_dino(resize_mode="max_size", image_resolution=224, patch_size=14, svd_components=500):
@@ -260,7 +262,7 @@ def test_each_extractor_keeps_its_own_default_resolution():
 
 def test_svd_components_still_reaches_the_base():
     """A non-default svd_components passed to DINOFeatureExtractor lands on the base attribute."""
-    # Mirrors the production call site at semantics/segmentation/insid3.py:248,
+    # Mirrors the DINOFeatureExtractor(...) call in INSID3Segmentation.__init__,
     # which passes svd_components explicitly. A dropped argument in the concrete
     # extractor's super().__init__() would silently pin every run to the default.
     ext = _make_fake_dino(svd_components=37)
@@ -277,3 +279,59 @@ def test_preprocess_square_mode_center_crops_to_square():
     ext = _make_fake_dino(resize_mode="square", image_resolution=196, patch_size=14)
     t = ext.preprocess(Image.new("RGB", (400, 300)))
     assert t.shape[1] == t.shape[2] == 196
+
+
+########################################################################
+# Shared forward: prefix tokens dropped by count
+########################################################################
+
+
+class _TokenBackend(BaseFeatureExtractor):
+    """Minimal backend: `_patch_tokens` returns `prefix` marker tokens, then the patch tokens."""
+
+    def __init__(self, prefix: int, declared: int | None = None):
+        super().__init__(resize_mode="square", image_resolution=28)
+        self.patch_size = 14
+        self._normalize = T.Normalize([0.0] * 3, [1.0] * 3)
+        self._device = torch.device("cpu")
+        self.prefix = prefix
+        self.n_prefix_tokens = prefix if declared is None else declared
+        self.patches = torch.randn(1, 4, 8)
+
+    def _patch_tokens(self, batch: torch.Tensor) -> torch.Tensor:
+        return torch.cat([torch.full((1, self.prefix, 8), 99.0), self.patches], dim=1)
+
+
+@pytest.mark.parametrize("prefix", [0, 1, 5])
+def test_base_forward_drops_prefix_tokens(prefix):
+    """The base drops the backend's declared prefix and keeps the H_p * W_p patch tokens."""
+    backend = _TokenBackend(prefix)
+    [feat] = backend.forward([Image.new("RGB", (28, 28))])
+    expected = torch.nn.functional.normalize(backend.patches[0].reshape(2, 2, 8).permute(2, 0, 1), dim=0)
+    assert feat.shape == (8, 2, 2)
+    assert torch.allclose(feat, expected)
+
+
+@pytest.mark.parametrize("prefix, declared", [(1, 0), (0, 1), (5, 1)])
+def test_base_forward_rejects_undeclared_prefix_tokens(prefix, declared):
+    """A token count other than declared prefix + patch grid raises, rather than slicing silently."""
+    backend = _TokenBackend(prefix, declared=declared)
+    with pytest.raises(ValueError, match="n_prefix_tokens"):
+        backend.forward([Image.new("RGB", (28, 28))])
+
+
+def test_base_device_property_reads_device():
+    assert _TokenBackend(0).device == torch.device("cpu")
+
+
+def test_maskclip_missing_dep_names_install(monkeypatch):
+    monkeypatch.setitem(sys.modules, "maskclip_onnx", None)
+    with pytest.raises(ImportError, match="pip install"):
+        MaskCLIPExtractor(device="cpu")
+
+
+def test_dino_device_none_resolves_with_get_device(monkeypatch):
+    """device=None is resolved by the extractor itself, so callers such as INSID3 pass it through."""
+    monkeypatch.setattr(dino_mod, "get_device", lambda: "cpu")
+    monkeypatch.setattr(dino_mod, "AutoModel", MagicMock())
+    assert DINOFeatureExtractor(device=None)._device == torch.device("cpu")

@@ -1,12 +1,16 @@
 """
-Segmentation backends and mask utilities.
+Segmentation backends, looked up by name via `BaseSegmentation.get`, plus mask utilities.
 
-- import from here; the submodule structure is an implementation detail
+- insid3: in-context masks from one reference image and mask
+- mobilesamv2, sam3: class-agnostic instance masks; sam3 also takes text prompts
+- skywater: per-pixel sky masks; `sky_masks` caches sky probability per scene
 """
 
 from __future__ import annotations
 
-# ── Abstract base and mask utilities ──────────────────────────────────────────
+########################################################################
+# Abstract base and mask utilities
+########################################################################
 from .base import (
     BaseSegmentation,
     create_patch_mask,
@@ -16,8 +20,10 @@ from .base import (
     aggregate_masked_features,
 )
 
-# ── Concrete backends ─────────────────────────────────────────────────────────
-from .mobile_sam import MobileSAMSegmentation, load_mobile_sam
+########################################################################
+# Concrete backends
+########################################################################
+from .mobile_sam import MobileSAMSegmentation
 from .sam3 import SAM3Segmentation
 from .insid3 import INSID3Segmentation
 from .sky import SkyWaterSegmentation, sky_masks
@@ -33,7 +39,6 @@ __all__ = [
     "aggregate_masked_features",
     # backends
     "MobileSAMSegmentation",
-    "load_mobile_sam",
     "SAM3Segmentation",
     "INSID3Segmentation",
     "SkyWaterSegmentation",

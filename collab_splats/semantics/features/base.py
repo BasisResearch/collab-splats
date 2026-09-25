@@ -1,9 +1,8 @@
 """
-Base classes and shared constants for feature extractors.
+Base classes for patch-feature extractors.
 
-- BaseFeatureExtractor: abstract registry-based extractor with caching and debiasing
-- BaseQueryableExtractor: extends the base with text-query scoring
-- _DEBIAS_VALIDATED: extractor class names whose debiasing has been validated
+- BaseFeatureExtractor: registry, shared preprocess, positional debiasing
+- BaseQueryableExtractor: adds text embedding and contrastive query scoring
 """
 
 import logging
@@ -18,16 +17,11 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from PIL import Image
 
-from collab_splats.semantics.utils import compute_semantic_contrast
+from collab_splats.semantics.utils import _tokens_to_feature_map, compute_semantic_contrast
 from collab_splats.utils.image import open_image, resize_image
 from collab_splats.utils.torch_utils import RegistryMixin
 
 logger = logging.getLogger(__name__)
-
-# Extractors where positional debiasing is empirically validated (DINO-family)
-# - add a class name here after verifying debiasing improves that model family
-# - extractors NOT listed still work with debias(), but warn at call time
-_DEBIAS_VALIDATED: frozenset = frozenset({"DINOFeatureExtractor", "Talk2DinoExtractor"})
 
 
 ########################################################
@@ -37,26 +31,30 @@ _DEBIAS_VALIDATED: frozenset = frozenset({"DINOFeatureExtractor", "Talk2DinoExtr
 
 class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
     """
-    Abstract base for image feature extractors with a name-based registry.
+    Image patch-feature extractor, registered by name.
 
-    - Register subclasses via `@BaseFeatureExtractor.register("name")`, retrieve with `.get("name")`.
-    - Subclasses set `self._normalize` and `self.patch_size`; `preprocess` is shared.
+    - register with `@BaseFeatureExtractor.register("name")`, look up with `.get("name")`
+    - subclasses set `_normalize`, `patch_size`, `_device` and implement `_patch_tokens`
+    - a backend whose tokens lead with CLS or registers sets `n_prefix_tokens` to their count
+    - `preprocess` and `forward` are shared
     """
 
     _registry: Dict[str, type["BaseFeatureExtractor"]] = {}
+
+    # Positional debiasing checked on this backend; unchecked backends warn in debias()
+    debias_validated: bool = False
+
+    # Tokens ahead of the patch grid in `_patch_tokens` output (CLS, registers)
+    n_prefix_tokens: int = 0
 
     def __init__(self, resize_mode: str, image_resolution: int, svd_components: int = 500) -> None:
         """
         Store the shared preprocessing and debiasing configuration.
 
-        Subclasses must set `self._normalize` (a `T.Normalize`) and `self.patch_size` before
-        `preprocess` is called — the stats and stride are backbone-specific.
-
         Args:
-            resize_mode: "max_size" (proportional longest-edge) or "square" (center-crop + resize).
-            image_resolution: longest-edge target for "max_size", square side for "square".
-            svd_components: top singular vectors kept for the positional subspace. 500 matches
-                the INSID3 default (see reference implementation).
+            resize_mode: "max_size" (longest edge) or "square" (center-crop, then resize).
+            image_resolution: longest-edge target for "max_size", side for "square".
+            svd_components: positional-subspace rank for debias(); 500 is the INSID3 default.
         """
         super().__init__()
 
@@ -64,22 +62,73 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         self._image_resolution = image_resolution
         self.svd_components = svd_components
 
-        # Caches keyed by (H_p, W_p) so different input resolutions each get their own basis.
-        self._pos_basis_cache: dict = {}   # (H_p, W_p) → Tensor(D, K) positional subspace basis
-        self._zero_feats_cache: dict = {}  # (H_p, W_p) → Tensor(D, H_p, W_p) zero-image features for viz
+        # Per patch-grid caches: positional basis (D, K) and zero-image features (D, H_p, W_p)
+        self._pos_basis_cache: dict = {}
+        self._zero_feats_cache: dict = {}
 
-    @abstractmethod
+    @property
+    def device(self) -> torch.device:
+        """
+        Device the backend's model was moved to at construction.
+
+        Returns:
+            `self._device`, set by each backend's `__init__`.
+        """
+        return self._device
+
+    def _patch_tokens(self, batch: torch.Tensor) -> torch.Tensor:
+        """
+        Run the backbone on a preprocessed batch.
+
+        Args:
+            batch: (B, C, H, W) preprocessed images on `self.device`.
+
+        Returns:
+            (B, n_prefix_tokens + H_p * W_p, D) tokens; patch tokens last, in raster order.
+
+        Raises:
+            NotImplementedError: in a backend that does not override it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} must implement _patch_tokens")
+
     def forward(self, images: list) -> list[torch.Tensor]:
         """
-        Preprocess, run inference, and reshape to patch grids.
+        Preprocess, run the backbone, and reshape each image's patch tokens to a grid.
+
+        - the backend's `n_prefix_tokens` (CLS, registers) are dropped
+        - all images in one call must preprocess to the same size (they are stacked)
 
         Args:
             images: anything `open_image` accepts, one entry per frame.
 
         Returns:
-            One (D, H_p, W_p) tensor per image, on CPU.
+            One (D, H_p, W_p) float32 CPU tensor per image, unit-norm per patch.
+
+        Raises:
+            ValueError: when the backbone's token count is not n_prefix_tokens + H_p * W_p.
         """
-        ...
+        logger.debug("[%s] Extracting features: %d images", type(self).__name__, len(images))
+
+        # Preprocess and batch; torch.stack needs every image at one grid
+        preprocessed = [self.preprocess(img) for img in images]
+        batch = torch.stack(preprocessed).to(self.device)
+
+        # Backbone tokens, prefix included
+        with torch.no_grad():
+            tokens_all = self._patch_tokens(batch)
+
+        # One grid for the whole batch; any other token count means a wrong prefix
+        _, H, W = batch.shape[1:]
+        n_patches = (H // self.patch_size) * (W // self.patch_size)
+        if tokens_all.shape[1] != self.n_prefix_tokens + n_patches:
+            raise ValueError(
+                f"{type(self).__name__}: {tokens_all.shape[1]} tokens, expected n_prefix_tokens="
+                f"{self.n_prefix_tokens} + {n_patches} patches for {H}x{W}"
+            )
+
+        # Drop the prefix and reshape each image to (D, H_p, W_p)
+        patch_tokens = tokens_all[:, self.n_prefix_tokens :].cpu()
+        return [_tokens_to_feature_map(tokens, H, W, self.patch_size) for tokens in patch_tokens]
 
     def preprocess(self, image: Union[str, Path, np.ndarray, Image.Image]) -> torch.Tensor:
         """
@@ -143,10 +192,10 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
             (H_p, W_p, 3) uint8 ndarray. All-zero when the features have no variance.
         """
         D, H_p, W_p = feat.shape
-        E = feat.reshape(D, -1).T.float()  # (N, D) where N = H_p * W_p
-        E = E - E.mean(dim=0, keepdim=True)  # center per-channel
-        _, _, Vt = torch.linalg.svd(E, full_matrices=False)  # Vt: (min(N,D), D)
-        rgb = (E @ Vt[:3].T).detach().cpu().numpy()  # (N, 3) — project onto top-3 PCs
+        E = feat.reshape(D, -1).T.float()
+        E = E - E.mean(dim=0, keepdim=True)
+        _, _, Vt = torch.linalg.svd(E, full_matrices=False)
+        rgb = (E @ Vt[:3].T).detach().cpu().numpy()
         # Normalize to [0, 255]: shift to zero, scale by range, guard zero-variance case
         rgb -= rgb.min()
         rgb /= rgb.max() + 1e-8
@@ -154,139 +203,99 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
     def _build_positional_basis(self, H_p: int, W_p: int) -> None:
         """
-        Estimate the positional subspace from a zero-pixel image using SVD (INSID3 algorithm).
+        Positional subspace at one patch grid, from a zero-pixel image (INSID3).
 
-        A black (zero-pixel) image, after each extractor's own normalization, produces features
-        driven entirely by the model's positional embeddings — no semantic content to interfere.
-        SVD then extracts the top-K directions of variance, representing the positional subspace.
-
-        Calls self.forward() so each subclass handles its own preprocessing identically to
-        real inference — no separate code path, no reimplementation of preprocessing.
-
-        Stores results in _pos_basis_cache[(H_p, W_p)] and _zero_feats_cache[(H_p, W_p)].
-        Only called once per resolution; all subsequent debias() calls at (H_p, W_p) reuse the cache.
+        - a black image carries no content, so its features are positional only
+        - runs through self.forward(), so each backend preprocesses exactly as at inference
+        - fills _pos_basis_cache and _zero_feats_cache at (H_p, W_p)
 
         Args:
-            H_p: Number of patch rows in the target feature map.
-            W_p: Number of patch columns in the target feature map.
+            H_p: patch rows.
+            W_p: patch columns.
         """
-        # Require patch_size to be set explicitly — no silent fallback.
-        # If missing, the AttributeError here is far better than producing a silently wrong zero image.
+        # patch_size must be set; an AttributeError beats a wrong zero image
         if not hasattr(self, "patch_size"):
             raise AttributeError(
                 f"{type(self).__name__} must define `self.patch_size` "
                 "(the pixel stride of each patch token) before calling debias()."
             )
-        patch_size = self.patch_size  # pixel stride per patch; set in each concrete subclass __init__
-        H_img = H_p * patch_size  # image height that produces H_p patch rows under stride-exact preprocessing
-        W_img = W_p * patch_size  # image width  that produces W_p patch cols under stride-exact preprocessing
+        patch_size = self.patch_size
+        H_img = H_p * patch_size
+        W_img = W_p * patch_size
 
-        # Zero-pixel (black) image, matching INSID3's torch.zeros approach
-        # - expressed as a PIL Image so it passes through each subclass's own forward()
-        # - after forward()'s normalization, zero pixels are a fixed non-semantic input,
-        #   eliciting the model's positional response with no image-content signal
+        # Zero-pixel image through the backend's own forward()
         zero_arr = np.zeros((H_img, W_img, 3), dtype=np.uint8)
-        zero_pil = Image.fromarray(zero_arr)  # PIL Image so forward() preprocessing runs unchanged
+        zero_pil = Image.fromarray(zero_arr)
 
         with torch.no_grad():
-            [zero_feat] = self.forward([zero_pil])  # (D, H_p', W_p') — subclass forward handles preprocessing
+            [zero_feat] = self.forward([zero_pil])
 
         if zero_feat.shape[1:] != (H_p, W_p):
-            # The subclass's internal preprocessing (e.g. Talk2DINO upscaling) changed the grid size.
-            # Interpolate to the target (H_p, W_p) — positional bias is spatially smooth so this is valid.
+            # Backend preprocessing changed the grid; bias is smooth, so interpolate
             zero_feat = F.interpolate(
-                zero_feat.unsqueeze(0),  # (1, D, H_p', W_p') — F.interpolate requires a leading batch dim
+                zero_feat.unsqueeze(0),
                 size=(H_p, W_p),
                 mode="bilinear",
                 align_corners=False,
-            ).squeeze(0)  # remove batch dim → (D, H_p, W_p)
+            ).squeeze(0)
 
-        self._zero_feats_cache[(H_p, W_p)] = zero_feat  # saved for get_bias_visualization
+        self._zero_feats_cache[(H_p, W_p)] = zero_feat
 
-        D = zero_feat.shape[0]  # feature dimensionality — needed to reshape E for SVD
-        E = zero_feat.reshape(D, -1)               # (D, H_p*W_p) — one column per patch, one row per feature
-        E = E - E.mean(dim=1, keepdim=True)        # center: remove mean activation per channel before SVD
+        # Top-K left singular vectors of the centered features span the positional subspace
+        D = zero_feat.shape[0]
+        E = zero_feat.reshape(D, -1)
+        E = E - E.mean(dim=1, keepdim=True)
 
-        # SVD: columns of U are principal directions of feature variance across spatial patch positions.
-        # Because the image has no content, these directions capture positional variation only.
-        U, _, _ = torch.linalg.svd(E, full_matrices=False)  # U: (D, min(D, H_p*W_p))
+        U, _, _ = torch.linalg.svd(E, full_matrices=False)
 
-        # Keep top-K directions — they represent the positional subspace; the tail captures noise.
-        self._pos_basis_cache[(H_p, W_p)] = U[:, : self.svd_components].contiguous()  # (D, K)
+        self._pos_basis_cache[(H_p, W_p)] = U[:, : self.svd_components].contiguous()
 
     def _apply_debias(self, fmap: torch.Tensor) -> torch.Tensor:
         """
-        Project fmap onto the orthogonal complement of the positional subspace.
-
-        Removes the positional component from each patch feature vector, then re-normalizes
-        L2 so downstream cosine-similarity comparisons remain well-defined.
+        Project out the positional subspace, then re-normalize each patch.
 
         Args:
-            fmap: (D, H_p, W_p) patch feature map — same spatial resolution as a cached basis.
+            fmap: (D, H_p, W_p) features at a grid with a cached basis.
 
         Returns:
-            (D, H_p, W_p) debiased feature map with unit-norm patch vectors.
+            (D, H_p, W_p) debiased features, unit-norm per patch.
         """
         D, H_p, W_p = fmap.shape
-        basis = self._pos_basis_cache[(H_p, W_p)].to(fmap.device)  # (D, K) — move to same device as features
+        basis = self._pos_basis_cache[(H_p, W_p)].to(fmap.device)
 
-        # P_perp = I - U @ U.T projects out the component in span(U) (the positional subspace).
-        # Applying P_perp to a feature vector zeroes its positional component, keeping only semantics.
-        P_perp = torch.eye(D, device=fmap.device, dtype=fmap.dtype) - basis @ basis.T  # (D, D)
+        # P_perp = I - U U^T removes the span(U) component
+        P_perp = torch.eye(D, device=fmap.device, dtype=fmap.dtype) - basis @ basis.T
 
-        X = fmap.reshape(D, -1)    # (D, H_p*W_p) — flatten spatial dims for matrix multiply
-        X_deb = P_perp @ X         # (D, H_p*W_p) — positional component removed from each patch vector
+        X = fmap.reshape(D, -1)
+        X_deb = P_perp @ X
 
-        # Re-normalize: after projection the vectors are no longer unit-norm.
-        # Cosine-similarity comparisons in downstream code require unit-norm patch vectors.
-        X_deb = F.normalize(X_deb, p=2, dim=0)  # normalize along the feature axis (dim=0) → each patch column becomes unit-norm
+        # Projection breaks unit norm; cosine queries need it back
+        X_deb = F.normalize(X_deb, p=2, dim=0)
 
-        return X_deb.reshape(D, H_p, W_p)  # restore spatial layout
+        return X_deb.reshape(D, H_p, W_p)
 
     def get_bias_visualization(self, H_p: int, W_p: int) -> "np.ndarray":
         """
-        RGB heatmap of the positional bias at one patch-grid resolution.
+        RGB view of the positional bias at one patch grid (top-3 PCs of the zero image).
 
-        - PCA via SVD (no sklearn): zero-image features projected onto the top 3 components
-        - color therefore encodes the dominant axes of positional variation
-        - use it to check that debiasing actually captured spatial structure
-        - needs a prior debias() call at this (H_p, W_p) to populate the cache
+        - needs a prior debias() call at this grid
 
         Args:
-            H_p: patch grid height — must match a resolution used in a prior debias() call.
-            W_p: patch grid width — same constraint.
+            H_p: patch rows of a prior debias() call.
+            W_p: patch columns of a prior debias() call.
 
         Returns:
-            (H_p, W_p, 3) uint8 RGB visualization.
+            (H_p, W_p, 3) uint8 RGB.
 
         Raises:
-            KeyError: when (H_p, W_p) is not cached — call debias() at this resolution first.
+            KeyError: when (H_p, W_p) is not cached.
         """
         if (H_p, W_p) not in self._zero_feats_cache:
             raise KeyError(
                 f"No positional bias cached for patch grid ({H_p}, {W_p}). "
                 "Call debias() at this resolution first."
             )
-        zero_feats = self._zero_feats_cache[(H_p, W_p)]  # (D, H_p, W_p) — zero-image patch features
-        D = zero_feats.shape[0]  # feature dimensionality — needed to reshape before SVD
-
-        # PCA via SVD on the (N, D) matrix where N = H_p*W_p patch locations.
-        # Each row is one patch's feature vector; SVD gives the principal axes of spatial variation.
-        E = zero_feats.reshape(D, -1).T  # (N, D) — transpose so rows are per-patch observations
-        E = E - E.mean(dim=0, keepdim=True)  # center per channel (dim=0 on (N,D) ≡ dim=1 on (D,N) in _build_positional_basis — same operation)
-
-        # SVD: right singular vectors Vt span the principal directions in feature space.
-        # We only need Vt[:3] (top-3 right singular vectors) to project onto the 3 dominant PCs.
-        _, _, Vt = torch.linalg.svd(E, full_matrices=False)  # Vt: (min(N,D), D)
-
-        rgb = (E @ Vt[:3].T).cpu().numpy()  # (N, 3) — project each patch onto the top-3 PCs
-
-        # Normalize to [0, 1] for display: shift minimum to zero, then scale by range.
-        # +1e-8 prevents divide-by-zero when all features are identical (e.g. all-black image edge case).
-        rgb -= rgb.min()
-        rgb /= rgb.max() + 1e-8
-
-        return (rgb.reshape(H_p, W_p, 3) * 255).astype(np.uint8)  # scale to uint8 RGB for display
+        return self.features_to_rgb(self._zero_feats_cache[(H_p, W_p)])
 
     def debias(self, features: list[torch.Tensor]) -> list[torch.Tensor]:
         """
@@ -300,21 +309,20 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
             features: (D, H_p, W_p) tensors from forward(); all must share (H_p, W_p).
 
         Returns:
-            The same list with positional bias removed and each patch column L2 re-normalized.
+            A new list, positional bias removed and each patch re-normalized.
         """
-        if type(self).__name__ not in _DEBIAS_VALIDATED:
-            # Algorithm is general but has only been verified for DINO-family models.
-            # Warn rather than raise so researchers can experiment with other extractors.
+        if not self.debias_validated:
+            # Checked only on DINO-family models; warn so other backends stay usable
             logger.warning(
                 "[%s] Positional debiasing not yet validated for this extractor. "
                 "Proceeding — results may be suboptimal.",
                 type(self).__name__,
             )
-        _, H_p, W_p = features[0].shape  # read patch grid dimensions from the first feature map
+        _, H_p, W_p = features[0].shape
         if (H_p, W_p) not in self._pos_basis_cache:
-            # First debias() call at this resolution — build and cache the positional basis.
+            # First call at this grid builds the basis
             self._build_positional_basis(H_p, W_p)
-        return [self._apply_debias(f) for f in features]  # project each image's feature map
+        return [self._apply_debias(f) for f in features]
 
 
 ########################################################
@@ -324,11 +332,10 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
 class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
     """
-    Feature extractor that also embeds text, for cosine queries against patch features.
+    Extractor that also embeds text, so patches can be queried by cosine similarity.
 
-    - Subclasses implement `encode_text` and `forward`; `compute_similarity` and
-      `score_queries` are shared.
-    - All subclasses take `model_name` as their first constructor parameter.
+    - subclasses implement `encode_text` and `_patch_tokens`
+    - `compute_similarity` and `score_queries` are shared
     """
 
     @abstractmethod
@@ -378,30 +385,27 @@ class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
         reduction: str = "max",
     ) -> torch.Tensor:
         """
-        Score positive queries against negative queries using contrastive softmax.
+        Contrastive score of positive queries against negative ones.
 
         Args:
             features: (C, H, W) patch feature map, or (P, D) point feature array.
-            positive: Text queries that should score high.
-            negative: Text queries that should score low. Defaults to ["object"] —
-                matches Talk2DINO paper convention; ensures contrastive softmax is always
-                used. Pass [] to skip contrast and return raw cosine similarities directly
-                (not recommended for visualization).
-            temperature: Softmax temperature. Lower = sharper. Defaults to 0.05.
-            reduction: How to reduce across positive queries. "max" or "pool". Defaults to "max".
+            positive: queries that should score high.
+            negative: queries that should score low; None uses ["object"] (Talk2DINO's
+                convention), [] skips the contrast and returns raw similarity.
+            temperature: softmax temperature; lower is sharper.
+            reduction: "max" or "pool", see `compute_semantic_contrast`.
 
         Returns:
-            (H, W) score map in [0, 1] when input is (C, H, W).
-            (P,)   score array in [0, 1] when input is (P, D).
+            (H, W) for a patch map, (P,) for point features; in [0, 1] unless negative is [].
         """
+        if negative is None:
+            negative = ["object"]
         logger.debug(
             "[%s] Scoring queries: %d positive%s (reduction=%s)",
             type(self).__name__, len(positive),
             f", {len(negative)} negative" if negative else "",
             reduction,
         )
-        if negative is None:
-            negative = ["object"]
         queries = positive + negative
         similarity = self.compute_similarity(features, queries)
         result = compute_semantic_contrast(similarity, len(positive), temperature, reduction)

@@ -2,9 +2,9 @@
 Sky segmentation over the skywater ONNX SegFormer, plus a cached per-scene mask stack.
 
 - SkyWaterSegmentation ("skywater"): MiT-B2 fine-tuned on ADE20K sky/water/person
-- sky_masks: cached (N, H, W) mask stack for a keyframe directory, order-preserving
-- replaces VGGT's skyseg (facebookresearch/vggt @ a288dd0f14786c93483e45524328726ab7b1b4ce,
-  visual_util.py:365-434), which measured as a brightness detector on our scenes
+- sky_masks: (N, H, W) mask stack over a cached sky-probability PNG per frame, order-preserving
+- used instead of VGGT's skyseg (facebookresearch/vggt @ a288dd0f14786c93483e45524328726ab7b1b4ce,
+  visual_util.py:365-434), whose per-image min-max rescale invents sky on dim frames
 """
 
 from __future__ import annotations
@@ -57,8 +57,7 @@ class SkyWaterSegmentation(BaseSegmentation):
         input_size: int = 384,
         sky_class: int = 1,
     ) -> None:
-        # CUDA first when the wheel provides it; this container's onnxruntime is CPU-only,
-        # and naming an unavailable provider only warns, so filtering keeps the log honest
+        # CUDA first when available; naming a missing provider only warns, so filter
         providers = [
             p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in ort.get_available_providers()
         ]
@@ -100,7 +99,7 @@ class SkyWaterSegmentation(BaseSegmentation):
 
 
 ########################################################
-########## Cached mask stack ###########################
+########## Cached sky-probability stack ################
 ########################################################
 
 
@@ -108,26 +107,38 @@ def sky_masks(
     images_dir: Path | str,
     idxs: Sequence[int] | None = None,
     cache_dir: Path | str | None = None,
+    threshold: float = 0.5,
 ) -> np.ndarray:
     """
     Sky masks for a keyframe directory, segmenting only what is not already cached.
 
-    - inference costs ~0.2 s/frame on CPU, so the PNG cache is load-bearing
-    - cached PNGs store 255 for sky, inverted from skyseg's 255-is-NOT-sky files
+    - the cache is keyed by frame index only: a changed threshold is re-applied on read,
+      but a changed model reuses stale PNGs
+    - cached PNGs store sky probability x 255; old 0/255 PNGs read as the same mask at
+      any threshold, so re-thresholding one means deleting the cache dir first
+    - the backend's own `threshold` does not affect this function; `threshold=` below
+      is the only knob
 
     Args:
         images_dir: keyframe directory holding frame_NNNNNN.<ext>.
         idxs: SOURCE frame indices in the order wanted; None takes every frame in
             filename order, exactly as `frames.read_frames` does.
-        cache_dir: directory of cached mask PNGs; None uses images_dir's sibling sky/.
+        cache_dir: directory of cached sky-probability PNGs; None uses images_dir's
+            sibling sky/.
+        threshold: sky probability above which a pixel is sky; applied on read, so
+            changing it needs no re-segmentation.
 
     Returns:
         (N, H, W) bool, True where sky, in the order `idxs` names.
 
     Raises:
+        ValueError: when threshold is outside [0, 1), which marks every pixel sky or none.
         FileNotFoundError: when images_dir holds no frames.
         KeyError: when idxs names a frame_idx the directory does not hold.
     """
+    if not 0.0 <= threshold < 1.0:
+        raise ValueError(f"sky_masks: threshold must be in [0, 1), got {threshold}")
+
     images_dir = Path(images_dir)
     cache_dir = Path(cache_dir) if cache_dir is not None else images_dir.parent / "sky"
 
@@ -135,8 +146,7 @@ def sky_masks(
     if not paths:
         raise FileNotFoundError(f"sky_masks: no frame images in {images_dir}")
 
-    # Resolve the wanted source indices up front, so the contract holds whether or not the
-    # cache is warm — validating only the uncached ones would let a warm cache accept junk
+    # Validate every wanted index up front, so a warm cache rejects junk too
     by_idx = {frames.frame_idx_from_path(p): p for p in paths}
     wanted = [int(i) for i in idxs] if idxs is not None else list(by_idx)
     missing = [i for i in wanted if i not in by_idx]
@@ -144,17 +154,19 @@ def sky_masks(
         raise KeyError(f"sky_masks: frame_idx {missing[:5]} not in {images_dir}")
 
     # Segment only the cache misses, one frame at a time
-    # - segment() coerces a path through open_image, so no decode step is needed here
-    # - frames.read_frames would np.stack every miss at once: 853 full-res frames is ~10 GB,
-    #   on top of whatever the caller's fusion buffers already hold
+    # - segment() opens the path itself, so no decode step here
+    # - frames.read_frames would stack every miss in RAM at once
     cache_dir.mkdir(parents=True, exist_ok=True)
     todo = [i for i in wanted if not (cache_dir / f"frame_{i:06d}.png").exists()]
     if todo:
         model = BaseSegmentation.get("skywater")()
         for idx in todo:
-            mask, _ = model.segment(by_idx[idx])
-            cv2.imwrite(str(cache_dir / f"frame_{idx:06d}.png"), np.asarray(mask, dtype=np.uint8) * 255)
+            _, meta = model.segment(by_idx[idx])
+            prob8 = np.rint(np.clip(meta["raw"], 0.0, 1.0) * 255).astype(np.uint8)
+            cv2.imwrite(str(cache_dir / f"frame_{idx:06d}.png"), prob8)
         logger.info("sky_masks: segmented %d of %d frames into %s", len(todo), len(wanted), cache_dir)
 
-    # Read every mask back from the cache, so a hit and a miss return the identical array
-    return np.stack([cv2.imread(str(cache_dir / f"frame_{i:06d}.png"), cv2.IMREAD_GRAYSCALE) > 127 for i in wanted])
+    # Threshold on read, so hits and misses share one path and a new threshold reuses the cache
+    return np.stack(
+        [cv2.imread(str(cache_dir / f"frame_{i:06d}.png"), cv2.IMREAD_GRAYSCALE) / 255.0 > threshold for i in wanted]
+    )

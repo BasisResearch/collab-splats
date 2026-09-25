@@ -8,11 +8,14 @@ The skywater sky backend and its mask cache.
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import cv2
 import numpy as np
 import pytest
 import torch
 
+from collab_splats.preproc import frames as fr
 from collab_splats.semantics.segmentation import sky
 
 ######## Fakes
@@ -38,6 +41,9 @@ class _FakeSession:
 class _ConstantBackend:
     """
     A BaseSegmentation stand-in whose every mask is one constant value.
+
+    - raw carries 0.9 where the mask is sky and 0.0 elsewhere, not 1.0/0.0, so a cached
+      probability can be re-thresholded to flip the mask without re-segmenting
     """
 
     def __init__(self, value):
@@ -46,7 +52,8 @@ class _ConstantBackend:
     def segment(self, image):
         rgb = np.asarray(sky.open_image(image).convert("RGB"))
         mask = np.full(rgb.shape[:2], self._value, bool)
-        return torch.from_numpy(mask), {"raw": mask.astype(np.float32)}
+        raw = np.where(mask, 0.9, 0.0).astype(np.float32)
+        return torch.from_numpy(mask), {"raw": raw}
 
 
 def _logits_for(prob: np.ndarray) -> np.ndarray:
@@ -185,8 +192,6 @@ def _scene(tmp_path, monkeypatch, prob, frame_idxs=(0, 5, 7)):
     """
     An images/ dir plus a registry whose "skywater" entry is the fake-session backend.
     """
-    from collab_splats.preproc import frames as fr
-
     images = [np.full((16, 16, 3), idx, np.uint8) for idx in frame_idxs]
     fr.write_frames(tmp_path / "images", images, [{"frame_idx": i} for i in frame_idxs], {})
 
@@ -208,6 +213,16 @@ def test_sky_masks_reads_every_frame_in_filename_order(tmp_path, monkeypatch):
     assert session.calls == 3
 
 
+@pytest.mark.parametrize("threshold", [-0.1, 1.0, 1.5])
+def test_sky_masks_rejects_threshold_outside_unit_interval(tmp_path, monkeypatch, threshold):
+    """A threshold that makes every pixel sky, or none, raises before any frame is segmented."""
+    images_dir, session = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
+
+    with pytest.raises(ValueError, match="threshold"):
+        sky.sky_masks(images_dir, threshold=threshold)
+    assert session.calls == 0
+
+
 def test_sky_masks_returns_masks_in_the_order_idxs_names_them(tmp_path, monkeypatch):
     # Per-frame probability so a permutation is detectable: frame_idx 7 is the only sky one
     calls = {"n": 0}
@@ -227,9 +242,7 @@ def test_sky_masks_returns_masks_in_the_order_idxs_names_them(tmp_path, monkeypa
     assert not permuted[1].any() and not permuted[2].any()
 
 
-def test_sky_masks_caches_to_disk_with_255_meaning_sky(tmp_path, monkeypatch):
-    import cv2
-
+def test_sky_masks_caches_probability_as_8bit(tmp_path, monkeypatch):
     prob = np.zeros((384, 384), np.float32)
     prob[:192] = 0.9
     images_dir, session = _scene(tmp_path, monkeypatch, prob)
@@ -238,7 +251,48 @@ def test_sky_masks_caches_to_disk_with_255_meaning_sky(tmp_path, monkeypatch):
     cached = cv2.imread(str(tmp_path / "sky" / "frame_000005.png"), cv2.IMREAD_GRAYSCALE)
 
     assert cached.shape == (16, 16)
-    assert cached[0, 0] == 255 and cached[15, 15] == 0
+    assert abs(int(cached[0, 0]) - 230) <= 1  # 0.9 * 255
+    assert cached[15, 15] == 0
+
+
+def test_sky_masks_rethresholds_cache_without_model(tmp_path, monkeypatch):
+    """A new threshold re-reads the cached probability; the model is not called again."""
+    images_dir, _ = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
+    monkeypatch.setattr(sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: _ConstantBackend(True)))
+    sky.sky_masks(images_dir)  # warm the cache with a 0.9 probability at the default threshold
+
+    # The model factory must not be asked for again: any call raises
+    monkeypatch.setattr(
+        sky.BaseSegmentation,
+        "get",
+        classmethod(lambda cls, name: MagicMock(side_effect=AssertionError("model should not be called"))),
+    )
+
+    assert not sky.sky_masks(images_dir, threshold=0.95).any()
+    assert sky.sky_masks(images_dir, threshold=0.5).all()
+
+
+def test_sky_masks_reads_old_binary_cache(tmp_path, monkeypatch):
+    """A 0/255 PNG from the old format thresholds to the same mask."""
+    images_dir = tmp_path / "images"
+    fr.write_frames(images_dir, [np.zeros((16, 16, 3), np.uint8)], [{"frame_idx": 0}], {})
+
+    cache_dir = tmp_path / "sky"
+    cache_dir.mkdir()
+    old_mask = np.zeros((16, 16), np.uint8)
+    old_mask[:8] = 255
+    cv2.imwrite(str(cache_dir / "frame_000000.png"), old_mask)
+
+    # A fully warm cache must never ask the registry for the model
+    monkeypatch.setattr(
+        sky.BaseSegmentation,
+        "get",
+        classmethod(lambda cls, name: MagicMock(side_effect=AssertionError("model should not be called"))),
+    )
+
+    mask = sky.sky_masks(images_dir, cache_dir=cache_dir)
+
+    assert mask[0, :8].all() and not mask[0, 8:].any()
 
 
 def test_sky_masks_second_call_runs_the_model_zero_times(tmp_path, monkeypatch):

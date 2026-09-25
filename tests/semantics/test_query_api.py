@@ -153,3 +153,11 @@ def test_talk2dino_is_queryable():
     from collab_splats.semantics.features import Talk2DinoExtractor
     extractor = Talk2DinoExtractor()
     assert isinstance(extractor, BaseQueryableExtractor)
+
+
+def test_score_queries_logs_default_negative(caplog):
+    """The debug log reports the negative set actually used, including the default."""
+    ext = _ConcreteExtractor()
+    with caplog.at_level("DEBUG", logger="collab_splats.semantics.features.base"):
+        ext.score_queries(torch.randn(8, 2, 2), ["cat"])
+    assert "1 negative" in caplog.text

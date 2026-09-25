@@ -13,7 +13,9 @@ import torch.nn.functional as F
 from PIL import Image
 
 from collab_splats.semantics.features import BaseFeatureExtractor
-from collab_splats.semantics.features.base import _DEBIAS_VALIDATED
+from collab_splats.semantics.features.dino import DINOFeatureExtractor
+from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
+from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
 
 # ---------------------------------------------------------------------------
 # Fake extractor: minimal concrete implementation for testing base-class logic
@@ -53,7 +55,7 @@ class _FakeExtractor(BaseFeatureExtractor):
 
 
 class _UnvalidatedExtractor(_FakeExtractor):
-    """Subclass of _FakeExtractor NOT listed in _DEBIAS_VALIDATED — used to test warning path."""
+    """Subclass of _FakeExtractor left at `debias_validated = False` — used to test warning path."""
     pass
 
 
@@ -141,8 +143,8 @@ def test_positional_basis_cached_after_first_debias_call():
 
 
 def test_unvalidated_extractor_warns_on_debias(caplog):
-    """debias() on an extractor not in _DEBIAS_VALIDATED must log WARNING (not raise)."""
-    assert _UnvalidatedExtractor.__name__ not in _DEBIAS_VALIDATED  # confirm test precondition
+    """debias() on an extractor with `debias_validated` False must log WARNING (not raise)."""
+    assert _UnvalidatedExtractor.debias_validated is False  # confirm test precondition
     extractor = _UnvalidatedExtractor(feature_dim=16, h_p=4, w_p=4, svd_components=4)
     img = _make_rgb_image(value=128)
     features = extractor.forward([img])
@@ -194,3 +196,28 @@ def test_missing_patch_size_raises():
     extractor = _NoPatchSizeExtractor("max_size", 512)
     with pytest.raises(AttributeError, match="patch_size"):
         extractor._build_positional_basis(4, 4)
+
+
+def test_debias_validated_flags():
+    assert DINOFeatureExtractor.debias_validated is True
+    assert Talk2DinoExtractor.debias_validated is True
+    assert MaskCLIPExtractor.debias_validated is False
+
+
+def test_debias_validated_silences_warning(caplog):
+    class _Validated(_FakeExtractor):
+        debias_validated = True
+
+    ext = _Validated(svd_components=4)
+    with caplog.at_level("WARNING"):
+        ext.debias(ext.forward([Image.new("RGB", (28, 28))]))
+    assert "not yet validated" not in caplog.text
+
+
+def test_get_bias_visualization_matches_features_to_rgb():
+    ext = _FakeExtractor(svd_components=4)
+    [feat] = ext.forward([Image.new("RGB", (28, 28))])
+    ext.debias([feat])
+    _, H_p, W_p = feat.shape
+    expected = ext.features_to_rgb(ext._zero_feats_cache[(H_p, W_p)])
+    assert np.array_equal(ext.get_bias_visualization(H_p, W_p), expected)

@@ -52,13 +52,11 @@ class FeatureAutoencoder(nn.Module):
             nn.Linear(hidden_dim, latent_dim),
         )
 
-        # decoder: latent_dim -> hidden_dim -> input_dim. Kept as two submodules rather than
-        # one Sequential so the state_dict keys match checkpoints already on disk.
+        # decoder as two submodules, not one Sequential: keeps checkpoint state_dict keys
         self.decoder_hidden = nn.Sequential(nn.Linear(latent_dim, hidden_dim), nn.ReLU())
         self.decoder_out = nn.Linear(hidden_dim, input_dim)
 
-        # Fit quality from the last fit(), persisted in the checkpoint. Both are measured on the
-        # TRAINING set, so gate on epochs_run > 0 before trusting recon_cosine/recon_mse at all.
+        # Fit quality from the last fit(), on the training set; trust only when epochs_run > 0
         self.recon_cosine: float = 0.0
         self.recon_mse: float = 0.0
         self.epochs_run: int = 0
@@ -67,8 +65,7 @@ class FeatureAutoencoder(nn.Module):
     # Image branch — spatial patch maps (D, H, W)
     ####################################################################
 
-    # Compress-only: the dashboard encodes patch maps then lifts the latent maps to points,
-    # so decoding a map back to (D, H, W) never happens. per_point_decode is the read path.
+    # No image decode: lifted codes are decoded per point (per_point_decode)
 
     def encode(self, feature_map: Tensor) -> Tensor:
         """
@@ -125,25 +122,23 @@ class FeatureAutoencoder(nn.Module):
         target_cosine: Optional[float] = None,
     ) -> None:
         """
-        Train the autoencoder in place; loss is MSE(recon, x) + (1 - cosine(recon, x)).
+        Train in place on MSE(recon, x) + (1 - cosine(recon, x)).
+
+        - fit quality lands on `self` as recon_cosine, recon_mse, epochs_run
+        - both metrics are on the training set, so optimistic at small N
 
         Args:
             features: (N, input_dim) training features.
             epochs: epoch ceiling.
             batch_size: mini-batch size.
             lr: Adam learning rate.
-            on_epoch: callback(epoch, epochs, avg_loss) fired once per epoch — the dashboard
-                reads progress through it, since tqdm and logger.debug do not reach the UI.
-            target_cosine: stop once mean reconstruction cosine reaches this, with `epochs`
-                as the ceiling. Measured on the training set, so optimistic at small N.
-
-        Fit quality lands on `self` as recon_cosine / recon_mse / epochs_run.
+            on_epoch: callback(epoch, epochs, avg_loss), once per epoch; a progress hook for UIs.
+            target_cosine: stop once mean reconstruction cosine reaches this; None runs all epochs.
 
         Raises:
             ValueError: if `features` has no samples.
         """
-        # Reject empty input up front: zero gradient steps would still record metrics and could
-        # satisfy target_cosine, publishing a false "trained" signal downstream.
+        # Empty input raises a clear ValueError, not a ZeroDivisionError at the epoch mean
         if features.shape[0] == 0:
             raise ValueError(f"fit() requires at least one sample; got features with shape {tuple(features.shape)}")
 
@@ -180,8 +175,7 @@ class FeatureAutoencoder(nn.Module):
                 epoch_mse += mse.item()
                 n_batches += 1
 
-            # N >= 1 is guaranteed above and range(0, N, batch_size) yields >= 1 batch,
-            # so n_batches is never 0 here.
+            # N >= 1 (checked above), so n_batches >= 1
             avg_loss = epoch_loss / n_batches
             self.recon_cosine = epoch_cos / n_batches
             self.recon_mse = epoch_mse / n_batches
@@ -251,15 +245,17 @@ class FeatureAutoencoder(nn.Module):
 
         Returns:
             An eval-mode FeatureAutoencoder with the checkpoint's weights and fit metrics.
+
+        Raises:
+            KeyError: when the checkpoint lacks a key `save` writes (older checkpoints must be refit).
         """
         path = Path(path)
         payload = torch.load(path, map_location="cpu", weights_only=True)
         ae = cls(input_dim=payload["input_dim"], latent_dim=payload["latent_dim"])
         ae.load_state_dict(payload["state_dict"])
-        # Checkpoints predating the metric keys default to the untrained values rather than failing
-        ae.recon_cosine = payload.get("recon_cosine", 0.0)
-        ae.recon_mse = payload.get("recon_mse", 0.0)
-        ae.epochs_run = payload.get("epochs_run", 0)
+        ae.recon_cosine = payload["recon_cosine"]
+        ae.recon_mse = payload["recon_mse"]
+        ae.epochs_run = payload["epochs_run"]
         ae.eval()
 
         logger.info("loaded autoencoder ← %s", path)

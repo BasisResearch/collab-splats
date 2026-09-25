@@ -191,7 +191,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 ########################################################################
 
 # Packages that finished their release cleanup; the rest xfail the release checks
-RELEASED: frozenset[str] = frozenset({"preproc"})
+RELEASED: frozenset[str] = frozenset({"preproc", "semantics"})
 
 # Module-level numbers that are facts, not tunables
 FIXED_FACTS = frozenset({"SCHEMA_VERSION"})

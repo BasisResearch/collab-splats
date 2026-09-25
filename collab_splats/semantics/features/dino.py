@@ -1,18 +1,16 @@
-"""DINOv2 feature extractor backend."""
-import logging
+"""
+DINOv2 patch-feature backend ("dinov2"), via HuggingFace transformers.
+"""
 from typing import Optional
 
 import torch
 import torchvision.transforms as T
 from transformers import AutoModel
 
-from collab_splats.semantics.utils import tokens_to_feature_map
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
 from collab_splats.utils.torch_utils import get_device
 
 from .base import BaseFeatureExtractor
-
-logger = logging.getLogger(__name__)
 
 
 ########################################################################
@@ -21,15 +19,19 @@ logger = logging.getLogger(__name__)
 
 @BaseFeatureExtractor.register("dinov2")
 class DINOFeatureExtractor(BaseFeatureExtractor):
-    """Patch-level DINOv2 feature extractor via HuggingFace transformers.
+    """
+    DINOv2 patch features via HuggingFace transformers.
 
     Args:
-        model_name: HuggingFace model ID. Defaults to ``"facebook/dinov2-small"``.
-        resize_mode: ``"max_size"`` (proportional longest-edge) or ``"square"`` (center-crop + resize).
-        image_resolution: Longest-edge target (max_size) or square side length (square). Default 800.
-        device: Torch device string (``"cpu"`` or ``"cuda"``).
-        svd_components: Top singular vectors kept for positional debiasing. Default 500.
+        model_name: HuggingFace model id.
+        resize_mode: "max_size" (longest edge) or "square" (center-crop, then resize).
+        image_resolution: longest-edge target for "max_size", side for "square".
+        device: torch device; None picks one with `get_device`.
+        svd_components: positional-subspace rank for debias().
     """
+
+    debias_validated = True
+    n_prefix_tokens = 1  # CLS
 
     def __init__(
         self,
@@ -42,7 +44,6 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         if device is None:
             device = get_device()
         super().__init__(resize_mode, image_resolution, svd_components)
-        self.model_name = model_name
 
         # Load DINOv2 from HuggingFace and move to device
         self.model = AutoModel.from_pretrained(model_name).to(device).eval()
@@ -50,16 +51,6 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         # ImageNet normalization — correct stats for DINOv2
         self._normalize = T.Normalize(IMAGENET_MEAN, IMAGENET_STD)
         self._device = torch.device(device)
-
-    @property
-    def device(self) -> torch.device:
-        """
-        Device of the underlying model parameters.
-
-        Returns:
-            The torch device the model was moved to at construction.
-        """
-        return self._device
 
     @property
     def patch_size(self) -> int:
@@ -71,30 +62,14 @@ class DINOFeatureExtractor(BaseFeatureExtractor):
         """
         return self.model.config.patch_size
 
-    def forward(self, images: list) -> list[torch.Tensor]:
+    def _patch_tokens(self, batch: torch.Tensor) -> torch.Tensor:
         """
-        Extract patch-level DINOv2 features from a list of images.
+        DINOv2 last hidden state: CLS token, then patch tokens.
 
         Args:
-            images: anything `preprocess` accepts — paths, ndarrays or PIL images.
+            batch: (B, C, H, W) preprocessed images.
 
         Returns:
-            One (D, H_p, W_p) float32 CPU tensor per input image. Per-image shape, because
-            `preprocess` preserves aspect ratio and the grids differ.
+            (B, 1 + H_p * W_p, D) tokens.
         """
-        logger.debug("[%s] Extracting features: %d images", type(self).__name__, len(images))
-
-        # Preprocess all images and stack into a single batch
-        preprocessed = [self.preprocess(img) for img in images]
-        batch = torch.stack(preprocessed).to(self._device)
-
-        # Run DINOv2; drop CLS token (index 0), keep patch tokens → (B, N, D)
-        with torch.no_grad():
-            tokens_all = self.model(batch).last_hidden_state[:, 1:]
-
-        # Reshape each image's flat patch sequence to (D, H_p, W_p)
-        results = []
-        for i, t in enumerate(preprocessed):
-            _, H, W = t.shape
-            results.append(tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size))
-        return results
+        return self.model(batch).last_hidden_state

@@ -1,6 +1,20 @@
+import sys
+import types
+from unittest.mock import MagicMock, patch
+
 import numpy as np
 import pytest
-from collab_splats.semantics.segmentation import create_composite_mask
+import torch
+from PIL import Image
+
+from collab_splats.semantics.segmentation import (
+    BaseSegmentation,
+    MobileSAMSegmentation,
+    SAM3Segmentation,
+    create_composite_mask,
+    mobile_sam,
+)
+from collab_splats.semantics.segmentation.base import convert_matched_mask
 
 
 
@@ -18,8 +32,6 @@ def test_create_composite_mask_no_stdout(capsys):
 
 def test_create_composite_mask_empty_results():
     """create_composite_mask must not crash when no masks pass confidence threshold."""
-    from collab_splats.semantics.segmentation import create_composite_mask
-    import numpy as np
     results = [{"predicted_iou": 0.5, "segmentation": np.zeros((4, 4), dtype=np.uint8)}]
     result = create_composite_mask(results, confidence_threshold=0.99)
     assert isinstance(result, np.ndarray)
@@ -85,14 +97,10 @@ def test_create_composite_mask_area_ratio_drops_buried_mask():
     assert composite[0, 12] == 3
 
 
-def test_create_composite_mask_truly_empty_results():
-    """An empty results list has no shape to borrow, so it returns an empty (0, 0) mask."""
-    # Distinct from the threshold-filtered case above: that path still has results[0] to
-    # take a shape from, this one has nothing at all.
-    result = create_composite_mask([])
-
-    assert result.shape == (0, 0)
-    assert result.dtype == np.uint16
+def test_create_composite_mask_empty_results_raises():
+    """No results means no shape; an empty (0, 0) mask would break every caller downstream."""
+    with pytest.raises(ValueError, match="no results"):
+        create_composite_mask([])
 
 
 def test_create_composite_mask_more_than_255_masks():
@@ -112,26 +120,45 @@ def test_create_composite_mask_more_than_255_masks():
     assert np.array_equal(np.unique(composite), np.arange(1, 301, dtype=np.uint16))
 
 
+def test_create_composite_mask_min_visible_frac():
+    """The buried-mask floor is a kwarg: at 0.05, a 9.1%-visible mask survives."""
+    small = np.zeros((3, 13), dtype=bool)
+    small[:, 12] = True
+    wide = np.zeros((3, 13), dtype=bool)
+    wide[:, 0:11] = True
+    medium = np.zeros((3, 13), dtype=bool)
+    medium[:, 0:10] = True
+    results = [
+        {"segmentation": small, "predicted_iou": 0.99},
+        {"segmentation": wide, "predicted_iou": 0.90},
+        {"segmentation": medium, "predicted_iou": 0.95},
+    ]
+    assert create_composite_mask(results)[0, 10] == 0
+    assert create_composite_mask(results, min_visible_frac=0.05)[0, 10] != 0
+
+
+def test_convert_matched_mask_label_count_mismatch_raises():
+    masks = np.array([[1, 2], [2, 0]])
+    with pytest.raises(ValueError, match="labels"):
+        convert_matched_mask(torch.tensor([0]), masks)
+
+
 ########################################################
 ########## BaseSegmentation registry ##################
 ########################################################
 
 
 def test_registry_get_mobilesamv2():
-    from collab_splats.semantics.segmentation import BaseSegmentation, MobileSAMSegmentation
     cls = BaseSegmentation.get("mobilesamv2")
     assert cls is MobileSAMSegmentation
 
 
 def test_registry_unknown_raises():
-    from collab_splats.semantics.segmentation import BaseSegmentation
     with pytest.raises((KeyError, ValueError)):
         BaseSegmentation.get("nonexistent-backend")
 
 
 def test_mobilesamv2_segment_with_text_raises():
-    from collab_splats.semantics.segmentation import MobileSAMSegmentation
-    from unittest.mock import MagicMock
     seg = MobileSAMSegmentation.__new__(MobileSAMSegmentation)
     seg.seg_model = MagicMock()
     seg.object_model = MagicMock()
@@ -142,9 +169,61 @@ def test_mobilesamv2_segment_with_text_raises():
 
 
 def test_base_segmentation_abstract():
-    from collab_splats.semantics.segmentation import BaseSegmentation
     with pytest.raises(TypeError):
         BaseSegmentation()
+
+
+def _mobilesam_stub(strategy="object", box_batch_size=320):
+    with patch.object(mobile_sam, "_load_mobile_sam", return_value=(MagicMock(), MagicMock(), MagicMock())):
+        return mobile_sam.MobileSAMSegmentation(strategy=strategy, box_batch_size=box_batch_size)
+
+
+def test_mobilesamv2_bad_strategy_raises_at_init():
+    with pytest.raises(ValueError, match="Strategy 'grid'"):
+        _mobilesam_stub(strategy="grid")
+
+
+def test_mobilesamv2_no_detections_returns_empty_stack():
+    seg = _mobilesam_stub()
+    seg.object_model.return_value = []
+    masks, results = seg.segment(np.zeros((5, 7, 3), dtype=np.uint8))
+    assert masks.shape == (0, 5, 7)
+    assert masks.dtype == torch.float32
+    assert results == []
+
+
+def test_mobilesamv2_auto_empty_returns_empty_stack(monkeypatch):
+    gen = MagicMock()
+    gen.return_value.generate.return_value = []
+    monkeypatch.setattr(mobile_sam, "SamAutomaticMaskGenerator", gen)
+    seg = _mobilesam_stub(strategy="auto")
+    masks, results = seg.segment(np.zeros((5, 7, 3), dtype=np.uint8))
+    assert masks.shape == (0, 5, 7)
+    assert results == []
+
+
+def test_mobilesamv2_box_batch_size_reaches_decoder_loop(monkeypatch):
+    """Both batch_iterator calls get box_batch_size; detections with no masks give an empty stack."""
+    # Two detections reach the loop; the spy records batch sizes and yields no batches
+    seg = _mobilesam_stub(box_batch_size=16)
+    det = MagicMock()
+    det.boxes.__len__.return_value = 2
+    seg.object_model.return_value = [det]
+    seg.predictor.transform.apply_boxes.return_value = np.zeros((2, 4), dtype=np.float32)
+    seg.seg_model.parameters.return_value = iter([torch.zeros(1)])
+    sizes = []
+
+    def spy(bs, *args):
+        sizes.append(bs)
+        return iter(())
+
+    monkeypatch.setattr(mobile_sam, "batch_iterator", spy)
+
+    masks, results = seg.segment(np.zeros((5, 7, 3), dtype=np.uint8))
+
+    assert sizes == [16, 16]
+    assert masks.shape == (0, 5, 7)
+    assert results == []
 
 
 ########################################################
@@ -152,17 +231,12 @@ def test_base_segmentation_abstract():
 ########################################################
 
 def test_registry_get_sam3():
-    from collab_splats.semantics.segmentation import BaseSegmentation, SAM3Segmentation
     cls = BaseSegmentation.get("sam3")
     assert cls is SAM3Segmentation
 
 
 def test_sam3_segment_with_text_interface():
     """segment_with_text exists and calls SAM3 processor — mocked to avoid loading model."""
-    from collab_splats.semantics.segmentation import SAM3Segmentation
-    from unittest.mock import patch, MagicMock
-    import torch
-
     mock_masks = torch.zeros(2, 1, 4, 4)
     mock_boxes = torch.zeros(2, 4)
     mock_scores = torch.ones(2)
@@ -172,13 +246,19 @@ def test_sam3_segment_with_text_interface():
     mock_processor.set_image.return_value = "state"
     mock_processor.set_text_prompt.return_value = mock_output
 
-    with patch("collab_splats.semantics.segmentation.sam3.build_sam3_image_model",
-               return_value=MagicMock()):
-        with patch("collab_splats.semantics.segmentation.sam3.Sam3Processor",
-                   return_value=mock_processor):
-            seg = SAM3Segmentation(confidence_threshold=0.5)
+    builder = types.ModuleType("sam3.model_builder")
+    builder.build_sam3_image_model = MagicMock()
+    proc = types.ModuleType("sam3.model.sam3_image_processor")
+    proc.Sam3Processor = MagicMock(return_value=mock_processor)
+    fake = {
+        "sam3": types.ModuleType("sam3"),
+        "sam3.model": types.ModuleType("sam3.model"),
+        "sam3.model_builder": builder,
+        "sam3.model.sam3_image_processor": proc,
+    }
+    with patch.dict(sys.modules, fake):
+        seg = SAM3Segmentation(confidence_threshold=0.5)
 
-    from PIL import Image
     fake_img = Image.new("RGB", (4, 4))
     masks, boxes, scores = seg.segment_with_text(fake_img, "a cat")
 
@@ -187,3 +267,29 @@ def test_sam3_segment_with_text_interface():
     assert masks.shape == (2, 1, 4, 4)
     assert boxes.shape == (2, 4)
     assert scores.shape == (2,)
+
+
+def test_sam3_missing_dep_names_install():
+    with patch.dict(sys.modules, {"sam3": None}):
+        with pytest.raises(ImportError, match="huggingface-cli login"):
+            SAM3Segmentation()
+
+
+def test_sam3_broken_transitive_dep_propagates():
+    """A missing dependency of sam3 surfaces under its own name, not as 'sam3 is not installed'."""
+    # The processor module "loads" but its body needs a missing third-party package
+    proc = types.ModuleType("sam3.model.sam3_image_processor")
+
+    def missing(name):
+        raise ModuleNotFoundError("No module named 'timm'", name="timm")
+
+    proc.__getattr__ = missing
+    fake = {
+        "sam3": types.ModuleType("sam3"),
+        "sam3.model": types.ModuleType("sam3.model"),
+        "sam3.model.sam3_image_processor": proc,
+    }
+    with patch.dict(sys.modules, fake):
+        with pytest.raises(ModuleNotFoundError, match="timm") as exc:
+            SAM3Segmentation()
+    assert "huggingface-cli" not in str(exc.value)

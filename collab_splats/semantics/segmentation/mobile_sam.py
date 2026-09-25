@@ -1,8 +1,8 @@
 """
-MobileSAMv2 segmentation backend.
+MobileSAMv2 segmentation backend ("mobilesamv2").
 
-- load_mobile_sam: load MobileSAMV2 weights from torchhub
-- MobileSAMSegmentation: registry backend with 'auto' and 'object' strategies
+- "object": YOLOv8 boxes prompt SAM
+- "auto": SAM's automatic mask generator
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 ########################################################
 
 
-def load_mobile_sam(
+def _load_mobile_sam(
     mobilesam_encoder_name: str = "mobilesamv2_efficientvit_l2", device: str = "cpu"
 ) -> tuple[Any, Any, Any]:
     """
@@ -47,6 +47,23 @@ def load_mobile_sam(
     return mobilesamv2, ObjAwareModel, predictor
 
 
+def _stack_masks(results: list[dict], height: int, width: int) -> torch.Tensor:
+    """
+    Stack SAM result masks as float32, (0, H, W) when there are none.
+
+    Args:
+        results: SAM dicts with a "segmentation" (H, W) array.
+        height: frame rows, for the empty stack.
+        width: frame columns, for the empty stack.
+
+    Returns:
+        (N, H, W) float32.
+    """
+    if not results:
+        return torch.zeros((0, height, width), dtype=torch.float32)
+    return torch.stack([torch.tensor(m["segmentation"]).to(torch.float32) for m in results])
+
+
 ########################################################
 ########## MobileSAMv2 backend #########################
 ########################################################
@@ -61,6 +78,10 @@ class MobileSAMSegmentation(BaseSegmentation):
         strategy: "object" prompts SAM with YOLOv8 boxes; "auto" runs SAM's mask generator.
         device: torch device string.
         mobilesam_encoder_name: encoder variant to load from torchhub.
+        box_batch_size: boxes per SAM decoder call ("object" only).
+
+    Raises:
+        ValueError: if strategy is neither "object" nor "auto".
     """
 
     def __init__(
@@ -68,13 +89,17 @@ class MobileSAMSegmentation(BaseSegmentation):
         strategy: str = "object",
         device: str = "cpu",
         mobilesam_encoder_name: str = "mobilesamv2_efficientvit_l2",
+        box_batch_size: int = 320,
     ):
-        self.seg_model, self.object_model, self.predictor = load_mobile_sam(
+        if strategy not in ("object", "auto"):
+            raise ValueError(f"Strategy '{strategy}' not supported. Available: ['object', 'auto']")
+        self.seg_model, self.object_model, self.predictor = _load_mobile_sam(
             mobilesam_encoder_name, device
         )
         self.strategy = strategy
+        self.box_batch_size = box_batch_size
 
-    def segment(self, image: np.ndarray) -> tuple[torch.Tensor, Any] | None:
+    def segment(self, image: np.ndarray) -> tuple[torch.Tensor, list[dict]]:
         """
         Segment one frame with the configured strategy.
 
@@ -82,21 +107,14 @@ class MobileSAMSegmentation(BaseSegmentation):
             image: (H, W, 3) uint8 array.
 
         Returns:
-            (masks, metadata) — masks is (N, H, W) float32. None when nothing is detected.
-
-        Raises:
-            ValueError: if `strategy` is neither "object" nor "auto".
+            (masks, results): masks (N, H, W) float32, N = 0 when nothing is detected;
+            results are the raw SAM dicts, one per mask.
         """
         if self.strategy == "object":
             return self._segment_object(image)
-        elif self.strategy == "auto":
-            return self._segment_auto(image)
-        else:
-            raise ValueError(
-                f"Strategy '{self.strategy}' not supported. Available: ['object', 'auto']"
-            )
+        return self._segment_auto(image)
 
-    def _segment_auto(self, image) -> tuple[torch.Tensor, Any] | None:
+    def _segment_auto(self, image: np.ndarray) -> tuple[torch.Tensor, list[dict]]:
         """
         SAM's automatic mask generator, no prompts.
 
@@ -104,36 +122,29 @@ class MobileSAMSegmentation(BaseSegmentation):
             image: (H, W, 3) uint8 array.
 
         Returns:
-            (masks, raw results), or None when the generator returns nothing.
+            (masks, results), N = 0 when the generator finds nothing.
         """
         mask_generator = SamAutomaticMaskGenerator(model=self.seg_model)
         results = mask_generator.generate(image)
 
-        if len(results) == 0:
-            return None
+        return _stack_masks(results, *image.shape[:2]), results
 
-        masks = [torch.tensor(mask["segmentation"]).to(torch.float32) for mask in results]
-        masks = torch.stack(masks)
-
-        return masks, results
-
-    def _segment_object(self, image, batch_size: int = 320) -> tuple[torch.Tensor, Any] | None:
+    def _segment_object(self, image: np.ndarray) -> tuple[torch.Tensor, list[dict]]:
         """
         YOLOv8 boxes prompt SAM once per detected object.
 
         Args:
             image: (H, W, 3) uint8 array.
-            batch_size: boxes per SAM decoder call.
 
         Returns:
-            (masks, raw results), or None when the detector finds no objects.
+            (masks, results), N = 0 when the detector finds no objects.
         """
         height, width = image.shape[:2]
 
         obj_results = self.object_model(image)
 
         if not obj_results or len(obj_results[0].boxes) == 0:
-            return None
+            return _stack_masks([], height, width), []
 
         self.predictor.set_image(image)
         image_embedding = self.predictor.features
@@ -151,8 +162,8 @@ class MobileSAMSegmentation(BaseSegmentation):
         results = []
 
         for boxes_batch, conf_batch in zip(
-            batch_iterator(batch_size, transformed_boxes),
-            batch_iterator(batch_size, boxes_conf),
+            batch_iterator(self.box_batch_size, transformed_boxes),
+            batch_iterator(self.box_batch_size, boxes_conf),
         ):
             boxes = boxes_batch[0]
             confs = conf_batch[0]
@@ -207,10 +218,4 @@ class MobileSAMSegmentation(BaseSegmentation):
                     }
                 )
 
-        if len(results) == 0:
-            return None
-
-        masks = [torch.tensor(mask["segmentation"]).to(torch.float32) for mask in results]
-        masks = torch.stack(masks)
-
-        return masks, results
+        return _stack_masks(results, height, width), results

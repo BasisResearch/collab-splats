@@ -1,12 +1,9 @@
 """
-Base class and mask utilities for segmentation backends.
+Segmentation base class and mask utilities.
 
-- BaseSegmentation: abstract registry-based segmentation interface
-- create_patch_mask: divide an image into a spatial patch grid
-- create_composite_mask: merge SAM results into a single integer-ID mask
-- mask_id_to_binary_mask: expand an integer-ID mask to an (N, H, W) boolean array
-- convert_matched_mask: remap sequential IDs to matched label IDs
-- aggregate_masked_features: pool features per segment mask
+- BaseSegmentation: backend registry and interface
+- create_composite_mask, mask_id_to_binary_mask, convert_matched_mask: integer-ID masks
+- create_patch_mask, aggregate_masked_features: patch grids and per-mask feature pooling
 """
 from __future__ import annotations
 
@@ -41,17 +38,17 @@ class BaseSegmentation(RegistryMixin, ABC):
     _registry: dict[str, type["BaseSegmentation"]] = {}
 
     @abstractmethod
-    def segment(self, image: np.ndarray | Image.Image) -> tuple[torch.Tensor, Any] | None:
+    def segment(self, image: np.ndarray | Image.Image) -> tuple[torch.Tensor, Any]:
         """
-        Class-agnostic segmentation with no prompt.
+        Segment one frame with the backend's default prompt or cached context.
 
         Args:
-            image: (H, W, 3) uint8 array or PIL Image, per backend.
+            image: the frame; accepted types are per backend (ndarray, PIL image, or tensor).
 
         Returns:
             (masks, metadata) — masks rank and dtype are backend-specific: (H, W) bool
-            for insid3 and skywater, (N, H, W) float32 for mobilesamv2, (N, 1, H, W) float32
-            for sam3, and mobilesamv2 returns None outright when nothing is detected.
+            for insid3 and skywater, (N, H, W) float32 for mobilesamv2, (N, 1, H, W) bool
+            for sam3.
             metadata is backend-specific.
         """
 
@@ -115,21 +112,30 @@ def create_patch_mask(image: np.ndarray, num_patches: int = 32) -> torch.Tensor:
     return flatten_patch_mask
 
 
-def create_composite_mask(results: list[dict], confidence_threshold: float = 0.85) -> np.ndarray:
+def create_composite_mask(
+    results: list[dict], confidence_threshold: float = 0.85, min_visible_frac: float = 0.1
+) -> np.ndarray:
     """
-    Merge SAM segment results into a single (H, W) uint16 mask of integer IDs.
+    Merge SAM results into one (H, W) uint16 mask of integer IDs.
 
-    - uint16 preserves IDs > 255: SAM's 32x32 point grid routinely clears 256 proposals
-    - numpy>=2 raises OverflowError on the 256th rather than wrapping around
+    - higher-confidence masks paint over lower ones; a mask left with ≤min_visible_frac of its pixels is dropped
+    - uint16: SAM routinely yields >255 masks, and numpy>=2 raises on uint8 overflow
+    - IDs skip dropped masks, so they are not always contiguous
 
     Args:
-        results: dicts from a SAM mask generator; each needs "segmentation" (H, W) bool
-            and "predicted_iou" float.
-        confidence_threshold: masks with iou below this are discarded.
+        results: SAM mask-generator dicts with "segmentation" (H, W) bool and "predicted_iou".
+        confidence_threshold: drop masks with predicted_iou below this (or above 1).
+        min_visible_frac: drop a mask left with this share of its pixels or less.
 
     Returns:
-        (H, W) uint16 array — pixel value is the 1-indexed mask ID, 0 is background.
+        (H, W) uint16; 1-indexed mask IDs, 0 is background.
+
+    Raises:
+        ValueError: when results is empty.
     """
+    if not results:
+        raise ValueError("create_composite_mask: no results to merge")
+
     selected_masks = []
     for mask in results:
         if mask["predicted_iou"] < confidence_threshold or mask["predicted_iou"] > 1.0:
@@ -137,9 +143,7 @@ def create_composite_mask(results: list[dict], confidence_threshold: float = 0.8
         selected_masks.append((mask["segmentation"], mask["predicted_iou"]))
 
     if not selected_masks:
-        return (
-            np.zeros_like(results[0]["segmentation"], dtype=np.uint16) if results else np.zeros((0, 0), dtype=np.uint16)
-        )
+        return np.zeros_like(results[0]["segmentation"], dtype=np.uint16)
     masks, confs = zip(*selected_masks)
 
     H, W = masks[0].shape[:2]
@@ -159,9 +163,8 @@ def create_composite_mask(results: list[dict], confidence_threshold: float = 0.8
         mask = mask_id == idx
         logger.debug("Mask %d has %d pixels", i, mask.sum())
 
-        # Paint ID `idx` was written from masks[sorted_idxs[idx - 1]] — not masks[idx - 1],
-        # which is a different mask whenever the confidences are not already ascending.
-        if mask.sum() > 0 and (mask.sum() / masks[sorted_idxs[idx - 1]].sum()) > 0.1:
+        # ID idx was painted from masks[sorted_idxs[idx - 1]], not masks[idx - 1]
+        if mask.sum() > 0 and (mask.sum() / masks[sorted_idxs[idx - 1]].sum()) > min_visible_frac:
             composite_mask[mask] = i
 
     return composite_mask
@@ -172,8 +175,7 @@ def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
     Expand an integer-ID mask to a (N, H, W) boolean array.
 
     Args:
-        composite_mask: (H, W) uint16 array where each unique positive integer
-                        represents a separate object mask.
+        composite_mask: (H, W) integer-ID mask; 0 is background.
 
     Returns:
         (N, H, W) bool array where N is the number of distinct mask IDs.
@@ -186,19 +188,20 @@ def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
 
 def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
     """
-    Remap sequential mask IDs to matched label IDs.
+    Remap sequential mask IDs 1..N to matched label IDs.
 
     Args:
-        labels: (N,) tensor of matched labels, one per mask ID.
-        masks:  (H, W) array of sequential mask IDs from 1 to N.
+        labels: (N,) matched label per mask ID; label k is written as k + 1.
+        masks: (H, W) sequential mask IDs, 1..N.
 
     Returns:
-        (H, W) uint16 array with IDs replaced by matched labels.
-        uint16 preserves label IDs > 255.
+        (H, W) uint16 with each ID replaced by its label + 1.
+
+    Raises:
+        ValueError: when the label count differs from the highest mask ID.
     """
-    assert labels.shape[0] == np.max(masks), (
-        "Number of labels must match number of unique masks"
-    )
+    if labels.shape[0] != np.max(masks):
+        raise ValueError(f"{labels.shape[0]} labels for {int(np.max(masks))} mask IDs")
 
     matched_mask = np.zeros(masks.shape, dtype=np.uint16)
 
@@ -221,9 +224,9 @@ def aggregate_masked_features(
 
     Args:
         features: (C, H, W) image feature tensor.
-        masks:    (N, H, W) segmentation masks from SAM.
-        resolution: Intermediate spatial resolution for feature interpolation.
-        final_resolution: Output spatial resolution.
+        masks: (N, H, W) segmentation masks from SAM.
+        resolution: intermediate spatial resolution for feature interpolation.
+        final_resolution: output spatial resolution.
 
     Returns:
         (C, H, W) aggregated feature map at final_resolution.

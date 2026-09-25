@@ -42,20 +42,6 @@ def test_agglomerative_clustering_identical_vectors_merge():
     assert int(labels.max().item()) == 0  # all merged into one cluster
 
 
-def test_cluster_prototypes_handles_missing_cluster():
-    from collab_splats.semantics.segmentation.insid3 import _cluster_prototypes
-    # K=3 but only clusters 0 and 2 exist — cluster 1 is empty
-    X = F.normalize(torch.randn(10, 16), p=2, dim=1)
-    labels = torch.tensor([0, 0, 2, 2, 0, 2, 0, 2, 0, 2])
-    protos = _cluster_prototypes(X, labels, K=3)
-    assert protos.shape == (3, 16)
-    norms = protos.norm(dim=1)
-    # Non-empty clusters (0 and 2) have unit norm; empty cluster (1) has norm 0
-    assert torch.isclose(norms[0], torch.tensor(1.0), atol=1e-5)
-    assert torch.isclose(norms[1], torch.tensor(0.0), atol=1e-5)
-    assert torch.isclose(norms[2], torch.tensor(1.0), atol=1e-5)
-
-
 def test_downsample_mask_reduces_to_patch_resolution():
     from collab_splats.semantics.segmentation.insid3 import _downsample_mask
     mask = torch.zeros(64, 64, dtype=torch.bool)
@@ -158,22 +144,6 @@ def test_seed_and_aggregate_empty_candidate_returns_empty():
     assert not out.any()
 
 
-def test_seed_and_aggregate_missing_cluster_no_crash():
-    from collab_splats.semantics.segmentation.insid3 import _seed_and_aggregate
-    # K=3 but only clusters 0 and 2 present — cluster 1 is absent
-    D, H, W = 16, 6, 6
-    feat = F.normalize(torch.randn(D, H, W), p=2, dim=0)
-    feat_deb = F.normalize(torch.randn(D, H, W), p=2, dim=0)
-    proto = F.normalize(torch.randn(D), p=2, dim=0)
-    candidate_mask = torch.zeros(H, W, dtype=torch.bool)
-    candidate_mask[0:3, 0:3] = True
-    labels = torch.zeros(H, W, dtype=torch.long)
-    labels[3:, 3:] = 2  # only clusters 0 and 2 — cluster 1 absent
-    out = _seed_and_aggregate(candidate_mask, feat, feat_deb, proto, labels, K=3, merge_threshold=0.2)
-    assert out.shape == (H, W)
-    assert out.dtype == torch.bool
-
-
 from unittest.mock import MagicMock
 from PIL import Image
 
@@ -189,6 +159,7 @@ def _make_seg_with_mock_extractor(D=16, H_p=6, W_p=6):
     seg._extractor = extractor
     seg._tau = 0.6
     seg._merge_threshold = 0.2
+    seg._fallback_quantile = 0.9
     seg._prototype = None
     seg._ref_feat_deb = None
     seg._ref_mask_down = None
@@ -229,13 +200,24 @@ def test_set_context_accepts_numpy_mask():
     assert seg._prototype is not None
 
 
-def test_set_context_empty_mask_does_not_set_context():
+def test_set_context_empty_mask_raises_and_keeps_no_context():
     seg, extractor, feat = _make_seg_with_mock_extractor()
     ref_image = Image.fromarray(np.zeros((48, 48, 3), dtype=np.uint8))
-    ref_mask = torch.zeros(48, 48, dtype=torch.bool)  # all-zero mask
+    ref_mask = torch.zeros(48, 48, dtype=torch.bool)
+    ref_mask[16:32, 16:32] = True
     seg.set_context(ref_image, ref_mask)
-    # Context should NOT be set — prototype should remain None
+    with pytest.raises(ValueError, match="no True pixel"):
+        seg.set_context(ref_image, torch.zeros(48, 48, dtype=torch.bool))
     assert seg._prototype is None
+
+
+def test_set_context_empty_mask_raises_before_extraction():
+    """An empty mask is rejected before the backbone runs, so no forward pass is wasted."""
+    seg, extractor, feat = _make_seg_with_mock_extractor()
+    ref_image = Image.fromarray(np.zeros((48, 48, 3), dtype=np.uint8))
+    with pytest.raises(ValueError, match="no True pixel"):
+        seg.set_context(ref_image, np.zeros((48, 48), dtype=bool))
+    extractor.forward.assert_not_called()
 
 
 def test_registered_as_insid3():
@@ -296,3 +278,67 @@ def test_segment_with_mask_one_shot_clears_context():
     assert pred_mask.dtype == torch.bool
     assert seg._prototype is None  # cleared after one-shot
     assert seg._ref_feat_deb is None
+
+
+def test_segment_with_mask_clears_context_when_segment_raises():
+    seg, extractor, feat = _make_seg_with_mock_extractor()
+    ref_image = Image.fromarray(np.zeros((48, 48, 3), dtype=np.uint8))
+    ref_mask = torch.zeros(48, 48, dtype=torch.bool)
+    ref_mask[16:32, 16:32] = True
+    seg.segment = MagicMock(side_effect=RuntimeError("boom"))
+    with pytest.raises(RuntimeError, match="boom"):
+        seg.segment_with_mask(ref_image, ref_image, ref_mask)
+    assert seg._prototype is None
+
+
+def test_agglomerative_labels_cover_every_cluster():
+    """Cluster labels are compact: every id in 0..K-1 has a member."""
+    from collab_splats.semantics.segmentation.insid3 import _agglomerative_clustering
+    X = F.normalize(torch.randn(40, 16), p=2, dim=1)
+    labels = _agglomerative_clustering(X, tau=0.6)
+    K = int(labels.max()) + 1
+    assert torch.equal(labels.unique(), torch.arange(K))
+
+
+def test_locate_candidates_fallback_quantile():
+    """With no positive-similarity patch, the fallback keeps the top (1 - q) share."""
+    from collab_splats.semantics.segmentation.insid3 import _locate_candidates
+    D = 4
+    prototype = F.normalize(torch.ones(D), dim=0)
+    tgt = -F.normalize(torch.rand(D, 4, 5) + 0.1, dim=0)
+    ref = F.normalize(torch.rand(D, 2, 2), dim=0)
+    mask = torch.ones(2, 2, dtype=torch.bool)
+    few = _locate_candidates(tgt, ref, mask, prototype, fallback_quantile=0.9).sum()
+    many = _locate_candidates(tgt, ref, mask, prototype, fallback_quantile=0.5).sum()
+    assert 0 < few < many
+
+
+@pytest.mark.parametrize("device", [None, "cpu"])
+def test_insid3_forwards_device_to_extractor(monkeypatch, device):
+    """INSID3 passes device through untouched; DINOFeatureExtractor resolves None itself."""
+    from collab_splats.semantics.segmentation import insid3
+    seen = {}
+    monkeypatch.setattr(insid3, "DINOFeatureExtractor", lambda **kw: seen.update(kw))
+    insid3.INSID3Segmentation(device=device)
+    assert seen["device"] == device
+
+
+def test_segment_forwards_fallback_quantile(monkeypatch):
+    from collab_splats.semantics.segmentation import insid3
+    seg, extractor, feat = _make_seg_with_mock_extractor(D=16, H_p=6, W_p=6)
+    seg._fallback_quantile = 0.5
+    ref_image = Image.fromarray(np.zeros((48, 48, 3), dtype=np.uint8))
+    ref_mask = torch.zeros(48, 48, dtype=torch.bool)
+    ref_mask[16:32, 16:32] = True
+    seg.set_context(ref_image, ref_mask)
+
+    # Stub records its kwargs and returns no candidates on the 6x6 patch grid
+    seen = {}
+
+    def fake_locate(*args, **kwargs):
+        seen.update(kwargs)
+        return torch.zeros(6, 6, dtype=torch.bool)
+
+    monkeypatch.setattr(insid3, "_locate_candidates", fake_locate)
+    seg.segment(ref_image)
+    assert seen["fallback_quantile"] == 0.5

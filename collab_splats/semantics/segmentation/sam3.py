@@ -1,7 +1,5 @@
 """
-SAM3 text-prompted segmentation backend.
-
-- SAM3Segmentation: text-prompted segmentation via facebook/sam3, a gated HF model
+SAM3 text-prompted segmentation backend ("sam3"); facebook/sam3 is a gated model.
 """
 from __future__ import annotations
 
@@ -15,14 +13,6 @@ from .base import BaseSegmentation
 
 logger = logging.getLogger(__name__)
 
-# SAM3 is an optional heavy dependency — imported lazily so the module loads without it
-try:
-    from sam3.model.sam3_image_processor import Sam3Processor
-    from sam3.model_builder import build_sam3_image_model
-except ImportError:
-    build_sam3_image_model = None
-    Sam3Processor = None
-
 
 ########################################################
 ########## SAM3 backend ################################
@@ -34,32 +24,43 @@ class SAM3Segmentation(BaseSegmentation):
     """
     SAM3 text-prompted segmentation backend.
 
-    - facebook/sam3 is a gated model: request access, wait for approval, then `huggingface-cli login`.
-    - Device placement is handled inside Sam3Processor — there is no device argument.
+    - gated model: request access to facebook/sam3, then `huggingface-cli login`
+    - Sam3Processor places the model on a device itself; no device argument
 
     Args:
         confidence_threshold: minimum score for returned masks.
+
+    Raises:
+        ImportError: when sam3 is not installed; other import failures propagate unchanged.
     """
 
     def __init__(self, confidence_threshold: float = 0.5):
-        if build_sam3_image_model is None or Sam3Processor is None:
+        # Imported here: optional, gated dependency
+        try:
+            from sam3.model.sam3_image_processor import Sam3Processor  # noqa: PLC0415
+            from sam3.model_builder import build_sam3_image_model  # noqa: PLC0415
+        except ModuleNotFoundError as e:
+            # Only sam3 itself missing gets the install hint; a broken transitive dep re-raises
+            if (e.name or "").split(".")[0] != "sam3":
+                raise
             raise ImportError(
                 "sam3 is not installed. Request access at https://huggingface.co/facebook/sam3, "
                 "wait for approval, run `huggingface-cli login`, then install from "
                 "https://github.com/facebookresearch/sam3"
-            )
-        sam3_model = build_sam3_image_model()
-        self._processor = Sam3Processor(sam3_model, confidence_threshold=confidence_threshold)
+            ) from e
+        self._processor = Sam3Processor(
+            build_sam3_image_model(), confidence_threshold=confidence_threshold
+        )
 
     def segment(self, image: Image.Image) -> tuple[torch.Tensor, Any]:
         """
-        Auto-segment all objects without a text prompt.
+        Every object in the frame, via the generic prompt "object".
 
         Args:
             image: the frame to segment.
 
         Returns:
-            (masks, output) — masks (N, 1, H, W) float32; output is the raw processor dict.
+            (masks, output) — masks (N, 1, H, W) bool; output is the raw processor dict.
         """
         state = self._processor.set_image(image)
         # SAM3 has no promptless auto-segment path; "object" is the generic catch-all
@@ -77,7 +78,7 @@ class SAM3Segmentation(BaseSegmentation):
             prompt: text prompt, e.g. "red tractor".
 
         Returns:
-            masks (N, 1, H, W) float32, boxes (N, 4) float32, scores (N,) float32.
+            masks (N, 1, H, W) bool, boxes (N, 4) float32, scores (N,) float32.
         """
         state = self._processor.set_image(image)
         output = self._processor.set_text_prompt(state=state, prompt=prompt)

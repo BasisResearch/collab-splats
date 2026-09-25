@@ -1,7 +1,6 @@
 """
-Semantic feature helpers and the on-disk layout of semantic artifacts.
+Semantic feature helpers and the on-disk layout of a scene's semantics dir.
 
-Layout inside a scene's semantics dir:
 - `<extractor>.zarr`: 2D patch cache, `features` (N, D, H_p, W_p) float32, one chunk per frame;
   attrs `extractor`, `patch_size`, `n_frames`.
 - `<extractor>_lifted.zarr` + `<extractor>_ae.pt`: per-point codes `features` (P, latent) and the
@@ -34,6 +33,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Errors a missing, corrupt or half-written zarr store raises; anything else is a bug
+_UNREADABLE_STORE = (OSError, ValueError, KeyError, TypeError)
+
 __all__ = [
     "ae_path",
     "cache_store_path",
@@ -44,7 +46,6 @@ __all__ = [
     "load_feature_maps",
     "load_point_features",
     "point_features_cached",
-    "tokens_to_feature_map",
     "write_point_features",
 ]
 
@@ -122,25 +123,20 @@ def compute_semantic_contrast(
     reduction: str = "max",
 ) -> torch.Tensor:
     """
-    Contrastive scoring: how strongly positive queries match relative to negatives.
+    Contrastive score per patch or point: positive queries against negative ones.
 
-    - with no negatives (num_positive == raw_similarities.shape[0]) it falls back to a raw
-      reduction over positives — contrastive scoring is undefined with nothing to push against
+    - no negatives (num_positive == N_queries): a plain reduction over positives
+    - "max": each positive scored against all negatives, then max; distinct concepts
+    - "pool": positives averaged before the softmax; synonyms read as one query
 
     Args:
-        raw_similarities: (N_queries, N) dot-product similarities per patch.
+        raw_similarities: (N_queries, N) similarities per patch or point (cosine when inputs are unit-norm).
         num_positive: rows [0:num_positive] are positive queries; the rest are negative.
-        temperature: scaling parameter τ. Lower = sharper. Ignored when there are no negatives.
-        reduction: aggregation over positive queries —
-            "max": each positive scored independently against all negatives via binary
-            softmax, then max over the per-positive scores; use for distinct concepts where
-            any match counts.
-            "pool": positives averaged in similarity space before softmax, so one
-            representative competes against all negatives; use for synonymous concepts that
-            should read as one query.
+        temperature: softmax temperature; lower is sharper. Unused without negatives.
+        reduction: "max" or "pool".
 
     Returns:
-        (N,) contrastive scores in [0, 1].
+        (N,) softmax scores in [0, 1]; the raw max or mean similarity when there are no negatives.
 
     Raises:
         ValueError: when `reduction` is neither "max" nor "pool".
@@ -171,7 +167,7 @@ def compute_semantic_contrast(
 ########################################################################
 
 
-def tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int) -> torch.Tensor:
+def _tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int) -> torch.Tensor:
     """
     Reshape (N, D) patch tokens to (D, H_p, W_p), L2-normalized along the channel dim.
 
@@ -185,14 +181,15 @@ def tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patc
         (D, H_p, W_p) feature map with unit-norm patch vectors.
 
     Raises:
-        AssertionError: when the token count does not match the implied patch grid.
+        ValueError: when the token count does not match the patch grid.
     """
     ph = input_h // patch_size
     pw = input_w // patch_size
-    assert tokens.shape[0] == ph * pw, (
-        f"Expected {ph * pw} tokens for {input_h}x{input_w} " f"(patch_size={patch_size}), got {tokens.shape[0]}"
-    )
-    feat = tokens.reshape(ph, pw, -1).permute(2, 0, 1)  # (D, H_p, W_p)
+    if tokens.shape[0] != ph * pw:
+        raise ValueError(
+            f"Expected {ph * pw} tokens for {input_h}x{input_w} (patch_size={patch_size}), got {tokens.shape[0]}"
+        )
+    feat = tokens.reshape(ph, pw, -1).permute(2, 0, 1)
     return F.normalize(feat, dim=0)
 
 
@@ -203,7 +200,7 @@ def tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patc
 
 def cache_store_path(semantics_dir: Path) -> Path:
     """
-    Find the 2D patch cache store in semantics_dir — `<extractor>.zarr`.
+    Find the single 2D patch cache store in semantics_dir — `<extractor>.zarr`.
 
     Args:
         semantics_dir: the scene's semantics dir.
@@ -213,13 +210,17 @@ def cache_store_path(semantics_dir: Path) -> Path:
 
     Raises:
         FileNotFoundError: when the dir holds no cache store.
+        ValueError: when the dir holds more than one cache store.
     """
     sem_dir = Path(semantics_dir)
-    # `*.zarr` also matches the lifted store next door; the suffix is the only thing separating them
-    store = next((p for p in sem_dir.glob("*.zarr") if not p.name.endswith("_lifted.zarr")), None)
-    if store is None:
+
+    # `*.zarr` also matches the lifted store; the suffix is the only thing separating them
+    stores = sorted(p for p in sem_dir.glob("*.zarr") if not p.name.endswith("_lifted.zarr"))
+    if not stores:
         raise FileNotFoundError(f"no 2D feature cache (*.zarr) in {sem_dir} — extract this scene's semantics first")
-    return store
+    if len(stores) > 1:
+        raise ValueError(f"more than one 2D feature cache in {sem_dir}: {[p.name for p in stores]}")
+    return stores[0]
 
 
 def extract_feature_cache(
@@ -231,6 +232,7 @@ def extract_feature_cache(
     - re-entrant: a cache whose extractor name and frame count both match is returned untouched
     - the attrs that make a store look valid are written LAST, after every frame is on disk
     - so a run that dies mid-extraction leaves an attr-less store the next run re-extracts
+    - the check ignores resolution and resize mode; delete the store after changing either
 
     Args:
         extractor: supplies `.name`, `.patch_size` and `.forward`.
@@ -245,8 +247,7 @@ def extract_feature_cache(
     """
     zarr_path = Path(cache_dir) / f"{extractor.name}.zarr"
 
-    # One path at a time, never one decoded stack: a 300-frame scene at original resolution must
-    # not sit in RAM while the model runs.
+    # Decode one path at a time: RAM holds one frame, not the stack
     paths = frame_paths(images_dir)
     if not paths:
         raise FileNotFoundError(f"No frame images ({list(IMAGE_EXTS)}) in {images_dir}")
@@ -259,7 +260,7 @@ def extract_feature_cache(
             if z.attrs.get("extractor") == extractor.name and z.attrs.get("n_frames") == N:
                 logger.info("Feature cache valid, skipping extraction: %s", zarr_path)
                 return zarr_path
-        except Exception:
+        except _UNREADABLE_STORE:
             logger.warning("Cache at %s is corrupt or unreadable, re-extracting", zarr_path)
 
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
@@ -287,11 +288,9 @@ def extract_feature_cache(
         with torch.no_grad():
             [feat] = extractor.forward([pil_img])
         arr[i] = feat.cpu().float().numpy()
-        if i % 10 == 0:
-            logger.info("extract_feature_cache: %d/%d frames written", i + 1, N)
+        logger.debug("extract_feature_cache: %d/%d frames written", i + 1, N)
 
-    # Marker last: until these attrs land the store cannot pass the validity check above, so a
-    # crash mid-loop can never leave zero-filled planes behind a store that claims to be complete.
+    # Validity attrs last: a crash mid-loop leaves a store the check above rejects
     store.attrs.update({"extractor": extractor.name, "patch_size": extractor.patch_size, "n_frames": N})
 
     logger.info("Feature cache written: %s  shape=%s", zarr_path, tuple(arr.shape))
@@ -326,6 +325,8 @@ def write_point_features(
     """
     Write the per-point pair: `<extractor>_lifted.zarr` (+ `_ae.pt` when compressed).
 
+    - uncompressed (`ae` None) deletes any `_ae.pt` an earlier compressed run left behind
+
     Args:
         out_dir: the scene's semantics dir.
         extractor: extractor name — both halves of the pair carry it.
@@ -340,12 +341,14 @@ def write_point_features(
     codes = np.asarray(codes)
     lifted_zarr = lifted_store_path(out_dir, extractor)
 
-    # The width marker is what disambiguates a missing _ae.pt
-    # - input_dim == latent_dim: full-dim-by-design codes that need no weights
-    # - unequal widths: codes the weights are REQUIRED to decode
-    # - without it a missing _ae.pt reads as uncompressed OR orphaned by a crash
-    # - write order is codes, attrs, weights; any failure after the store exists removes it
-    #   again, so no half-pair (unreadable codes) is left behind on disk
+    # A stale _ae.pt would make load_point_features decode full-dim codes
+    if ae is None:
+        ae_path(out_dir, extractor).unlink(missing_ok=True)
+
+    # Width attrs tell a full-dim store from an orphaned one
+    # - input_dim == latent_dim: full-dim codes, no weights needed
+    # - unequal: codes need the _ae.pt to decode
+    # - order codes, attrs, weights; a failure removes the store (no half-pair left)
     try:
         store = zarr.open(str(lifted_zarr), mode="w")
         store["features"] = codes
@@ -365,13 +368,16 @@ def write_point_features(
 
 def point_features_cached(semantics_dir: Path) -> bool:
     """
-    Report whether the lifted store exists and is readable.
+    Report whether a usable lifted store exists (weights present, or full-dim codes).
 
     Args:
         semantics_dir: the scene's semantics dir.
 
     Returns:
         True when the codes are present and either the weights are too or the codes are full-dim.
+
+    Raises:
+        ValueError: when the dir holds more than one lifted store.
     """
     sem_dir = Path(semantics_dir)
     extractor = find_lifted_extractor(sem_dir)
@@ -380,17 +386,12 @@ def point_features_cached(semantics_dir: Path) -> bool:
     if ae_path(sem_dir, extractor).exists():
         return True
 
-    # No weights: usable only if the codes describe themselves as full-dim. Anything else is a
-    # half-written pair (crash between the two writes) — report NOT cached so the caller re-lifts.
+    # No weights: cached only when the codes are full-dim; else a half-written pair
     try:
         attrs = zarr.open(str(lifted_store_path(sem_dir, extractor)), mode="r").attrs
         return int(attrs["latent_dim"]) >= int(attrs["input_dim"])
-    # Broad except on purpose, unlike load_point_features' narrow tuple
-    # - this is a bool predicate dashboard/app.py calls to pick UI state, so an unreadable
-    #   store must answer False rather than raise
-    # - PermissionError, chunk-IO errors and TOCTOU races all escape
-    #   (KeyError, TypeError, ValueError) and would surface as a crash in the caller
-    except Exception:
+    # Predicate, so an unreadable store answers False instead of raising
+    except _UNREADABLE_STORE:
         logger.warning("Lifted store for %s in %s is corrupt or unreadable, reporting not cached", extractor, sem_dir)
         return False
 
@@ -401,14 +402,14 @@ def load_point_features(semantics_dir: Path, batch_size: int = 65_536) -> np.nda
 
     Args:
         semantics_dir: the scene's semantics dir.
-        batch_size: points per decode chunk — a one-shot decode of a 500k-point scene
-            materialises ~2.3 GB of float32 at 768-D, against a 46.6 GB shared container cap.
+        batch_size: points per decode chunk; bounds peak memory.
 
     Returns:
         (P, D) float32, L2-normalized per row.
 
     Raises:
         FileNotFoundError: when no lifted store exists, or when latent codes have no weights.
+        ValueError: when the dir holds more than one lifted store.
     """
     sem_dir = Path(semantics_dir)
     extractor = find_lifted_extractor(sem_dir)
@@ -419,8 +420,7 @@ def load_point_features(semantics_dir: Path, batch_size: int = 65_536) -> np.nda
     store = zarr.open(str(lifted_zarr), mode="r")
     codes = np.asarray(store["features"])
 
-    # Weights present -> always decode, even at equal widths: an equal-width autoencoder still
-    # encodes, so its codes are not full-dim features. Weights absent is the ambiguous case.
+    # Weights present: always decode, even at equal widths (the codes are still encoded)
     if not weights.exists():
         try:
             full_dim = int(store.attrs["latent_dim"]) >= int(store.attrs["input_dim"])
@@ -436,8 +436,7 @@ def load_point_features(semantics_dir: Path, batch_size: int = 65_536) -> np.nda
         )
 
     ae = FeatureAutoencoder.load(weights)
-    # Streamed decode into a preallocated output: peak stays at (result + one chunk). Row-wise
-    # normalize and the decoder's linear layers are both row-independent, so chunking is exact.
+    # Decode in chunks into one preallocated array; row-wise ops, so chunking is exact
     codes_t = torch.from_numpy(codes)
     decoded = torch.empty((codes_t.shape[0], ae.input_dim), dtype=torch.float32)
     with torch.no_grad():

@@ -1,32 +1,33 @@
-"""MaskCLIP feature extractor backend."""
-import logging
+"""
+MaskCLIP patch-feature backend ("maskclip"), with CLIP's text tower for queries.
+"""
 import os
 from typing import List, Optional
 
 import torch
-import torch.nn.functional as F
 import torchvision.transforms as T
 
-from collab_splats.semantics.utils import tokens_to_feature_map
 from collab_splats.utils.image import CLIP_MEAN, CLIP_STD
 from collab_splats.utils.torch_utils import get_device
 
 from .base import BaseQueryableExtractor
 
-logger = logging.getLogger(__name__)
-
 
 @BaseQueryableExtractor.register("maskclip")
 class MaskCLIPExtractor(BaseQueryableExtractor):
-    """Patch-level MaskCLIP feature extractor.
+    """
+    MaskCLIP patch features and CLIP text embeddings.
 
     Args:
-        model_name: CLIP model variant. Defaults to ``"ViT-L/14@336px"``.
-        resize_mode: ``"max_size"`` (proportional longest-edge) or ``"square"`` (center-crop + resize).
-        image_resolution: Longest-edge target (max_size) or square side length (square). Default 1024.
-        cache_dir: Directory to cache model weights. Defaults to $TORCH_HOME, else ~/.cache/torch.
-        device: Torch device string. Defaults to auto-detected device.
-        svd_components: Top singular vectors kept for positional debiasing. Default 500.
+        model_name: CLIP model variant.
+        resize_mode: "max_size" (longest edge) or "square" (center-crop, then resize).
+        image_resolution: longest-edge target for "max_size", side for "square".
+        cache_dir: weights cache; None uses $TORCH_HOME, else ~/.cache/torch.
+        device: torch device; None picks one with `get_device`.
+        svd_components: positional-subspace rank for debias().
+
+    Raises:
+        ImportError: when maskclip_onnx is not installed; the message names the install command.
     """
 
     def __init__(
@@ -41,24 +42,24 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         if device is None:
             device = get_device()
 
-        # Resolved here, not in the signature, so $TORCH_HOME is read at call time
-        # rather than frozen at import. Falls back to torch's own default cache dir.
+        # Read $TORCH_HOME at call time, not at import
         cache_dir = cache_dir or os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
 
         super().__init__(resize_mode=resize_mode, image_resolution=image_resolution, svd_components=svd_components)
 
-        # Lazy import: maskclip_onnx needs pkg_resources.packaging
-        # - that was removed in setuptools>=71
-        # - imported here so the module loads even with broken transitive deps
-        # - failures then surface only when MaskCLIPExtractor is actually used
-        import maskclip_onnx  # noqa: PLC0415
+        # Imported here: needs setuptools<70 (pkg_resources.packaging) at import
+        try:
+            import maskclip_onnx  # noqa: PLC0415
+        except ImportError as e:
+            raise ImportError(
+                "MaskCLIPExtractor needs maskclip_onnx: "
+                "pip install 'git+https://github.com/RogerQi/maskclip_onnx.git' 'setuptools<70'"
+            ) from e
 
-        # Load the MaskCLIP model; discard the library's default preprocess (square crop)
-        # since we apply our own transform with correct CLIP normalization stats
+        # Drop the library's square-crop preprocess; preprocess() does CLIP normalization
         self.model, _ = maskclip_onnx.clip.load(model_name, download_root=cache_dir)
         self._maskclip_onnx = maskclip_onnx
 
-        # Read patch_size before chaining .to().eval() (chained calls return new objects on mocks)
         self.patch_size: int = self.model.visual.patch_size
         self.model = self.model.to(device).eval()
         self._device = torch.device(device)
@@ -67,51 +68,20 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         self._normalize = T.Normalize(CLIP_MEAN, CLIP_STD)
 
     ########################################################################
-    # Properties
+    # Backbone
     ########################################################################
 
-    @property
-    def device(self) -> torch.device:
+    def _patch_tokens(self, batch: torch.Tensor) -> torch.Tensor:
         """
-        Device of the underlying model parameters.
-
-        Returns:
-            The torch device the model was moved to at construction.
-        """
-        return self._device
-
-    ########################################################################
-    # Forward pass
-    ########################################################################
-
-    def forward(self, images: list) -> list[torch.Tensor]:
-        """
-        Extract patch-level CLIP features from a list of images.
+        Raw MaskCLIP patch encodings as float32; the base L2-normalizes them.
 
         Args:
-            images: anything `preprocess` accepts — paths, ndarrays or PIL images.
+            batch: (B, C, H, W) preprocessed images.
 
         Returns:
-            One (D, H_p, W_p) float32 CPU tensor per input image, L2-normalized per patch.
+            (B, H_p * W_p, D) tokens; no CLS.
         """
-        logger.debug("[%s] Extracting features: %d images", type(self).__name__, len(images))
-
-        # Preprocess all images and stack into a single batch
-        preprocessed = [self.preprocess(img) for img in images]
-        batch = torch.stack(preprocessed).to(self._device)
-
-        # get_patch_encodings returns (B, N_patches, D) — no CLS token to skip
-        with torch.no_grad():
-            tokens_all = F.normalize(
-                self.model.get_patch_encodings(batch).to(torch.float32), dim=-1
-            )
-
-        # Reshape each image's flat patch sequence to (D, H_p, W_p)
-        results = []
-        for i, t in enumerate(preprocessed):
-            _, H, W = t.shape
-            results.append(tokens_to_feature_map(tokens_all[i].cpu(), H, W, self.patch_size))
-        return results
+        return self.model.get_patch_encodings(batch).to(torch.float32)
 
     ########################################################################
     # Text encoding

@@ -43,7 +43,7 @@ upstream/main ─┬─ feat/batch-forward ──► upstream PR  (1a base, then
             collab-splats pins a basis SHA
 ```
 
-- repo: fork `tommybotch/vismatch`, cloned `--recursive` at `/workspace/vismatch`
+- repo: fork `BasisResearch/vismatch`, cloned `--recursive` at `/workspace/vismatch`
 - remotes: `origin` = fork, `upstream` = gmberton
 - feature branches cut from `upstream/main`, never from `basis` or each other (except 1b on 1a,
   #5 on #4)
@@ -55,7 +55,7 @@ upstream/main ─┬─ feat/batch-forward ──► upstream PR  (1a base, then
 
 ### 0. Fork setup
 
-- user forks on GitHub (`gh` not installed here)
+- fork exists: https://github.com/BasisResearch/vismatch (even with upstream `9d49b89` on 2026-09-25)
 - clone, remotes, record baseline gate on clean `upstream/main`
 
 ### 1. `feat/batch-forward` (upstream PR)
@@ -87,7 +87,7 @@ upstream/main ─┬─ feat/batch-forward ──► upstream PR  (1a base, then
 
 - `basis` = `upstream/main` + merge `feat/batch-forward` + merge `feat/colmap-export`
 - collab-splats `pyproject.toml`:
-  `vismatch @ git+https://github.com/tommybotch/vismatch@<basis-sha>`
+  `vismatch @ git+https://github.com/BasisResearch/vismatch@<basis-sha>`
 - local dev: editable install of `/workspace/vismatch`
 - first check: uv git install pulls submodules recursively (vismatch vendors 30+ in
   `third_party/`); fallback = build and pin a wheel

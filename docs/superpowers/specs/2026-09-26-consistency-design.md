@@ -35,12 +35,30 @@ Each phase lands as its own commit group on the branch.
 | # | Phase | Scope |
 |---|---|---|
 | 1 | Convention bugs | this spec, below |
-| 2 | Shared low-level helpers | lazy `utils/__init__`; `jsonio`, `zarr_io`, `geometry/colmap.py`, `camera_centers`, `to_uint8_hwc`, `to_numpy`; adopt `get_device` / `pytorch_gc` |
+| 2 | Shared low-level helpers | lazy `utils/__init__`; one `utils/io.py` (below); `geometry/colmap.py`, `camera_centers`, `to_numpy`; adopt `get_device` / `pytorch_gc` |
 | 3 | Backend hoisting | feedforward `_postprocess` / `_reproject` / QKV hook, LC pose extraction, SfM base |
 | 4 | Pipeline and registry | single kind-tagged backend registry, `SceneLayout`, config helpers, `localization/store.py`, dashboard calls Reconstructor stages |
 | 5 | API renames | `conf_percentile` / `min_conf`, `poses_w2c` / `poses_c2w`, `out_dir` / `images_dir` |
 | 6 | Test consolidation | shared builders with non-identity defaults, conftest cleanup, autouse seeding |
 | 7 | Dependencies | drop list, open3d to core, declare rich / scikit-image |
+
+### Phase 2 IO module
+
+All file IO helpers live in one `collab_splats/utils/io.py`, split by `########` sections.
+
+- **images:** `read_image` (one decoder, RGB HWC uint8), `iter_images`, `to_uint8_hwc`
+  (explicit range, no guessing); replaces ~9 ad-hoc cv2 / PIL readers and 8 uint8 converters
+- **json:** `to_jsonable` (NaN / ±inf → null, numpy scalars, ndarray, tuple, Path) and
+  `write_json(path, obj, *, indent=2, atomic=True)`; replaces `clean_for_json` and the
+  9 JSON sites
+- **zarr:** `LZ4` codec, `UNREADABLE_STORE`, `open_valid`, `stamp_valid` (completion marker
+  written after the arrays); replaces the 4 codec copies and 2 open-else-rebuild paths
+- import-light: numpy, json, zarr, PIL / cv2 only, never torch, so `remote` and the dashboard
+  fast path can import it
+- stays out:
+  - the `images/` + `frames.json` keyframe store stays in `preproc/frames.py` and calls `io.read_image`
+  - PIL-exact feedforward preprocessing stays where it matches an upstream loader
+  - `to_numpy` stays in `torch_utils`
 
 Dead code the audit found goes into `2026-09-09-clean-final-dead-code-design.md`, not here:
 `ConfigLoader`, `infer_batch_size`, `OPENGL_TO_OPENCV`, `FeedforwardResult.save/load`, `load_hf_weights`.

@@ -84,6 +84,8 @@ repo. It configures the `collab-data` remote and verifies access:
 - **build-essential** (gcc/g++) + a CUDA toolkit at build time for the source extensions.
 - Optional: `ffmpeg`, `rclone` for the video and data pipelines.
 
+All subsequent commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`. The interpreter is always `/opt/venv/reconstruction/bin/python` (py3.11).
+
 ### 5. Docker image
 
 The image runs the same `setup.sh`, with every CUDA extension compiled ahead of time. Build it
@@ -97,7 +99,7 @@ docker run --gpus all -it collab-splats:release bash
 
 - **First build takes ~2.5 h.** Most of it is gsplat's 3DGUT kernel (~2 h CPU even on native x86).
 - **Rebuilds take minutes.** The CUDA compile is its own cached layer; it re-runs only when
-  `pyproject.toml`, `uv.lock`, `setup.sh` or `../collab-data` change.
+  `pyproject.toml`, `uv.lock`, `LICENSE`, `setup.sh` or `../collab-data` change.
 - **`MAX_JOBS`**: Docker memory in GB / 8 (one `cicc` peaks ~7.3 GB), at most 6.
 - **GPUs**: native on Ampere/Ada (A100, A40, L40, RTX 30xx/40xx); Hopper (H100) via PTX JIT on
   first launch; Volta/Turing and Blackwell unsupported. Details in the `Dockerfile` header.
@@ -115,8 +117,6 @@ docker run --gpus all -it collab-splats:release bash
   ```
 - Never run `docker builder prune`, `docker system prune -a` or "Clean / Purge data": they
   delete the cached compile.
-
-All subsequent commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`. The interpreter is always `/opt/venv/reconstruction/bin/python` (py3.11).
 
 ## Getting Started
 

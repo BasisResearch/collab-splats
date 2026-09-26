@@ -29,18 +29,17 @@ These tasks are started but not complete — do not assume their targets are don
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
 - **consistency** — dedup audit; phase 1 = convention bugs (RPE frame, crop-box K, MapAnything box, NaN JSON, PNG ids, DB provenance) on worktree `.worktrees/consistency` / branch `clean/consistency`; phases 2-3 (utils/io.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md))
-- **pycolmap-cuda-docker** — `pycolmap-cuda12==4.1.1` replaces the colmap 3.10 binary (InstantSfM SIFT DB); Docker drops the colmap stage and README from the cached CUDA layer ([spec](docs/superpowers/specs/2026-09-26-pycolmap-cuda-docker-design.md) · [plan](docs/superpowers/plans/2026-09-26-pycolmap-cuda-docker.md))
 
 ## Recently Completed
 
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **pycolmap-cuda-docker** (2026-09-26)
 - **geometry-release** (2026-09-25)
 - **semantics-release** (2026-09-25)
 - **preproc-release** (2026-09-24)
 - **mesh-cleanup** (2026-09-07)
-- **splats-cleanup** (2026-09-06)
 
 Known test failures: `docs/known-test-failures.md`
 

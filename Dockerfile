@@ -11,7 +11,7 @@
 # - Docker Desktop > General: enable "Use Rosetta for x86_64/amd64 emulation"; QEMU is far slower
 # - Docker Desktop > Resources: raise memory, then set MAX_JOBS from it
 # - first build still takes hours; the CUDA layer is then cached until pyproject.toml, uv.lock,
-#   setup.sh or collab-data change
+#   LICENSE, setup.sh or collab-data change
 #
 # GPU support: TORCH_ARCH_LIST="8.0+PTX" (fused-ssim: CUDA_ARCHITECTURES="80;90", set in setup.sh)
 # - native: Ampere + Ada, sm_80/86/89 (A100, A40, A6000, A10, L4, L40, RTX 3090, RTX 4090)

@@ -95,8 +95,9 @@ Same contract (`image_path`, `database_path`, `num_threads=8`; unlink partial DB
 - delete the `colmap-source` stage and both `COPY --from=colmap-source` lines
 - apt: drop COLMAP-only libs — `libboost-filesystem1.74.0 libboost-program-options1.74.0 libceres2
   libfreeimage3 libglew2.2 libgoogle-glog0v5 libqt5core5a libqt5gui5 libqt5widgets5`
-- apt: add `libx11-6 libxext6 libsm6 libice6` explicitly, previously pulled in transitively by
-  Qt5/GLEW; any further gap surfaces in the smoke test below, not at first run
+- apt: list `libx11-6 libxext6 libsm6 libice6` explicitly as direct NEEDED deps (ffmpeg/libgl1
+  already pull them in transitively); any further gap surfaces in the smoke test below, not at
+  first run
   - open3d links `libX11` (plus `libGL`, `libudev`, `libgomp`)
   - pycolmap-cuda12 `_core.so` links `libX11`, `libXext`, `libSM`, `libICE` (found by `ldd`)
 - pass-1 COPY: `pyproject.toml uv.lock LICENSE setup.sh` (no `README.md`)

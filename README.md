@@ -82,7 +82,39 @@ repo. It configures the `collab-data` remote and verifies access:
 
 - **NVIDIA driver + GPU** at runtime (model warmup loads CUDA kernels at import).
 - **build-essential** (gcc/g++) + a CUDA toolkit at build time for the source extensions.
-- Optional: `colmap`, `ffmpeg`, `rclone` for the COLMAP and data pipelines.
+- Optional: `ffmpeg`, `rclone` for the video and data pipelines.
+
+### 5. Docker image
+
+The image runs the same `setup.sh`, with every CUDA extension compiled ahead of time. Build it
+from the collab-splats checkout, with `collab-data` cloned beside it (`../collab-data`); it is
+a locked path dependency, handed to the build as a named context so no GitHub credentials are needed:
+
+```sh
+docker build --platform=linux/amd64 --progress=plain --build-context collab-data=../collab-data --build-arg MAX_JOBS=4 -t collab-splats:release .
+docker run --gpus all -it collab-splats:release bash
+```
+
+- **First build takes ~2.5 h.** Most of it is gsplat's 3DGUT kernel (~2 h CPU even on native x86).
+- **Rebuilds take minutes.** The CUDA compile is its own cached layer; it re-runs only when
+  `pyproject.toml`, `uv.lock`, `setup.sh` or `../collab-data` change.
+- **`MAX_JOBS`**: Docker memory in GB / 8 (one `cicc` peaks ~7.3 GB), at most 6.
+- **GPUs**: native on Ampere/Ada (A100, A40, L40, RTX 30xx/40xx); Hopper (H100) via PTX JIT on
+  first launch; Volta/Turing and Blackwell unsupported. Details in the `Dockerfile` header.
+
+**Apple Silicon (Docker Desktop):**
+
+- General: use the **Apple Virtualization framework** with **Rosetta for x86_64/amd64 emulation**
+  on. Docker VMM has no Rosetta, falls back to QEMU, and uv segfaults under it.
+- Resources: disk usage limit **≥ 250 GB** (the default 60 GB fills during the runtime stage).
+- Docker Engine: raise the build-cache cap, or the 20 GB default evicts the compiled layer
+  between builds:
+
+  ```json
+  "builder": { "gc": { "enabled": true, "defaultKeepStorage": "150GB" } }
+  ```
+- Never run `docker builder prune`, `docker system prune -a` or "Clean / Purge data": they
+  delete the cached compile.
 
 All subsequent commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`. The interpreter is always `/opt/venv/reconstruction/bin/python` (py3.11).
 

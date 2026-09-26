@@ -3,14 +3,15 @@
 # Build (from the collab-splats checkout, with collab-data cloned beside it):
 #   docker build --platform=linux/amd64 --progress=plain \
 #     --build-context collab-data=../collab-data \
-#     --build-arg MAX_JOBS=4 -t collab-env:cu121 .
+#     --build-arg MAX_JOBS=4 -t collab-splats:release .
 # - collab-data is private and locked as a path dep at /workspace/collab-data
 # - MAX_JOBS: Docker memory GB / 8 (one cicc peaks ~7.3 GB), ceiling 6
 #
 # Apple Silicon: every nvcc call runs under amd64 emulation
 # - Docker Desktop > General: enable "Use Rosetta for x86_64/amd64 emulation"; QEMU is far slower
 # - Docker Desktop > Resources: raise memory, then set MAX_JOBS from it
-# - first build still takes hours; the CUDA layer is then cached until pyproject.toml/uv.lock change
+# - first build still takes hours; the CUDA layer is then cached until pyproject.toml, uv.lock,
+#   setup.sh or collab-data change
 #
 # GPU support: TORCH_ARCH_LIST="8.0+PTX" (fused-ssim: CUDA_ARCHITECTURES="80;90", set in setup.sh)
 # - native: Ampere + Ada, sm_80/86/89 (A100, A40, A6000, A10, L4, L40, RTX 3090, RTX 4090)
@@ -69,16 +70,10 @@ COPY --from=collab-data collab_data /workspace/collab-data/collab_data
 # - pass 1 sees only the lock: the slow CUDA compiles stay cached across source edits
 # - pass 2 installs the project itself and the non-lock extras
 WORKDIR /workspace/collab-splats
-COPY pyproject.toml uv.lock README.md LICENSE setup.sh /workspace/collab-splats/
+COPY pyproject.toml uv.lock LICENSE setup.sh /workspace/collab-splats/
 RUN SETUP_DEPS_ONLY=1 bash setup.sh
 COPY . /workspace/collab-splats
 RUN bash setup.sh
-
-##################################################
-# Pre-built sources for runtime stage
-##################################################
-
-FROM colmap/colmap:20240213.23 AS colmap-source
 
 ##################################################
 # Stage 2: Runtime — no nvcc; every CUDA extension was built AOT above
@@ -89,11 +84,9 @@ FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runti
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
-        libboost-filesystem1.74.0 libboost-program-options1.74.0 \
-        libc6 libceres2 libfreeimage3 libgcc-s1 \
-        libgl1 libglew2.2 libgoogle-glog0v5 \
-        libqt5core5a libqt5gui5 libqt5widgets5 \
-        libgl1-mesa-glx libhdf5-dev xvfb \
+        libc6 libgcc-s1 libgl1 libgl1-mesa-glx \
+        libx11-6 libxext6 libsm6 libice6 \
+        libhdf5-dev xvfb \
         build-essential ffmpeg libsuitesparse-dev \
         wget curl unzip xz-utils git vim htop tmux less \
         openssh-server gnupg ca-certificates \
@@ -112,10 +105,6 @@ COPY --from=builder /root/.local/share/uv/ /root/.local/share/uv/
 # collab-splats is an editable install: its path must match the builder's
 COPY --from=builder /workspace/collab-splats /workspace/collab-splats
 
-# Colmap binary
-COPY --from=colmap-source /usr/local/bin/colmap /usr/local/bin/
-COPY --from=colmap-source /usr/local/lib/libcolmap* /usr/local/lib/
-
 ENV CUDA_HOME=/usr/local/cuda \
     CUDA_ROOT=/usr/local/cuda \
     PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
@@ -127,14 +116,17 @@ ENV CUDA_HOME=/usr/local/cuda \
 # Smoke test: torch imports and the AOT extensions survived the stage copy
 # - no GPU during build, so the creator chain is checked at run time (--gpus), not here
 # - a missing .so would JIT-compile on first use, and this stage has no nvcc
+# - cv2/open3d/pycolmap import here so a missing system lib fails the build, not the first run
 RUN python - <<'EOF'
 import glob, sysconfig
-import torch
+import cv2, open3d, pycolmap, torch
+
+assert pycolmap.has_cuda, "pycolmap is the CPU wheel; expected pycolmap-cuda12"
 
 site = sysconfig.get_paths()["purelib"]
 for pattern in ("gsplat/csrc*.so", "_nvdiffrast_c*.so", "bae/sparse/*.so"):
     assert glob.glob(f"{site}/{pattern}"), f"missing AOT build: {pattern}"
-print(f"[Runtime] torch={torch.__version__} cuda={torch.version.cuda}; AOT extensions present")
+print(f"[Runtime] torch={torch.__version__} cuda={torch.version.cuda}; AOT extensions present; pycolmap={pycolmap.__version__}")
 EOF
 
 # SSH

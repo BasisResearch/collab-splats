@@ -28,6 +28,7 @@ These tasks are started but not complete — do not assume their targets are don
 - **sky-mask** — ONNX sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
+- **pycolmap-cuda-docker** — `pycolmap-cuda12==4.1.1` replaces the colmap 3.10 binary (InstantSfM SIFT DB); Docker drops the colmap stage and README from the cached CUDA layer ([spec](docs/superpowers/specs/2026-09-26-pycolmap-cuda-docker-design.md) · [plan](docs/superpowers/plans/2026-09-26-pycolmap-cuda-docker.md))
 
 ## Recently Completed
 

@@ -514,9 +514,9 @@ Video-Depth-Anything into `third_party/Video-Depth-Anything` at commit `4f5ae23`
 only — no weights). The metric checkpoint is pulled from the Hugging Face hub on first use
 (`depth-anything/Metric-Video-Depth-Anything-Large`, ~1.5 GB) and cached under `HF_HOME`
 (`/workspace/models` in the image), so a build needs no network for it and a machine that
-has none at run time fails on the first sfm run with a `RuntimeError` naming the repo. A
-system `colmap` binary must be on `PATH`. Plain `uv sync` prunes the `--no-deps` packages;
-re-run the setup.sh block afterwards.
+has none at run time fails on the first sfm run with a `RuntimeError` naming the repo. SIFT
+runs through the `pycolmap-cuda12` wheel (GPU when torch sees one). Plain `uv sync` prunes
+the `--no-deps` packages; re-run the setup.sh block afterwards.
 
 **Licences.** InstantSfM is CC-BY-NC-4.0 (research use only). VDA code is Apache-2.0; the
 VDA metric weights are CC-BY-NC-4.0.

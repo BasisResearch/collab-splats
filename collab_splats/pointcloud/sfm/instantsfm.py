@@ -111,7 +111,7 @@ def _generate_sift_database(image_path: Path, database_path: Path, *, num_thread
       — 96 here — and per-thread RAM blows past the 46.6 GB container cgroup cap (measured:
       OOM-kill at default, clean 1.5 min run at 8 threads on 100 frames of 1920x1080).
     - GPU via the pycolmap-cuda12 4.1.1 wheel (measured 100x1907x1072 on an A40: extraction
-      8 s, matching 25 s vs 10 s / 42 s for the colmap 3.10 binary it replaces); why 4.1.1 and
+      8 s, matching 25 s unloaded vs 10 s / 42 s for the colmap 3.10 binary it replaces); why 4.1.1 and
       not 4.2: docs/superpowers/specs/2026-09-26-pycolmap-cuda-docker-design.md.
     - Reimplements upstream GenerateDatabase (cre185/InstantSfM
       instantsfm/controllers/feature_handler.py:18-57 @ d3e599e), which forces CPU with no
@@ -154,7 +154,7 @@ def _generate_sift_database(image_path: Path, database_path: Path, *, num_thread
         pycolmap.match_exhaustive(database_path, matching_options=matching_options, device=device)
     except (RuntimeError, ValueError) as err:
         database_path.unlink(missing_ok=True)
-        raise RuntimeError(f"COLMAP SIFT database build failed ({err}) — is there enough memory?") from err
+        raise RuntimeError(f"COLMAP SIFT database build failed on {device.name} ({err})") from err
 
 
 def _patch_instantsfm_track_ids() -> None:

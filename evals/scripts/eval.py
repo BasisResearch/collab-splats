@@ -64,7 +64,7 @@ from collab_splats.pointcloud import get_creator
 from collab_splats.pointcloud.sfm import InstantSfMCreator
 from collab_splats.pointcloud.vda import generate_vda_depth, vda_depth_complete
 
-# InstantSfM conditions: condition name -> use_depths. Classical global SfM (system colmap
+# InstantSfM conditions: condition name -> use_depths. Classical global SfM (pycolmap
 # SIFT + InstantSfM global mapper), not a feedforward backbone — --backbone and --submap_size
 # do not apply, and the TUM file is keyed by the condition alone.
 _INSTANTSFM_CONDITIONS = {"instantsfm": True, "instantsfm_nodepth": False}
@@ -561,7 +561,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=["baseline", "ba", "lc"],
         help="Conditions: baseline | ba | ba_coarse | ba_percam | lc | ba_track-density-{N} | "
-        "incremental_ba-{N} | instantsfm (global SfM + VDA depth priors, system colmap SIFT) | "
+        "incremental_ba-{N} | instantsfm (global SfM + VDA depth priors, pycolmap SIFT) | "
         "instantsfm_nodepth (same without depth priors). instantsfm* ignore --backbone and reject "
         "--submap_size.",
     )

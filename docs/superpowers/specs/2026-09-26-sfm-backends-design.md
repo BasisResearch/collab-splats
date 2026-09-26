@@ -1,7 +1,7 @@
 # SfM backends — wire ColmapCreator + HlocCreator into `pointcloud.method: sfm`
 
 **Date:** 2026-09-26
-**Status:** approved design, pre-plan
+**Status:** approved design, revised 2026-09-26 after a consistency pass (pre-plan)
 **Branch:** `feat/sfm-backends` in `.worktrees/sfm-backends`, off `clean/final` @ `ac93e96b`
 **Sequencing:** lands BEFORE the pointcloud release cleanup; that cleanup runs on the result
 
@@ -45,14 +45,17 @@ Rationale worth keeping:
 
 ## Config
 
+Two new blocks in `base.yaml`, beside `instantsfm:`. The defaults above them do not change
+(`method: feedforward`, `backend: vggt_omega`); only the `backend` comment gains the sfm names.
+A run selects one with `pointcloud: {method: sfm, backend: colmap}`.
+
 ```yaml
 pointcloud:
-  method: sfm
-  backend: instantsfm        # sfm: instantsfm | colmap | hloc
-  instantsfm: {...}          # unchanged
+  # ...existing keys and instantsfm: block unchanged...
   colmap:
     pairing: sequential+retrieval  # sequential | retrieval | sequential+retrieval | exhaustive
     overlap: 10              # sequential: pair each frame with the next N
+    num_retrieved: 20        # retrieval: vocab-tree neighbors per image
     num_threads: 8           # CPU SIFT/mapper thread cap; colmap default spawns 96 and OOMs
     min_registered_frac: 0.5 # fail below this share of frames registered
   hloc:
@@ -70,10 +73,18 @@ pointcloud:
 
 | value | colmap (CLI, GPU when available) | hloc |
 |---|---|---|
-| `sequential` | `sequential_matcher --SequentialMatching.overlap N` | in-repo pairs: frame i with i+1..i+N |
-| `retrieval` | `vocab_tree_matcher` | `pairs_from_retrieval`, top `num_retrieved` |
-| `sequential+retrieval` | `sequential_matcher` + `loop_detection` (vocab tree) | union of both pair sets, deduplicated |
+| `sequential` | `sequential_matcher --SequentialMatching.overlap N --SequentialMatching.quadratic_overlap 0` | in-repo pairs: frame i with i+1..i+N |
+| `retrieval` | `vocab_tree_matcher --VocabTreeMatching.num_images num_retrieved` | `pairs_from_retrieval`, top `num_retrieved` |
+| `sequential+retrieval` | `sequential_matcher` as above + `--SequentialMatching.loop_detection 1` | union of both pair sets, deduplicated |
 | `exhaustive` | `exhaustive_matcher` | `pairs_from_exhaustive` |
+
+- flag names checked against the installed binary (`colmap sequential_matcher -h`, 3.10-dev @ 879a296a)
+- `quadratic_overlap 0`: colmap's default 1 also pairs i with i+2^k, which hloc's generator does
+  not; off, both backends mean the same thing by `sequential`
+- `sequential+retrieval` is NOT the same pair set across backends: colmap's `loop_detection` fires
+  every `loop_detection_period` (10) frames, hloc retrieves for every frame. So colmap vs hloc
+  compares pipelines, not matchers. Acceptable; stated in the report.
+- so colmap also takes `num_retrieved` (default 20, unused unless `pairing` retrieves)
 
 Validation in `Reconstructor.validate_config`, the `random_seed` / `min_num_view_per_track` way:
 
@@ -88,14 +99,15 @@ Validation in `Reconstructor.validate_config`, the `random_seed` / `min_num_view
 
 ```
 collab_splats/pointcloud/sfm/
-  sift_db.py     NEW, private to sfm/ — moved out of instantsfm.py, not InstantSfM-specific
-                   build_sift_database(image_dir, db_path, *, pairing, overlap, num_threads)
-                   sift_database_valid(db_path, names, *, pairing, overlap)
+  sift_db.py     NEW, not re-exported — moved out of instantsfm.py, not InstantSfM-specific
+                   build_sift_database(image_dir, db_path, *, pairing="exhaustive", overlap,
+                                       num_retrieved, vocab_tree, num_threads=8)
+                   sift_database_valid(db_path, names, *, params=None)
                    rename_images_to_stems(recon, sparse_dir)
                    sfm_image_dir(images_dir)
                    largest_model(recons)                   by num_reg_images
-  instantsfm.py  imports the above; build_sift_database(pairing="exhaustive") -> same argv
-  colmap.py      ColmapCreator(pairing, overlap, num_threads)
+  instantsfm.py  imports the above; defaults reproduce today's argv exactly, params=None
+  colmap.py      ColmapCreator(pairing, overlap, num_retrieved, num_threads)
   hloc.py        HlocCreator(pairing, overlap, num_retrieved, retrieval_conf,
                              feature_conf, matcher_conf, num_threads)
   __init__.py    SFM_CREATORS = {"instantsfm": ..., "colmap": ..., "hloc": ...}
@@ -109,57 +121,90 @@ All three sfm creators share instantsfm's shape, not `BasePointcloudCreator`:
 - model written to `data_dir/colmap/sparse/0` (stale `sparse/` removed first)
 - image names renamed to filename stems (`frame_NNNNNN`)
 - `colmap` / `hloc` leave `pointcloud/__init__.py` `_REGISTRY`, which becomes feedforward only;
-  its only callers (`geometry/loop_closure/wrapper.py`, `evals/scripts/eval.py`) are feedforward
+  its callers (`geometry/loop_closure/wrapper.py`, `evals/scripts/eval.py`,
+  `evals/scripts/ba_start_at_gt.py`) are all feedforward. `tests/pointcloud/test_registry.py`
+  `test_get_creator_colmap` / `_hloc` flip to asserting a `KeyError`.
+- `BasePointcloudCreator` is then feedforward's base only; `base.py` docstrings ("every backend
+  implements", "resolve through the registry") and `pointcloud/__init__.py`'s ("sfm backends
+  (colmap, hloc) all resolve through get_creator") are corrected. The class stays: moving it into
+  `feedforward/` is cleanup scope.
+- moved helpers lose their InstantSfM wording ("InstantSfM expects an image directory",
+  "InstantSfM: running colmap ..."); log / error text only
 
 ### ColmapCreator
 
 1. `build_sift_database` into `colmap/colmap.db` (reused when valid, see Caching)
-2. `pycolmap.incremental_mapping(..., options={"num_threads": num_threads})`
-3. `largest_model` — incremental mapping gives no size ordering
-4. write `sparse/0`, rename to stems
+2. `pycolmap.incremental_mapping(db, image_dir, colmap/mapper/, options={"num_threads": num_threads})`
+   — writes one `mapper/<idx>/` per model, so it cannot target `sparse/` directly
+3. `largest_model` — incremental mapping gives no size ordering; warn when > 1
+4. rename to stems, `write_binary` to `sparse/0`, remove `mapper/`
+
+Measured 2026-09-26: a colmap 3.10 CLI database (0 rigs, 0 frames in pycolmap 4.0.4's view)
+maps fine under `pycolmap.incremental_mapping` — 12/12 registered, 11,236 points on 12 GH010229
+frames. Image names come back with `.png`, so the stem rename is needed here too.
 
 ### HlocCreator
 
-- `hloc` imported inside `reconstruct`; `ImportError` says `uv sync --extra hloc`
-- intermediates under `colmap/hloc/`
+- `hloc` imported inside `reconstruct`; `ImportError` names `setup/hloc.sh` + the user-run sync
+- intermediates under `colmap/hloc/`; `sfm_dir = colmap/hloc/sfm` (its `database.db` never
+  collides with verify's `colmap/database.db`)
 - pairs file per `pairing` (table above); sequential generator is in-repo (~10 lines, hloc has none)
 - `extract_features.main` / `match_features.main` with the configured confs
 - `hloc.reconstruction.main(camera_mode=SINGLE, image_options={"camera_model": "SIMPLE_RADIAL"},
-  mapper_options={"num_threads": num_threads})` — at the pin it already keeps the largest
-  model (`hloc/reconstruction.py:117-139` @ `c13273b`)
-- copy that model to `sparse/0`, rename to stems
+  mapper_options={"num_threads": num_threads})` (`hloc/reconstruction.py:142-189` @ `c13273b`)
+  - keeps the largest model itself (`:117-139`) but only logs it; the warning on > 1 model counts
+    `sfm_dir/models/*`
+  - returns `None` (logs an error, does not raise) when nothing reconstructs (`:112-114`) — we raise
+  - `mapper_options` merges into the pipeline options with `num_threads` default
+    `min(cpu_count, 16)` (`:105`), so the cap is effective
+- rename the returned model to stems, `write_binary` to `sparse/0`
+- runtime downloads: netvlad and LightGlue weights on first use — prefetched in `setup/hloc.sh`,
+  as `setup.sh` already does for vismatch
 
 ### `_run_sfm`
 
 1. VDA depth — unchanged
-2. `SFM_CREATORS[backend](**pc_cfg[backend]).reconstruct(backend_dir, images_dir)`
-   (instantsfm keeps its explicit kwargs; `min_registered_frac` is not a creator field)
+2. build the creator from `SFM_CREATORS[backend]` with the block minus `min_registered_frac`
+   (a `_run_sfm` concern, not a creator field); instantsfm's construction stays as today;
+   then `.reconstruct(backend_dir, images_dir=images_dir)`
 3. colmap / hloc only: filter `names`, `depths`, `keyframes` to registered stems; raise
    `RuntimeError` with N/M below `min_registered_frac`, else warn
 4. `result_from_reconstruction` — unchanged logic
-5. zarr attrs: `method`, `backend`, `<backend>_version` (`instantsfm`, `pycolmap`, or the hloc
-   pin); colmap / hloc also stamp `registered_frames` / `total_frames`. instantsfm's attr set
-   is unchanged.
+5. zarr attrs, beside `method` / `backend` / `align_attrs`:
+   - instantsfm: `instantsfm_version`, unchanged
+   - colmap: `pycolmap_version` (mapper) + `colmap_cli_version` (SIFT; first line of `colmap -h`)
+     — features and mapping come from different COLMAPs (3.10 CLI vs pycolmap 4.0.4)
+   - hloc: `pycolmap_version` + `hloc_commit` from a `HLOC_PIN = "c13273b"` constant in
+     `sfm/hloc.py`; `hloc.__version__` is `"1.5"` at the pin and identifies nothing. A unit
+     test asserts the constant equals the pin in `setup/hloc.sh`.
+   - colmap / hloc: `registered_frames`, `total_frames` (no clash with `align_attrs` keys)
 
 The `NotImplementedError` guard in `_run_sfm` goes; `_SFM_BACKENDS = set(SFM_CREATORS)`.
 
 ## Caching
 
-- DB valid only when its image set, `pairing` and `overlap` all match — the latter two via a
-  `colmap.db.json` sidecar. Without it a `pairing` change silently reuses stale matches.
-- instantsfm keeps `instantsfm.db` and its current gate (exhaustive only, no sidecar needed);
-  gate logic change there is limited to the moved function taking the new keyword args
-- vocab tree for colmap `retrieval` pairing: downloaded once to a cache dir. The exact file for
-  colmap 3.10's (pre-3.12, FLANN) format is pinned in the plan after a check against that
-  binary.
+- colmap: DB valid only when its image set AND its matching params (`pairing`, `overlap`,
+  `num_retrieved`) match; params live in a `colmap.db.json` sidecar written after a successful
+  build. Without it a `pairing` change silently reuses stale matches.
+- `sift_database_valid(..., params=None)` skips the sidecar, so instantsfm's `instantsfm.db`
+  gate is byte-for-byte today's behavior
+- hloc: `reconstruction.main` rebuilds its DB every run (`create_empty_db` deletes it); the
+  expensive h5 features / matches are reused by hloc's own `overwrite=False` skip
+- vocab tree: needed by `retrieval` AND `sequential+retrieval` — i.e. the colmap DEFAULT pulls a
+  15.2 MB download on first use
+  - `vocab_tree_flickr100K_words32K.bin`, the pre-3.12 format a 3.10 binary reads
+  - HEAD-checked 2026-09-26: `github.com/colmap/colmap/releases/download/3.11.1/...` and
+    `demuc.de/colmap/...` both 200, both 15,229,678 bytes
+  - cached under `~/.cache/collab_splats/`, sha256 pinned in the plan after a load test
+    against the 3.10 binary
 
 ## Errors
 
 | Failure | Behavior |
 |---|---|
 | `colmap` binary missing / crashed | `RuntimeError`, partial DB unlinked (existing) |
-| hloc not importable | `ImportError` naming `uv sync --extra hloc` |
-| mapper returns no model | `RuntimeError` |
+| hloc not importable | `ImportError` naming `setup/hloc.sh` and the sync |
+| mapper returns no model (hloc: `None`) | `RuntimeError` |
 | several models | warning, largest kept |
 | registered < `min_registered_frac` | `RuntimeError` with N/M |
 | vocab-tree download fails | `RuntimeError` with URL and cache path |
@@ -169,18 +214,32 @@ The `NotImplementedError` guard in `_run_sfm` goes; `_SFM_BACKENDS = set(SFM_CRE
 - `validate_config` BA/LC refusals: "InstantSfM runs its own global bundle adjustment" -> neutral
 - `_run_sfm` docstring; `_SFM_BACKENDS` comment (`reconstructor.py:75`)
 - `depth_align.result_from_reconstruction` errors ("InstantSfM registered N/M") and docstring
-- `sfm/__init__.py` and `pointcloud/__init__.py` docstrings ("unwired")
+- `sfm/__init__.py`, `colmap.py`, `hloc.py` module docstrings ("unwired"); `pointcloud/__init__.py`
+  and `base.py` docstrings (see Shared creator contract)
 - `base.yaml` backend comment; CLAUDE.md architecture line
+- `configs/README.md` artifact tree + excludes paragraph (`:533-543`, `:649-650`)
 
 ## Dependency
 
 - `pyproject.toml`: optional extra `hloc = ["hloc"]`;
   `[tool.uv.sources] hloc = { path = "third_party/hloc", editable = true }`
+  - hloc's own requirements at the pin (`requirements.txt`) are all already satisfied or
+    source-pinned here: `pycolmap>=3.13` (4.0.4), `kornia`, `h5py`, `gdown`, `opencv-python`,
+    `lightglue` (already a `[tool.uv.sources]` git pin)
+- `setup.sh` runs `uv sync --locked --all-extras` (`:89`, `:94`), so the new extra is picked up
+  with no flag change, but `--locked` means **`uv.lock` must be regenerated** (`uv lock`)
+- a path source must EXIST before any resolve, exactly like collab-data (`setup.sh:70-80`):
+  - `setup.sh` calls `setup/hloc.sh` BEFORE the `SETUP_DEPS_ONLY` early exit
+  - `Dockerfile:72-73` runs that deps-only pass with only `pyproject.toml uv.lock README.md
+    LICENSE setup.sh` copied — it must also get `setup/hloc.sh` (the clone needs network, as
+    LoGeR/VDA do)
+  - the runtime stage copies only the venv (`Dockerfile:109`); the editable finder points at
+    `/workspace/collab-splats/third_party/hloc`, so that tree must be in the runtime image
+  - **Dockerfile is touched**; the rebuild is the user's (Mac-only builds)
 - `setup/hloc.sh`: path fixed to repo-root `third_party/hloc`; `clone --recursive`, re-pin to
-  `c13273b` every run (LoGeR/VDA policy); bare `pip install` removed
-- `setup.sh`: calls `setup/hloc.sh`; its `uv sync` gains `--extra hloc` (plain sync prunes extras)
-- **The user runs the sync.** No `pip install` / `uv sync` from this work. Until the sync, hloc
-  unit tests mock hloc and the hloc integration run is blocked.
+  `c13273b` every run (LoGeR/VDA policy); bare `pip install` removed; weight prefetch added
+- **The user runs `uv lock` + the sync.** No `pip install` / `uv lock` / `uv sync` from this work.
+  Until then, hloc unit tests mock hloc and the hloc integration run is blocked.
 
 ## Testing
 
@@ -188,7 +247,7 @@ Baseline before any edit, in the worktree, with the `collab_splats.__file__` pro
 
 ```
 cd .worktrees/sfm-backends && PYTHONUTF8=1 PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest \
-  tests/pointcloud tests/wrapper tests/geometry tests/test_docstring_contract.py \
+  tests/pointcloud tests/wrapper tests/geometry tests/remote tests/test_docstring_contract.py \
   -q -p no:cacheprovider --continue-on-collection-errors
 ```
 
@@ -199,8 +258,10 @@ Unit (mocks or synthetic):
 
 - `build_sift_database` argv per `pairing`; `exhaustive` argv equal to a snapshot taken before the move
 - sequential pair generation; sequential+retrieval union dedups
+- `sift_database_valid(params=None)` ignores the sidecar; with params, a mismatch rebuilds
+- hloc `reconstruction.main` returning `None` raises; `HLOC_PIN` equals `setup/hloc.sh`'s pin
+- `PUSH_EXCLUDES` covers `colmap.db` and `colmap/hloc/`
 - `largest_model` picks by registered count, not key
-- sidecar invalidation on `pairing` / `overlap` change
 - registered-subset filter: keeps order, floor raises with N/M
 - every validation key accepted and rejected; bool rejected where int expected
 - ColmapCreator / HlocCreator through mocked pycolmap / hloc: `sparse/0` written, stems
@@ -234,8 +295,11 @@ Integration, tutorial video, tmux, nothing else running, same frames and budget,
 Files touched beyond the creators, their tests, `setup/hloc.sh`, `base.yaml` sfm block and
 `_run_sfm` + validation — allowed because no pointcloud cleanup is running:
 
-- `sfm/instantsfm.py` (move only), `sfm/__init__.py`, `pointcloud/__init__.py`,
-  `depth_align.py` (messages), `pyproject.toml`, `setup.sh`, docs listed above
+- `sfm/instantsfm.py` (move only), `sfm/__init__.py`, `pointcloud/__init__.py`, `pointcloud/base.py`
+  (docstrings), `depth_align.py` (messages), `remote/sources.py` (`PUSH_EXCLUDES`),
+  `pyproject.toml`, `uv.lock` (user-regenerated), `setup.sh`, `Dockerfile`, docs listed above
+- tests: `tests/pointcloud/sfm/*`, `tests/pointcloud/test_registry.py`,
+  `tests/wrapper/test_sfm_config.py`, `tests/remote/test_sources.py`
 
 Not touched: notebooks on `clean/final`, `.worktrees/tutorial-rework`.
 

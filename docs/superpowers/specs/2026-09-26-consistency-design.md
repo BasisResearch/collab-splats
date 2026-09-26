@@ -156,6 +156,25 @@ Each stays only if its failing test reproduces it; otherwise it is dropped with 
 - dropped from the audit: the `.jpg` vs `.png` frame-id split no longer exists on `clean/final`
   (`reconstructor.py:777`, `dashboard/pipeline.py:694` both `.jpg`)
 
+### 7. PNG for every frame image
+
+The keyframe store writes `.png`; frame images elsewhere still use `.jpg`.
+
+- `dashboard/pipeline.py:694`: localized query frames saved as `.jpg` via PIL at default
+  quality 75, then fed back into the localization DB — lossy; switch to `.png`
+- `wrapper/reconstructor.py:777`: localization ids `frame_NNNNNN.jpg` are labels, not files;
+  switch to `.png`
+  - blocker: `localizer.py:830-834` staleness check compares whole strings, so every DB on
+    disk would warn stale
+  - fix: compare `Path(x).stem` lists; old `.jpg` DBs and new `.png` ids both match, no migration
+  - delete the comment at `reconstructor.py:770-775` justifying `.jpg`
+- `pointcloud/sfm/instantsfm.py:292`: fallback name `f"{idx}.jpg"` → `.png`
+- kept as JPEG: `mesh/io.py:317` texture atlas (8192², display-only output; PNG is 10-20x
+  larger); the call site gets a comment saying so
+- test: a DB whose attrs hold `.jpg` ids, loaded with `.png` ids → no stale warning; a DB with
+  different stems → warning; dashboard-appended query frame on disk is PNG and decodes
+  byte-identical to the array written
+
 ## Error handling
 
 - `rescale_intrinsics` raises `ValueError` on a crop box that is not 6 values or has zero size

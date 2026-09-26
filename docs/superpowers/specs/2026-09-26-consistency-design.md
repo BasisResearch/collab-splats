@@ -20,8 +20,12 @@ One long-lived worktree; every phase lands on it in order.
 - forked from the `clean/final` tip at worktree creation (recorded in the plan), never merges a sibling in
 - rebases onto `clean/final` before integration; merge into `clean/final` is the user's call
 - known overlap at fork time:
-  - `clean/r4-lc` rewrites `geometry/metrics.py`, `geometry/verification.py`, loop closure, `evals/scripts/eval.py`
-  - `clean/pointcloud-release` (sfm-backends) rewrites `wrapper/reconstructor.py` and the pointcloud registry
+  - `clean/r4-lc` rewrites `geometry/metrics.py`, `geometry/verification.py`, loop closure, `evals/scripts/eval.py`,
+    `evals/scripts/eval_verification.py` (report keys only, not the `cam.params` line)
+    - moves `clean_for_json` to `geometry/transforms.py:467` and the metrics report write to
+      `reconstructor.py:1657`, same `default=lambda o: o.item()` pattern; item 3 conflicts there
+  - `clean/pointcloud-release` (sfm-backends) rewrites `wrapper/reconstructor.py`, the pointcloud registry
+    and `feedforward/base.py` (295 lines, none inside `_rescale_reconstruction_to_original_dimensions`)
   - `clean/tutorials` rewrites the localization notebook
 - phase 1 keeps each fix to the smallest hunk at the defect so rebase conflicts stay local
 - test runs: `cd .worktrees/consistency && PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest ...`,
@@ -61,7 +65,15 @@ All file IO helpers live in one `collab_splats/utils/io.py`, split by `########`
   - `to_numpy` stays in `torch_utils`
 
 Dead code the audit found goes into `2026-09-09-clean-final-dead-code-design.md`, not here:
-`ConfigLoader`, `infer_batch_size`, `OPENGL_TO_OPENCV`, `FeedforwardResult.save/load`, `load_hf_weights`.
+`ConfigLoader`, `infer_batch_size`, `OPENGL_TO_OPENCV`, `FeedforwardResult.save/load`.
+
+- each has test-only callers; deleting it deletes those tests
+  (`tests/wrapper/test_reconstructor.py`, `tests/utils/test_torch_utils.py`,
+  `tests/geometry/test_transforms.py`, `tests/integration/test_pipeline_cu121.py`)
+- `load_hf_weights` is live (`semantics/segmentation/sky.py:24`), not dead
+
+Second RPE implementation: `evals/metrics.py:75` `compute_rpe` (evo, TUM files, `eval_compare.py`).
+Phase 3 picks one; phase 1 only fixes `trajectory_metrics.rpe`.
 
 ## Phase 1 — convention bugs
 
@@ -89,6 +101,8 @@ Every fix is test-first on a fixture that can see the convention.
   - invert both to c2w
   - Sim3-align predicted centres to gt centres (`umeyama_sim3`), apply to the c2w poses
   - relative error as today on the aligned c2w poses
+- existing tests (`tests/evals/test_trajectory_metrics.py:64,71`, `test_pose_graph_diagnostics.py:189`)
+  use pred = gt or identities, so they pass on both conventions and must keep passing
 - test: non-identity gt trajectory; pred = gt under a known Sim3 (scale 2.5, rotated) → RPE ≈ 0;
   pred with one perturbed frame → nonzero at that pair only
 
@@ -109,6 +123,8 @@ Every fix is test-first on a fixture that can see the convention.
   a float32 NaN passes `clean_for_json` untouched, then `.item()` turns it into a bare `NaN`
 - contract: `clean_for_json` handles `np.floating`, `np.integer`, tuples, ndarrays;
   NaN and ±inf → `None`; the `default=` fallback in `metrics.py` is then dead and removed
+- after rebase onto `clean/r4-lc` the fix lives in `transforms.py:467`, and both `default=` sites
+  (`metrics.py`, `reconstructor.py:1657`) lose the fallback
 - fixed in place only: no `utils/jsonio.py`, no lazy `utils/__init__`, no migration of the
   other JSON sites — those are phase 2, which replaces `clean_for_json` with `to_jsonable`
 - test: `json.dumps(clean_for_json(payload), allow_nan=False)` succeeds for float32 / float64 NaN,
@@ -184,12 +200,16 @@ The keyframe store writes `.png`; frame images elsewhere still use `.jpg`.
     disk would warn stale
   - fix: compare `Path(x).stem` lists; old `.jpg` DBs and new `.png` ids both match, no migration
   - delete the comment at `reconstructor.py:770-775` justifying `.jpg`
+- `dashboard/pipeline.py:710-713` resolves every reconstruction id to `images/<id>`; ids are
+  `frame_NNNNNN.jpg`, the store holds `frame_NNNNNN.png`, so every reference path is missing today
+  - the reconstructor 770-775 comment ("nothing ... resolves an id to a file") is false
+  - fix: resolve by stem against `frames.IMAGE_EXTS`, so old `.jpg`-id DBs resolve too
 - `pointcloud/sfm/instantsfm.py:292`: fallback name `f"{idx}.jpg"` → `.png`
 - kept as JPEG: `mesh/io.py:317` texture atlas (8192², display-only output; PNG is 10-20x
   larger); the call site gets a comment saying so
 - test: a DB whose attrs hold `.jpg` ids, loaded with `.png` ids → no stale warning; a DB with
   different stems → warning; dashboard-appended query frame on disk is PNG and decodes
-  byte-identical to the array written
+  byte-identical to the array written; a `.jpg`-id DB resolves its reference frames to the `.png` files
 
 ## Error handling
 

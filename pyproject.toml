@@ -68,7 +68,10 @@ dependencies = [
     "trimesh",
     "pydantic==2.10.6",
     "pyyaml",
-    "pycolmap>=3.1",
+    # pycolmap-cuda12, pinned at 4.1.1
+    # - GPU SIFT wheel: replaces the colmap CLI (docs/superpowers/specs/2026-09-26-pycolmap-cuda-docker-design.md)
+    # - not 4.2: shared-focal two-view estimator, ~14x verification CPU for single-camera scenes
+    "pycolmap-cuda12==4.1.1",
     "transformers>=4.30,<5.0",
     "timm>=0.9,<2.0",
     "opencv-python",

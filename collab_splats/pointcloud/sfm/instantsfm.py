@@ -2,7 +2,7 @@
 InstantSfM global SfM: the one backend `pointcloud.method: sfm` dispatches to.
 
 - drives the upstream python API (cre185/InstantSfM @ 0.3.0), never their CLI
-- SIFT database is built here with system colmap; upstream's own DB step is bypassed
+- SIFT database is built here with pycolmap (GPU wheel); upstream's own DB step is bypassed
 - four upstream monkeypatches live here (_patch_*), each documented at its definition
 - output contract: image names are filename stems, model at <data_dir>/colmap/sparse/0
 """
@@ -10,9 +10,7 @@ InstantSfM global SfM: the one backend `pointcloud.method: sfm` dispatches to.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 ########################################
-# SIFT feature database (system colmap)
+# SIFT feature database (pycolmap)
 ########################################
 
 
@@ -75,7 +73,7 @@ def _sift_database_valid(database_path: Path, image_names: list[str]) -> bool:
     Returns:
         False when the DB is missing, partial, or keyed on a different image set.
 
-    - A crashed colmap subprocess (e.g. OOM-killed under the cgroup cap) leaves a partial or
+    - A crashed SIFT run (e.g. OOM-killed under the cgroup cap) leaves a partial or
       unreadable DB behind; an existence-only check would cache-hit on it and feed
       ReadColmapDatabase zero tracks.
     - Database.open CREATES the file when absent, so the exists() pre-check must stay; it
@@ -112,59 +110,51 @@ def _generate_sift_database(image_path: Path, database_path: Path, *, num_thread
     - num_threads: CPU SIFT thread cap. colmap's default (-1) spawns one thread per HOST core
       — 96 here — and per-thread RAM blows past the 46.6 GB container cgroup cap (measured:
       OOM-kill at default, clean 1.5 min run at 8 threads on 100 frames of 1920x1080).
-    - Drives the colmap CLI, not pycolmap: the system binary is the CUDA build (GPU SIFT,
-      measured 100x1920x1080 extraction 7 s vs 90 s, matching 55 s vs ~816 s) while the wheel
-      is CPU-only. Reimplements upstream GenerateDatabase (cre185/InstantSfM
+    - GPU via the pycolmap-cuda12 4.1.1 wheel (measured 100x1907x1072 on an A40: extraction
+      8 s, matching 25 s vs 10 s / 42 s for the colmap 3.10 binary it replaces); why 4.1.1 and
+      not 4.2: docs/superpowers/specs/2026-09-26-pycolmap-cuda-docker-design.md.
+    - Reimplements upstream GenerateDatabase (cre185/InstantSfM
       instantsfm/controllers/feature_handler.py:18-57 @ d3e599e), which forces CPU with no
       thread cap and swallows CalledProcessError — a colmap crash there surfaces only as an
       empty-tracks IndexError much later.
     - On failure the partial DB is unlinked so a re-run rebuilds from scratch.
+
+    Args:
+        image_path: directory of images to extract from.
+        database_path: SQLite database to create.
+        num_threads: CPU-path thread cap for extraction and matching; ignored on GPU.
     """
-    env = os.environ.copy()
     use_gpu = torch.cuda.is_available()
-    if not use_gpu:
-        env["CUDA_VISIBLE_DEVICES"] = ""
+    device = pycolmap.Device.cuda if use_gpu else pycolmap.Device.cpu
 
     # One shared SIMPLE_RADIAL camera over the whole set
     # - the sfm path stages frames from a single video/scene, so single_camera holds by
     #   construction (it was a creator field once and was never set False)
     # - per-image cameras would leave every intrinsic solved from one view
-    extractor_cmd = [
-        "colmap",
-        "feature_extractor",
-        "--image_path",
-        str(image_path),
-        "--database_path",
-        str(database_path),
-        "--ImageReader.camera_model",
-        "SIMPLE_RADIAL",
-        "--ImageReader.single_camera",
-        "1",
-        "--SiftExtraction.use_gpu",
-        "1" if use_gpu else "0",
-    ]
-    matcher_cmd = [
-        "colmap",
-        "exhaustive_matcher",
-        "--database_path",
-        str(database_path),
-        "--SiftMatching.use_gpu",
-        "1" if use_gpu else "0",
-    ]
+    reader_options = pycolmap.ImageReaderOptions()
+    reader_options.camera_model = "SIMPLE_RADIAL"
+
+    # CPU path only: cap threads on both steps (GPU path keeps colmap's defaults)
+    extraction_options = pycolmap.FeatureExtractionOptions()
+    matching_options = pycolmap.FeatureMatchingOptions()
     if not use_gpu:
-        extractor_cmd += ["--SiftExtraction.num_threads", str(num_threads)]
-        matcher_cmd += ["--SiftMatching.num_threads", str(num_threads)]
+        extraction_options.num_threads = num_threads
+        matching_options.num_threads = num_threads
 
     try:
-        for cmd in (extractor_cmd, matcher_cmd):
-            logger.info("InstantSfM: running %s %s (%s)", cmd[0], cmd[1], "gpu" if use_gpu else "cpu")
-            subprocess.run(cmd, check=True, env=env)
-    except (subprocess.CalledProcessError, FileNotFoundError) as err:
+        logger.info("InstantSfM: SIFT extraction + exhaustive matching (%s)", "gpu" if use_gpu else "cpu")
+        pycolmap.extract_features(
+            database_path,
+            image_path,
+            camera_mode=pycolmap.CameraMode.SINGLE,
+            reader_options=reader_options,
+            extraction_options=extraction_options,
+            device=device,
+        )
+        pycolmap.match_exhaustive(database_path, matching_options=matching_options, device=device)
+    except (RuntimeError, ValueError) as err:
         database_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"COLMAP SIFT database build failed ({err}) — is the `colmap` binary installed "
-            "(CUDA-built for the GPU path) and is there enough memory?"
-        ) from err
+        raise RuntimeError(f"COLMAP SIFT database build failed ({err}) — is there enough memory?") from err
 
 
 def _patch_instantsfm_track_ids() -> None:

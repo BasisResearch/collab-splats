@@ -388,3 +388,63 @@ def test_sfm_image_dir_refuses_a_missing_directory(tmp_path):
     """
     with pytest.raises(FileNotFoundError, match="image directory"):
         instantsfm._sfm_image_dir(tmp_path / "scene" / "images")
+
+
+def _record_sift_calls(monkeypatch, *, cuda: bool) -> list[tuple[str, dict]]:
+    """
+    Stub pycolmap SIFT entry points and torch's CUDA probe; return the call log.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        cuda: value torch.cuda.is_available() reports.
+
+    Returns:
+        (function name, kwargs) per pycolmap call, in call order.
+    """
+    calls = []
+    monkeypatch.setattr(instantsfm.torch.cuda, "is_available", lambda: cuda)
+    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **kw: calls.append(("extract", kw)))
+    monkeypatch.setattr(pycolmap, "match_exhaustive", lambda *a, **kw: calls.append(("match", kw)))
+    return calls
+
+
+def test_generate_sift_database_gpu_uses_cuda_device(monkeypatch, tmp_path):
+    calls = _record_sift_calls(monkeypatch, cuda=True)
+
+    instantsfm._generate_sift_database(tmp_path / "images", tmp_path / "db.db")
+
+    # Extraction then matching, both pinned to CUDA; one shared SIMPLE_RADIAL camera
+    assert [name for name, _ in calls] == ["extract", "match"]
+    assert all(kw["device"] == pycolmap.Device.cuda for _, kw in calls)
+    extract = calls[0][1]
+    assert extract["camera_mode"] == pycolmap.CameraMode.SINGLE
+    assert extract["reader_options"].camera_model == "SIMPLE_RADIAL"
+
+
+def test_generate_sift_database_cpu_caps_threads(monkeypatch, tmp_path):
+    calls = _record_sift_calls(monkeypatch, cuda=False)
+
+    instantsfm._generate_sift_database(tmp_path / "images", tmp_path / "db.db", num_threads=5)
+
+    # CPU device on both steps; the thread cap reaches both option structs
+    extract, match = calls[0][1], calls[1][1]
+    assert extract["device"] == match["device"] == pycolmap.Device.cpu
+    assert extract["extraction_options"].num_threads == 5
+    assert match["matching_options"].num_threads == 5
+
+
+def test_generate_sift_database_failure_unlinks_partial_db(monkeypatch, tmp_path):
+    db = tmp_path / "db.db"
+    db.write_bytes(b"partial")
+
+    def crash(*_args, **_kwargs):
+        raise RuntimeError("sift died")
+
+    monkeypatch.setattr(instantsfm.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **kw: None)
+    monkeypatch.setattr(pycolmap, "match_exhaustive", crash)
+
+    # Matching crash surfaces as RuntimeError and leaves no DB behind
+    with pytest.raises(RuntimeError, match="SIFT database build failed"):
+        instantsfm._generate_sift_database(tmp_path / "images", db)
+    assert not db.exists()

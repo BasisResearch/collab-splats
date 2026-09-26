@@ -21,6 +21,12 @@
   and must print a path under `.worktrees/consistency/`.
 - Never pipe pytest into `tail`/`head` (eats the exit code). Use `-q` and read the summary line.
 - No full-suite runs; the GPU is shared. Per-package gates only.
+- **Venv gaps (measured 2026-09-26):** `gsplat.losses` and `nvdiffrast` do not import, so
+  `tests/evals/test_eval_splats.py`, `tests/dashboard/test_pipeline.py` and
+  `tests/dashboard/test_run_localization.py` ERROR at collection; `vismatch` is missing, so
+  17 `tests/localization/test_local_matcher.py` tests fail. Do not repair the shared venv. Task 0
+  Step 3 writes an out-of-tree stub plugin. Every command touching those three files adds
+  `PYTHONPATH=.:/tmp/claude-0/consistency-stubs` and `-p consistency_stubs`.
 - Commit in the worktree with `git add <files> && git commit`. Messages end with
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Code style (CLAUDE.md): block comments per logical block; docstrings open on their own line,
@@ -28,6 +34,14 @@
   header line then `- ` bullets. `tests/test_docstring_contract.py` enforces it for `geometry`
   and `pointcloud`.
 - A test that passes on the unfixed code is rejected. Every "verify it fails" step is mandatory.
+
+## Plan verification (2026-09-26)
+
+Every task was dry-run in a `git archive` copy of `clean/final` (scratch, no git state touched):
+- tests appended first: every new test failed on current code for the stated reason
+- plan code applied verbatim: all new tests passed; touched files 569 passed, only failures were
+  the scratch copy lacking `configs/`; `tests/pointcloud/test_base.py`, `sfm`, `localization`,
+  `wrapper` 300 passed, 17 failed = the known missing `vismatch`
 
 ## Dropped from the spec during planning
 
@@ -80,21 +94,42 @@ into the "Fork point" line at the bottom of this plan (commit it on `clean/consi
 cd /workspace/collab-splats/.worktrees/consistency && mkdir -p third_party && for d in /workspace/collab-splats/third_party/*; do ln -sfn "$d" third_party/; done && ls third_party
 ```
 
-- [ ] **Step 3: Record the control gate on the fork point**
+- [ ] **Step 3: Out-of-tree stubs for the venv gaps**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -c "import collab_splats; print(collab_splats.__file__)" && for p in evals geometry pointcloud localization dashboard wrapper; do echo "== $p"; PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/$p -q -p no:cacheprovider 2>&1 | grep -E "passed|failed|error" | tail -1; done | tee /tmp/claude-0/consistency-control.txt
+mkdir -p /tmp/claude-0/consistency-stubs/nvdiffrast && touch /tmp/claude-0/consistency-stubs/nvdiffrast/__init__.py /tmp/claude-0/consistency-stubs/nvdiffrast/torch.py && cat > /tmp/claude-0/consistency-stubs/consistency_stubs.py <<'PY'
+"""
+pytest plugin: stub gsplat.losses when the venv's gsplat lacks it (test collection only).
+"""
+import sys
+import types
+
+import gsplat
+
+if not hasattr(gsplat, "losses"):
+    _m = types.ModuleType("gsplat.losses")
+    _m.ssim_loss = lambda *a, **k: None
+    sys.modules["gsplat.losses"] = _m
+    gsplat.losses = _m
+PY
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs -q -p no:cacheprovider tests/evals/test_eval_splats.py tests/dashboard/test_run_localization.py tests/dashboard/test_pipeline.py 2>&1 | grep -E "passed|failed|error" | tail -1
+```
+
+Expected: the three files collect and run (a summary line, not a collection error).
+
+- [ ] **Step 4: Record the control gate on the fork point**
+
+```bash
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -c "import collab_splats; print(collab_splats.__file__)" && for p in evals geometry pointcloud localization dashboard wrapper; do echo "== $p"; PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/$p -q -p no:cacheprovider 2>&1 | grep -E "passed|failed|error" | tail -1; done | tee /tmp/claude-0/consistency-control.txt
 ```
 
 Expected: one summary line per package. Save the failing node ids too:
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && for p in evals geometry pointcloud localization dashboard wrapper; do PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/$p -q -rfE -p no:cacheprovider 2>&1 | grep -E "^(FAILED|ERROR)"; done | sort > /tmp/claude-0/consistency-control-failures.txt; wc -l /tmp/claude-0/consistency-control-failures.txt
+cd /workspace/collab-splats/.worktrees/consistency && for p in evals geometry pointcloud localization dashboard wrapper; do PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/$p -q -rfE -p no:cacheprovider 2>&1 | grep -E "^(FAILED|ERROR)"; done | sort > /tmp/claude-0/consistency-control-failures.txt; wc -l /tmp/claude-0/consistency-control-failures.txt
 ```
 
 These are the baseline. Task 12 diffs against them; only a new failure blocks.
-
----
 
 ### Task 1: RPE frame convention
 
@@ -150,8 +185,9 @@ def test_rpe_rotation_error_isolated_to_the_perturbed_frame():
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/evals/test_trajectory_metrics.py -q -k "sim3_copy or perturbed_frame"
 ```
 
-Expected: `test_rpe_is_zero_for_a_sim3_copy_of_gt` FAILS (trans_rmse far above 1e-6 — w2c translations
-under a 2.5x scale). If both pass, stop: the fixture cannot see the bug; fix the fixture first.
+Expected: `test_rpe_is_zero_for_a_sim3_copy_of_gt` FAILS (measured: trans_rmse 15.03). The
+perturbed-frame test PASSES on old code — it pins the rotation formula, it is not the bug detector.
+If the Sim3 test passes, stop: the fixture cannot see the bug; fix the fixture first.
 
 - [ ] **Step 3: Implement**
 
@@ -891,7 +927,7 @@ Add to the imports: `from pathlib import Path`, `from types import SimpleNamespa
 - [ ] **Step 2: Run to verify it fails, and that the fixture edit alone breaks nothing**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/evals/test_eval_splats.py -q
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/evals/test_eval_splats.py -q
 ```
 
 Expected: only `test_native_intrinsics_undo_the_crop` FAILS — old code gives fy = 20 * 64/16 = 80
@@ -934,7 +970,7 @@ and change the docstring's first bullet to:
 - [ ] **Step 4: Run the eval_splats tests**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/evals/test_eval_splats.py -q
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/evals/test_eval_splats.py -q
 ```
 
 Expected: all pass.
@@ -1005,7 +1041,8 @@ instead of the helper call, run, and confirm the mean diff assertion fails for a
 
 - [ ] **Step 3: Implement**
 
-In `mapanything.py`, add a module-level helper (above the creator class):
+In `mapanything.py`, add a module-level helper between the `_MA_RESIZE_MODE_MAP` dict and
+`@dataclass class MapAnythingCreator` (above the decorator, not between it and the class):
 
 ```python
 def _mapanything_crop_coords(frame_hw: list[tuple[int, int]], model_w: int, model_h: int) -> np.ndarray:
@@ -1089,7 +1126,7 @@ def test_stamp_db_provenance_reads_a_reconstructor_run_config(tmp_path):
     zarr_path = tmp_path / "pointcloud.zarr"
     zarr.open(str(zarr_path), mode="w")
 
-    pipeline._stamp_db_provenance(zarr_path, "loma", tmp_path)
+    pl._stamp_db_provenance(zarr_path, "loma", tmp_path)
 
     attrs = dict(zarr.open(str(zarr_path), mode="r")["local_features/loma"].attrs)
     assert attrs["backbone"] == "mapanything"
@@ -1103,18 +1140,19 @@ def test_stamp_db_provenance_still_reads_a_dashboard_run_config(tmp_path):
     zarr_path = tmp_path / "pointcloud.zarr"
     zarr.open(str(zarr_path), mode="w")
 
-    pipeline._stamp_db_provenance(zarr_path, "loma", tmp_path)
+    pl._stamp_db_provenance(zarr_path, "loma", tmp_path)
 
     attrs = dict(zarr.open(str(zarr_path), mode="r")["local_features/loma"].attrs)
     assert (attrs["backbone"], attrs["frame_indices"], attrs["video_ref"]) == ("vggtx", [1, 2], "gs://v.mp4")
 ```
 
-Match the module alias the file already uses for `collab_splats.dashboard.pipeline`.
+The file imports the module as `pl` and `RunConfig` already; add
+`from collab_splats.preproc import frames as fr`.
 
 - [ ] **Step 2: Run to verify it fails**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/dashboard/test_pipeline.py -q -k stamp_db_provenance
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_pipeline.py -q -k stamp_db_provenance
 ```
 
 Expected: the Reconstructor test FAILS with `'vggt_omega' == 'mapanything'`; the dashboard test passes.
@@ -1158,7 +1196,7 @@ Replace the body of `_stamp_db_provenance` down to the `store = zarr.open(...)` 
 - [ ] **Step 4: Run the dashboard provenance tests and the config test**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/dashboard/test_pipeline.py tests/dashboard/test_config.py tests/dashboard/test_run_localization.py -q
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_pipeline.py tests/dashboard/test_config.py tests/dashboard/test_run_localization.py -q
 ```
 
 Expected: all pass.
@@ -1327,7 +1365,7 @@ fix the path only. Add `from PIL import Image` if missing.
 - [ ] **Step 3: Run to verify they fail**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/dashboard/test_run_localization.py -q -k "png_store_files or lossless_png"
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_run_localization.py -q -k "png_store_files or lossless_png"
 ```
 
 Expected: both FAIL (`images/00000.jpg` returned; saved suffix `.jpg`).
@@ -1390,7 +1428,7 @@ and change line 694's `.jpg` to `.png`:
 - [ ] **Step 5: Run the dashboard localization tests**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/dashboard/test_run_localization.py tests/dashboard/test_localize_page.py tests/dashboard/test_pipeline.py -q
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_run_localization.py tests/dashboard/test_localize_page.py tests/dashboard/test_pipeline.py -q
 ```
 
 Expected: all pass, including the existing `test_ref_paths_remapped_to_local_images_dir`
@@ -1456,7 +1494,7 @@ second grep is empty.
 - [ ] **Step 2: Per-package gate vs control**
 
 ```bash
-cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -c "import collab_splats; print(collab_splats.__file__)" && for p in evals geometry pointcloud localization dashboard wrapper; do PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/$p -q -rfE -p no:cacheprovider 2>&1 | grep -E "^(FAILED|ERROR)"; done | sort > /tmp/claude-0/consistency-after-failures.txt; comm -13 /tmp/claude-0/consistency-control-failures.txt /tmp/claude-0/consistency-after-failures.txt
+cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -c "import collab_splats; print(collab_splats.__file__)" && for p in evals geometry pointcloud localization dashboard wrapper; do PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/$p -q -rfE -p no:cacheprovider 2>&1 | grep -E "^(FAILED|ERROR)"; done | sort > /tmp/claude-0/consistency-after-failures.txt; comm -13 /tmp/claude-0/consistency-control-failures.txt /tmp/claude-0/consistency-after-failures.txt
 ```
 
 Expected: `comm` prints nothing (no new failures). Also run `tests/test_docstring_contract.py`.

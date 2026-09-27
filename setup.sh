@@ -1,6 +1,8 @@
 #!/bin/bash
 # Single source of truth for env setup. Runs in the Docker build AND standalone.
 # Floor required from the host/image: gcc/g++ (build-essential) + (at runtime) NVIDIA driver.
+# SETUP_DEPS_ONLY=1: Docker pass 1 — lock only, no project install; keeps the CUDA compile layer
+# cached across source edits.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,20 +11,18 @@ PYTHON="$VENV/bin/python"
 export PIP_ROOT_USER_ACTION=ignore
 export UV_PROJECT_ENVIRONMENT="$VENV"
 
-# CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim).
-# Prefer a complete SYSTEM toolkit: the nvidia/cuda:*-devel image ships nvcc + all headers +
-# libs under one root at /usr/local/cuda — exactly the unified layout torch's cpp_extension
-# expects. There is no pip fallback: every nvidia-cuda-nvcc-cu12 wheel (12.1 … 12.8) ships
-# only ptxas, so a bare host must provide the toolkit itself — fail fast with the recipe.
-if [ -x /usr/local/cuda/bin/nvcc ]; then
-    export CUDA_HOME=/usr/local/cuda
-    export PATH="$CUDA_HOME/bin:$PATH"
-else
+# CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim, nvdiffrast)
+# - toolkit is the user's to provide (README §4); setup.sh never installs system packages
+# - honors a pre-set CUDA_HOME (conda, /usr/local/cuda-12.1); default /usr/local/cuda
+# - no nvcc: warn and continue — an already-built env (runtime Docker image) compiles nothing;
+#   a failed `uv sync` then prints the recipe below
+cuda_toolkit_help() {
     cat >&2 <<'MSG'
-setup.sh: no nvcc at /usr/local/cuda/bin/nvcc — bae and gsplat build from source and need it.
-Use the nvidia/cuda:12.1.1-devel image (it supplies nvcc + dev headers, but NOT a new enough
-CCCL — the block below overlays that), or install just the two apt packages the image ships
-(verified 2026-09-06 on a bare host, exact match to torch cu121):
+setup.sh: uv sync failed with no nvcc under $CUDA_HOME — bae, gsplat, fused-ssim and nvdiffrast
+build from source and need it. The CUDA toolkit is yours to provide (README §4). Options:
+Use the Docker image (every extension prebuilt), or the nvidia/cuda:12.1.1-devel image (it supplies
+nvcc + dev headers, but NOT a new enough CCCL — setup.sh overlays that), or install just the two
+apt packages the image ships (verified 2026-09-06 on a bare host, exact match to torch cu121):
   apt-get install -y --no-install-recommends cuda-nvcc-12-1 cuda-libraries-dev-12-1
 Or build the toolkit with micromamba (verified 2026-08-22):
   micromamba create -p /opt/cuda-nvcc-12.1 -c nvidia -c conda-forge \
@@ -30,8 +30,17 @@ Or build the toolkit with micromamba (verified 2026-08-22):
   ln -sfn libcudart.so.12 /opt/cuda-nvcc-12.1/lib/libcudart.so   # solver leaves it dangling
   ln -sfn lib /opt/cuda-nvcc-12.1/lib64 && ln -sfn /opt/cuda-nvcc-12.1 /usr/local/cuda
 MSG
-    exit 1
+}
+
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+HAVE_NVCC=0
+if [ -x "$CUDA_HOME/bin/nvcc" ]; then
+    HAVE_NVCC=1
+    export PATH="$CUDA_HOME/bin:$PATH"
+else
+    echo "setup.sh: WARN no nvcc at $CUDA_HOME/bin/nvcc — fine if the CUDA extensions are already built." >&2
 fi
+
 # libcu++ (CCCL) floor — REQUIRED even inside nvidia/cuda:12.1.1-devel. gsplat d2f5c0f includes
 # <cuda/std/optional>, which arrived in CCCL 2.2. CUDA 12.1 ships cuda/std/detail/libcxx/include/
 # optional but NOT cuda/std/optional, so with a newer overlay on the path the OUTER header resolves
@@ -42,16 +51,19 @@ fi
 # The overlay reaches nvcc ONLY through NVCC_PREPEND_FLAGS. Do NOT also put it on CPLUS_INCLUDE_PATH
 # (or CPATH): those rank BELOW the toolkit's own -I on the host preprocessor's search order, which
 # resurrects the exact __config failure this block exists to prevent.
-CCCL_PREFIX="${CCCL_PREFIX:-/opt/cccl-12.6.77}"
-CCCL_INC="$CCCL_PREFIX/nvidia/cuda_cccl/include"
-if [ ! -f "$CCCL_INC/cuda/std/optional" ]; then
-    /root/.local/bin/uv pip install --target "$CCCL_PREFIX" nvidia-cuda-cccl-cu12==12.6.77
-fi
-if [ -f "$CCCL_INC/cuda/std/optional" ]; then
-    export NVCC_PREPEND_FLAGS="-I$CCCL_INC ${NVCC_PREPEND_FLAGS:-}"
-else
-    echo "setup.sh: no <cuda/std/optional> at $CCCL_INC — gsplat d2f5c0f will fail to compile." >&2
-    exit 1
+# Skipped without nvcc: the overlay only feeds nvcc.
+if [ "$HAVE_NVCC" = 1 ]; then
+    CCCL_PREFIX="${CCCL_PREFIX:-/opt/cccl-12.6.77}"
+    CCCL_INC="$CCCL_PREFIX/nvidia/cuda_cccl/include"
+    if [ ! -f "$CCCL_INC/cuda/std/optional" ]; then
+        /root/.local/bin/uv pip install --target "$CCCL_PREFIX" nvidia-cuda-cccl-cu12==12.6.77
+    fi
+    if [ -f "$CCCL_INC/cuda/std/optional" ]; then
+        export NVCC_PREPEND_FLAGS="-I$CCCL_INC ${NVCC_PREPEND_FLAGS:-}"
+    else
+        echo "setup.sh: no <cuda/std/optional> at $CCCL_INC — gsplat d2f5c0f will fail to compile." >&2
+        exit 1
+    fi
 fi
 
 # GPU targets: sm_80 SASS runs natively on all of 8.x, PTX JITs forward to Hopper
@@ -86,12 +98,14 @@ cd "$SCRIPT_DIR"
 # Dependency-only pass: Docker caches the slow CUDA compiles in their own layer
 # - needs only pyproject.toml + uv.lock, so source edits never invalidate it
 if [ "${SETUP_DEPS_ONLY:-0}" = 1 ]; then
-    /root/.local/bin/uv sync --locked --all-extras --no-install-project
+    /root/.local/bin/uv sync --locked --all-extras --no-install-project \
+        || { [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help; exit 1; }
     echo "=== setup complete (dependencies only) ==="
     exit 0
 fi
 
-/root/.local/bin/uv sync --locked --all-extras
+/root/.local/bin/uv sync --locked --all-extras \
+    || { [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help; exit 1; }
 
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
 # Best-effort: a build stage without network/system libs skips it and

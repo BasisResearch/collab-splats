@@ -49,16 +49,12 @@ uv sync --all-extras             # everything (what setup.sh does)
 ```
 
 > **Prefer `setup.sh` over a bare `uv sync` — and never `uv pip install ... @ git+...`.** Why:
-> - The CUDA extensions (`bae`, `gsplat`) build from source and need `nvcc` + `build-essential`. `setup.sh` wires `CUDA_HOME`/`PATH` to the system `/usr/local/cuda` and fails fast with a micromamba recipe when nvcc is absent (no pip wheel ships nvcc).
+> - The CUDA extensions (`bae`, `gsplat`) build from source and need `nvcc` + `build-essential`. `setup.sh` wires `CUDA_HOME`/`PATH` to the toolkit (default `/usr/local/cuda`), warns when nvcc is absent, and prints the install recipe only if a build needs it (no pip wheel ships nvcc).
 > - `uv pip install` ignores this project's `[tool.uv]` config, so it resolves wrong package sources and fails.
 
 ### 3. Private dependency (collab-data)
 
-`collab-data` is a private BasisResearch repo, kept out of the locked graph and installed post-sync (needs git credentials). `setup.sh` installs it best-effort; on a credential-less build it is skipped — re-run `setup.sh` at deploy, or install it directly:
-
-```sh
-uv pip install "git+https://github.com/BasisResearch/collab-data.git"
-```
+`collab-data` is a private BasisResearch repo, locked as a path dependency at `/workspace/collab-data` — `uv sync` cannot resolve without it. `setup.sh` clones it there if missing (needs GitHub credentials).
 
 **Data access (rclone remote).** The dashboard reads and writes scenes over an rclone
 remote named `collab-data` (Google Cloud Storage). Set it up once.
@@ -67,7 +63,7 @@ Install `rclone` and `jq`:
 
 ```sh
 brew install rclone jq                 # macOS
-sudo apt install rclone jq             # Debian / Ubuntu
+curl https://rclone.org/install.sh | sudo bash && sudo apt install jq   # Linux (apt's rclone is 1.53, from 2020)
 ```
 
 Save a GCS service-account key for the collab-data project to
@@ -80,6 +76,8 @@ repo. It configures the `collab-data` remote and verifies access:
 
 ### 4. System requirements
 
+You provide these; `setup.sh` never installs system packages.
+
 - **NVIDIA driver + GPU** at runtime (model warmup loads CUDA kernels at import).
 - **build-essential** (gcc/g++) + a CUDA toolkit at build time for the source extensions.
 - Optional: `ffmpeg`, `rclone` for the video and data pipelines.
@@ -88,7 +86,8 @@ All subsequent commands assume the venv is active (`source /opt/venv/reconstruct
 
 ### 5. Docker image
 
-The image runs the same `setup.sh`, with every CUDA extension compiled ahead of time. Build it
+The image runs the same `setup.sh`, with every CUDA extension compiled ahead of time. The runtime
+image has no nvcc by design; re-running `setup.sh` there is safe. Build it
 from the collab-splats checkout, with `collab-data` cloned beside it (`../collab-data`); it is
 a locked path dependency, handed to the build as a named context so no GitHub credentials are needed:
 

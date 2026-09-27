@@ -35,7 +35,10 @@ Minimal: no dry-run parsing, no version checks. uv already reports whether it mu
 
 - Move the recipe heredoc into a function `cuda_toolkit_help` (text unchanged, plus one line:
   "or use the Docker image; driver + toolkit are yours to provide — README Prerequisites").
-- `/usr/local/cuda/bin/nvcc` present → current behavior (CUDA_HOME, PATH, CCCL overlay).
+- nvcc lookup honors a pre-set toolkit: `CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"`, test
+  `$CUDA_HOME/bin/nvcc` (today's hardcoded path wrongly reports a conda/`/usr/local/cuda-12.1`
+  toolkit as missing, then skips CCCL and gsplat dies on `__config`).
+- present → current behavior (CUDA_HOME, PATH, CCCL overlay).
 - absent → `HAVE_NVCC=0`, one-line warning ("no nvcc — fine if the CUDA extensions are already
   built"), skip the CCCL overlay block entirely.
 
@@ -68,7 +71,9 @@ nvcc/CCCL/MAX_JOBS env.
 ## README Install rework
 
 Only the Install section. Uncommitted intro hunk at top of README.md is someone else's WIP —
-do not touch, commit Install hunks only.
+do not touch, commit Install hunks only. `git add -p` is interactive (unavailable here): build
+the Install-only patch, `git apply --cached` it, then plain `git commit` (not `--only`, which
+would take the whole working-tree file); confirm with `git diff --cached` first.
 
 1. **Prerequisites (you provide)** — moved to first: driver + GPU, gcc/g++, CUDA 12.1 toolkit
    (must match torch cu121; only needed when extensions compile), uv. One line: or use Docker (§5).
@@ -80,13 +85,20 @@ do not touch, commit Install hunks only.
    `uv pip install git+...`" text (contradicts the `uv pip` warning above it).
 4. **rclone** — Linux install via `curl https://rclone.org/install.sh | sudo bash`; note Ubuntu
    apt ships 1.53 (2020) and overwrites a newer binary.
-5. **Docker** — add: runtime image has no nvcc by design; `setup.sh` re-run there is safe.
+5. **Docker** — add: runtime image has no nvcc by design; `setup.sh` re-run there is safe while
+   `uv.lock` matches the image. Lock bumped a CUDA extension since the build → sync must compile
+   → fails with the recipe; the fix is rebuilding the image, not installing nvcc in the pod.
+6. **docs/source/getting_started.md** — one line after `bash setup.sh`: prerequisites (driver,
+   gcc, CUDA 12.1 toolkit) are the user's; link README. No other docs-site changes.
 
 ## Testing
 
 - Runtime pod (no nvcc): `bash setup.sh` completes; log shows the no-nvcc warning; smoke test
   passes; InstantSfM extras present after.
-- Forced compile without nvcc: `UV_PROJECT_ENVIRONMENT=<scratch empty venv>` (in scratchpad,
-  deleted after) → uv fails on a CUDA build → recipe printed under the error, exit 1.
+- Failure path: copy setup.sh to scratchpad, swap the full `uv sync` call for `false`, run with
+  no nvcc → recipe printed, exit 1. (A real empty-venv compile was rejected: uv cache is empty,
+  it would download ~400 packages incl. torch just to watch one build fail.)
+- Pre-set toolkit: `CUDA_HOME=/nonexistent bash setup.sh` in the pod → warning path (proves the
+  env var is read, not the hardcoded path).
 - No Docker rebuild required. Editing setup.sh invalidates the cached CUDA layer — flag to user
   before the next build; builder has nvcc so behavior there is identical.

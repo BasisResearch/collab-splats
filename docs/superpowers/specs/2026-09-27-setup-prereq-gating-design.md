@@ -68,26 +68,25 @@ nvcc/CCCL/MAX_JOBS env.
 - Smoke test at the end: unchanged (already works without nvcc — checks AOT `.so` presence).
 - `/workspace/setup_profile.sh` (outside repo; `apt install rclone` downgrade) — separate.
 
-## README Install rework
+## README Install edits
 
-Only the Install section. Uncommitted intro hunk at top of README.md is someone else's WIP —
-do not touch, commit Install hunks only. `git add -p` is interactive (unavailable here): build
-the Install-only patch, `git apply --cached` it, then plain `git commit` (not `--only`, which
-would take the whole working-tree file); confirm with `git diff --cached` first.
+Keep the existing structure (§1 uv · §2 install · §3 collab-data · §4 system requirements ·
+§5 Docker). No new sections, no reordering — line edits only.
 
-1. **Prerequisites (you provide)** — moved to first: driver + GPU, gcc/g++, CUDA 12.1 toolkit
-   (must match torch cu121; only needed when extensions compile), uv. One line: or use Docker (§5).
-2. **Install (`setup.sh` provides)** — list what it does; all four compiled extensions (bae,
-   gsplat, fused-ssim, nvdiffrast); idempotent; runs in the Docker image without nvcc because
-   nothing compiles.
-3. **collab-data** — fix: locked path dependency at `/workspace/collab-data`, required for
-   `uv sync`; setup.sh clones it (GitHub auth) if missing. Drop the "best-effort / post-sync /
-   `uv pip install git+...`" text (contradicts the `uv pip` warning above it).
-4. **rclone** — Linux install via `curl https://rclone.org/install.sh | sudo bash`; note Ubuntu
-   apt ships 1.53 (2020) and overwrites a newer binary.
-5. **Docker** — add: runtime image has no nvcc by design; `setup.sh` re-run there is safe.
-6. **docs/source/getting_started.md** — one line after `bash setup.sh`: prerequisites (driver,
-   gcc, CUDA 12.1 toolkit) are the user's; link README. No other docs-site changes.
+Uncommitted intro hunk at top of README.md is someone else's WIP — do not touch, commit Install
+hunks only. `git add -p` is interactive (unavailable here): build the Install-only patch,
+`git apply --cached` it, then plain `git commit` (not `--only`, which would take the whole
+working-tree file); confirm with `git diff --cached` first.
+
+- **§2 callout:** "fails fast with a micromamba recipe when nvcc is absent" → "warns when nvcc
+  is absent; prints the install recipe if a build needs it".
+- **§3 collab-data:** replace the stale "kept out of the locked graph, installed post-sync
+  best-effort" sentence + `uv pip install git+...` block with one sentence: locked path
+  dependency at `/workspace/collab-data`; `setup.sh` clones it if missing (needs GitHub auth).
+- **§3 rclone:** `sudo apt install rclone jq` → `curl https://rclone.org/install.sh | sudo bash`
+  + `sudo apt install jq` (apt rclone is 1.53 from 2020).
+- **§4:** one lead sentence — you provide these; `setup.sh` checks but never installs them.
+- **§5:** one line — runtime image has no nvcc by design; re-running `setup.sh` there is safe.
 
 ## Testing
 

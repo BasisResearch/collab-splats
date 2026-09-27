@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec, patch
@@ -11,6 +12,7 @@ import torch
 import yaml
 from mergedeep import merge
 
+from collab_splats.geometry import metrics
 from collab_splats.mesh import fuse_tsdf
 from collab_splats.pointcloud.feedforward.base import (
     FeedforwardResult,
@@ -1310,7 +1312,7 @@ def test_leaf_stages_derived_from_dep_graph():
     expected = {s for s in R._STAGE_ORDER if not any(s in deps for deps in R._STAGE_DEPS.values())}
     assert R.LEAF_STAGES == expected
     # Today's graph, spelled out so a failure above reads as a real change rather than a typo.
-    assert expected == {"refine", "semantics", "splats", "mesh", "localize", "verify", "reconstruction_quality_report"}
+    assert expected == {"refine", "semantics", "splats", "mesh", "localize", "reconstruction_quality_report"}
 
 
 def _seed_disk_reconstruction(rec, frame_idxs, image_names):
@@ -1541,7 +1543,7 @@ def test_report_is_appended_with_no_config_boolean_to_turn_it_off(tmp_path):
 
     Every other diagnostic ships behind a default-false flag, and the one boolean this stage
     would have had is the boolean that keeps it off. The config here disables everything that
-    HAS a flag — semantics, mesh, localize, BA, verify — so an appended report is the only
+    HAS a flag — semantics, mesh, localize, BA — so an appended report is the only
     thing that can follow pointcloud.
     """
     config = _make_config(
@@ -1550,7 +1552,7 @@ def test_report_is_appended_with_no_config_boolean_to_turn_it_off(tmp_path):
             "semantics": {"enabled": False},
             "mesh": {"enabled": False},
             "localization": {"enabled": False},
-            "pointcloud": {"bundle_adjustment": False, "geometric_verification": False},
+            "pointcloud": {"bundle_adjustment": False},
         },
     )
     rec = Reconstructor(config)
@@ -1585,59 +1587,137 @@ def test_report_output_marker_is_report_json_in_the_backend_dir(tmp_path):
         rec.run_pipeline(stages=["reconstruction_quality_report"])
 
 
-@pytest.mark.parametrize(
-    "flag,verification_exists,expect_verify",
-    [
-        # The flag is what the user pays verify's cost with, so it is what gates the call.
-        (True, False, True),
-        # Regression test: report is always on, and reaching around an explicit opt-out would
-        # charge every default run verify's measured 47.6 min and +6.29 GB RSS at 300 frames.
-        (False, False, False),
-        # Already on disk: loaded, never rebuilt, whatever the flag says.
-        (True, True, False),
-    ],
-)
-def test_report_runs_verify_only_when_the_flag_allows_it(tmp_path, flag, verification_exists, expect_verify):
-    """An always-on stage must not override an explicit `geometric_verification: false`."""
-    config = _make_config(tmp_path, {"pointcloud": {"geometric_verification": flag}})
-    rec = Reconstructor(config)
-    rec._resolve_result = lambda: object()
-    verification_json = rec.backend_dir / "colmap" / "verification.json"
-    if verification_exists:
-        verification_json.parent.mkdir(parents=True, exist_ok=True)
-        verification_json.write_text("{}")
+def _save_tiny_zarr(rec, n=3, with_confidence=True, confidence=None):
+    """A slanted-plane pointcloud.zarr at rec.pointcloud_zarr, so the report stage runs for real."""
+    if confidence is None and with_confidence:
+        confidence = np.full((n, 16, 16), 0.9, np.float32)
+    hw = 16
+    rows = np.arange(hw, dtype=np.float32)[:, None]
+    base = np.broadcast_to(3.0 + 0.1 * rows, (hw, hw)).astype(np.float32)
+    extrinsics = np.stack([np.eye(4, dtype=np.float32) for _ in range(n)])
+    for k in range(n):
+        extrinsics[k][0, 3] = -0.15 * k  # sideways baseline, so pairs have parallax
+    K = np.array([[50.0, 0, hw / 2], [0, 50.0, hw / 2], [0, 0, 1.0]], dtype=np.float32)
+    FeedforwardResult(
+        points=np.zeros((1, 3), np.float32),
+        colors=np.zeros((1, 3), np.uint8),
+        extrinsics=extrinsics,
+        intrinsics=np.stack([K] * n),
+        image_paths=[Path(f"frame_{4 * k:06d}.png") for k in range(n)],
+        original_coords=np.tile(np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1)),
+        model_width=hw,
+        model_height=hw,
+        depth=np.stack([base * (1.0 + 0.01 * k) for k in range(n)]),
+        confidence=confidence,
+    ).save_zarr(rec.pointcloud_zarr)
 
-    with (
-        patch.object(rec, "verify") as verify,
-        patch("collab_splats.geometry.metrics.build_reconstruction_quality_report") as build,
-    ):
+
+def _texture_frames(n=3, width=32, height=24):
+    """Textured RGB keyframes on the fixture's original canvas, shifted per frame."""
+    yy, xx = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
+    out = []
+    for k in range(n):
+        x = xx + 1.5 * k
+        rgb = np.stack([127 + 100 * np.sin(0.7 * x) * np.cos(0.5 * yy),
+                        127 + 90 * np.cos(0.45 * x + 0.3 * yy),
+                        127 + 80 * np.sin(0.25 * x - 0.6 * yy)], axis=-1)
+        out.append(np.clip(rgb, 0, 255).astype(np.uint8))
+    return np.stack(out)
+
+
+def test_report_json_is_the_columnar_contract(tmp_path):
+    """Top-level keys, scene block and params; nan ships as null and no .json.tmp is left."""
+    rec = Reconstructor(_make_config(tmp_path))
+    rec._resolve_result = lambda: object()
+    _save_tiny_zarr(rec, with_confidence=False)
+
+    out = rec.reconstruction_quality_report()
+
+    text = out.read_text()
+    report = json.loads(text)
+    assert set(report) == {
+        "scene", "params", "frames", "depth_pairs", "depth_residual_histogram",
+        "photometric_pairs",
+    }
+    assert report["scene"]["n_frames"] == 3
+    assert report["scene"]["model_resolution"] == "16x16"
+    assert report["scene"]["image_width"] == 32
+    assert report["params"] == {"rel_thresh": 0.05}
+    assert report["frames"]["frame_idx"] == [0, 4, 8]
+    assert report["frames"]["confidence_median"] == [None, None, None]
+    assert "NaN" not in text
+    assert not out.with_suffix(".json.tmp").exists()
+
+
+def test_report_refuses_a_stale_old_format_report(tmp_path):
+    """A pre-columnar report on disk must raise on reuse, not be served as current."""
+    rec = Reconstructor(_make_config(tmp_path))
+    out = rec.backend_dir / "reconstruction_quality_report.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text('{"measurements": {}}')
+
+    with pytest.raises(ValueError, match="stale"):
         rec.reconstruction_quality_report()
 
-    assert verify.called is expect_verify
-    # The measurement is attempted either way — a missing verification.json disables the
-    # epipolar channel inside build_reconstruction_quality_report, it does not skip the report.
-    build.assert_called_once()
 
-
-def test_report_is_still_written_when_verify_raises(tmp_path):
-    """ "Never fails a reconstruction" has to hold for the one thing report calls that can."""
-    config = _make_config(tmp_path, {"pointcloud": {"geometric_verification": True}})
-    rec = Reconstructor(config)
+def test_report_writes_nan_as_null(tmp_path):
+    """An all-nan confidence frame has a nan median; the file must carry null, never a bare NaN."""
+    rec = Reconstructor(_make_config(tmp_path))
     rec._resolve_result = lambda: object()
+    confidence = np.full((3, 16, 16), 0.9, np.float32)
+    confidence[1] = np.nan
+    _save_tiny_zarr(rec, confidence=confidence)
 
-    def _write(**kwargs):
-        Path(kwargs["output_path"]).parent.mkdir(parents=True, exist_ok=True)
-        Path(kwargs["output_path"]).write_text('{"measurements": {}}')
+    text = rec.reconstruction_quality_report().read_text()
 
-    with (
-        patch.object(rec, "verify", side_effect=RuntimeError("pycolmap exploded")),
-        patch("collab_splats.geometry.metrics.build_reconstruction_quality_report", side_effect=_write),
-    ):
-        out = rec.reconstruction_quality_report()
+    assert "NaN" not in text
+    assert json.loads(text)["frames"]["confidence_median"] == [pytest.approx(0.9), None, pytest.approx(0.9)]
 
-    # The exception did not propagate and did not cost the other two measurements.
-    assert out.exists()
-    assert out.read_text() == '{"measurements": {}}'
+
+def test_report_threads_its_thresholds_to_the_dense_pass(tmp_path, monkeypatch):
+    """The rel_thresh the report records is the one the dense pass ran with; abs_thresh is 0."""
+    rec = Reconstructor(_make_config(tmp_path))
+    rec._resolve_result = lambda: object()
+    _save_tiny_zarr(rec)
+    seen = {}
+    real = R.compute_multiview_depth_confidence
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(R, "compute_multiview_depth_confidence", spy)
+    report = json.loads(rec.reconstruction_quality_report().read_text())
+    assert seen["rel_thresh"] == report["params"]["rel_thresh"]
+    assert seen["abs_thresh"] == 0.0
+
+
+def test_report_runs_photometric_when_images_exist(tmp_path, monkeypatch):
+    """Keyframes present: photometric_pairs is a filled table, not null."""
+    rec = Reconstructor(_make_config(tmp_path))
+    rec._resolve_result = lambda: object()
+    _save_tiny_zarr(rec)
+    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(fr, "read_frames", lambda d: _texture_frames())
+
+    report = json.loads(rec.reconstruction_quality_report().read_text())
+    assert report["photometric_pairs"]["idx1"]
+
+
+def test_report_raises_when_photometric_raises(tmp_path, monkeypatch):
+    """A failing measurement fails the report; nothing is caught."""
+    rec = Reconstructor(_make_config(tmp_path))
+    rec._resolve_result = lambda: object()
+    _save_tiny_zarr(rec)
+    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(fr, "read_frames", lambda d: _texture_frames())
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("photometric exploded")
+
+    monkeypatch.setattr(metrics, "compute_photometric_ncc", _boom)
+    with pytest.raises(RuntimeError, match="photometric exploded"):
+        rec.reconstruction_quality_report()
 
 
 def test_report_skips_without_overwrite_and_never_touches_the_reconstruction(tmp_path):
@@ -1646,14 +1726,14 @@ def test_report_skips_without_overwrite_and_never_touches_the_reconstruction(tmp
     rec = Reconstructor(config)
     out = rec.backend_dir / "reconstruction_quality_report.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("{}")
+    out.write_text('{"frames": {}}')
 
     def _explode():
         raise AssertionError("_resolve_result must not run when the report already exists")
 
     rec._resolve_result = _explode
     assert rec.reconstruction_quality_report() == out
-    assert out.read_text() == "{}"
+    assert out.read_text() == '{"frames": {}}'
 
 
 def test_stale_preprocessing_key_is_refused(tmp_path):

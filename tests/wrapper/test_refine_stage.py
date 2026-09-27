@@ -96,28 +96,46 @@ def test_refine_poses_skips_when_marker_exists(tmp_path):
     marker.parent.mkdir(parents=True)
     marker.write_text("{}")
     with patch.object(Reconstructor, "_resolve_result", return_value=MagicMock()) as mock_resolve, \
-         patch("collab_splats.geometry.bundle_adjustment.BundleAdjustment.refine") as mock_refine:
+         patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine") as mock_refine:
         r.refine_poses(overwrite=False)
     mock_refine.assert_not_called()
     mock_resolve.assert_called_once()
 
 
+def test_refine_poses_rejects_original_res_k_before_ba(tmp_path):
+    """An original-res K in pointcloud.zarr raises in the stage, before BA runs."""
+    import zarr as zarr_mod
+
+    r = _reconstructor(tmp_path)
+    _write_ff_zarr(r.backend_dir)
+
+    # Original-res K: cx at the 64-px source center instead of the 8-px model grid's
+    store = zarr_mod.open(str(r.backend_dir / "pointcloud.zarr"), mode="r+")
+    K = store["intrinsics"][:]
+    K[:, 0, 2] = 32.0
+    store["intrinsics"][:] = K
+
+    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine") as mock_refine:
+        with pytest.raises(ValueError, match="original resolution"):
+            r.refine_poses()
+    mock_refine.assert_not_called()
+
+
 def test_refine_poses_refines_and_persists(tmp_path):
     """refine_poses: BA refine + reproject, COLMAP rewritten, zarr updated, marker written."""
     import zarr as zarr_mod
-    from dataclasses import replace
 
     r = _reconstructor(tmp_path)
     ff = _write_ff_zarr(r.backend_dir)
 
     # BA output: translate every camera by +1 in x so refinement is observable
-    def fake_refine(self, result):
-        new_ext = result.extrinsics.copy()
+    def fake_refine(self, images, confidence, world_points, extrinsics, intrinsics, image_paths=None):
+        new_ext = extrinsics.copy()
         new_ext[:, 0, 3] += 1.0
-        return replace(result, extrinsics=new_ext)
+        return new_ext, intrinsics
 
     fake_result = MagicMock()
-    with patch("collab_splats.geometry.bundle_adjustment.BundleAdjustment.refine", fake_refine), \
+    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine", fake_refine), \
          patch.object(Reconstructor, "_load_pointcloud_from_disk", return_value=fake_result):
         out = r.refine_poses()
 

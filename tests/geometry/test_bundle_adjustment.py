@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import types
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -21,8 +22,22 @@ import torch
 from collab_splats.geometry.bundle_adjustment import (
     BundleAdjustment,
     BundleAdjustmentConfig,
-    _check_model_resolution,
+    check_model_resolution,
 )
+
+
+def _refine(ba, result):
+    """Old-style call: check K, refine arrays, return the result with refined cameras."""
+    check_model_resolution(result.intrinsics, result.images, result.original_coords)
+    ext, K = ba.refine(
+        result.images, result.confidence, result.world_points, result.extrinsics, result.intrinsics, result.image_paths
+    )
+    return replace(result, extrinsics=ext, intrinsics=K)
+
+
+def _tracks(ba, result):
+    """Track load with the result's arrays."""
+    return ba.extract_tracks(result.images, result.confidence, result.world_points, result.image_paths)
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +84,7 @@ def _make_bae_mock():
 # Test 1: extract_tracks_vggsfm — shape correctness with mocked predict_tracks
 # ---------------------------------------------------------------------------
 
-def test_extract_tracks_vggsfm_shape():
+def test_extract_tracks_shape():
     N, H, W = 6, 64, 64
     P = 50  # vggt's predict_tracks already concatenates per-query-frame results
             # internally and returns single np.ndarrays — mock matches that contract.
@@ -103,14 +118,11 @@ def test_extract_tracks_vggsfm_shape():
         import collab_splats.geometry.bundle_adjustment as ba_mod
         importlib.reload(ba_mod)
 
-        tracks, vis_scores, pts3d = ba_mod._extract_tracks_vggsfm(
+        tracks, vis_scores, pts3d = ba_mod.extract_tracks_vggsfm(
             images,
             conf=conf,
             world_points=None,
-            max_query_pts=512,
-            query_frame_num=2,
-            fine_tracking=True,
-            device=None,
+            cfg=ba_mod.BundleAdjustmentConfig(max_query_pts=512, query_frame_num=2, device=None),
         )
 
     assert tracks.shape == (N, P, 2), f"expected ({N},{P},2), got {tracks.shape}"
@@ -132,7 +144,7 @@ def test_extract_tracks_vggsfm_shape():
     )
 
 
-def test_extract_tracks_vggsfm_tensor_images_reach_target_device():
+def test_extract_tracks_tensor_images_reach_target_device():
     """Tensor images (not numpy) must be moved to target_device before predict_tracks.
 
     Regression guard: the isinstance(np.ndarray) guard previously meant CPU torch.Tensor
@@ -161,15 +173,12 @@ def test_extract_tracks_vggsfm_tensor_images_reach_target_device():
         "collab_splats.geometry.bundle_adjustment.predict_tracks",
         side_effect=fake_predict,
     ):
-        from collab_splats.geometry.bundle_adjustment import _extract_tracks_vggsfm
-        _extract_tracks_vggsfm(
+        from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig, extract_tracks_vggsfm
+        extract_tracks_vggsfm(
             images_cpu,
             conf=None,
             world_points=None,
-            max_query_pts=2048,
-            query_frame_num=5,
-            fine_tracking=True,
-            device="cpu",
+            cfg=BundleAdjustmentConfig(max_query_pts=2048, query_frame_num=5, device="cpu"),
         )
 
     assert len(received_device) == 1, "predict_tracks must be called exactly once"
@@ -182,7 +191,7 @@ def test_extract_tracks_vggsfm_tensor_images_reach_target_device():
     )
 
 
-def test_extract_tracks_vggsfm_conf_4d():
+def test_extract_tracks_conf_4d():
     """4-D conf (N,1,H,W) should be squeezed to (N,H,W) before passing."""
     N, H, W = 4, 32, 32
     P = 10
@@ -214,14 +223,11 @@ def test_extract_tracks_vggsfm_conf_4d():
         import collab_splats.geometry.bundle_adjustment as ba_mod
         importlib.reload(ba_mod)
 
-        tracks, vis_scores, pts3d = ba_mod._extract_tracks_vggsfm(
+        tracks, vis_scores, pts3d = ba_mod.extract_tracks_vggsfm(
             images,
             conf=conf_4d,
             world_points=None,
-            max_query_pts=2048,
-            query_frame_num=5,
-            fine_tracking=True,
-            device=None,
+            cfg=ba_mod.BundleAdjustmentConfig(max_query_pts=2048, query_frame_num=5, device=None),
         )
 
     # Verify that conf passed to predict_tracks has shape (N,H,W), not (N,1,H,W)
@@ -579,47 +585,29 @@ def _make_ff_result_for_ba(N=2, H=8, W=8):
     )
 
 
-def test_bundle_adjustment_refine_returns_feedforward_result():
-    """refine() must return a FeedforwardResult with updated extrinsics/intrinsics."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-
-    N, H, W = 2, 8, 8
-    result = _make_ff_result_for_ba(N, H, W)
-    refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
-    refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
-
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
-               return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))), \
-         patch.object(BundleAdjustment, "_optimize",
-                      return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
-        out = BundleAdjustment().refine(result)
-
-    assert isinstance(out, FeedforwardResult)
-    assert out.extrinsics.shape == (N, 4, 4)
-    assert out.intrinsics.shape == (N, 3, 3)
-
-
-def test_bundle_adjustment_refine_preserves_pts3d_colors():
-    """refine() must not change points, colors, or pixel_indices."""
+def test_bundle_adjustment_refine_returns_arrays():
+    """refine() takes arrays and returns (N, 4, 4) extrinsics and (N, 3, 3) intrinsics."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment
 
     N, H, W = 2, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
-    original_points = result.points.copy()
-    original_colors = result.colors.copy()
     refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
+    refined_ext[:, 0, 3] = 1.0
     refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm",
                return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))), \
          patch.object(BundleAdjustment, "_optimize",
                       return_value=(np.zeros((5, 3)), refined_ext, refined_intr)):
-        out = BundleAdjustment().refine(result)
+        ext, K = BundleAdjustment().refine(
+            result.images, result.confidence, result.world_points, result.extrinsics, result.intrinsics
+        )
 
-    np.testing.assert_array_equal(out.points, original_points)
-    np.testing.assert_array_equal(out.colors, original_colors)
-    assert out.pixel_indices is None
+    assert ext.shape == (N, 4, 4)
+    assert K.shape == (N, 3, 3)
+    np.testing.assert_array_equal(ext[:, :3, :], refined_ext)
+    np.testing.assert_array_equal(ext[:, 3], np.tile([0, 0, 0, 1], (N, 1)))
+    np.testing.assert_array_equal(K, refined_intr)
 
 
 def test_bundle_adjustment_refine_threads_config():
@@ -631,15 +619,15 @@ def test_bundle_adjustment_refine_threads_config():
     refined_ext = np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32)
     refined_intr = np.tile(np.eye(3), (N, 1, 1)).astype(np.float32)
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm",
                return_value=(np.zeros((N, 5, 2)), np.ones((N, 5)), np.zeros((5, 3)))) as mock_tracks, \
          patch.object(BundleAdjustment, "_optimize",
                       return_value=(np.zeros((5, 3)), refined_ext, refined_intr)) as mock_opt:
         cfg = BundleAdjustmentConfig(device="cuda:1", lm_steps=5, max_reproj_error=2.0)
-        BundleAdjustment(config=cfg).refine(result)
+        _refine(BundleAdjustment(config=cfg), result)
 
-    _, tracks_kw = mock_tracks.call_args
-    assert tracks_kw["device"] == "cuda:1"
+    tracks_args, _ = mock_tracks.call_args
+    assert tracks_args[3].device == "cuda:1"
     mock_opt.assert_called_once()
 
 
@@ -725,7 +713,7 @@ def test_ba_config_has_no_capture_loss_history_field():
 
 
 def test_tracks_cache_save_load(tmp_path):
-    """_load_or_extract_tracks saves to zarr; second call returns cached arrays without extracting."""
+    """extract_tracks saves to zarr; second call returns cached arrays without extracting."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, H, W = 3, 8, 8
@@ -740,13 +728,13 @@ def test_tracks_cache_save_load(tmp_path):
 
     extract_calls = []
 
-    def fake_extract(images, confidence, world_points, max_query_pts, query_frame_num, fine_tracking=True, device=None):
+    def fake_extract(images, confidence, world_points, cfg):
         extract_calls.append(1)
         return fake_tracks, fake_vis, fake_pts3d
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
-        t1, v1, p1 = ba._load_or_extract_tracks(result)
-        t2, v2, p2 = ba._load_or_extract_tracks(result)
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm", side_effect=fake_extract):
+        t1, v1, p1 = _tracks(ba, result)
+        t2, v2, p2 = _tracks(ba, result)
 
     assert len(extract_calls) == 1, "second call should use cache, not re-extract"
     np.testing.assert_array_equal(t1, fake_tracks)
@@ -773,13 +761,13 @@ def test_tracks_cache_invalidates_on_config_change(tmp_path):
     def fake_extract(*args, **kwargs):
         return extractions.pop(0)
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm", side_effect=fake_extract):
         ba1 = BundleAdjustment(config=BundleAdjustmentConfig(query_frame_num=5, tracks_cache_dir=tmp_path))
-        ba1._load_or_extract_tracks(result)
+        _tracks(ba1, result)
 
         # Change query_frame_num — different key → cache miss
         ba2 = BundleAdjustment(config=BundleAdjustmentConfig(query_frame_num=10, tracks_cache_dir=tmp_path))
-        t2, _, _ = ba2._load_or_extract_tracks(result)
+        t2, _, _ = _tracks(ba2, result)
 
     np.testing.assert_array_equal(t2, fake_b[0])
 
@@ -802,13 +790,13 @@ def test_tracks_cache_invalidates_on_fine_tracking_change(tmp_path):
     def fake_extract(*args, **kwargs):
         return extractions.pop(0)
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm", side_effect=fake_extract):
         ba1 = BundleAdjustment(config=BundleAdjustmentConfig(fine_tracking=True, tracks_cache_dir=tmp_path))
-        ba1._load_or_extract_tracks(result)
+        _tracks(ba1, result)
 
         # Flip fine_tracking — different key → cache miss, re-extract
         ba2 = BundleAdjustment(config=BundleAdjustmentConfig(fine_tracking=False, tracks_cache_dir=tmp_path))
-        t2, _, _ = ba2._load_or_extract_tracks(result)
+        t2, _, _ = _tracks(ba2, result)
 
     np.testing.assert_array_equal(t2, fake_b[0])
 
@@ -830,38 +818,52 @@ def test_tracks_cache_hit_on_vis_thresh_change(tmp_path):
         extract_calls.append(1)
         return fake_tracks, fake_vis, fake_pts3d
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm", side_effect=fake_extract):
         ba1 = BundleAdjustment(config=BundleAdjustmentConfig(vis_thresh=0.2, tracks_cache_dir=tmp_path))
-        ba1._load_or_extract_tracks(result)
+        _tracks(ba1, result)
         ba2 = BundleAdjustment(config=BundleAdjustmentConfig(vis_thresh=0.5, tracks_cache_dir=tmp_path))
-        ba2._load_or_extract_tracks(result)
+        _tracks(ba2, result)
 
     assert len(extract_calls) == 1, "vis_thresh change must NOT invalidate the track cache"
 
 
+def test_tracks_cache_key_changes_with_world_points():
+    """world_points enter the cache key: two backbones over the same images must not share tracks."""
+    from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig, _compute_tracks_cache_key
+
+    cfg = BundleAdjustmentConfig()
+    paths = [Path("a/frame_000000.png"), Path("a/frame_000001.png")]
+    wp = np.zeros((2, 4, 4, 3), np.float32)
+    k0 = _compute_tracks_cache_key(paths, wp, cfg)
+    wp2 = wp.copy()
+    wp2[0, 0, 0, 0] = 1.0
+    assert _compute_tracks_cache_key(paths, wp2, cfg) != k0
+    assert _compute_tracks_cache_key(paths, wp.copy(), cfg) == k0
+
+
 def test_extract_receives_fine_tracking_kwarg(tmp_path):
-    """_load_or_extract_tracks passes cfg.fine_tracking through to _extract_tracks_vggsfm."""
+    """extract_tracks passes cfg (with fine_tracking) through to extract_tracks_vggsfm."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, H, W = 3, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
     seen_kwargs = {}
 
-    def fake_extract(*args, **kwargs):
-        seen_kwargs.update(kwargs)
+    def fake_extract(images, confidence, world_points, cfg):
+        seen_kwargs["fine_tracking"] = cfg.fine_tracking
         return (np.ones((N, 5, 2), dtype=np.float32),
                 np.ones((N, 5), dtype=np.float32),
                 np.ones((5, 3), dtype=np.float32))
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm", side_effect=fake_extract):
         ba = BundleAdjustment(config=BundleAdjustmentConfig(fine_tracking=False))
-        ba._load_or_extract_tracks(result)
+        _tracks(ba, result)
 
     assert seen_kwargs.get("fine_tracking") is False
 
 
-def test_incremental_ba_increment_size_n_matches_allonce():
-    """increment_size >= N dispatches to all-at-once path: _optimize called exactly once with all N frames."""
+def test_incremental_ba_increment_size_n_matches_global():
+    """increment_size >= N dispatches to the global path: _optimize called exactly once with all N frames."""
     from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
 
     N, H, W = 4, 8, 8
@@ -880,13 +882,13 @@ def test_incremental_ba_increment_size_n_matches_allonce():
         optimize_frame_counts.append(len(tracks))
         return (fake_pts3d, refined_ext[:len(tracks)], refined_intr[:len(tracks)])
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm",
                return_value=(fake_tracks, fake_vis, fake_pts3d)), \
          patch.object(BundleAdjustment, "_optimize", side_effect=mock_optimize):
 
-        BundleAdjustment(BundleAdjustmentConfig(increment_size=0)).refine(result)
-        BundleAdjustment(BundleAdjustmentConfig(increment_size=N)).refine(result)
-        BundleAdjustment(BundleAdjustmentConfig(increment_size=N + 10)).refine(result)
+        _refine(BundleAdjustment(BundleAdjustmentConfig(increment_size=0)), result)
+        _refine(BundleAdjustment(BundleAdjustmentConfig(increment_size=N)), result)
+        _refine(BundleAdjustment(BundleAdjustmentConfig(increment_size=N + 10)), result)
 
     assert optimize_frame_counts == [N, N, N], (
         f"increment_size=0/N/N+10 should all call _optimize once with N frames; got {optimize_frame_counts}"
@@ -916,12 +918,12 @@ def test_incremental_ba_warm_start_updates_registered_frames():
         step_counter[0] += 1
         return (fake_pts3d, refined, intrinsics.copy())
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm",
                return_value=(fake_tracks, fake_vis, fake_pts3d)), \
          patch.object(BundleAdjustment, "_optimize", side_effect=mock_optimize):
 
         ba = BundleAdjustment(BundleAdjustmentConfig(increment_size=2))
-        ba.refine(result)
+        _refine(ba, result)
 
     # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls
     assert len(received_extrinsics) == 3, f"expected 3 steps for N=6 increment_size=2, got {len(received_extrinsics)}"
@@ -949,13 +951,13 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
         self_ba.loss_history.append([float(k) * 0.1])
         return (fake_pts3d, extrinsics.copy(), intrinsics.copy())
 
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm",
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm",
                return_value=(fake_tracks, fake_vis, fake_pts3d)), \
          patch.object(BundleAdjustment, "_optimize",
                       lambda self_ba, *a, **kw: mock_optimize_with_hist(self_ba, *a, **kw)):
 
         ba = BundleAdjustment(BundleAdjustmentConfig(increment_size=2))
-        ba.refine(result)
+        _refine(ba, result)
 
     # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls → 3 inner lists
     assert len(ba.loss_history) == 3, (
@@ -971,14 +973,14 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
 def test_check_model_resolution_accepts_model_res_K():
     K = np.tile(np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]]), (2, 1, 1))
     coords = np.tile(np.array([11, 7, 59, 47, 64, 48], np.float32), (2, 1))
-    _check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)  # 2*cx == W_model: passes
+    check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)  # 2*cx == W_model: passes
 
 
 def test_check_model_resolution_rejects_original_res_K():
     K = np.tile(np.array([[40.0, 0, 35.0], [0, 50.0, 27.0], [0, 0, 1]]), (2, 1, 1))
     coords = np.tile(np.array([11, 7, 59, 47, 64, 48], np.float32), (2, 1))
     with pytest.raises(ValueError, match="re-run the pointcloud stage"):
-        _check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)
+        check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)
 
 
 # ---------------------------------------------------------------------------
@@ -1167,7 +1169,7 @@ def test_incremental_steps_skip_single_frame_windows(monkeypatch):
         extrinsics=np.tile(np.eye(4, dtype=np.float32), (N, 1, 1)),
     )
     intr = np.tile(np.eye(3, dtype=np.float32), (N, 1, 1))
-    ba._refine_incremental(result, np.zeros((N, 5, 2)), np.zeros((N, 5)), np.zeros((5, 3)), intr, 1)
+    ba._refine_incremental(result.extrinsics, np.zeros((N, 5, 2)), np.zeros((N, 5)), np.zeros((5, 3)), intr, 1)
     assert seen == [2, 3, 4]
 
 
@@ -1177,7 +1179,7 @@ def _cache_ba(tmp_path):
     ba = BundleAdjustment(config=BundleAdjustmentConfig(tracks_cache_dir=tmp_path))
     calls = []
 
-    def fake_extract(images, confidence, world_points, max_query_pts, query_frame_num, fine_tracking, device):
+    def fake_extract(images, confidence, world_points, cfg):
         calls.append(1)
         return np.ones((3, 5, 2), np.float32), np.ones((3, 5), np.float32), np.ones((5, 3), np.float32)
 
@@ -1189,8 +1191,8 @@ def test_unreadable_track_cache_is_re_extracted(tmp_path):
     ba, result, calls, fake_extract = _cache_ba(tmp_path)
     (tmp_path / "tracks.zarr").mkdir()
     (tmp_path / "tracks.zarr" / "zarr.json").write_text("not json")
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
-        ba._load_or_extract_tracks(result)
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm", side_effect=fake_extract):
+        _tracks(ba, result)
     assert calls == [1]
 
 
@@ -1203,29 +1205,9 @@ def test_unexpected_track_cache_error_propagates(tmp_path, monkeypatch):
         raise TypeError("bug")
 
     monkeypatch.setattr("collab_splats.geometry.bundle_adjustment.zarr.open", broken_open)
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
+    with patch("collab_splats.geometry.bundle_adjustment.extract_tracks_vggsfm", side_effect=fake_extract):
         with pytest.raises(TypeError, match="bug"):
-            ba._load_or_extract_tracks(result)
+            _tracks(ba, result)
 
     # zarr.open also backs the cache write, so only a zero extract count proves the read raised
-    assert calls == []
-
-
-def test_refine_rejects_original_res_k_before_track_extraction():
-    """An original-res K raises before the slow VGGSfM extraction runs."""
-    N, H, W = 3, 8, 8
-    result = _make_ff_result_for_ba(N, H, W)
-
-    # Original-res K: 64-px-wide source cropped to the 8-px model grid, cx at the source center
-    result.original_coords[:] = np.array([0, 0, 64, 64, 64, 64], np.float32)
-    result.intrinsics[:, 0, 2] = 32.0
-    calls = []
-
-    def fake_extract(*args, **kwargs):
-        calls.append(1)
-        return np.zeros((N, 5, 2), np.float32), np.ones((N, 5), np.float32), np.zeros((5, 3), np.float32)
-
-    with patch("collab_splats.geometry.bundle_adjustment._extract_tracks_vggsfm", side_effect=fake_extract):
-        with pytest.raises(ValueError, match="original resolution"):
-            BundleAdjustment().refine(result)
     assert calls == []

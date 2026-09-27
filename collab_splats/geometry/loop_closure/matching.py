@@ -2,6 +2,8 @@
 Loop-closure candidates from DINO-SALAD retrieval descriptors.
 
 - a candidate pairs a query frame with its nearest frame in an earlier submap
+- adapted from MIT-SPARK/VGGT-SLAM @ fd3fd218 (BSD-2-Clause): vggt_slam/loop_closure.py
+  (LoopMatch, LoopMatchQueue, find_loop_closures), vggt_slam/map.py:retrieve_best_score_frame
 """
 
 from __future__ import annotations
@@ -13,9 +15,9 @@ import torch
 
 from .submap import Submap
 
-########################################
-####### Retrieval matching #############
-########################################
+########################################################################
+# Retrieval matching
+########################################################################
 
 
 @dataclass
@@ -23,8 +25,17 @@ class LoopMatch:
     """
     Loop-closure candidate: a query frame and its nearest frame in an earlier submap.
 
-    - similarity_score: L2 distance between unit DINO-SALAD descriptors; lower is more similar
     - frame indices are local to their submaps
+
+    Args:
+        similarity_score: L2 distance between unit DINO-SALAD descriptors; lower is more similar.
+        query_submap_id: submap holding the query frame.
+        detected_submap_id: earlier submap holding the nearest frame.
+        query_frame_idx: query frame, local to its submap.
+        detected_frame_idx: nearest frame, local to its submap.
+        accepted: True once the wrapper verifies the candidate.
+        reject_reason: None when accepted; else "verify_ratio", "no_joint_poses" or
+            "non_finite_pose".
     """
 
     similarity_score: float
@@ -33,7 +44,6 @@ class LoopMatch:
     query_frame_idx: int
     detected_frame_idx: int
     accepted: bool = False
-    # None on accepted matches; "verify_ratio" | "no_joint_poses" | "non_finite_pose" on rejects.
     reject_reason: str | None = None
 
 
@@ -43,6 +53,15 @@ class LoopMatchQueue:
     """
 
     def __init__(self, max_size: int, nms_frame_distance: int) -> None:
+        """
+        Empty queue with a size cap and a suppression radius.
+
+        - heap entries are (-score, insertion counter, match), so the root is the worst
+
+        Args:
+            max_size: candidates kept.
+            nms_frame_distance: suppression radius in frames; 0 disables suppression.
+        """
         self._max_size = max_size
         self._nms = nms_frame_distance
         self._counter: int = 0
@@ -70,9 +89,12 @@ class LoopMatchQueue:
         Returns:
             Candidates in ascending similarity_score.
         """
+        # Best first; no suppression radius means nothing to drop
         candidates = sorted([m for _, _, m in self._heap], key=lambda m: m.similarity_score)
         if self._nms <= 0:
             return candidates
+
+        # Keep a candidate unless a better kept one is on the same submap and nearby
         accepted: list[LoopMatch] = []
         for cand in candidates:
             suppressed = any(
@@ -110,8 +132,10 @@ def find_loop_closures(
     if not past_submaps:
         return []
     queue = LoopMatchQueue(max_size=max_loops, nms_frame_distance=nms_frame_distance)
-    # For each query frame, find the nearest-neighbor frame in each past submap by
-    # L2 distance over DINO-SALAD retrieval vectors; keep it if under lc_threshold.
+
+    # Nearest past frame per query frame and past submap
+    # - L2 distance over DINO-SALAD retrieval vectors
+    # - kept only under lc_threshold
     for q_idx in range(query_submap.retrieval_vectors.shape[0]):
         q_vec = query_submap.retrieval_vectors[q_idx]
         for past in past_submaps:
@@ -129,4 +153,3 @@ def find_loop_closures(
                     )
                 )
     return queue.get_matches()
-

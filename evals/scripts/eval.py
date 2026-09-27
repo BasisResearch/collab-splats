@@ -28,6 +28,7 @@ named by the condition alone) and ``--submap_size`` is rejected.
 from __future__ import annotations
 
 import argparse
+import functools
 import itertools
 import json
 import logging
@@ -38,7 +39,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -50,14 +51,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
+from scipy.spatial.transform import Rotation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from datasets import get_dataset
+from datasets import EvalDataset, get_dataset
 from eval_compare import collect_grid_metrics, format_markdown_rows
 from trajectory_metrics import ate_translation, auc_at_threshold, rpe
 
 from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig
+from collab_splats.geometry.bundle_adjustment import check_model_resolution
 from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 from collab_splats.pointcloud import get_creator
@@ -99,7 +102,6 @@ class EvalCell:
     submap_size: int | None
     max_frames: int | None
     lc_layer: int | None
-    scale_method: str
     output_dir: Path
 
 
@@ -115,9 +117,6 @@ class EvalConfig:
     submap_size: int | None = None
     max_frames: int | None = None
     lc_layer: int | None = None
-    # Inter-submap scale estimation for the lc condition. Defaults to the
-    # parity method (rotation_only) so presets reproduce the frozen baselines.
-    scale_method: str = "rotation_only"
 
 
 def load_eval_config(path: Path) -> EvalConfig:
@@ -132,7 +131,6 @@ def load_eval_config(path: Path) -> EvalConfig:
         submap_size=raw.get("submap_size"),
         max_frames=raw.get("max_frames"),
         lc_layer=raw.get("lc_layer"),
-        scale_method=raw.get("scale_method", "rotation_only"),
     )
 
 
@@ -154,7 +152,6 @@ def build_grid(cfg: EvalConfig) -> list[EvalCell]:
                     submap_size=cfg.submap_size,
                     max_frames=cfg.max_frames,
                     lc_layer=cfg.lc_layer,
-                    scale_method=cfg.scale_method,
                     output_dir=cfg.output_dir,
                 )
             )
@@ -207,8 +204,6 @@ def _cam_positions(poses: np.ndarray) -> np.ndarray:
 
 def _write_tum(path: Path, poses_w2c: np.ndarray) -> None:
     """Write TUM trajectory: 'timestamp tx ty tz qx qy qz qw' (camera-to-world)."""
-    from scipy.spatial.transform import Rotation
-
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     for i, w2c in enumerate(poses_w2c):
@@ -231,7 +226,6 @@ def _make_creator(
     condition: str,
     submap_size: int | None = None,
     backbone: str = "vggt_omega",
-    lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
     loop_edge_timing: str = "deferred",
     tracks_cache_dir: Path | None = None,
@@ -248,64 +242,40 @@ def _make_creator(
     if max_loops_per_submap is not None:
         _lc_extra["max_loops_per_submap"] = max_loops_per_submap
 
-    # Every BA config below shares one track cache dir. Extraction dominates BA runtime,
-    # so a warm cache is the main lever when re-running conditions on the same scene.
-    # Nested per backbone because tracks are seeded from the backbone's own world_points
-    # but _compute_tracks_cache_key only hashes image paths + extraction knobs — one flat
-    # dir would hand one backbone's tracks to another under a matching key.
-    _ba_cache = None if tracks_cache_dir is None else Path(tracks_cache_dir) / backbone
-
-    def _ba(**kw) -> BundleAdjustmentConfig:
-        return BundleAdjustmentConfig(tracks_cache_dir=_ba_cache, **kw)
+    # Every BA config below shares one track cache dir
+    # - extraction dominates BA runtime, so a warm cache is the lever on re-runs
+    ba = functools.partial(BundleAdjustmentConfig, tracks_cache_dir=tracks_cache_dir)
 
     base = get_creator(backbone)()
     if condition == "lc":
-        lc_cfg = LoopClosureConfig(
-            scale_method=lc_scale_method, **_lc_extra, **({} if submap_size is None else {"submap_size": submap_size})
-        )
+        lc_cfg = LoopClosureConfig(**_lc_extra, **({} if submap_size is None else {"submap_size": submap_size}))
         return LoopClosure(base, config=lc_cfg), None
+
+    # Creator every non-lc condition shares
+    # - submap_size None: single pass, for short sequences that fit in GPU memory
+    # - otherwise windowed: LC pipeline with detection off, so baseline = windowed backbone
+    creator = base
+    if submap_size is not None:
+        no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0, **_lc_extra)
+        creator = LoopClosure(base, config=no_lc_cfg)
+
+    # BA conditions
+    # - ba_percam: one focal per frame instead of one per scene
+    # - ba_coarse: skip the VGGSfM fine refinement stage
     m = re.fullmatch(r"ba_track-density-(\d+)", condition)
     if m:
         n = int(m.group(1))
-        cfg = _ba(
-            max_query_pts=n,
-            query_frame_num=max(5, n // 512),
-        )
-        if submap_size is not None:
-            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0, **_lc_extra)
-            windowed = LoopClosure(base, config=_no_lc_cfg)
-            return windowed, cfg
-        return base, cfg
+        return creator, ba(max_query_pts=n, query_frame_num=max(5, n // 512))
     m2 = re.fullmatch(r"incremental_ba-(\d+)", condition)
     if m2:
-        increment_size = int(m2.group(1))
-        cfg = _ba(increment_size=increment_size)
-        if submap_size is not None:
-            _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0, **_lc_extra)
-            windowed = LoopClosure(base, config=_no_lc_cfg)
-            return windowed, cfg
-        return base, cfg
-    if submap_size is not None:
-        # Windowed mode: LC pipeline with detection disabled so baseline = windowed VGGT-X
-        _no_lc_cfg = LoopClosureConfig(submap_size=submap_size, lc_retrieval_threshold=0.0, **_lc_extra)
-        windowed = LoopClosure(base, config=_no_lc_cfg)
-        if condition == "ba":
-            return windowed, _ba()
-        # ba_percam: shared-camera ablation — one focal per frame instead of one per scene
-        if condition == "ba_percam":
-            return windowed, _ba(shared_camera=False)
-        # ba_coarse: track-quality ablation — skip the VGGSfM fine refinement stage
-        if condition == "ba_coarse":
-            return windowed, _ba(fine_tracking=False)
-        return windowed, None  # baseline
-    # Default: single-pass (short sequences that fit in GPU memory)
+        return creator, ba(increment_size=int(m2.group(1)))
     if condition == "ba":
-        return base, _ba()
+        return creator, ba()
     if condition == "ba_percam":
-        return base, _ba(shared_camera=False)
+        return creator, ba(shared_camera=False)
     if condition == "ba_coarse":
-        return base, _ba(fine_tracking=False)
-    return base, None  # baseline
+        return creator, ba(fine_tracking=False)
+    return creator, None  # baseline
 
 
 def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.ndarray:
@@ -380,7 +350,6 @@ def _run_condition(
     output_dir: Path,
     submap_size: int | None = None,
     backbone: str = "vggt_omega",
-    lc_scale_method: str = "rotation_only",
     max_loops_per_submap: int | None = None,
     loop_edge_timing: str = "deferred",
     tracks_cache_dir: Path | None = None,
@@ -400,7 +369,6 @@ def _run_condition(
         name,
         submap_size=submap_size,
         backbone=backbone,
-        lc_scale_method=lc_scale_method,
         max_loops_per_submap=max_loops_per_submap,
         loop_edge_timing=loop_edge_timing,
         tracks_cache_dir=tracks_cache_dir,
@@ -414,7 +382,12 @@ def _run_condition(
         creator.setup_inference(image_dir)
         creator.run_inference()
         creator.postprocess()
-        creator.outputs = ba.refine(creator.outputs).reproject()
+        out = creator.outputs
+        check_model_resolution(out.intrinsics, out.images, out.original_coords)
+        ext, K = ba.refine(
+            out.images, out.confidence, out.world_points, out.extrinsics, out.intrinsics, out.image_paths
+        )
+        creator.outputs = replace(out, extrinsics=ext, intrinsics=K).reproject()
         creator.build_colmap(output_dir)
     if creator.outputs is None:
         raise RuntimeError(f"Condition '{name}' produced no outputs")
@@ -544,9 +517,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Reuse extracted VGGSfM tracks across BA conditions (extraction dominates BA "
-        "runtime). Nested per backbone automatically. Single-slot per backbone: conditions "
-        "that differ in extraction settings (ba vs ba_coarse differ in fine_tracking) evict "
-        "each other — give those separate dirs.",
+        "runtime). One tracks.zarr slot per dir: the key covers world_points plus the "
+        "extraction knobs, so a different backbone or fine_tracking value (ba vs ba_coarse) "
+        "re-extracts and evicts the slot — use separate dirs to keep both warm.",
     )
     parser.add_argument(
         "--backbone",
@@ -564,13 +537,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "incremental_ba-{N} | instantsfm (global SfM + VDA depth priors, pycolmap SIFT) | "
         "instantsfm_nodepth (same without depth priors). instantsfm* ignore --backbone and reject "
         "--submap_size.",
-    )
-    parser.add_argument(
-        "--lc_scale_method",
-        choices=["rotation_only", "none"],
-        default="rotation_only",
-        help="Inter-submap scale estimation method for lc condition. "
-        "rotation_only=default (matches VGGT-SLAM, see docs/parity.md), none=skip scale (always 1.0).",
     )
     parser.add_argument(
         "--lc_layer",
@@ -626,7 +592,6 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
         args.output_dir / args._condition,
         submap_size=args.submap_size,
         backbone=backbone,
-        lc_scale_method=getattr(args, "lc_scale_method", "rotation_only"),
         max_loops_per_submap=getattr(args, "max_loops_per_submap", None),
         loop_edge_timing=getattr(args, "loop_edge_timing", "deferred"),
         tracks_cache_dir=getattr(args, "tracks_cache_dir", None),
@@ -672,7 +637,6 @@ def _build_cell_command(cell: EvalCell, cell_dir: Path) -> list[str]:
         cmd += ["--submap_size", str(cell.submap_size)]
     if cell.lc_layer is not None:
         cmd += ["--lc_layer", str(cell.lc_layer)]
-    cmd += ["--lc_scale_method", cell.scale_method]
     if cell.keyframe_list is not None:
         cmd += ["--keyframe_list", str(cell.keyframe_list)]
     return cmd
@@ -765,7 +729,6 @@ def main() -> None:
                 "keyframes dropped by dataset loader (e.g. TUM GT-gap filter) — the run would "
                 "use different frames than requested; aborted."
             )
-        from datasets import EvalDataset
 
         dataset = EvalDataset(
             images=[dataset.images[i] for i in indices],
@@ -816,9 +779,6 @@ def main() -> None:
             # has to cross the process boundary or every condition re-extracts tracks.
             if getattr(args, "tracks_cache_dir", None) is not None:
                 cmd += ["--tracks_cache_dir", str(args.tracks_cache_dir)]
-            # Always forward scale_method so the leaf never falls back to a
-            # drifting default (default = rotation_only = parity method).
-            cmd += ["--lc_scale_method", getattr(args, "lc_scale_method", "rotation_only")]
             # Forward loop_edge_timing (deferred|live A/B knob) to the leaf.
             cmd += ["--loop_edge_timing", getattr(args, "loop_edge_timing", "deferred")]
             if getattr(args, "lc_layer", None) is not None:

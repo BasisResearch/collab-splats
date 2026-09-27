@@ -20,6 +20,7 @@ import numpy as np
 from skimage.measure import blur_effect
 
 from collab_splats.preproc.video import get_video_info, iter_frames
+from collab_splats.utils.io import to_json_safe, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -479,19 +480,20 @@ def compute_video_quality(
     )
     frames = {k: [row[k] for row in frame_rows] for k in frame_keys}
 
-    # Pair columns; nan -> null on the only two that can be non-finite
-    # - json.dumps writes a bare NaN that no strict parser accepts
+    # Pair columns; translation_px and parallax are nan for an unmatched pair
+    # - to_json_safe nulls them here, so the returned dict equals the written file
     # - np.nan_to_num is not the fix: its 0.0 fill reads as "no motion"
-    pairs = {k: [r[k] for r in pair_rows] for k in ("frame_idx_a", "frame_idx_b", "n_matches")}
-    for k in ("translation_px", "parallax"):
-        pairs[k] = [None if np.isnan(r[k]) else r[k] for r in pair_rows]
+    pair_keys = ("frame_idx_a", "frame_idx_b", "n_matches", "translation_px", "parallax")
+    pairs = {k: [r[k] for r in pair_rows] for k in pair_keys}
 
-    report = {
-        "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
-        "params": {"motion_stride": stride, **tuning},
-        "frames": frames,
-        "pairs": pairs,
-    }
+    report = to_json_safe(
+        {
+            "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
+            "params": {"motion_stride": stride, **tuning},
+            "frames": frames,
+            "pairs": pairs,
+        }
+    )
 
     # Throughput, not just a count: it is the number that tells a reader
     # whether a long run is progressing or degrading.
@@ -546,10 +548,8 @@ def load_video_quality(
 
     report = compute_video_quality(video_path, motion_stride=motion_stride, workers=workers)
 
-    # Write via a temp file so an interrupted run leaves no partial report
+    # Atomic write: an interrupted run leaves no partial report
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = report_path.with_suffix(".json.tmp")
-    tmp_path.write_text(json.dumps(report, indent=2))
-    os.replace(tmp_path, report_path)
+    write_json(report_path, report)
     logger.info("video quality: wrote %s (%.1f kB)", report_path, report_path.stat().st_size / 1000)
     return report

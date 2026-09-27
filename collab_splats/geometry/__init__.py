@@ -1,9 +1,9 @@
 """
-Pose and geometry backend: bundle adjustment, loop closure, verification, scene metrics.
+Pose and geometry backend: bundle adjustment, loop closure, scene metrics.
 
-- transforms: pose conversions, Umeyama alignment, intrinsics from points
-- bundle_adjustment: LM refinement of a `pointcloud.zarr` result (feedforward only at refine)
-- verification / metrics: report-only geometric checks over a `pointcloud.zarr` result
+- transforms: pose conversions, Umeyama, intrinsics, decompose_camera, project_to_so3
+- bundle_adjustment: LM refinement on arrays (feedforward only at refine)
+- metrics: report-only quality tables on arrays; the Reconstructor stage owns the zarr
 - loop_closure: submap pose graph around a feedforward creator's forward pass
 """
 
@@ -21,9 +21,21 @@ from .transforms import (
 
 
 def __getattr__(name: str) -> type:
-    # Lazy import breaks a load-time cycle
-    # - loop_closure.wrapper -> collab_splats.pointcloud -> geometry.transforms
-    # - delegates to loop_closure's own lazy hook
+    """
+    Lazy import of LoopClosure and LoopClosureConfig to break a load-time cycle.
+
+    - cycle: loop_closure.wrapper -> collab_splats.pointcloud -> geometry.transforms
+    - delegates to loop_closure's own lazy hook
+
+    Args:
+        name: attribute requested from the package.
+
+    Returns:
+        The requested class.
+
+    Raises:
+        AttributeError: any other name.
+    """
     if name == "LoopClosure":
         from .loop_closure import LoopClosure
 

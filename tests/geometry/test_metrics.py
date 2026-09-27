@@ -1,11 +1,8 @@
 """Unit tests for reference-free scene error metrics."""
 
 import json
-import math
 import warnings
-from dataclasses import asdict
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -13,105 +10,28 @@ from scipy import stats
 
 from collab_splats.geometry import metrics
 from collab_splats.geometry.metrics import (
-    _running_error,
-    _scale_intrinsics_to_original,
+    PairStats,
     bounded_residual,
-    build_reconstruction_quality_report,
     compute_depth_error,
     compute_photometric_ncc,
-    depth_error_in_pixels,
     residual_bin_edges,
 )
-from collab_splats.geometry.verification import PairStats, _distribution, clean_for_json
 from collab_splats.pointcloud.feedforward import base as ff_base
 from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import LEAF_STAGES, _STAGE_DEPS, _STAGE_ORDER
 
 
 def test_pair_stats_is_keyed_on_frame_index():
-    """Depth path has indices and no filenames; verify has filenames. Index is the join key."""
+    """The depth pass keys a pair on frame indices; every measurement starts unset."""
     p = PairStats(idx1=0, idx2=4)
     assert (p.idx1, p.idx2) == (0, 4)
-    assert p.name1 is None and p.median_rel_depth_error is None
+    assert p.median_rel_depth_error is None
 
 
 def test_separation_is_a_subtraction_not_a_field():
     """1->4 and 2->5 are both separation 3 — the distance-vs-error axis, derived not stored."""
     assert abs(PairStats(1, 4).idx1 - PairStats(1, 4).idx2) == 3
     assert abs(PairStats(2, 5).idx1 - PairStats(2, 5).idx2) == 3
-
-
-def test_pair_stats_carries_epipolar_and_depth_together():
-    """One row per pair. Two measurements fill different columns of it."""
-    p = PairStats(0, 1, name1="f0.png", name2="f1.png", num_matches=500, num_inliers=450,
-                  rot_error_deg=0.15, t_direction_error_deg=0.9, median_rel_depth_error=0.02)
-    assert p.num_inliers == 450 and p.median_rel_depth_error == pytest.approx(0.02)
-
-
-def test_distribution_skips_rows_that_did_not_fill_the_column():
-    """The depth pass writes rows with the epipolar fields None; _distribution must survive them.
-
-    _triangulate_and_summarize feeds p.rot_error_deg straight into np.asarray(..., float64),
-    which coerces None to nan, and _distribution strips nan. That degradation is load-bearing
-    now that a second pass emits rows leaving those columns empty — so it gets a test.
-    """
-    rows = [
-        PairStats(0, 1, name1="f0.png", name2="f1.png", rot_error_deg=0.4),
-        PairStats(1, 2, median_rel_depth_error=0.02, median_parallax_deg=3.0),  # depth-only
-    ]
-    d = _distribution([p.rot_error_deg for p in rows])
-    assert d is not None and d["median"] == pytest.approx(0.4)
-    assert d["p90"] == pytest.approx(0.4) and d["p99"] == pytest.approx(0.4)
-    # A column no pass filled is absent, not a row of nan.
-    assert _distribution([p.photometric_ncc for p in rows]) is None
-
-
-def test_depth_error_in_pixels_is_r_times_disparity():
-    """delta_d = r * d, and d = f * parallax(rad) for small angles."""
-    assert depth_error_in_pixels(0.1, 2.0, 500.0) == pytest.approx(0.1 * np.deg2rad(2.0) * 500.0)
-
-
-def test_depth_error_in_pixels_scales_linearly_in_r():
-    assert depth_error_in_pixels(0.10, 3.0, 500.0) == pytest.approx(
-        2 * depth_error_in_pixels(0.05, 3.0, 500.0)
-    )
-
-
-def test_depth_error_in_pixels_shrinks_with_parallax():
-    """The whole far-pixel asymmetry: same depth error, less parallax, fewer pixels moved."""
-    assert depth_error_in_pixels(0.1, 1.0, 500.0) < depth_error_in_pixels(0.1, 6.0, 500.0)
-
-
-def test_depth_error_in_pixels_is_none_below_one_pixel_of_disparity():
-    """The floor is derived from the focal, not chosen: 1 px of disparity is the limit."""
-    f = 500.0
-    just_under = np.rad2deg(0.9 / f)  # 0.9 px of disparity
-    just_over = np.rad2deg(1.1 / f)
-    assert depth_error_in_pixels(0.1, just_under, f) is None
-    assert depth_error_in_pixels(0.1, just_over, f) is not None
-
-
-def test_the_disparity_floor_moves_with_the_focal_length():
-    """A longer lens resolves depth at a smaller angle — so the floor cannot be a constant."""
-    angle = np.rad2deg(1.5 / 500.0)  # 1.5 px at f=500, but only 0.3 px at f=100
-    assert depth_error_in_pixels(0.1, angle, 500.0) is not None
-    assert depth_error_in_pixels(0.1, angle, 100.0) is None
-
-
-def test_depth_error_in_pixels_uses_magnitude_not_sign():
-    assert depth_error_in_pixels(-0.1, 2.0, 500.0) == pytest.approx(
-        depth_error_in_pixels(0.1, 2.0, 500.0)
-    )
-
-
-def test_ratio_against_a_measured_pixel_error_needs_no_second_function():
-    """rho is a division at the call site, not an API — measured / equivalent."""
-    rel_residual, parallax_deg, focal_px = -0.1, 2.0, 500.0
-    # Independent of depth_error_in_pixels: deg2rad(2.0) * 500 * |-0.1|, via math not numpy.
-    expected_equiv = math.radians(parallax_deg) * focal_px * abs(rel_residual)
-    measured_px = 8.0
-    rho = measured_px / depth_error_in_pixels(rel_residual, parallax_deg, focal_px)
-    assert rho == pytest.approx(measured_px / expected_equiv)
 
 
 # Scene shapes as (frames, side), and the bin count Rice's rule gives each — measured, which
@@ -208,43 +128,29 @@ def _collected(pairs):
     return {"pairs": pairs, "rel_depth_error_counts": counts, "rel_depth_error_edges": edges}
 
 
-def test_depth_error_reports_grid_and_resolution():
-    """Every block stamps its grid — model-res depth with original-res K is a known bug class."""
-    m = compute_depth_error(_collected([_pair(0, 1, 0.0, 3.0)]), 500.0, "518x518")
-    assert m["grid"] == "model" and m["resolution"] == "518x518"
+DEPTH_COLUMNS = {
+    "idx1", "idx2", "n_pixels", "median_rel_depth_error", "iqr_rel_depth_error",
+    "median_parallax_deg", "median_depth",
+}
 
 
-def test_pair_rows_carry_separation():
-    """4->1 and 2->5 both land at 3, so distance-vs-error is a column not a special case.
-
-    One fixture is REVERSED on purpose. The producer's loop is ordered (base.py sets
-    idx1=i, idx2=j for both directions), so rows with idx1 > idx2 genuinely ship. With two
-    same-direction fixtures, idx2 - idx1 would also give [3, 3] — and that expression sends
-    every reversed row negative, sign-flipping error_vs_frame_separation.
-    """
-    m = compute_depth_error(_collected([_pair(4, 1, 0.02, 3.0), _pair(2, 5, 0.03, 3.0)]), 500.0, "x")
-    assert [r["frame_separation"] for r in m["pair_directions"]] == [3, 3]
+def test_depth_pairs_are_the_seven_columns_one_entry_per_direction():
+    """Columnar, one entry per ordered direction, in the collected order; no derived column."""
+    pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0) for k in range(4)] + [_pair(4, 1, 0.02, 3.0)]
+    depth_pairs, histogram = compute_depth_error(_collected(pairs))
+    assert set(depth_pairs) == DEPTH_COLUMNS
+    assert all(len(v) == len(pairs) for v in depth_pairs.values())
+    # A reversed direction ships as written: the producer's loop is ordered
+    assert depth_pairs["idx1"] == [p.idx1 for p in pairs]
+    assert depth_pairs["idx2"] == [p.idx2 for p in pairs]
+    assert set(histogram) == {"counts", "bin_edges"}
 
 
 def test_scale_bias_keeps_its_sign_on_the_row():
     """A pure scale error has a large median and a small spread; the sign must survive."""
-    m = compute_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]), 500.0, "x")
-    assert m["pair_directions"][0]["median_rel_depth_error"] == pytest.approx(-0.08)
-    assert m["pair_directions"][0]["iqr_rel_depth_error"] == pytest.approx(0.005)
-
-
-def test_pixel_equivalent_lands_on_each_pair_row():
-    m = compute_depth_error(_collected([_pair(0, 1, 0.1, 2.0)]), 500.0, "x")
-    assert m["pair_directions"][0]["depth_error_px"] == pytest.approx(
-        depth_error_in_pixels(0.1, 2.0, 500.0)
-    )
-
-
-def test_pairs_under_one_pixel_of_disparity_report_null_not_zero():
-    tiny = np.rad2deg(0.5 / 500.0)  # half a pixel of disparity
-    m = compute_depth_error(_collected([_pair(0, 1, 0.1, tiny)]), 500.0, "x")
-    assert m["pair_directions"][0]["depth_error_px"] is None
-    assert m["pair_directions_under_one_pixel_disparity"] == 1
+    depth_pairs, _ = compute_depth_error(_collected([_pair(0, 1, -0.08, 3.0, iqr=0.005)]))
+    assert depth_pairs["median_rel_depth_error"][0] == pytest.approx(-0.08)
+    assert depth_pairs["iqr_rel_depth_error"][0] == pytest.approx(0.005)
 
 
 def test_per_pair_columns_ship_raw():
@@ -253,171 +159,28 @@ def test_per_pair_columns_ship_raw():
     Key presence alone does not test "raw" — round(x, 2) on every column survives it. The
     fixture value has more digits than any plausible rounding would keep.
     """
-    m = compute_depth_error(_collected([_pair(0, 1, 0.0123456789, 3.0, iqr=0.0098765432)]), 500.0, "x")
-    row = m["pair_directions"][0]
-    assert row["median_rel_depth_error"] == 0.0123456789  # exact, not approx
-    assert row["iqr_rel_depth_error"] == 0.0098765432
-    assert row["median_parallax_deg"] == 3.0 and row["median_depth"] == 4.0
-
-
-def test_output_keys_are_the_contract_task_6_reads():
-    """The report writer indexes these by name — a renamed or dropped key breaks it silently."""
-    pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0) for k in range(4)]
-    m = compute_depth_error(_collected(pairs), 500.0, "518x518")
-    assert set(m) == {
-        "available", "grid", "resolution", "units", "n_pair_directions",
-        "residual_histogram", "pair_directions_under_one_pixel_disparity",
-        "correlations", "pair_directions",
-    }
-    assert m["available"] is True
-    # Ordered directions, so this is len(pairs) and NOT the unordered pair count.
-    assert m["n_pair_directions"] == len(pairs) == len(m["pair_directions"])
-    assert set(m["correlations"]) == {"error_vs_depth", "error_vs_frame_separation", "null_hypothesis"}
-    h = m["residual_histogram"]
-    assert set(h) == {"counts", "bin_edges", "total", "quantiles", "abs_quantiles", "axis"}
-    # total is the histogram's own mass, not a row count: 4 pairs x 100 pixels each.
-    assert h["total"] == int(np.asarray(h["counts"]).sum()) == sum(p.n_pixels for p in pairs)
-    assert set(m["pair_directions"][0]) == {
-        "idx1", "idx2", "frame_separation", "n_pixels", "median_rel_depth_error",
-        "iqr_rel_depth_error", "median_parallax_deg", "median_depth", "depth_error_px",
-    }
-
-
-def test_per_pixel_residual_ships_as_counts_and_edges():
-    """The one quantity too large to hold — so any threshold query stays exact.
-
-    0.3, not 0.1: the bounded axis and the residual axis only diverge far from zero. At 0.1
-    the un-inverted bin value is 0.0904, inside abs=0.01 of 0.1, so the assertion could not
-    see whether the inversion ran at all. At 0.3 it reads 0.2301 un-inverted against 0.2989
-    inverted — a 7x margin. Do not lower it back.
-    """
-    m = compute_depth_error(_collected([_pair(0, 1, 0.3, 3.0)]), 500.0, "x")
-    h = m["residual_histogram"]
-    assert len(h["bin_edges"]) == len(h["counts"]) + 1 and h["total"] > 0
-    assert h["quantiles"]["0.5"] == pytest.approx(0.3, abs=0.01)  # inverted back to a residual
-
-
-def test_signed_and_folded_quantiles_both_ship():
-    """Every prior |rel| number in this repo is absolute, so the signed axis alone is not
-    comparable — a negative bias reads as a negative quantile until the histogram is folded.
-
-    -0.3 for the same reason as the test above: at -0.1 the un-inverted bin value passes.
-    """
-    h = compute_depth_error(_collected([_pair(0, 1, -0.3, 3.0)]), 500.0, "x")["residual_histogram"]
-    assert h["quantiles"]["0.5"] == pytest.approx(-0.3, abs=0.01)  # sign kept: scale bias
-    assert h["abs_quantiles"]["0.5"] == pytest.approx(0.3, abs=0.01)  # folded: magnitude
-
-
-def test_rising_residual_with_depth_shows_as_a_positive_correlation():
-    """One number replaces the depth-strata routine — the raw columns are in the JSON."""
-    pairs = [_pair(k, k + 1, 0.01 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
-    m = compute_depth_error(_collected(pairs), 500.0, "x")
-    assert m["correlations"]["error_vs_depth"] > 0.9
-
-
-def test_the_correlation_reads_residual_MAGNITUDE_not_signed_residual():
-    """A growing NEGATIVE bias is growing disagreement — dropping abs() would call it shrinking.
-
-    The signed column is deliberately kept on the row (scale bias reads off its sign), so the
-    correlation must take the magnitude itself. Every other correlation fixture uses positive
-    rel, where signed and absolute agree and the abs() is invisible.
-    """
-    pairs = [_pair(k, k + 1, -0.01 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]
-    m = compute_depth_error(_collected(pairs), 500.0, "x")
-    assert m["correlations"]["error_vs_depth"] > 0.9  # magnitude rises with depth
-    # The rows themselves stay signed, so the sign is recoverable and only the rho folds.
-    assert all(r["median_rel_depth_error"] < 0 for r in m["pair_directions"])
-
-
-def test_scipy_supplies_the_correlation_directly():
-    """The statistic IS scipy's, off the same columns that ship — no wrapper, no rewrite.
-
-    The fixture is deliberately NOT monotone. A rho of exactly 1.0 is also what Pearson,
-    Kendall and a hand-rolled rank difference all return, so a monotone fixture cannot tell
-    which statistic actually ran; this one separates Spearman (0.83) from Pearson (0.89).
-    """
-    rels = [0.01, 0.05, 0.02, 0.08, 0.03, 0.09]
-    depths = [2.0, 3.0, 1.0, 9.0, 4.0, 7.0]
-    pairs = [_pair(k, k + 1, r, 3.0, depth=z) for k, (r, z) in enumerate(zip(rels, depths))]
-    rho = compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"]
-    assert rho == stats.spearmanr(depths, [abs(r) for r in rels]).statistic
-    # Anchors: a real intermediate rho, and one Pearson does NOT also produce.
-    assert 0.0 < rho < 1.0
-    assert rho != pytest.approx(float(np.corrcoef(depths, rels)[0, 1]))
-
-
-def test_a_tiny_sample_ships_scipys_answer_NEXT_TO_the_count_that_qualifies_it():
-    """Two rows cannot support a rho, and the block publishes scipy's answer anyway.
-
-    Report-only means no verdicts, and "this sample is too small to correlate" is a verdict.
-    scipy answers 0.9999999999999999 off two rows by construction and never raises (measured
-    on 1.17.1); what makes that safe to publish is that the sample size ships in the same dict
-    and the raw rows ship below it, so the reader discounts it rather than inheriting a
-    judgement. The value and the count are ONE contract, so both are asserted here.
-    """
-    m = compute_depth_error(
-        _collected([_pair(0, 1, 0.01, 3.0, depth=1.0), _pair(1, 2, 0.02, 3.0, depth=2.0)]), 500.0, "x"
+    depth_pairs, _ = compute_depth_error(
+        _collected([_pair(0, 1, 0.0123456789, 3.0, iqr=0.0098765432)])
     )
-    assert m["correlations"]["error_vs_depth"] == stats.spearmanr([1.0, 2.0], [0.01, 0.02]).statistic
-    assert m["correlations"]["error_vs_depth"] == pytest.approx(1.0)  # the spurious perfect fit
-    assert m["n_pair_directions"] == 2 == len(m["pair_directions"])  # what makes it readable
-    # One row is the same case at the other end: scipy returns nan, still without raising.
-    one = compute_depth_error(_collected([_pair(0, 1, 0.01, 3.0, depth=1.0)]), 500.0, "x")
-    assert np.isnan(one["correlations"]["error_vs_depth"]) and one["n_pair_directions"] == 1
+    assert depth_pairs["median_rel_depth_error"][0] == 0.0123456789  # exact, not approx
+    assert depth_pairs["iqr_rel_depth_error"][0] == 0.0098765432
+    assert depth_pairs["median_parallax_deg"][0] == 3.0 and depth_pairs["median_depth"][0] == 4.0
 
 
-def test_a_nan_row_makes_the_rho_nan_rather_than_correlating_a_SUBSET():
-    """No silent row dropping: a missing value nans the whole rho, it does not shrink the sample.
-
-    The producers guarantee finite columns, so this is unreachable today — it pins that if one
-    ever regresses, the report says "cannot compute" instead of quietly reporting a rho over
-    whichever rows happened to survive. Dropping rows here would answer -0.2 off the four
-    co-finite rows; both nans sit on DIFFERENT rows, so a per-column drop would also desync
-    the pairing and answer -0.1 off rows never measured together.
-    """
-    pairs = [
-        _pair(0, 1, float("nan"), 3.0, depth=1.0),  # residual missing
-        _pair(1, 3, -0.10, 3.0, depth=2.0),
-        _pair(2, 5, 0.01, 3.0, depth=3.0),
-        _pair(3, 7, 0.07, 3.0, depth=float("nan")),  # depth missing, a DIFFERENT row
-        _pair(4, 9, 0.02, 3.0, depth=5.0),
-        _pair(5, 11, 0.09, 3.0, depth=6.0),
-    ]
-    m = compute_depth_error(_collected(pairs), 500.0, "x")
-    assert np.isnan(m["correlations"]["error_vs_depth"])
-    # Anchors: the two row-dropping answers this rejects are both finite and both wrong.
-    assert stats.spearmanr([2.0, 3.0, 5.0, 6.0], [0.10, 0.01, 0.02, 0.09]).statistic == pytest.approx(-0.2)
-    # frame_separation is never nan, so only the residual's nan reaches this column — still nan.
-    assert np.isnan(m["correlations"]["error_vs_frame_separation"])
+def test_per_pixel_residual_ships_as_the_collected_counts_and_edges():
+    """The one quantity too large to hold ships as the pass binned it, untouched."""
+    collected = _collected([_pair(0, 1, 0.3, 3.0)])
+    _, histogram = compute_depth_error(collected)
+    assert histogram["counts"] == collected["rel_depth_error_counts"].tolist()
+    assert histogram["bin_edges"] == collected["rel_depth_error_edges"].tolist()
+    assert len(histogram["bin_edges"]) == len(histogram["counts"]) + 1
 
 
-def test_nothing_in_the_output_grades_the_scene():
-    """Report-only: distributions and how they vary, never a verdict for the reader to inherit."""
-    pairs = [_pair(k, k + 1, 0.5 * (k + 1), 3.0, depth=1.0 + k) for k in range(20)]  # awful scene
-    m = compute_depth_error(_collected(pairs), 500.0, "x")
-    banned = {"verdict", "status", "grade", "quality", "pass", "passed", "failed", "ok", "healthy"}
-    assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pair_directions"][0]))
-    # The shipped strings describe units and hypotheses; none of them announce an outcome.
-    strings = " ".join(v for v in m.values() if isinstance(v, str))
-    strings += " " + m["correlations"]["null_hypothesis"] + " " + m["residual_histogram"]["axis"]
-    assert not any(w in strings.lower() for w in ("good", "bad", "poor", "acceptable", "fail"))
-
-
-def test_constant_depth_gives_nan_which_the_json_writer_turns_into_null():
-    """scipy's answer, unwrapped — verification.clean_for_json does the nan -> null pass."""
-    pairs = [_pair(k, k + 1, 0.01, 3.0, depth=4.0) for k in range(10)]
-    assert np.isnan(compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_depth"])
-
-
-def test_error_vs_frame_separation_is_reported():
-    """Does disagreement grow with how far apart the two frames are?"""
-    pairs = [_pair(0, k, 0.005 * k, 3.0) for k in range(1, 20)]
-    assert compute_depth_error(_collected(pairs), 500.0, "x")["correlations"]["error_vs_frame_separation"] > 0.9
-
-
-def test_depth_error_is_unavailable_not_a_crash_when_empty():
-    m = compute_depth_error(_collected([]), 500.0, "x")
-    assert m["available"] is False and "reason" in m
+def test_depth_error_is_empty_columns_not_a_crash_when_no_pair():
+    depth_pairs, histogram = compute_depth_error(_collected([]))
+    assert set(depth_pairs) == DEPTH_COLUMNS
+    assert all(v == [] for v in depth_pairs.values())
+    assert sum(histogram["counts"]) == 0
 
 
 ########################################
@@ -469,7 +232,7 @@ def _translated_pair(shift_px=4, hw=32, f=40.0, depth=4.0, seed=5):
 def test_identical_poses_and_depth_warp_to_ncc_one():
     img, d, K, e = _plane()
     m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
+    assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.05)
 
 
 def test_the_warp_actually_moves_pixels_through_pose_and_depth():
@@ -480,7 +243,7 @@ def test_the_warp_actually_moves_pixels_through_pose_and_depth():
     """
     img, d, K, e = _translated_pair()
     m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+    assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
 
 
 def test_bounds_are_checked_against_the_right_axis_on_a_NON_SQUARE_frame():
@@ -494,8 +257,8 @@ def test_bounds_are_checked_against_the_right_axis_on_a_NON_SQUARE_frame():
     """
     img, d, K, e = _plane(hw=(24, 32))
     m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert m["pairs"][0]["n_pixels"] == 24 * 32
-    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
+    assert m["n_pixels"][0] == 24 * 32
+    assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.05)
 
 
 def test_zero_depth_pixels_are_dropped_rather_than_warped_from_the_camera_centre():
@@ -514,7 +277,7 @@ def test_zero_depth_pixels_are_dropped_rather_than_warped_from_the_camera_centre
     e = e.copy()
     e[1, 2, 3] = 2.0  # camera 1 sits at world z = -2, looking the same way
     m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert m["pairs"][0]["n_pixels"] == 32 * 32 - 8 * 32
+    assert m["n_pixels"][0] == 32 * 32 - 8 * 32
 
 
 def test_ncc_is_invariant_to_image_scale_convention():
@@ -527,10 +290,10 @@ def test_ncc_is_invariant_to_image_scale_convention():
     rng = np.random.default_rng(11)
     img, d, K, e = _plane()
     img[1] = img[1] + rng.normal(0, 120, img[1].shape)
-    a = compute_photometric_ncc(img, d, K, e, max_separation=1)["pairs"][0]
-    b = compute_photometric_ncc(img / 255.0, d, K, e, max_separation=1)["pairs"][0]
-    assert a["photometric_ncc"] == pytest.approx(b["photometric_ncc"], abs=1e-4)
-    assert 0.2 < a["photometric_ncc"] < 0.9  # anchor: not the trivial 1.0 case
+    a = compute_photometric_ncc(img, d, K, e, max_separation=1)["photometric_ncc"][0]
+    b = compute_photometric_ncc(img / 255.0, d, K, e, max_separation=1)["photometric_ncc"][0]
+    assert a == pytest.approx(b, abs=1e-4)
+    assert 0.2 < a < 0.9  # anchor: not the trivial 1.0 case
 
 
 def test_ncc_is_invariant_to_exposure_shift():
@@ -544,7 +307,7 @@ def test_ncc_is_invariant_to_exposure_shift():
     shifted = img.copy()
     shifted[1] = shifted[1] * 0.15 + 210.0
     m = compute_photometric_ncc(shifted, d, K, e, max_separation=1)
-    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.05)
+    assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.05)
 
 
 def test_ncc_drops_with_genuine_disagreement():
@@ -552,15 +315,15 @@ def test_ncc_drops_with_genuine_disagreement():
     img, d, K, e = _plane()
     noisy = img.copy()
     noisy[1] = noisy[1] + rng.normal(0, 90, noisy[1].shape)
-    clean = compute_photometric_ncc(img, d, K, e, max_separation=1)["pairs"][0]
-    dirty = compute_photometric_ncc(noisy, d, K, e, max_separation=1)["pairs"][0]
-    assert dirty["photometric_ncc"] < clean["photometric_ncc"]
+    clean = compute_photometric_ncc(img, d, K, e, max_separation=1)["photometric_ncc"][0]
+    dirty = compute_photometric_ncc(noisy, d, K, e, max_separation=1)["photometric_ncc"][0]
+    assert dirty < clean
 
 
 def test_flat_patch_is_skipped_not_a_divide_by_zero():
     """Every value equal means zero variance, and corrcoef would divide by it.
 
-    `available is False` alone does NOT discriminate — measured, deleting the std guard leaves
+    An empty table alone does NOT discriminate — measured, deleting the std guard leaves
     all 51 tests passing, because the isfinite check below it drops the same rows. What the
     guard buys is that corrcoef is never CALLED on a zero-variance patch: on a real scene with
     sky or a blank wall that is one RuntimeWarning per pair. simplefilter("error") is the
@@ -570,7 +333,7 @@ def test_flat_patch_is_skipped_not_a_divide_by_zero():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         m = compute_photometric_ncc(np.full_like(img, 128.0), d, K, e, max_separation=1)
-    assert m["available"] is False
+    assert m["photometric_ncc"] == []
 
 
 def test_two_overlapping_pixels_do_not_count_as_a_correlation():
@@ -578,7 +341,7 @@ def test_two_overlapping_pixels_do_not_count_as_a_correlation():
     assert abs(np.corrcoef([0.0, 1.0], [5.0, -3.0])[0, 1]) == pytest.approx(1.0)
     img, d, K, e = _plane()
     m = compute_photometric_ncc(img, d, K, e, max_separation=1, min_samples=10**9)
-    assert m["available"] is False
+    assert m["photometric_ncc"] == []
 
 
 def test_min_samples_counts_pixels_not_the_ravelled_rgb_values():
@@ -590,21 +353,21 @@ def test_min_samples_counts_pixels_not_the_ravelled_rgb_values():
     """
     img, d, K, e = _plane()
     assert compute_photometric_ncc(img, d, K, e, max_separation=1,
-                                   min_samples=1024)["pairs"][0]["n_pixels"] == 1024
+                                   min_samples=1024)["n_pixels"] == [1024]
     assert compute_photometric_ncc(img, d, K, e, max_separation=1,
-                                   min_samples=1025)["available"] is False
+                                   min_samples=1025)["n_pixels"] == []
 
 
 def test_photometric_respects_max_separation():
     img, d, K, e = _plane(n=4, hw=16)
     m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert all(r["frame_separation"] <= 1 for r in m["pairs"])
+    assert m["idx1"] and all(abs(i - j) <= 1 for i, j in zip(m["idx1"], m["idx2"]))
 
 
-def test_photometric_is_unavailable_for_a_single_frame():
+def test_photometric_is_empty_for_a_single_frame():
     img, d, K, e = _plane(n=1, hw=16)
     m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert m["available"] is False and "reason" in m
+    assert m == {"idx1": [], "idx2": [], "photometric_ncc": [], "n_pixels": []}
 
 
 def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
@@ -622,8 +385,7 @@ def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
     m = compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords,
                                 max_separation=1)
-    assert m["available"] is True and m["grid"] == "original"
-    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+    assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
 
 
 def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION():
@@ -672,10 +434,10 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
 
     m = compute_photometric_ncc(np.stack([img0, img1]), model_d, model_K, e,
                                 original_coords=coords, max_separation=1)
-    assert m["pairs"][0]["photometric_ncc"] == pytest.approx(1.0, abs=0.02)
+    assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
     # Anchor: the whole crop warped in bounds, so that 1.0 is the full overlap rather than a
     # few surviving pixels that happened to agree.
-    assert m["pairs"][0]["n_pixels"] == 16 * 32
+    assert m["n_pixels"][0] == 16 * 32
 
 
 def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(monkeypatch):
@@ -767,12 +529,12 @@ def test_ncc_is_invariant_to_image_scale_convention_even_with_a_DARK_frame():
     assert img[1].max() < 1.0 < img.max()
     a = compute_photometric_ncc(img, d, K, e, original_coords=coords, max_separation=1)
     b = compute_photometric_ncc(img / 255.0, d, K, e, original_coords=coords, max_separation=1)
-    assert [r["idx1"] for r in a["pairs"]] == [r["idx1"] for r in b["pairs"]] == [0, 1]
-    for ra, rb in zip(a["pairs"], b["pairs"]):
-        assert ra["photometric_ncc"] == pytest.approx(rb["photometric_ncc"], abs=1e-6)
+    assert a["idx1"] == b["idx1"] == [0, 1]
+    for na, nb in zip(a["photometric_ncc"], b["photometric_ncc"]):
+        assert na == pytest.approx(nb, abs=1e-6)
     # Anchor: the depth edge really does reach the ncc, so the equality above is not two runs
     # of a warp that ignores the lifted depth. A perfect 1.0 would read the same either way.
-    assert all(0.01 < r["photometric_ncc"] < 0.5 for r in a["pairs"])
+    assert all(0.01 < v < 0.5 for v in a["photometric_ncc"])
 
 
 def test_upsampling_without_crop_rows_is_a_refusal_not_a_guess():
@@ -799,129 +561,23 @@ def test_images_that_are_not_the_canvas_the_crops_were_cut_from_are_a_refusal():
                                 max_separation=1)
 
 
-def test_photometric_resolution_is_derived_from_the_images_not_declared():
-    """It used to be a caller-supplied string, and a 32x32 fixture round-tripped "1920x1080".
+def test_photometric_output_is_four_columns_over_unordered_pairs():
+    """UNORDERED pairs (i < j); one entry per pair per column.
 
-    Non-square on purpose: "32x24" also pins the ORDER, which a square frame cannot see.
-    """
-    img, d, K, e = _plane(hw=(24, 32))
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert m["grid"] == "original" and m["resolution"] == "32x24"
-
-
-def test_a_two_pair_rho_ships_NEXT_TO_the_n_pairs_that_qualifies_it():
-    """scipy hands back +-1.0 off two points, and the block publishes it beside the count.
-
-    Frame 1 is flat, which skips every pair touching it and leaves exactly two rows with
-    DIFFERENT separations and DIFFERENT correlations — so neither column is constant and the
-    +-1.0 is purely an artefact of the row count. That is precisely the case `n_pairs` exists
-    for the reader to spot; withholding the value instead would be this module grading its own
-    sample, which the report does not do.
-    """
-    rng = np.random.default_rng(7)
-    img, d, K, e = _plane(n=4)
-    img[1] = 128.0
-    img[3] = img[3] + rng.normal(0, 90, img[3].shape)
-    m = compute_photometric_ncc(img, d, K, e, max_separation=2)
-    assert m["n_pairs"] == 2 == len(m["pairs"])  # the count that makes the rho readable
-    assert [r["frame_separation"] for r in m["pairs"]] == [2, 1]
-    assert m["pairs"][0]["photometric_ncc"] != pytest.approx(m["pairs"][1]["photometric_ncc"])
-    assert m["correlations"]["ncc_vs_frame_separation"] == stats.spearmanr(
-        [r["frame_separation"] for r in m["pairs"]], [r["photometric_ncc"] for r in m["pairs"]]
-    ).statistic
-    assert abs(m["correlations"]["ncc_vs_frame_separation"]) == pytest.approx(1.0)
-
-
-def test_the_correlation_reads_the_shipped_pair_columns():
-    """With enough rows it is computed, and off the same columns the reader can plot.
-
-    Appearance drifts as a random WALK, not as independent per-frame noise: independent noise
-    decorrelates every pair by the same amount whatever their separation (measured rho -0.12
-    on that fixture), so it cannot anchor a falls-off-with-separation claim.
-    """
-    rng = np.random.default_rng(9)
-    img, d, K, e = _plane(n=4)
-    img = img + np.cumsum(rng.normal(0, 70, img.shape), axis=0)
-    m = compute_photometric_ncc(img, d, K, e, max_separation=3)
-    rho = stats.spearmanr(
-        [r["frame_separation"] for r in m["pairs"]], [r["photometric_ncc"] for r in m["pairs"]]
-    ).statistic
-    assert m["correlations"]["ncc_vs_frame_separation"] == pytest.approx(rho)
-    assert rho < -0.5  # anchor: the fixture really does fall off with separation
-
-
-def test_photometric_output_keys_are_the_contract_task_6_reads():
-    """UNORDERED pairs, matching verification.py's epipolar block — n_pairs, not directions.
-
-    The depth block ships "pair_directions" because its producer loop is ordered and emits
-    both (i, j) and (j, i) with different values. This loop is `for j in range(i + 1, ...)`,
-    one row per pair, so the two counts are not comparable and the key names must not suggest
-    they are: a reader comparing them would otherwise see a phantom 2x.
+    This loop is `for j in range(i + 1, ...)`, one row per pair, unlike the depth pass's
+    ordered directions — so the two row counts are not comparable.
     """
     img, d, K, e = _plane(n=4)
     m = compute_photometric_ncc(img, d, K, e, max_separation=3)
-    assert set(m) == {
-        "available", "grid", "resolution", "units", "n_pairs", "correlations", "pairs",
-    }
-    assert m["available"] is True and m["grid"] == "original" and m["resolution"] == "32x32"
-    assert set(m["correlations"]) == {"ncc_vs_frame_separation"}
+    assert set(m) == {"idx1", "idx2", "photometric_ncc", "n_pixels"}
     # C(4, 2) = 6 unordered pairs. An ordered loop over the same frames would ship 12.
-    assert m["n_pairs"] == len(m["pairs"]) == 6
-    assert [(r["idx1"], r["idx2"]) for r in m["pairs"]] == [
-        (0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3),
-    ]
-    assert set(m["pairs"][0]) == {
-        "idx1", "idx2", "frame_separation", "photometric_ncc", "n_pixels",
-    }
-
-
-def test_nothing_in_the_photometric_output_grades_the_scene():
-    """Report-only, the same contract as the depth block: a number and its units, no verdict."""
-    rng = np.random.default_rng(13)
-    img, d, K, e = _plane(n=4)
-    img[1:] = img[1:] + rng.normal(0, 200, img[1:].shape)  # an awful scene
-    m = compute_photometric_ncc(img, d, K, e, max_separation=3)
-    banned = {"verdict", "status", "grade", "quality", "pass", "passed", "failed", "ok", "healthy"}
-    assert banned.isdisjoint(set(m) | set(m["correlations"]) | set(m["pairs"][0]))
-    strings = " ".join(v for v in m.values() if isinstance(v, str))
-    assert not any(w in strings.lower() for w in ("good", "bad", "poor", "acceptable", "fail"))
-
-
-def test_extract_photometric_propagates_measurement_errors(tmp_path, monkeypatch):
-    """A failure inside the correlation raises; only missing images return unavailable."""
-    monkeypatch.setattr(metrics.frames, "frame_paths", lambda d: [d / "frame_000000.png"])
-    monkeypatch.setattr(metrics.frames, "read_frames", lambda d: np.zeros((1, 4, 4, 3), np.uint8))
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("correlation failed")
-
-    monkeypatch.setattr(metrics, "compute_photometric_ncc", boom)
-    result = SimpleNamespace(
-        depth=np.ones((1, 4, 4)), intrinsics=np.tile(np.eye(3), (1, 1, 1)),
-        extrinsics=np.tile(np.eye(4), (1, 1, 1)), original_coords=np.zeros((1, 6)),
-    )
-    with pytest.raises(RuntimeError, match="correlation failed"):
-        metrics.extract_photometric(result, tmp_path, 1)
-
-
-def test_extract_photometric_without_images_is_unavailable(tmp_path):
-    """Nothing to measure is the one case that returns unavailable instead of raising."""
-    out = metrics.extract_photometric(SimpleNamespace(), tmp_path / "no_images", 1)
-    assert out["available"] is False
-    assert "no frame images" in out["reason"]
+    assert all(len(v) == 6 for v in m.values())
+    assert list(zip(m["idx1"], m["idx2"])) == [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
 
 
 ########################################
-# The stage and the running-error accumulator
+# The stage wiring
 ########################################
-
-
-def test_verify_writes_the_index_keys_so_no_merge_code_is_needed():
-    """asdict() serialises whatever fields PairStats has — the shape lives at the source."""
-    row = asdict(PairStats(3, 11, name1="a.png", name2="b.png", num_matches=500, num_inliers=450))
-    assert row["idx1"] == 3 and row["idx2"] == 11
-    assert abs(row["idx1"] - row["idx2"]) == 8
-    assert row["num_inliers"] / row["num_matches"] == pytest.approx(0.9)
 
 
 def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
@@ -932,71 +588,21 @@ def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
 
 def test_report_does_not_demote_any_existing_leaf():
     """A new dependency edge would silently break another stage's disk re-run."""
-    for s in ("refine", "semantics", "mesh", "localize", "verify"):
+    for s in ("refine", "semantics", "mesh", "localize"):
         assert s in LEAF_STAGES
 
 
-def test_running_error_is_sequential_pairs_and_absolute_steps():
-    """Signed steps cancel and hide accumulation; a separation-5 pair is a revisit not a step."""
-    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "median_rel_depth_error": 0.1},
-            {"idx1": 1, "idx2": 2, "frame_separation": 1, "median_rel_depth_error": -0.1},
-            {"idx1": 0, "idx2": 5, "frame_separation": 5, "median_rel_depth_error": 9.9}]
-    out = _running_error(rows, "median_rel_depth_error")
-    assert out["frame_index"] == [1, 2]  # separation-5 revisit excluded
-    assert out["cumulative"] == pytest.approx([0.1, 0.2])  # |-0.1| added, not cancelled
-
-
-def test_running_error_counts_an_ordered_pair_once():
-    """The depth pass emits (i,j) AND (j,i); summing raw rows would double every step."""
-    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "median_rel_depth_error": 0.10},
-            {"idx1": 1, "idx2": 0, "frame_separation": 1, "median_rel_depth_error": -0.20},
-            {"idx1": 1, "idx2": 2, "frame_separation": 1, "median_rel_depth_error": 0.30},
-            {"idx1": 2, "idx2": 1, "frame_separation": 1, "median_rel_depth_error": 0.30}]
-    out = _running_error(rows, "median_rel_depth_error")
-    # Two steps, not four, and each frame index appears once.
-    assert out["frame_index"] == [1, 2]
-    # Step 0->1 is mean(|0.10|, |-0.20|) = 0.15, NOT the signed mean (-0.05) and not the sum.
-    assert out["cumulative"] == pytest.approx([0.15, 0.45])
-
-
-def test_running_error_on_unordered_rows_is_the_identity():
-    """Epipolar rows are one per unordered pair, so grouping must not alter them."""
-    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "rot_error_deg": 0.4},
-            {"idx1": 1, "idx2": 2, "frame_separation": 1, "rot_error_deg": 0.6}]
-    out = _running_error(rows, "rot_error_deg")
-    assert out["frame_index"] == [1, 2]
-    assert out["cumulative"] == pytest.approx([0.4, 1.0])
-
-
-def test_running_error_drops_non_finite_and_missing_values():
-    """A dead measurement leaves None or nan in the column; neither may enter the cumsum."""
-    rows = [{"idx1": 0, "idx2": 1, "frame_separation": 1, "rot_error_deg": 0.4},
-            {"idx1": 1, "idx2": 2, "frame_separation": 1, "rot_error_deg": None},
-            {"idx1": 2, "idx2": 3, "frame_separation": 1, "rot_error_deg": float("nan")},
-            {"idx1": 3, "idx2": 4, "frame_separation": 1, "rot_error_deg": 0.6}]
-    out = _running_error(rows, "rot_error_deg")
-    assert out["frame_index"] == [1, 4]
-    assert out["cumulative"] == pytest.approx([0.4, 1.0])
-
-
-def test_report_json_is_valid_json_with_no_bare_nan():
-    """json.dumps writes a bare NaN, which no strict parser accepts — clean_for_json prevents it."""
-    text = json.dumps(clean_for_json({"rho": float("nan"), "nested": [float("nan"), 1.0]}))
-    assert "NaN" not in text
-    assert json.loads(text)["rho"] is None
-
-
 ########################################
-# build_reconstruction_quality_report end to end
+# compute_reconstruction_quality end to end
 ########################################
 
 
 def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
-    """A minimal pointcloud.zarr that build_reconstruction_quality_report can actually run on. Returns its path.
+    """A minimal pointcloud.zarr that compute_reconstruction_quality can run on. Returns its path.
 
     Depth is a SLANTED plane, never a constant one: a constant-depth scene has a degenerate
     frustum AABB, compute_multiview_depth_confidence's pair gate then skips every pair, and
-    the depth measurement would come back unavailable — a fixture that can observe nothing.
+    the depth tables would come back empty — a fixture that can observe nothing.
     Each frame carries a slightly different depth scale so the pairwise residuals are
     non-zero and the per-frame medians actually differ.
 
@@ -1004,9 +610,6 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
     implementation that ignores the top-left origin reads 0.469 instead of 1/3, and a centred
     crop would hide exactly that.
     """
-    # Heavy dep (pulls the vggt tree); imported here so the rest of this module stays light.
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-
     n, hw = len(image_names), 16
     rows = np.arange(hw, dtype=np.float32)[:, None]
     base = np.broadcast_to(3.0 + 0.1 * rows, (hw, hw)).astype(np.float32)
@@ -1017,7 +620,7 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
         extrinsics[k][0, 3] = -0.15 * k  # camera centre slides along +x, so pairs have parallax
     rng = np.random.default_rng(4)
     coords = np.tile(np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1))
-    result = FeedforwardResult(
+    result = ff_base.FeedforwardResult(
         points=np.zeros((1, 3), np.float32),
         colors=np.zeros((1, 3), np.uint8),
         extrinsics=extrinsics,
@@ -1034,19 +637,26 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
     return zarr_path
 
 
-def _build(tmp_path, image_names, with_confidence=True):
-    """build_reconstruction_quality_report over _write_tiny_scene with no verification.json and no images/."""
-    return build_reconstruction_quality_report(
-        zarr_path=_write_tiny_scene(tmp_path, image_names, with_confidence),
-        verification_json=tmp_path / "absent" / "verification.json",
-        images_dir=tmp_path / "absent" / "images",
-        output_path=tmp_path / "reconstruction_quality_report.json",
-        backend="vggtx",
+def _quality(tmp_path, image_names, with_confidence=True, images=None):
+    """The stage's data path over _write_tiny_scene: load, collect, compute. Returns (tables, collected)."""
+    ff = ff_base.FeedforwardResult.load_zarr(_write_tiny_scene(tmp_path, image_names, with_confidence))
+    collected = {}
+    ff_base.compute_multiview_depth_confidence(
+        ff.depth, ff.intrinsics, ff.extrinsics, abs_thresh=0.0, rel_thresh=0.05, collect=collected
     )
+    tables = metrics.compute_reconstruction_quality(
+        collected, ff.depth, ff.intrinsics, ff.extrinsics, ff.original_coords,
+        [Path(str(p)).name for p in ff.image_paths], ff.confidence, images,
+    )
+    return tables, collected
+
+
+def _column_lengths(table):
+    return {len(v) for v in table.values()}
 
 
 def test_the_source_index_join_rests_on_the_frame_stem_naming_contract():
-    """build_reconstruction_quality_report derives its index map with this parser; a naming change must break loudly.
+    """compute_reconstruction_quality derives frame_idx with this parser; a naming change must break loudly.
 
     frame_{idx:06d} is what the images/ store writes and what a reconstruction's image_paths
     carry. If that convention ever moves, every row of this report silently mispairs with
@@ -1059,169 +669,87 @@ def test_the_source_index_join_rests_on_the_frame_stem_naming_contract():
     assert fr.frame_idx_from_path(Path("frame_000019.jpg")) == 19
 
 
-def test_build_reconstruction_quality_report_maps_recon_index_to_SOURCE_frame_index(tmp_path):
-    """Every other per-frame block is keyed 0..N-1, which is NOT the source video index.
-
-    The fixture's source indices are NON-CONTIGUOUS on purpose: sampling skips frames, so a
-    map built as list(range(n)) or enumerate() would be wrong in production and completely
-    invisible against 0, 1, 2. Without this key nothing keyed on the source video — a
-    video-quality report, the frame store — can be joined to this one at all.
-    """
+def test_frame_idx_is_the_SOURCE_frame_index_not_the_row(tmp_path):
+    """Rows are 0..N-1; frame_idx is the source video index, NON-CONTIGUOUS because sampling skips."""
     names = ["frame_000000.jpg", "frame_000007.jpg", "frame_000019.jpg"]
-    report = _build(tmp_path, names)
-    assert report["source_frame_indices"] == [0, 7, 19]
+    tables, _ = _quality(tmp_path, names)
+    assert tables["frames"]["frame_idx"] == [0, 7, 19]
     # It is derived through the same parser, not re-implemented alongside it.
-    assert report["source_frame_indices"] == [fr.frame_idx_from_path(Path(p)) for p in names]
-    # The join happens against the FILE, so the map has to survive serialisation.
-    written = json.loads((tmp_path / "reconstruction_quality_report.json").read_text())
-    assert written["source_frame_indices"] == [0, 7, 19]
-    # One entry per reconstruction row, in reconstruction order.
-    assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 3
+    assert tables["frames"]["frame_idx"] == [fr.frame_idx_from_path(Path(p)) for p in names]
 
 
 def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_path):
     """A guessed source index is worse than a missing one, so the contract is checked first.
 
-    fr.frame_idx_from_path is int(stem.split("_")[-1]): it raises only on a non-numeric
-    tail, so IMG_1234 reads as 1234 and 00019 as 19 — plausible integers that are simply wrong.
-    Those are the cases the map exists to prevent, because a downstream join then pairs real
-    frames with the wrong rows and nothing looks broken. A null is visibly absent instead.
-
-    The parser itself is deliberately NOT changed — other callers depend on its behaviour, and
-    the two asserts below pin that it still guesses, so this guard is what stands between the
-    guess and the report.
+    fr.frame_idx_from_path is int(stem.split("_")[-1]): IMG_1234 reads as 1234 and 00019 as
+    19 — plausible integers that are simply wrong. The parser is deliberately NOT changed;
+    the asserts below pin that it still guesses, so the stem guard is what stands between
+    the guess and the report. frame_1000000 is ON contract: 06d pads, it does not cap.
     """
-    # The parser on its own would hand back a confident, wrong answer for all three of these.
     assert fr.frame_idx_from_path(Path("IMG_1234.jpg")) == 1234
     assert fr.frame_idx_from_path(Path("00019.jpg")) == 19
     assert fr.frame_idx_from_path(Path("x_frame_000007.jpg")) == 7
 
-    # Through build_reconstruction_quality_report, all three come back null; the one on-contract name still resolves,
-    # so the guard rejects by shape and is not just disabling the map wholesale. The prefixed
-    # name is why the stem is matched WHOLE: a substring match would accept anything ending in
-    # the right shape, which is the same guess this guard exists to refuse.
-    # frame_1000000 is ON contract and must parse: 06d pads to six digits, it does not cap at
-    # six, so a video past a million frames still names its keyframes by this rule. A guard
-    # written as exactly-six would silently null every frame of such a scene.
-    report = _build(tmp_path, ["IMG_1234.jpg", "00019.jpg", "x_frame_000007.jpg",
-                               "frame_000007.jpg", "frame_1000000.jpg"])
-    assert report["source_frame_indices"] == [None, None, None, 7, 1000000]
-    # null, not the string "None" and not a dropped entry: one slot per reconstruction row.
-    written = json.loads((tmp_path / "reconstruction_quality_report.json").read_text())
-    assert written["source_frame_indices"] == [None, None, None, 7, 1000000]
-    assert len(written["source_frame_indices"]) == written["scene"]["n_frames"] == 5
+    tables, _ = _quality(tmp_path, ["IMG_1234.jpg", "00019.jpg", "x_frame_000007.jpg",
+                                    "frame_000007.jpg", "frame_1000000.jpg"])
+    assert tables["frames"]["frame_idx"] == [None, None, None, 7, 1000000]
 
 
-def test_running_error_says_unavailable_rather_than_shipping_empty_arrays(tmp_path):
-    """An empty cumulative array is a false verdict: it reads as "error stayed at zero".
-
-    _running_error itself is correct — the caller was the defect. It looked the rows up with a
-    .get default, so a measurement that never ran took the empty list and came back as a
-    well-formed result with nothing in it, indistinguishable from one that ran and accumulated
-    nothing. The fixture has no verification.json, so epipolar is exactly that case.
-    """
-    report = _build(tmp_path, ["frame_000000.jpg", "frame_000001.jpg", "frame_000002.jpg"])
-
-    # Epipolar never ran, and says so in the same words the measurement block uses.
-    assert report["measurements"]["epipolar"]["available"] is False
-    assert report["running_error"]["epipolar"]["available"] is False
-    assert "verification.json" in report["running_error"]["epipolar"]["reason"]
-    # The shape a reader must not receive for a dead channel.
-    assert "cumulative" not in report["running_error"]["epipolar"]
-
-    # Depth DID run on this fixture, so the live shape is unchanged beside it.
-    assert report["measurements"]["depth"]["available"] is True
-    assert report["running_error"]["depth"]["cumulative"]
-    assert len(report["running_error"]["depth"]["cumulative"]) == 2  # 3 frames -> 2 steps
-
-    # Both shapes have to survive serialisation; the file is what a reader actually opens.
-    written = json.loads((tmp_path / "reconstruction_quality_report.json").read_text())
-    assert written["running_error"]["epipolar"]["available"] is False
-    assert written["running_error"]["depth"]["cumulative"]
+def test_every_table_is_columnar_with_equal_column_lengths(tmp_path):
+    """A table is {column: [values]}; a ragged column means rows no longer line up."""
+    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
+    for key in ("frames", "depth_pairs"):
+        assert len(_column_lengths(tables[key])) == 1, key
 
 
-def test_epipolar_row_missing_num_inliers_raises(tmp_path):
-    """verify always writes num_matches and num_inliers; a row without one is corrupt."""
-    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
-    vj = tmp_path / "verification.json"
-    vj.write_text(json.dumps({"pair_stats": [
-        {"idx1": 0, "idx2": 1, "num_matches": 10, "rot_error_deg": 1.0},
-    ]}))
-    with pytest.raises(KeyError, match="num_inliers"):
-        build_reconstruction_quality_report(
-            zarr_path, vj, tmp_path / "no_images", tmp_path / "report.json", "vggtx"
-        )
+def test_frames_table_has_one_row_per_reconstruction_frame(tmp_path):
+    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
+    assert _column_lengths(tables["frames"]) == {3}
+    assert all(v is not None for v in tables["frames"]["median_abs_rel_depth_error"])
 
 
-def test_verification_json_missing_pair_stats_raises(tmp_path):
-    """verify always writes pair_stats; a file without it is malformed, not zero verified pairs."""
-    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
-    vj = tmp_path / "verification.json"
-    vj.write_text(json.dumps({"frame_stats": {}}))
-    with pytest.raises(KeyError, match="pair_stats"):
-        build_reconstruction_quality_report(
-            zarr_path, vj, tmp_path / "no_images", tmp_path / "report.json", "vggtx"
-        )
+def test_depth_pairs_follow_the_collected_pair_order(tmp_path):
+    """Rows are the collected PairStats, one per direction, in the order the depth pass emitted."""
+    tables, collected = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
+    assert collected["pairs"]
+    assert tables["depth_pairs"]["idx1"] == [p.idx1 for p in collected["pairs"]]
+    assert tables["depth_pairs"]["idx2"] == [p.idx2 for p in collected["pairs"]]
 
 
-def test_available_channel_without_rows_raises(tmp_path, monkeypatch):
-    """A channel that claims available must ship its rows; a missing key is a bug, not zero."""
-    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
-    monkeypatch.setattr(metrics, "compute_depth_error", lambda *a, **k: {"available": True})
-    with pytest.raises(KeyError, match="pair_directions"):
-        build_reconstruction_quality_report(
-            zarr_path, tmp_path / "none.json", tmp_path / "no_images",
-            tmp_path / "report.json", "vggtx",
-        )
+def test_photometric_is_null_without_images(tmp_path):
+    """No images/: depth still ships, the photometric table is null."""
+    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg"])
+    assert tables["photometric_pairs"] is None
+    assert tables["depth_pairs"]["idx1"]
 
 
-def test_rel_thresh_reaches_depth_confidence(tmp_path, monkeypatch):
-    """rel_thresh is a kwarg on the report, threaded to the dense confidence pass."""
-    zarr_path = _write_tiny_scene(tmp_path, ["frame_000000", "frame_000001"])
-    seen = {}
-    real = ff_base.compute_multiview_depth_confidence
+def test_frame_columns_keep_their_order(tmp_path):
+    """Index, then crop coverage, then the depth and confidence summaries."""
+    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg"])
+    assert list(tables["frames"]) == [
+        "frame_idx", "covered_fraction", "median_abs_rel_depth_error", "confidence_median",
+    ]
 
-    def spy(*args, **kwargs):
-        seen["rel_thresh"] = kwargs["rel_thresh"]
-        return real(*args, **kwargs)
 
-    monkeypatch.setattr(ff_base, "compute_multiview_depth_confidence", spy)
-    build_reconstruction_quality_report(
-        zarr_path, tmp_path / "none.json", tmp_path / "no_images",
-        tmp_path / "report.json", "vggtx", rel_thresh=0.2,
+def test_median_abs_rel_depth_error_is_the_median_magnitude_over_pairs_touching_the_frame():
+    """Both directions count for a frame, by magnitude: frame 1 sees |-0.02|, |0.04| and |0.10|."""
+    collected = _collected([_pair(0, 1, -0.02, 2.0), _pair(1, 0, 0.04, 2.0), _pair(1, 2, 0.10, 2.0)])
+    n, hw = 3, 8
+    K = np.array([[50.0, 0, hw / 2], [0, 50.0, hw / 2], [0, 0, 1.0]])
+    tables = metrics.compute_reconstruction_quality(
+        collected, np.ones((n, hw, hw)), np.stack([K] * n), np.stack([np.eye(4)] * n),
+        np.tile([0, 0, hw, hw, hw, hw], (n, 1)), [f"frame_{k:06d}.png" for k in range(n)],
+        None, None,
     )
-    assert seen["rel_thresh"] == 0.2
+    assert tables["frames"]["median_abs_rel_depth_error"] == pytest.approx([0.03, 0.04, 0.10])
 
 
-def test_a_measurement_that_cannot_run_disables_only_itself(tmp_path):
-    """No verification.json and no images/: depth still ships, the other two say why not."""
-    report = _build(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
-    assert report["measurements_available"] == ["depth"]
-    assert report["measurements"]["depth"]["available"] is True
-    for dead in ("epipolar", "photometric"):
-        assert report["measurements"][dead]["available"] is False
-        assert report["measurements"][dead]["reason"]
-    # A bare NaN is what json.dumps emits for a nan and no strict parser accepts it.
-    assert "NaN" not in (tmp_path / "reconstruction_quality_report.json").read_text()
-
-
-def test_confidence_rho_ships_nested_with_the_n_frames_that_qualifies_it(tmp_path):
-    """An unguarded rho is only publishable because its sample size cannot be read apart from it.
-
-    n_frames is NOT recoverable from frame_percentile_ranks — ranks is {} at one frame while
-    this rho's sample is len(per_frame) — so the count lives inside the same object.
-    """
-    report = _build(tmp_path, ["frame_000000.jpg", "frame_000007.jpg", "frame_000019.jpg"])
-    block = report["confidence_vs_error"]
-    assert set(block) == {"spearman", "n_frames"}
-    assert block["n_frames"] == 3
-    assert isinstance(block["spearman"], float)
-
-
-def test_confidence_rho_and_its_count_are_both_none_without_a_confidence_array(tmp_path):
-    """No array means the rho was never computed — distinct from a rho over a tiny sample."""
-    report = _build(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"], with_confidence=False)
-    assert report["confidence_vs_error"] == {"spearman": None, "n_frames": None}
+def test_confidence_median_is_null_without_a_confidence_array(tmp_path):
+    """No array means the column was never computed — distinct from a low confidence."""
+    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"], with_confidence=False)
+    assert tables["frames"]["confidence_median"] == [None, None]
+    tables, _ = _quality(tmp_path / "c", ["frame_000000.jpg", "frame_000007.jpg"])
+    assert all(0.5 <= v <= 1.0 for v in tables["frames"]["confidence_median"])
 
 
 def test_crop_coverage_is_measured_against_the_ORIGINAL_canvas_not_the_model_grid(tmp_path):
@@ -1231,14 +759,5 @@ def test_crop_coverage_is_measured_against_the_ORIGINAL_canvas_not_the_model_gri
     Dropping the top-left origin gives 0.469 and using the model grid gives 1.0, so both
     mistakes are separated from the right answer.
     """
-    report = _build(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"])
-    fractions = [c["covered_fraction"] for c in report["crop_coverage"]]
-    assert fractions == pytest.approx([1.0 / 3.0, 1.0 / 3.0])
-    assert [c["index"] for c in report["crop_coverage"]] == [0, 1]
-
-
-def test_scale_intrinsics_to_original_known_answer():
-    """Crop (11,7)-(59,47) resized to 12x8: sx=0.25, sy=0.2."""
-    K = np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]])
-    out = _scale_intrinsics_to_original(K, 0.25, 0.2, 11.0, 7.0)
-    assert np.allclose(out, [[40.0, 0, 35.0], [0, 50.0, 27.0], [0, 0, 1]])
+    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"])
+    assert tables["frames"]["covered_fraction"] == pytest.approx([1.0 / 3.0, 1.0 / 3.0])

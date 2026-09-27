@@ -38,11 +38,6 @@ try:
 except ImportError:
     pass
 
-# ── Internal helpers (re-exported for wrappers and tests) ─────────────────────
-# _raw_to_world_points is re-exported for geometry/loop_closure/wrapper.py
-# - that caller runs it directly on raw VGGT-X outputs, outside the normal postprocess
-from .base import _raw_to_world_points
-
 # ── Test-patchable symbols ────────────────────────────────────────────────────
 # Explicit re-export so the patch target never moves
 # - tests patch collab_splats.pointcloud.feedforward.unproject_and_filter_points

@@ -9,6 +9,7 @@ import torch
 
 from collab_splats.geometry.loop_closure.submap import Submap
 from collab_splats.pointcloud.feedforward import FeedforwardResult
+from tests.geometry.loop_closure._helpers import record_driven_submaps
 
 
 def _make_ff_result(**overrides):
@@ -297,7 +298,7 @@ def test_loop_closure_reproject_delegates_to_base():
 
 
 def _make_raw(k: int) -> dict:
-    # All frames use identity 3x4 extrinsic; first frame must be identity for assert_world_to_cam
+    # All frames use identity 3x4 extrinsic; the wrapper requires frame 0 at identity
     extrinsic = np.tile(np.eye(3, 4, dtype=np.float32), (k, 1, 1))
     # Varied positive confidence over the 4x4 grid so the per-submap 25th-percentile
     # conf mask keeps a non-empty dense cloud (else _assemble_result fails fast).
@@ -365,6 +366,37 @@ def test_lc_loop_passes_k_plus_overlap_to_forward():
     ), f"Expected windows of size {submap_size + overlap}, got {non_final}"
 
 
+def test_lc_loop_rejects_a_window_not_normalized_to_frame_0():
+    """A window whose frame-0 pose is not identity raises before any submap is built."""
+    from collab_splats.geometry.loop_closure.wrapper import (
+        LoopClosure,
+        LoopClosureConfig,
+    )
+
+    def fake_forward(model, views, **kwargs):
+        raw = _make_raw(views.shape[0])
+        raw["extrinsic"][0, :3, 3] = [1.0, 2.0, 3.0]
+        return raw
+
+    base = MagicMock()
+    base.views = torch.zeros(4, 3, 4, 4)
+    base.image_paths = [f"img_{i:03d}.png" for i in range(4)]
+    base._forward = fake_forward
+    base._lc_collate_outputs = lambda r: r
+
+    wrapper = LoopClosure.__new__(LoopClosure)
+    wrapper.base = base
+    wrapper.config = LoopClosureConfig(submap_size=3, submap_overlap=1)
+    wrapper.viz = None
+
+    with (
+        patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
+        pytest.raises(ValueError, match="not normalized to frame 0"),
+    ):
+        mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
+        wrapper._run_lc_loop()
+
+
 def test_lc_loop_populates_dense_points_and_map():
     """Window submaps carry dense points/colors/conf/conf_threshold and register in self.map."""
     from collab_splats.geometry.loop_closure.wrapper import (
@@ -409,7 +441,7 @@ def test_lc_loop_populates_dense_points_and_map():
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         wrapper._run_lc_loop()
 
-    # self.map holds the window submaps (reset at loop start, populated in add_points).
+    # self.map holds the window submaps (reset at loop start, populated in _add_window_submap).
     assert len(wrapper.map.submaps) > 0
     sm = next(iter(wrapper.map.submaps.values()))
     k = sm.frames.shape[0]
@@ -430,9 +462,9 @@ def _rot_z(theta: float) -> np.ndarray:
 def _make_raw_nontrivial(k: int, H: int, W: int) -> dict:
     """Non-degenerate stub _forward output: non-identity poses/K + varied positive depth.
 
-    Frame 0 stays identity (assert_world_to_cam), frames 1..k-1 carry real rotation +
-    translation so optimize() actually moves nodes; intrinsics_downsampled + high-conf
-    depth make _raw_to_world_points return points, so the inter-submap scale path runs.
+    Frame 0 stays identity (the wrapper's frame-0 check), frames 1..k-1 carry real rotation +
+    translation so optimize() actually moves nodes; depth + depth_conf give every window
+    dense points, so the inter-submap scale path runs.
     """
     # Extrinsics (world2cam): frame 0 identity; others rotated + translated.
     extrinsic = np.zeros((k, 3, 4), dtype=np.float32)
@@ -445,14 +477,13 @@ def _make_raw_nontrivial(k: int, H: int, W: int) -> dict:
     K = np.array([[200.0, 0.0, W * 0.5 + 3.0], [0.0, 200.0, H * 0.5 - 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
     intr = np.tile(K, (k, 1, 1))
 
-    # Varied positive depth + high confidence (> conf_threshold) so scale path engages.
+    # Varied positive depth + confidence so the scale path engages.
     rows = np.arange(H, dtype=np.float32)[:, None]
     cols = np.arange(W, dtype=np.float32)[None, :]
     base_depth = 1.5 + 0.01 * (rows + cols)
     depth = np.stack([base_depth + 0.1 * i for i in range(k)], axis=0)[..., None].astype(np.float32)
-    # Spatially varied confidence, all > 25 (graph scale gate keeps every point, so the
-    # driven-graph == batch-shim parity is untouched) but with a real 25th percentile so
-    # the per-submap conf mask keeps ~75% of pixels — a non-empty dense cloud.
+    # Spatially varied confidence with a real 25th percentile
+    # - the per-submap percentile gate keeps ~75% of pixels, for scale and the dense cloud
     conf_grid = 50.0 + 0.5 * (rows + cols)
     depth_conf = np.tile(conf_grid, (k, 1, 1)).astype(np.float32)
 
@@ -538,13 +569,14 @@ def test_self_graph_matches_incremental_drive():
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+        record_driven_submaps() as driven,
     ):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         wrapper._run_lc_loop()
 
     # Capture the exact submaps + loop submaps the run drove self.graph with.
-    submaps = wrapper._last_submaps
-    lc_submaps = wrapper._last_lc_submaps
+    submaps = driven["submaps"]
+    lc_submaps = driven["lc_submaps"]
     N = base.views.shape[0]
 
     # The strengthened harness must actually exercise a loop edge, else it has no teeth.
@@ -554,18 +586,77 @@ def test_self_graph_matches_incremental_drive():
     # cadence (add_submap+optimize per submap, then deferred loop edges, final solve).
     pg_golden = PoseGraph()
     for s in submaps:
-        pg_golden.add_submap(
-            s,
-            wrapper.config.submap_overlap,
-            wrapper.config.conf_threshold,
-            wrapper.config.scale_method,
-        )
+        pg_golden.add_submap(s, wrapper.config.submap_overlap)
         pg_golden.optimize()
     for lc in lc_submaps:
-        pg_golden.add_loop_edge(lc, submaps, wrapper.config.conf_threshold, wrapper.config.scale_method)
+        pg_golden.add_loop_edge(lc, submaps)
     pg_golden.optimize()
     golden = pg_golden.extract_extrinsics(N)
     np.testing.assert_allclose(wrapper.graph.extract_extrinsics(N), golden, atol=1e-5)
+
+
+def test_conf_percentile_reaches_window_and_loop_submaps():
+    """
+    LoopClosureConfig.conf_percentile sets every driven submap's percentile threshold.
+
+    - window submaps: percentile(depth_conf, 60) + 1e-6
+    - loop carriers: dense (2, H, W, 3) points and (2, H, W) conf, same percentile
+    """
+    from collab_splats.geometry.loop_closure.matching import LoopMatch
+    from collab_splats.geometry.loop_closure.wrapper import (
+        LoopClosure,
+        LoopClosureConfig,
+    )
+
+    H = W = 16
+    cfg = LoopClosureConfig(submap_size=3, submap_overlap=1, min_submap_gap=0, conf_percentile=60.0)
+    lc_conf = np.random.RandomState(1).rand(2, H, W).astype(np.float32)
+
+    def fake_forward(model, views, **kwargs):
+        sz = views.shape[0] if hasattr(views, "shape") else len(views)
+        return _make_raw_nontrivial(sz, H, W)
+
+    def fake_verify(q_frame, d_frame, verify_match_ratio=None):
+        pose1 = np.eye(4, dtype=np.float32)
+        pose1[:3, 3] = [0.05, 0.02, 0.1]
+        wp = np.random.RandomState(0).rand(2, H, W, 3).astype(np.float32)
+        return True, {"poses": np.stack([np.eye(4, dtype=np.float32), pose1]), "world_points": wp, "conf": lc_conf}
+
+    def fake_find(submap, past, *args, **kwargs):
+        if not past:
+            return []
+        return [LoopMatch(0.1, submap.submap_id, 0, query_frame_idx=1, detected_frame_idx=1)]
+
+    base = MagicMock()
+    base.max_points = 500_000
+    base.views = torch.full((9, 3, H, W), 0.5)
+    base.image_paths = [f"img_{i:03d}.png" for i in range(9)]
+    base._forward = fake_forward
+    base._lc_collate_outputs = lambda r: r
+    base._verify_loop_candidate = fake_verify
+
+    wrapper = LoopClosure.__new__(LoopClosure)
+    wrapper.base = base
+    wrapper.config = cfg
+    wrapper.map = None
+    wrapper.graph = None
+    wrapper.viz = None
+
+    with (
+        patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
+        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+        record_driven_submaps() as driven,
+    ):
+        mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
+        wrapper._run_lc_loop()
+
+    assert driven["lc_submaps"], "expected >=1 driven loop edge"
+    for sm in driven["submaps"]:
+        assert sm.conf_threshold == pytest.approx(float(np.percentile(sm.conf, 60.0)) + 1e-6)
+    for lc in driven["lc_submaps"]:
+        assert lc.points.shape == (2, H, W, 3)
+        assert lc.conf.shape == (2, H, W)
+        assert lc.conf_threshold == pytest.approx(float(np.percentile(lc_conf, 60.0)) + 1e-6)
 
 
 def test_lc_output_assembled_from_graphmap():
@@ -634,12 +725,13 @@ def test_lc_output_assembled_from_graphmap():
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+        record_driven_submaps() as driven,
     ):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         lc.run_inference()
 
     # A loop edge must have actually driven the graph, else the harness has no teeth.
-    assert len(lc._last_lc_submaps) >= 1
+    assert len(driven["lc_submaps"]) >= 1
 
     out = base.outputs
     assert isinstance(out, FeedforwardResult)
@@ -723,7 +815,6 @@ def test_assemble_result_intrinsics_first_occurrence_dedup():
     for s in (s0, s1):
         lc.map.add_submap(s)
     lc.graph = pg
-    lc._last_submaps = [s0, s1]
 
     out = lc._assemble_result(n_frames)
     fx = out.intrinsics[:, 0, 0]
@@ -770,7 +861,6 @@ def test_assemble_result_caps_cloud_to_max_points():
     for s in (s0, s1):
         lc.map.add_submap(s)
     lc.graph = pg
-    lc._last_submaps = [s0, s1]
 
     # The uncapped cloud must exceed the budget, else the test proves nothing.
     full_pts, _ = lc.map.get_world_pointcloud(lc.graph)
@@ -841,12 +931,13 @@ def test_lc_submaps_keep_frames_after_unproject():
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+        record_driven_submaps() as driven,
     ):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         lc.run_inference()
 
     # A loop edge must have actually driven the graph, else the harness has no teeth.
-    assert len(lc._last_lc_submaps) >= 1
+    assert len(driven["lc_submaps"]) >= 1
 
     # frames retained on every submap (window + loop-closure)
     for s in lc.map.ordered_submaps_by_key():
@@ -1010,12 +1101,13 @@ def test_lc_loop_pushes_to_viz_when_set():
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+        record_driven_submaps() as driven,
     ):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         lc.run_inference()
 
     # At least one accepted loop drove the graph (else the harness has no teeth).
-    assert len(lc._last_lc_submaps) >= 1
+    assert len(driven["lc_submaps"]) >= 1
 
     # add_points fired at least once per non-LC submap; frusta + >=1 loop line drawn.
     n_submaps = len([s for s in lc.map.ordered_submaps_by_key() if not s.is_lc_submap])
@@ -1204,11 +1296,12 @@ def test_lc_rejects_non_finite_loop_pose():
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+        record_driven_submaps() as driven,
     ):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         lc.run_inference()
 
-    assert lc._last_lc_submaps == []
+    assert driven["lc_submaps"] == []
     assert np.isfinite(base.outputs.extrinsics).all()
 
 
@@ -1273,11 +1366,12 @@ def _run_lc_harness_with_timing(loop_edge_timing):
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=fake_find),
+        record_driven_submaps() as driven,
     ):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         lc.run_inference()
 
-    return base.outputs, len(lc._last_lc_submaps), n_frames
+    return base.outputs, len(driven["lc_submaps"]), n_frames
 
 
 def test_loop_edge_timing_default_is_deferred():

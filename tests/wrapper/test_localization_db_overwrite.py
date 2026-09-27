@@ -29,7 +29,7 @@ def _make_stale_store(tmp_path: Path) -> Path:
 
 
 def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
-    """Stub the heavy inline deps of _build_localization_db; record cache state at call time."""
+    """Stub the heavy deps of _build_localization_db; record cache state at call time."""
 
     # from_feedforward is where the cache check lives — capture whether the stale
     # reconstruction group still exists in the store at the moment it runs.
@@ -49,7 +49,7 @@ def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
             return_value=MagicMock(),
         )
     )
-    stack.enter_context(patch("collab_splats.localization.extractors.LocalMatcher", return_value=MagicMock()))
+    stack.enter_context(patch("collab_splats.wrapper.reconstructor.LocalMatcher", return_value=MagicMock()))
 
 
 def _images_dir(tmp_path: Path) -> Path:

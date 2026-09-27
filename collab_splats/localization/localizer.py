@@ -118,7 +118,7 @@ def load_localization_db(
     store (per-image keypoint/descriptor tables + CSR offsets), not reconstruction
     geometry. Returns (per-frame LocalFeatures, image ids, (H, W)). Raises KeyError when
     the cache is missing. This is the read half of CameraLocalizer.save_index; load_index
-    builds a localizer on top of it, geometry/verification.py consumes it directly.
+    builds a localizer on top of it.
     """
     zarr_path = pathlib.Path(zarr_path)
     store = zarr.open(str(zarr_path), mode="r")

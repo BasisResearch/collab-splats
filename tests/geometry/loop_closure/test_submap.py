@@ -29,6 +29,21 @@ def test_dense_fields_and_conf_threshold():
     assert s.conf_threshold is not None  # percentile-derived
 
 
+def test_conf_percentile_sets_conf_threshold():
+    """conf_threshold = percentile(conf, conf_percentile) + 1e-6, as VGGT-SLAM vggt_slam/submap.py:40."""
+    conf = np.arange(1, 101, dtype=np.float32).reshape(1, 10, 10)
+    kw = dict(
+        submap_id=0,
+        poses=np.eye(4, dtype=np.float32)[None],
+        intrinsics=np.eye(3, dtype=np.float32)[None],
+        retrieval_vectors=np.zeros((1, 8), dtype=np.float32),
+        image_paths=["f0.jpg"],
+        conf=conf,
+    )
+    assert Submap(**kw).conf_threshold == np.percentile(conf, 25.0) + 1e-6
+    assert Submap(**kw, conf_percentile=60.0).conf_threshold == np.percentile(conf, 60.0) + 1e-6
+
+
 def test_get_points_in_world_frame_conf_masked():
     s = _dense_submap()
     pg = PoseGraph()

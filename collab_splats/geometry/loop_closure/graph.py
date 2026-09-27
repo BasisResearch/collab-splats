@@ -3,8 +3,9 @@ SL(4) factor graph over per-frame camera projection matrices, for loop closure.
 
 - optimizes poses on the SL(4) manifold to correct drift and close loops
 - one node per frame, keyed by global frame index
-- ported from MIT-SPARK/VGGT-SLAM: vggt_slam/graph.py (SL4 backend),
-  vggt_slam/slam_utils.py (decompose_camera), vggt_slam/scale_solver.py (estimate_scale_pairwise)
+- ported from MIT-SPARK/VGGT-SLAM @ fd3fd218 (BSD-2-Clause): vggt_slam/graph.py (SL4 backend),
+  vggt_slam/solver.py (add_edge), vggt_slam/scale_solver.py (estimate_scale_pairwise)
+- decompose_camera (vggt_slam/slam_utils.py) lives in geometry.transforms
 """
 
 from __future__ import annotations
@@ -15,35 +16,23 @@ from typing import TYPE_CHECKING
 import gtsam
 import numpy as np
 from gtsam.symbol_shorthand import X as _X
-from scipy.linalg import rq
+
+from collab_splats.geometry.transforms import (
+    decompose_camera,
+    intrinsics_4x4,
+    transform_points,
+)
 
 from .submap import Submap
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-# inter-submap scale estimators; "none" pins scale to 1.0
-SCALE_METHODS = ("rotation_only", "none")
+logger = logging.getLogger(__name__)
 
-########################################
-########## Module-level helpers ########
-########################################
-
-
-def check_scale_method(scale_method: str) -> None:
-    """
-    Reject a scale_method outside SCALE_METHODS.
-
-    - retired "se3" and "pairwise_dist" fail loudly instead of running rotation_only
-
-    Args:
-        scale_method: the requested inter-submap scale estimator.
-
-    Raises:
-        ValueError: `scale_method` is not in SCALE_METHODS.
-    """
-    if scale_method not in SCALE_METHODS:
-        raise ValueError(f"scale_method must be one of {SCALE_METHODS}, got {scale_method!r}")
+########################################################################
+# Scale and overlap
+########################################################################
 
 
 def dedup_overlap(
@@ -57,7 +46,8 @@ def dedup_overlap(
 
     - adjacent submaps share an overlap frame; the earlier submap's pose wins
     - frames no submap covers stay identity
-    - VGGT-SLAM writes the overlap frame twice (map.py:142-162); evo (MichaelGrupp/evo) keeps the first
+    - VGGT-SLAM writes the overlap frame twice (MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/map.py:142-162)
+    - evo (MichaelGrupp/evo) keeps the first
     - keeping the first makes both pipelines agree on the boundary pose
 
     Args:
@@ -69,6 +59,7 @@ def dedup_overlap(
     Returns:
         (total_frames, 4, 4) float32 poses.
     """
+    # Identity everywhere, then fill each frame from the first submap that covers it
     out = np.tile(np.eye(4, dtype=np.float32), (total_frames, 1, 1))
     assigned = np.zeros(total_frames, dtype=bool)
     for sid, start in zip(submap_ids, submap_starts):
@@ -82,87 +73,12 @@ def dedup_overlap(
     return out
 
 
-def _resolve_frame_node(
-    frame_to_node: dict[tuple[int, int], int],
-    submaps: list[Submap],
-    image_path: Path,
-) -> tuple[int, Submap, int] | None:
-    """
-    Resolve an image path to (node_id, submap, local frame index).
-
-    Args:
-        frame_to_node: (submap_id, local index) -> graph node id.
-        submaps: submaps to search.
-        image_path: the path to find.
-
-    Returns:
-        (node_id, submap, local index), or None when no node holds the path.
-    """
-    for submap in submaps:
-        for local_i, p in enumerate(submap.image_paths):
-            if p == image_path:
-                nid = frame_to_node.get((submap.submap_id, local_i))
-                if nid is not None:
-                    return nid, submap, local_i
-    return None
-
-
-def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-    """
-    RQ-decompose a 3x4 or 4x4 projection matrix into (K, R, t, scale).
-
-    - port of MIT-SPARK/VGGT-SLAM vggt_slam/slam_utils.py:decompose_camera
-    - matches VGGT-SLAM's ``no_inverse=True`` branch: R is camera-to-world, t = inv(K) @ P[:, 3]
-    - t = inv(K) @ P[:, 3] is the world-to-cam translation, paired with R^T, not R
-    - camera center C = -R @ t
-    - storing R directly agrees only near identity rotation and bends multi-submap trajectories
-
-    Args:
-        P: 3x4 projection matrix, or 4x4 (divided by P[-1, -1], last row dropped).
-
-    Returns:
-        (K with K[2, 2] = 1, camera-to-world R, t, scale = K[2, 2] before normalizing).
-
-    Raises:
-        ValueError: P is not (3, 4) after the 4x4 strip.
-    """
-    P = np.array(P, dtype=np.float64)
-    if P.shape[0] != 3:
-        P = P / P[-1, -1]
-        P = P[:3, :]
-    if P.shape != (3, 4):
-        raise ValueError(f"expected (3,4) after strip, got {P.shape}")
-
-    M = P[:, :3]
-    K, R = rq(M)
-    # ensure positive diagonal on K (per-column sign fix)
-    if K[0, 0] < 0:
-        K[:, 0] *= -1
-        R[0, :] *= -1
-    if K[1, 1] < 0:
-        K[:, 1] *= -1
-        R[1, :] *= -1
-    if K[2, 2] < 0:
-        K[:, 2] *= -1
-        R[2, :] *= -1
-    scale = float(K[2, 2])
-    R = np.linalg.inv(R)
-    # SVD polar-decomposition snap: enforce R is a proper rotation matrix
-    U, _, Vt = np.linalg.svd(R)
-    R = U @ Vt
-    # t = inv(K) @ P[:,3], VGGT-SLAM's no_inverse=True value
-    # - the world-to-cam translation, paired with R^T; camera center C = -R @ t
-    t = np.linalg.inv(K) @ P[:, 3]
-    K = K / scale
-    return K, R, t, scale
-
-
 def estimate_scale_pairwise(X: np.ndarray, Y: np.ndarray) -> float:
     """
     Scale between two paired point clouds: median(||Y[i]|| / ||X[i]||).
 
     - initializes the inter-submap SL(4) edge with the right scale
-    - port of MIT-SPARK/VGGT-SLAM vggt_slam/scale_solver.py:estimate_scale_pairwise
+    - port of MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/scale_solver.py:estimate_scale_pairwise
     - points with ||X[i]|| <= 1e-8 are skipped; 1.0 when none remain
 
     Args:
@@ -177,6 +93,8 @@ def estimate_scale_pairwise(X: np.ndarray, Y: np.ndarray) -> float:
     """
     if X.shape != Y.shape:
         raise ValueError(f"X and Y must have the same shape, got {X.shape} vs {Y.shape}")
+
+    # Median norm ratio over points with a non-degenerate source norm
     x_norms = np.linalg.norm(X, axis=1)
     y_norms = np.linalg.norm(Y, axis=1)
     valid = x_norms > 1e-8
@@ -185,11 +103,62 @@ def estimate_scale_pairwise(X: np.ndarray, Y: np.ndarray) -> float:
     return float(np.median(y_norms[valid] / x_norms[valid]))
 
 
-########################################
-########## PoseGraph class #############
-########################################
+def calculate_pairwise_frame_scale(
+    curr_submap: Submap,
+    curr_idx: int | list[int],
+    prior_submap: Submap,
+    prior_idx: int | list[int],
+    min_conf_points: int,
+) -> float | None:
+    """
+    Scale taking one frame's points into another's units, for two frames of the same image.
 
-log = logging.getLogger(__name__)
+    - each frame's points are moved into its own camera first (divergence: docs/parity.md)
+    - None when points are missing, grids differ, or the scale is not finite and > 0
+
+    Args:
+        curr_submap: submap holding the frames to rescale.
+        curr_idx: local frame index, or indices pooled into one fit.
+        prior_submap: submap whose units the scale maps into.
+        prior_idx: local frame index or indices, paired with curr_idx.
+        min_conf_points: fewest confident points before the confidence mask is used.
+
+    Returns:
+        Scale from curr_submap's units to prior_submap's, or None.
+    """
+    # No points to fit the scale on, or grids that do not pair pixel-for-pixel
+    if curr_submap.points is None or prior_submap.points is None:
+        return None
+    if curr_submap.points.shape[1:3] != prior_submap.points.shape[1:3]:
+        return None
+    curr_idx, prior_idx = list(np.atleast_1d(curr_idx)), list(np.atleast_1d(prior_idx))
+
+    # Each frame's points in its own camera, rotated by inv(K_prior) @ K_curr (rotation_only)
+    curr_pts, prior_pts = [], []
+    for ci, pi in zip(curr_idx, prior_idx):
+        c = transform_points(curr_submap.points[ci].reshape(-1, 3), curr_submap.poses[ci].astype(np.float64))
+        p = transform_points(prior_submap.points[pi].reshape(-1, 3), prior_submap.poses[pi].astype(np.float64))
+        K_prior = prior_submap.intrinsics[pi].astype(np.float64)
+        K_curr = curr_submap.intrinsics[ci].astype(np.float64)
+        curr_pts.append(c @ (np.linalg.inv(K_prior) @ K_curr).T)
+        prior_pts.append(p)
+    curr_pts, prior_pts = np.concatenate(curr_pts), np.concatenate(prior_pts)
+
+    # Confidence tiers against the prior's threshold; a missing prior conf passes all
+    mask = np.ones(curr_pts.shape[0], dtype=bool)
+    if prior_submap.conf is not None:
+        curr_conf = curr_submap.conf[curr_idx].reshape(-1) if curr_submap.conf is not None else None
+        prior_conf = prior_submap.conf[prior_idx].reshape(-1)
+        mask = _conf_fallback_mask(curr_conf, prior_conf, prior_submap.conf_threshold, min_conf_points)
+
+    # NaN/inf depth pixels can poison the median; a scale <= 0 makes the SL(4) factor singular
+    s = estimate_scale_pairwise(curr_pts[mask], prior_pts[mask])
+    return s if np.isfinite(s) and s > 0 else None
+
+
+########################################################################
+# PoseGraph
+########################################################################
 
 
 class PoseGraph:
@@ -197,21 +166,28 @@ class PoseGraph:
     Per-frame SL(4) factor graph for loop-closure trajectory correction.
 
     - one node per frame, keyed gtsam.symbol('x', node_id) by global frame index
-    - port of MIT-SPARK/VGGT-SLAM vggt_slam/graph.py
-    - noise matches VGGT-SLAM: sigma 0.05 on every edge, 1e-6 on the first-frame prior
+    - port of MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/graph.py:PoseGraph
+    - noise matches vggt_slam/graph.py:19-23: sigma 0.05 on every edge, 1e-6 on the first-frame prior
 
     Args:
         min_conf_points: fewest confident points before the scale fit uses the confidence mask.
     """
 
     def __init__(self, min_conf_points: int = 100) -> None:
+        """
+        Empty graph with no nodes, edges or submaps.
+
+        Args:
+            min_conf_points: fewest confident points before the scale fit uses the confidence mask.
+        """
+        # Factor graph, initial values and the set of inserted node ids
         self.min_conf_points = min_conf_points
         self._graph = gtsam.NonlinearFactorGraph()
         self._initial = gtsam.Values()
         self._node_ids: set[int] = set()
 
-        # Uniform σ=0.05 for all edges (sequential, inter-submap, loop chain)
-        # — matches VGGT-SLAM exactly
+        # Uniform sigma 0.05 on every edge, 1e-6 on the first-frame prior
+        # - matches VGGT-SLAM exactly: sequential, inter-submap and loop-chain edges
         self._seq_noise = gtsam.noiseModel.Diagonal.Sigmas(0.05 * np.ones(15, dtype=np.float64))
         self._anchor_noise = gtsam.noiseModel.Diagonal.Sigmas(np.full(15, 1e-6, dtype=np.float64))
 
@@ -221,7 +197,9 @@ class PoseGraph:
         self._submap_node_ids: dict[int, list[int]] = {}
         self._submaps_seen: list = []  # prior submaps, for inter-submap overlap lookups
 
-    # ---- node management ----
+    ####################################################################
+    # Node management
+    ####################################################################
 
     def add_homography(self, node_id: int, H: np.ndarray) -> None:
         """
@@ -250,7 +228,9 @@ class PoseGraph:
         H = np.array(H, dtype=np.float64)
         self._graph.add(gtsam.PriorFactorSL4(key, gtsam.SL4(H), self._anchor_noise))
 
-    # ---- edges ----
+    ####################################################################
+    # Edges
+    ####################################################################
 
     def add_between_factor(self, id_i: int, id_j: int, H_rel: np.ndarray) -> None:
         """
@@ -265,7 +245,9 @@ class PoseGraph:
         H_rel = np.array(H_rel, dtype=np.float64)
         self._graph.add(gtsam.BetweenFactorSL4(key_i, key_j, gtsam.SL4(H_rel), self._seq_noise))
 
-    # ---- optimization ----
+    ####################################################################
+    # Optimization
+    ####################################################################
 
     def optimize(self) -> None:
         """
@@ -278,7 +260,7 @@ class PoseGraph:
             optimizer = gtsam.LevenbergMarquardtOptimizer(self._graph, self._initial, params)
             self._initial = optimizer.optimize()
         except RuntimeError as exc:
-            log.warning("GTSAM optimization failed: %s — returning initial values", exc)
+            logger.warning("GTSAM optimization failed: %s — returning initial values", exc)
 
     def get_homography(self, node_id: int) -> np.ndarray:
         """
@@ -293,36 +275,25 @@ class PoseGraph:
         key = _X(node_id)
         return self._initial.atSL4(key).matrix().astype(np.float64)
 
-    # ---- incremental submap build ----
+    ####################################################################
+    # Incremental submap build
+    ####################################################################
 
-    def add_submap(
-        self,
-        submap: Submap,
-        overlap_frames: int,
-        conf_threshold: float = 25.0,
-        scale_method: str = "rotation_only",
-        debug_out: list[dict] | None = None,
-    ) -> None:
+    def add_submap(self, submap: Submap, overlap_frames: int) -> None:
         """
         Add one submap's nodes and SL(4) edges to the persistent graph.
 
         - the first submap is anchored at identity with a tight prior
         - later submaps link to the previous submap's last node through the overlap frames
-        - the inter-submap scale comes from the overlap points, per `scale_method`
+        - the inter-submap scale comes from the overlap points, rotation_only as VGGT-SLAM
+        - overlap points on both sides move into their own frame's camera; upstream skips this
+        - scale falls back to 1.0, with a warning, when the overlap points are missing or degenerate
 
         Args:
             submap: the next Submap in trajectory order.
             overlap_frames: frames shared with the previous submap.
-            conf_threshold: point-confidence floor for the scale estimate.
-            scale_method: "rotation_only" or "none" (scale 1.0).
-            debug_out: list that receives one dict (submap_id, T, scale, H_w, H_overlap) per
-                non-first submap, or None.
-
-        Raises:
-            ValueError: `scale_method` is not "rotation_only" or "none".
         """
-        check_scale_method(scale_method)
-
+        # Allocate consecutive global node ids for this submap's frames
         k = submap.poses.shape[0]
         node_ids_this: list[int] = []
 
@@ -331,82 +302,42 @@ class PoseGraph:
             self._frame_to_node[(submap.submap_id, local_i)] = nid
             node_ids_this.append(nid)
 
-        # K_4x4 from 3x3 intrinsics, as VGGT-SLAM's proj_mats
-        # - T: inv(K_prev) @ K_curr = I for the same camera
-        # - extraction: K @ inv(H_opt), and decompose_camera cancels K
-        K_4x4 = np.tile(np.eye(4, dtype=np.float64), (k, 1, 1))
-        K_4x4[:, :3, :3] = submap.intrinsics.astype(np.float64)
+        # K_4x4 from 3x3 intrinsics, as VGGT-SLAM's proj_mats; see decompose_camera
+        K_4x4 = intrinsics_4x4(submap.intrinsics.astype(np.float64))
 
         if not self._submaps_seen:
-            # First node = I, prior = I — matches VGGT-SLAM add_homography(0, I) + add_prior_factor(0, I)
+            # First node = I, prior = I, as VGGT-SLAM @ fd3fd218, vggt_slam/solver.py:169-170
             self.add_homography(node_ids_this[0], np.eye(4))
             self.add_prior_factor(node_ids_this[0], np.eye(4))
-            for local_i in range(1, k):
-                H_inner = submap.poses[local_i - 1].astype(np.float64) @ np.linalg.inv(
-                    submap.poses[local_i].astype(np.float64)
-                )
-                prev_H = self.get_homography(node_ids_this[local_i - 1])
-                self.add_homography(node_ids_this[local_i], prev_H @ H_inner)
-                self.add_between_factor(node_ids_this[local_i - 1], node_ids_this[local_i], H_inner)
         else:
+            # Previous submap's intrinsics and the usable overlap length
             prev_submap = self._submaps_seen[-1]
-            prev_K_4x4 = np.tile(np.eye(4, dtype=np.float64), (len(prev_submap.poses), 1, 1))
-            prev_K_4x4[:, :3, :3] = prev_submap.intrinsics.astype(np.float64)
+            prev_K_4x4 = intrinsics_4x4(prev_submap.intrinsics.astype(np.float64))
             O = min(overlap_frames, k, len(prev_submap.poses))
 
-            # T = inv(K_prev[-1]) @ K_curr[0] — same as VGGT-SLAM's proj_mats-based T.
-            # For fixed camera (K_prev = K_curr) this equals I exactly.
+            # T = inv(K_prev[-1]) @ K_curr[0], as VGGT-SLAM's P_temp (vggt_slam/solver.py:140)
+            # - intrinsics ratio; see decompose_camera
             T = np.linalg.inv(prev_K_4x4[-1]) @ K_4x4[0]
 
-            scale = 1.0
-            if submap.world_points is not None and prev_submap.world_points is not None and O > 0:
-                # curr_pts: world_points[0] = cam_pts[0] (W2C[0]=I for VGGT) — same as SLAM t1.
-                curr_pts = submap.world_points[:O].reshape(-1, 3).astype(np.float64)
+            # Inter-submap scale from the overlap frames, each in its own camera
+            # - rotation_only, as VGGT-SLAM (vggt_slam/solver.py:141)
+            # - diverges from solver.py:141-142, which reads points in frame 0; docs/parity.md
+            scale = None
+            if O > 0:
+                prev_idx = list(range(len(prev_submap.poses) - O, len(prev_submap.poses)))
+                curr_idx = list(range(O))
+                scale = calculate_pairwise_frame_scale(submap, curr_idx, prev_submap, prev_idx, self.min_conf_points)
+            if scale is None:
+                logger.warning(
+                    "Submap %d → %d: no usable overlap points (missing, misaligned or degenerate); scale 1.0",
+                    prev_submap.submap_id,
+                    submap.submap_id,
+                )
+                scale = 1.0
 
-                # prev_pts: camera-local points of the previous submap's overlap frames
-                # - VGGT-SLAM uses camera-local depth (pointclouds[K-1])
-                # - ours are cam0-frame: W2C @ world_pts recovers cam_pts, matching SLAM
-                prev_wps = prev_submap.world_points[-O:]  # (O, P, 3)
-                P_per = prev_wps.shape[1]
-                prev_cam_list = []
-                for oi in range(O):
-                    W2C = prev_submap.poses[-O + oi].astype(np.float64)
-                    wh = np.hstack([prev_wps[oi], np.ones((P_per, 1), dtype=np.float64)])
-                    prev_cam_list.append((W2C @ wh.T).T[:, :3])
-                prev_pts = np.concatenate(prev_cam_list, axis=0)
-
-                n = curr_pts.shape[0]
-
-                # Confidence filtering: match VGGT-SLAM solver.py:132-143
-                mask = np.ones(n, dtype=bool)
-                if (
-                    submap.world_points_conf is not None
-                    and prev_submap.world_points_conf is not None
-                    and submap.world_points_conf.shape[:2] == submap.world_points.shape[:2]
-                    and prev_submap.world_points_conf.shape[:2] == prev_submap.world_points.shape[:2]
-                ):
-                    curr_conf = submap.world_points_conf[:O].reshape(-1)
-                    prev_conf = prev_submap.world_points_conf[-O:].reshape(-1)
-                    joint_mask = (curr_conf > conf_threshold) & (prev_conf > conf_threshold)
-                    if joint_mask.sum() >= self.min_conf_points:
-                        mask = joint_mask
-                    else:
-                        # VGGT-SLAM fallback: prior_conf > thresh only (not OR mask).
-                        prior_only_mask = prev_conf > conf_threshold
-                        if prior_only_mask.sum() >= self.min_conf_points:
-                            mask = prior_only_mask
-
-                # rotation_only, as VGGT-SLAM: apply the 3x3 block of T, inv(K_prev) @ K_curr
-                # - T has zero translation (block-diagonal K), so the 3x3 block is all of T
-                # - norm-preserving only for a shared camera (block is I), not in general
-                # - "none" keeps scale 1.0
-                if scale_method == "rotation_only":
-                    curr_in_prev = (T[:3, :3] @ curr_pts.T).T
-                    scale = estimate_scale_pairwise(curr_in_prev[mask], prev_pts[mask])
-
-            # H_w = H_overlap @ T @ H_scale, as VGGT-SLAM solver.py:161-162
+            # H_w = H_overlap @ T @ H_scale, as VGGT-SLAM @ fd3fd218, vggt_slam/solver.py:153-154
             # - SLAM: H_overlap_prev_node @ inv(K_prev) @ K_curr @ H_scale
-            # - SLAM's proj_mats holds K (param named intrinsics_inv; solver.py:256 passes K_4x4)
+            # - SLAM's proj_mats holds K (param named intrinsics_inv, submap.py:36-41; solver.py:247 passes K_4x4)
             # - so its inv(proj_mats[-1]) @ proj_mats[0] equals our T
             H_scale = np.diag([scale, scale, scale, 1.0])
             prev_submap_last_nid = self._submap_node_ids[prev_submap.submap_id][-1]
@@ -414,39 +345,35 @@ class PoseGraph:
             H_w = H_overlap @ T @ H_scale
             self.add_homography(node_ids_this[0], H_w)
 
-            if debug_out is not None:
-                debug_out.append(
-                    {
-                        "submap_id": submap.submap_id,
-                        "T": T.copy(),
-                        "scale": float(scale),
-                        "H_w": H_w.copy(),
-                        "H_overlap": H_overlap.copy(),
-                    }
-                )
-
+            # Inter-submap edge from the previous submap's last node
             H_rel_inter = np.linalg.inv(self.get_homography(prev_submap_last_nid)) @ H_w
             self.add_between_factor(prev_submap_last_nid, node_ids_this[0], H_rel_inter)
 
-            for local_i in range(1, k):
-                H_inner = submap.poses[local_i - 1].astype(np.float64) @ np.linalg.inv(
-                    submap.poses[local_i].astype(np.float64)
-                )
-                prev_H = self.get_homography(node_ids_this[local_i - 1])
-                self.add_homography(node_ids_this[local_i], prev_H @ H_inner)
-                self.add_between_factor(node_ids_this[local_i - 1], node_ids_this[local_i], H_inner)
+        # Chain consecutive frames inside the submap
+        self._add_inner_chain(submap, node_ids_this)
 
+        # Book the submap for later overlap lookups and extraction
         self._submap_node_ids[submap.submap_id] = node_ids_this
         self._global_node_id += k
         self._submaps_seen.append(submap)
 
-    def add_loop_edge(
-        self,
-        lc: Submap,
-        self_submaps: list[Submap],
-        conf_threshold: float = 25.0,
-        scale_method: str = "rotation_only",
-    ) -> None:
+    def _add_inner_chain(self, submap: Submap, node_ids: list[int]) -> None:
+        """
+        Chain edges between consecutive frames inside one submap.
+
+        - H_inner = P[i-1] @ inv(P[i]); each node starts at its predecessor's value @ H_inner
+        - node_ids: one graph node per frame, in frame order
+        """
+        # Seed each node from its predecessor and add the between factor
+        for local_i in range(1, submap.poses.shape[0]):
+            H_inner = submap.poses[local_i - 1].astype(np.float64) @ np.linalg.inv(
+                submap.poses[local_i].astype(np.float64)
+            )
+            prev_H = self.get_homography(node_ids[local_i - 1])
+            self.add_homography(node_ids[local_i], prev_H @ H_inner)
+            self.add_between_factor(node_ids[local_i - 1], node_ids[local_i], H_inner)
+
+    def add_loop_edge(self, lc: Submap, self_submaps: list[Submap]) -> None:
         """
         Add one verified loop closure as a 3-edge SL(4) chain through two LC nodes.
 
@@ -457,17 +384,12 @@ class PoseGraph:
         Args:
             lc: 2-frame loop-closure Submap (query, detected).
             self_submaps: the regular submaps already in the graph.
-            conf_threshold: point-confidence floor for the anchor scales.
-            scale_method: "rotation_only" or "none" (anchor scales 1.0).
-
-        Raises:
-            ValueError: `scale_method` is not "rotation_only" or "none".
         """
-        check_scale_method(scale_method)
-
-        # Only 2-frame LC submaps (query, detected) carry a valid loop constraint.
+        # Only a 2-frame LC submap (query, detected) carries a loop edge; see wrapper._run_lc_loop
         if lc.poses.shape[0] != 2:
             return
+
+        # Resolve both LC frames to graph nodes; skip when either is missing
         path_q, path_d = lc.image_paths[0], lc.image_paths[1]
         loc_q = _resolve_frame_node(self._frame_to_node, self_submaps, path_q)
         loc_d = _resolve_frame_node(self._frame_to_node, self_submaps, path_d)
@@ -476,13 +398,14 @@ class PoseGraph:
         nid_q, sub_q, qi = loc_q
         nid_d, sub_d, di = loc_d
 
-        # Anchor scales on pixel-aligned identical images; fall back to 1.0 when
-        # the LC backend supplies poses only (direction fix still applies).
-        s_a = _lc_anchor_scale(lc, 0, sub_q, qi, conf_threshold, scale_method, self.min_conf_points)
-        s_b = _lc_anchor_scale(sub_d, di, lc, 1, conf_threshold, scale_method, self.min_conf_points)
+        # Anchor scales on pixel-aligned identical images
+        # - 1.0 when the LC backend supplies poses only; the direction fix still applies
+        # - argument order as VGGT-SLAM's add_edge pair (vggt_slam/solver.py:286-287)
+        s_a = calculate_pairwise_frame_scale(lc, 0, sub_q, qi, self.min_conf_points)
+        s_b = calculate_pairwise_frame_scale(sub_d, di, lc, 1, self.min_conf_points)
         if s_a is None or s_b is None:
-            log.warning(
-                "Loop submap %d → %d: LC world points unavailable or grid-misaligned; " "using anchor scale 1.0",
+            logger.warning(
+                "Loop submap %d → %d: LC points unavailable or grid-misaligned; using anchor scale 1.0",
                 sub_q.submap_id,
                 sub_d.submap_id,
             )
@@ -490,22 +413,23 @@ class PoseGraph:
             s_b = 1.0 if s_b is None else s_b
 
         # Per-frame intrinsics as 4×4 for the K change across anchors (I for a shared camera)
-        K_q, K_lc0, K_lc1, K_d = (np.eye(4, dtype=np.float64) for _ in range(4))
-        K_q[:3, :3] = sub_q.intrinsics[qi].astype(np.float64)
-        K_lc0[:3, :3] = lc.intrinsics[0].astype(np.float64)
-        K_lc1[:3, :3] = lc.intrinsics[1].astype(np.float64)
-        K_d[:3, :3] = sub_d.intrinsics[di].astype(np.float64)
+        K_q = intrinsics_4x4(sub_q.intrinsics[qi].astype(np.float64))
+        K_lc0 = intrinsics_4x4(lc.intrinsics[0].astype(np.float64))
+        K_lc1 = intrinsics_4x4(lc.intrinsics[1].astype(np.float64))
+        K_d = intrinsics_4x4(sub_d.intrinsics[di].astype(np.float64))
 
         H_rel_a, H_inner_lc, H_rel_b = _loop_chain_relatives(lc.poses[0], lc.poses[1], s_a, s_b, K_q, K_lc0, K_lc1, K_d)
 
         # LC nodes chained from the query node's current graph state
-        # (upstream solver.py:162-166); they map to no output frame.
+        # - upstream vggt_slam/solver.py:153-158 via the add_edge pair at 286-287
+        # - they map to no output frame, as vggt_slam/map.py:128-129 skips LC submaps
         nid_lc0, nid_lc1 = self._global_node_id, self._global_node_id + 1
         self._global_node_id += 2
         H_q_state = self.get_homography(nid_q)
         self.add_homography(nid_lc0, H_q_state @ H_rel_a)
         self.add_homography(nid_lc1, H_q_state @ H_rel_a @ H_inner_lc)
 
+        # Three-edge chain: query -> LC0 -> LC1 -> detected
         self.add_between_factor(nid_q, nid_lc0, H_rel_a)
         self.add_between_factor(nid_lc0, nid_lc1, H_inner_lc)
         self.add_between_factor(nid_lc1, nid_d, H_rel_b)
@@ -526,29 +450,30 @@ class PoseGraph:
         if not self._submaps_seen:
             return np.tile(np.eye(4, dtype=np.float32), (total_frames, 1, 1))
 
+        # Decompose each node's K @ inv(H_opt) into a world-to-cam pose, per submap
         corrected_per_submap: dict[int, np.ndarray] = {}
         for submap in self._submaps_seen:
             node_ids = self._submap_node_ids[submap.submap_id]
             k = len(node_ids)
             poses_out = np.zeros((k, 4, 4), dtype=np.float32)
-            # Extraction via K_4x4 — matches VGGT-SLAM: proj_mats[i] @ inv(H_opt[i]).
-            # decompose_camera cancels the K factor and returns correct SE3 R, t.
-            s_K = np.tile(np.eye(4, dtype=np.float64), (k, 1, 1))
-            s_K[:, :3, :3] = submap.intrinsics.astype(np.float64)
+
+            # Extraction as VGGT-SLAM: proj_mats[i] @ inv(H_opt[i]) (vggt_slam/submap.py:118)
+            # - K cancels; see decompose_camera
+            s_K = intrinsics_4x4(submap.intrinsics.astype(np.float64))
             for local_i, nid in enumerate(node_ids):
                 H_opt = self.get_homography(nid)
                 local_proj = s_K[local_i]  # camera intrinsics as 4×4
                 corrected = local_proj @ np.linalg.inv(H_opt)
                 _, R, t, _ = decompose_camera(corrected)
-                # Store R^T: decompose_camera's R is camera-to-world
-                # - t = inv(K) @ P[:, 3], VGGT-SLAM's no_inverse=True value
-                # - downstream -R_stored^T @ t then recovers the camera center
+
+                # Store R^T: decompose_camera's R is camera-to-world; see transforms.invert_poses
                 mat = np.eye(4, dtype=np.float32)
                 mat[:3, :3] = R.T.astype(np.float32)
                 mat[:3, 3] = t.astype(np.float32)
                 poses_out[local_i] = mat
             corrected_per_submap[submap.submap_id] = poses_out
 
+        # One pose per frame; each overlap frame from the earlier submap
         return dedup_overlap(
             submap_ids=[s.submap_id for s in self._submaps_seen],
             submap_starts=[s.frame_start for s in self._submaps_seen],
@@ -557,126 +482,48 @@ class PoseGraph:
         )
 
 
-########################################
-########## Loop-edge helpers ###########
-########################################
+########################################################################
+# Helpers
+########################################################################
 
 
-def _cam_local_points(pts: np.ndarray, w2c: np.ndarray) -> np.ndarray:
+def _resolve_frame_node(
+    frame_to_node: dict[tuple[int, int], int],
+    submaps: list[Submap],
+    image_path: Path,
+) -> tuple[int, Submap, int] | None:
     """
-    Move (N, 3) points by a 4x4 world-to-cam pose into camera-local coords.
+    Resolve an image path to (node_id, submap, local frame index).
 
-    Args:
-        pts: (N, 3) points.
-        w2c: 4x4 world-to-cam pose.
-
-    Returns:
-        (N, 3) float64 camera-local points.
+    - frame_to_node keys: (submap_id, local index)
+    - None when no node holds the path
     """
-    h = np.hstack([pts.astype(np.float64), np.ones((pts.shape[0], 1))])
-    return (w2c.astype(np.float64) @ h.T).T[:, :3]
+    for submap in submaps:
+        for local_i, p in enumerate(submap.image_paths):
+            if p == image_path:
+                nid = frame_to_node.get((submap.submap_id, local_i))
+                if nid is not None:
+                    return nid, submap, local_i
+    return None
 
 
-def _lc_anchor_scale(
-    curr_submap: Submap,
-    curr_idx: int,
-    prior_submap: Submap,
-    prior_idx: int,
-    conf_threshold: float,
-    scale_method: str,
-    min_conf_points: int,
-) -> float | None:
+def _conf_fallback_mask(
+    curr_conf: np.ndarray | None, prior_conf: np.ndarray, conf_threshold: float, min_conf_points: int
+) -> np.ndarray:
     """
-    Pixel-aligned anchor scale between an LC frame and its identical regular frame.
+    Points both frames trust, relaxed in tiers until min_conf_points survive.
 
-    - mirrors VGGT-SLAM solver.py:129-151: same image, so point grids pair pixel-for-pixel
-    - median(||prior_cam|| / ||curr_cam||) per `scale_method`: curr units into prior units
-
-    Args:
-        curr_submap: submap whose units are scaled.
-        curr_idx: frame index in curr_submap.
-        prior_submap: submap whose units are the target.
-        prior_idx: frame index in prior_submap.
-        conf_threshold: point-confidence floor.
-        scale_method: "rotation_only" or "none" (always 1.0); validated by the caller.
-        min_conf_points: fewest confident points before a confidence mask is used.
-
-    Returns:
-        The scale, or None when points are missing, grids cannot be aligned, or the
-        estimate is non-finite or <= 0.
+    - tiers: both > threshold, then prior > threshold, then prior > 0 (vggt_slam/solver.py:129-138)
+    - a missing curr_conf drops the first tier to prior > threshold
     """
-    if scale_method == "none":
-        return 1.0
-    if curr_submap.world_points is None or prior_submap.world_points is None:
-        return None
-
-    # Align resolutions: LC grids are full-res, regular grids stride 8
-    # - regular: arange(0, W, 8) x arange(0, H, 8), row-major over (v, u); see _raw_to_world_points
-    # - resample the LC side onto the regular grid so points pair pixel-for-pixel
-    lc_side, reg_side = (curr_submap, prior_submap) if curr_submap.is_lc_submap else (prior_submap, curr_submap)
-    lc_flat_idx = None
-    if lc_side.world_points.shape[1] != reg_side.world_points.shape[1]:
-        if lc_side.frames is None:
-            return None
-        h_img, w_img = int(lc_side.frames.shape[-2]), int(lc_side.frames.shape[-1])
-        if lc_side.world_points.shape[1] != h_img * w_img:
-            return None
-        us = np.arange(0, w_img, 8)  # regular submaps use subsample stride 8 (_raw_to_world_points)
-        vs = np.arange(0, h_img, 8)
-        if reg_side.world_points.shape[1] != len(us) * len(vs):
-            return None
-        uu, vv = np.meshgrid(us, vs)
-        lc_flat_idx = (vv * w_img + uu).ravel()
-
-    # Gather paired points + confs, resampling the LC side where needed
-    def _frame_data(submap: Submap, idx: int) -> tuple[np.ndarray, np.ndarray | None]:
-        pts = submap.world_points[idx].astype(np.float64)
-        conf = None
-        if submap.world_points_conf is not None and submap.world_points_conf.shape[:2] == submap.world_points.shape[:2]:
-            conf = submap.world_points_conf[idx].astype(np.float64)
-        if submap is lc_side and lc_flat_idx is not None:
-            pts = pts[lc_flat_idx]
-            conf = conf[lc_flat_idx] if conf is not None else None
-        return pts, conf
-
-    curr_pts, curr_conf = _frame_data(curr_submap, curr_idx)
-    prior_pts, prior_conf = _frame_data(prior_submap, prior_idx)
-
-    # Back-transform both sides to their frame's camera-local coords so norms share
-    # an origin (same convention as the sequential-edge prev_pts back-transform).
-    curr_cam = _cam_local_points(curr_pts, curr_submap.poses[curr_idx])
-    prior_cam = _cam_local_points(prior_pts, prior_submap.poses[prior_idx])
-
-    # Confidence fallback chain (VGGT-SLAM solver.py:132-143): joint > thr,
-    # else prior > thr, else prior > 0; missing conf side treated as pass-all.
-    n = curr_cam.shape[0]
-    mask = np.ones(n, dtype=bool)
-    if prior_conf is not None:
-        joint = prior_conf > conf_threshold
-        if curr_conf is not None:
-            joint = joint & (curr_conf > conf_threshold)
-        if joint.sum() >= min_conf_points:
-            mask = joint
-        elif (prior_conf > conf_threshold).sum() >= min_conf_points:
-            mask = prior_conf > conf_threshold
-        else:
-            mask = prior_conf > 0
-
-    # rotation_only, as the sequential edge: apply K ratio inv(K_prior) @ K_curr
-    # - identity for a shared camera
-    K_prior = prior_submap.intrinsics[prior_idx].astype(np.float64)
-    K_curr = curr_submap.intrinsics[curr_idx].astype(np.float64)
-    T = np.linalg.inv(K_prior) @ K_curr
-    curr_in_prior = (T @ curr_cam.T).T
-    s = estimate_scale_pairwise(curr_in_prior[mask], prior_cam[mask])
-
-    # Guard degenerate estimates: None for a non-finite or <= 0 scale
-    # - depth-unprojected LC points can hold NaN/inf from invalid pixels
-    # - a bad median makes the diag(s, s, s, 1) between-factor singular
-    # - the caller falls back to scale 1.0 with a warning
-    if not np.isfinite(s) or s <= 0:
-        return None
-    return s
+    # First tier with enough survivors wins; else prior > 0
+    joint = prior_conf > conf_threshold
+    if curr_conf is not None:
+        joint = joint & (curr_conf > conf_threshold)
+    for mask in (joint, prior_conf > conf_threshold):
+        if mask.sum() >= min_conf_points:
+            return mask
+    return prior_conf > 0
 
 
 def _loop_chain_relatives(
@@ -692,29 +539,19 @@ def _loop_chain_relatives(
     """
     Three loop-chain relatives in the graph's H_inner convention (H_j = H_i @ M).
 
-    - anchor A (query -> LC0, identical image): K change plus scale fold s_a
+    - anchor A (query -> LC0, identical image): K change plus scale fold s_a (LC -> query-submap units)
     - inner edge: the LC relative P_lc0 @ inv(P_lc1), no K change
-    - anchor B (LC1 -> detected, identical image): K change plus scale fold s_b
+    - anchor B (LC1 -> detected, identical image): K change plus scale fold s_b (detected-submap -> LC units)
     - an LC run at k-times scale gets s_a = 1/k, s_b = k, which cancel to the metric relative
-    - follows the VGGT-SLAM solver.py:118-170 chain
-
-    Args:
-        P_lc0: 4x4 pose of LC frame 0.
-        P_lc1: 4x4 pose of LC frame 1.
-        s_a: scale from LC units to query-submap units.
-        s_b: scale from detected-submap units to LC units.
-        K_q: 4x4 query intrinsics.
-        K_lc0: 4x4 LC frame 0 intrinsics.
-        K_lc1: 4x4 LC frame 1 intrinsics.
-        K_d: 4x4 detected intrinsics.
-
-    Returns:
-        (H_rel_a, H_inner, H_rel_b), each 4x4.
+    - follows MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/solver.py:286-287 (add_edge, 118-195)
+    - P_lc0, P_lc1 and all K_* are 4x4; returns (H_rel_a, H_inner, H_rel_b), each 4x4
     """
-    # Anchor A: query → LC-frame-0 (identical image) — K change + scale fold s_a.
+    # Anchor A: query -> LC frame 0 (identical image), K change plus scale fold s_a
     H_rel_a = np.linalg.inv(K_q) @ K_lc0 @ np.diag([s_a, s_a, s_a, 1.0])
-    # Inner edge: the LC pair's own relative pose, no K change.
+
+    # Inner edge: the LC pair's own relative pose, no K change
     H_inner = P_lc0.astype(np.float64) @ np.linalg.inv(P_lc1.astype(np.float64))
-    # Anchor B: LC-frame-1 → detected (identical image) — K change + scale fold s_b.
+
+    # Anchor B: LC frame 1 -> detected (identical image), K change plus scale fold s_b
     H_rel_b = np.linalg.inv(K_lc1) @ K_d @ np.diag([s_b, s_b, s_b, 1.0])
     return H_rel_a, H_inner, H_rel_b

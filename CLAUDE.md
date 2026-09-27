@@ -35,11 +35,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **geometry-round3** (2026-09-27)
 - **setup-prereq-gating** (2026-09-27)
 - **pycolmap-cuda-docker** (2026-09-26)
 - **geometry-release** (2026-09-25)
 - **semantics-release** (2026-09-25)
-- **preproc-release** (2026-09-24)
 
 Known test failures: `docs/known-test-failures.md`
 
@@ -70,8 +70,10 @@ collab_splats/
     depth_align.py         # result_from_reconstruction: COLMAP model + VDA depth -> FeedforwardResult at COLMAP scale
     utils.py               # lift_features, reproject_pixels, clean_pointcloud, confidence_mask, subsample_points
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
-    transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV (ex utils/geometry.py)
-    bundle_adjustment.py   # Levenberg-Marquardt BA
+    transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV, project_to_so3,
+                           #   decompose_camera, intrinsics_4x4, intrinsics_to_original
+    bundle_adjustment.py   # Levenberg-Marquardt BA: array-in refine, check_model_resolution
+    metrics.py             # compute_reconstruction_quality -> reconstruction_quality_report.json
     loop_closure/          # submap pose graph (SL4/SE3), DINO-SALAD retrieval gate, LoopClosure wrapper
   localization/            # camera localization: query image → pose in known reconstruction
     retrieval.py           # Stage 1: BaseRetrievalExtractor, DinoSalad/PECLIP (also used by loop closure)
@@ -100,6 +102,7 @@ collab_splats/
   remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed
   dashboard/               # interactive video/scene browser (reads the FLAT dashboard layout only)
   utils/
+    io.py                  # to_json_safe + write_json: atomic, NaN -> null, numpy -> python
     torch_utils.py         # RegistryMixin, pytorch_gc, infer_batch_size, batch_iterator, get_device
 evals/
   scripts/eval.py          # compute script — CLI/tmux only, never run in notebook
@@ -121,7 +124,7 @@ evals/
   ```
 - **Section dividers:** use `########`-style dividers to separate major sections in long files (constants, helpers, classes, etc.). Keeps files scannable without opening a doc.
 - **Docstrings follow the same shape.** Every module, public class and public function gets one. The `"""` open and close on their own lines — the summary starts on the line after the opening quotes, never on the same line, is one line of at most 100 chars, and does not restate the name. A blank line, then `- ` bullets, then the named sections. Never a prose paragraph.
-- **Types live in the signature, meanings in the docstring.** Every parameter and return is annotated; `Args:` entries carry the name and what it means, never a duplicated type. A function with parameters documents every one under `Args:`; one that returns something documents it under `Returns:`, or `Yields:` if it is a generator.
+- **Types live in the signature, meanings in the docstring.** Every parameter and return is annotated; `Args:` entries carry the name and what it means, never a duplicated type. A public function with parameters documents every one under `Args:`; one that returns something documents it under `Returns:`, or `Yields:` if it is a generator. Private (`_`-prefixed) defs keep the summary and optional bullets only — no `Args:`/`Returns:` block; a shape or unit fact moves to a bullet.
 
   ```python
   def sample_optical_flow(frames: np.ndarray, *, max_frames: int = 100) -> np.ndarray:

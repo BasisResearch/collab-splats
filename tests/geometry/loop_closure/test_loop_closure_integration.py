@@ -9,8 +9,8 @@ from collab_splats.geometry.loop_closure import (
     LoopClosureConfig,
     PoseGraph,
     Submap,
-    find_loop_closures,
 )
+from collab_splats.geometry.loop_closure.matching import find_loop_closures
 
 
 def _make_submap(submap_id, k, vec_dim=128):

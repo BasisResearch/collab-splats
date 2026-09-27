@@ -1,7 +1,7 @@
 """Negative controls: each measurement must move under its own fault and stay still under others.
 
-The report aggregates three measurements chosen because their DEPENDENCIES DIFFER — epipolar
-reads poses, depth cross-view reads poses+depth, photometric reads poses+depth+appearance.
+The report aggregates two measurements chosen because their DEPENDENCIES DIFFER — depth
+cross-view reads poses+depth, photometric reads poses+depth+appearance.
 Attribution works only if that separation is real, so every claim below is a fault of known
 magnitude and known location, asserted to land in exactly one channel.
 
@@ -12,8 +12,8 @@ Three things this file deliberately does NOT do:
     ``test_a_constant_depth_fixture_is_silently_gated_out``) and the occlusion branch at the
     production tolerance (see ``test_the_controls_must_run_above_the_production_rel_thresh``).
     A loop over {} passes.
-  * It does not divide an invented number by a measured one. The pose control perturbs real
-    extrinsics and measures the pixel motion that perturbation actually produces.
+  * It does not assume a fault's pixel size. The pose control perturbs real extrinsics and
+    measures the pixel motion that perturbation actually produces.
   * It does not treat "the fault did not reach here" and "nothing could reach here" as the
     same evidence. Where an arm is exact-zero by construction it says so, and carries a
     second arm that has to move.
@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from collab_splats.geometry.metrics import compute_photometric_ncc, depth_error_in_pixels
+from collab_splats.geometry.metrics import compute_photometric_ncc
 from collab_splats.pointcloud.feedforward.base import compute_multiview_depth_confidence
 
 ########################################
@@ -162,7 +162,7 @@ def _reprojection_shift_px(depth, K, extr_true, extr_faulty, i, j):
 
     Measured, not assumed: frame i's pixels are unprojected once through the TRUE geometry, then
     projected into frame j under both poses and differenced. This is the only honest way to put
-    a pose fault on the same pixel axis the bridge's output lives on.
+    a pose fault on a pixel axis.
     """
     H, W = depth.shape[1:]
     yy, xx = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
@@ -337,33 +337,13 @@ def test_control_depth_scale_moves_parallax_only_on_the_source_side():
         assert ratio == pytest.approx(1.0 / DEPTH_FAULT, rel=0.01)
 
 
-def test_control_injected_scale_has_a_closed_form_prediction():
-    """r=0.1 predicts delta_d = 0.1*d exactly, and the ratio sits at 1 for a pure depth fault."""
-    depth, K, extr = _faulted_scene()
-    pairs = _pairs(depth, K, extr, rel_thresh=CONTROL_REL_THRESH)
-    assert (1, 2) in pairs
-    p = pairs[(1, 2)]
-    predicted = depth_error_in_pixels(DEPTH_FAULT - 1.0, p.median_parallax_deg, FOCAL)
-    measured = depth_error_in_pixels(p.median_rel_depth_error, p.median_parallax_deg, FOCAL)
-    # Both must be real numbers: None means the pair carries under a pixel of disparity, which
-    # would make the comparison below vacuous rather than passing.
-    assert predicted is not None and measured is not None
-    # Pin the closed form itself, delta_d = r * f * alpha. Without this line the ratio below is
-    # invariant to the bridge's functional form — a bridge that ignored the residual entirely
-    # would still divide to 1.0.
-    assert predicted == pytest.approx(0.1 * np.deg2rad(p.median_parallax_deg) * FOCAL, rel=1e-6)
-    assert measured == pytest.approx(predicted, rel=0.3)
-    # A pure depth fault: the pixel motion IS the depth motion, so the ratio sits at 1.
-    assert measured / predicted == pytest.approx(1.0, abs=0.3)
-
-
 ########################################
 # Pose fault
 ########################################
 
 
-def test_control_pose_fault_drives_the_ratio_far_above_one():
-    """Pixels move while depths stay mutually consistent — the >>1 signature.
+def test_control_pose_fault_leaves_the_depth_channel_quiet():
+    """Pixels move while depths stay mutually consistent — the depth channel cannot see it.
 
     The fault is a real translation of camera 1 along world Y (see POSE_FAULT_DY for why that
     axis): the surface is invariant under it, so the depth channel is structurally blind, while
@@ -385,13 +365,6 @@ def test_control_pose_fault_drives_the_ratio_far_above_one():
     # The depth channel stays as quiet as an unperturbed pair: nothing here exceeds the
     # resampling floor the clean fixture already sits at.
     assert abs(p.median_rel_depth_error) < 0.01
-    equiv = depth_error_in_pixels(p.median_rel_depth_error, p.median_parallax_deg, FOCAL)
-    assert equiv is not None and equiv < 0.05
-
-    # Pin rho itself, not just "it is big". This is the headline number the design rests on:
-    # one formula reads 0.98 for a pure depth fault and ~634 here, three orders apart.
-    rho = shift_px / equiv
-    assert rho == pytest.approx(634.0, rel=0.25)
 
 
 ########################################
@@ -421,8 +394,8 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     depth, K, extr = _scene(n=4)
     images = _texture(4)
     clean = compute_photometric_ncc(images, depth, K, extr, max_separation=2)
-    assert clean["available"] and clean["n_pairs"] == 5
-    ncc_clean = [r["photometric_ncc"] for r in clean["pairs"]]
+    assert len(clean["idx1"]) == 5
+    ncc_clean = clean["photometric_ncc"]
     # A correlation worth being invariant about: measured 0.884-0.956 on this fixture.
     assert min(ncc_clean) > 0.5
 
@@ -431,8 +404,8 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     shifted = images.copy()
     shifted[1] = shifted[1] * 1.6 + 30.0
     after = compute_photometric_ncc(shifted, depth, K, extr, max_separation=2)
-    assert after["n_pairs"] == clean["n_pairs"]  # else the zip below misaligns and truncates
-    exposure_delta = max(abs(a - b["photometric_ncc"]) for a, b in zip(ncc_clean, after["pairs"]))
+    assert after["idx1"] == clean["idx1"]  # else the zip below misaligns and truncates
+    exposure_delta = max(abs(a - b) for a, b in zip(ncc_clean, after["photometric_ncc"]))
     assert exposure_delta < 1e-9  # measured 3.3e-16
 
     # Without this half the test is decoration: an NCC hardwired to a constant would pass
@@ -440,8 +413,8 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     extr_bad = extr.copy()
     extr_bad[1, 1, 3] -= POSE_FAULT_DY
     faulted = compute_photometric_ncc(images, depth, K, extr_bad, max_separation=2)
-    assert faulted["n_pairs"] == clean["n_pairs"]  # same guard, same reason
-    pose_delta = max(abs(a - b["photometric_ncc"]) for a, b in zip(ncc_clean, faulted["pairs"]))
+    assert faulted["idx1"] == clean["idx1"]  # same guard, same reason
+    pose_delta = max(abs(a - b) for a, b in zip(ncc_clean, faulted["photometric_ncc"]))
     assert pose_delta > 0.01  # measured 0.0277
     assert pose_delta > 1e6 * exposure_delta
 
@@ -475,15 +448,12 @@ def test_control_forward_motion_is_the_direction_that_falls_under_the_floor():
 
     # The direction claim: same baseline, several times the parallax.
     assert strafe_px / fwd_px > 3.0
-    # The floor claim: the derived one-pixel-of-disparity threshold separates them, and the
-    # bridge declines to answer on the forward side rather than emitting an infinity.
+    # The floor claim: one pixel of disparity separates them
     assert fwd_px < 1.0 < strafe_px
-    assert depth_error_in_pixels(0.05, fwd_best.median_parallax_deg, FOCAL) is None
-    assert depth_error_in_pixels(0.05, strafe_best.median_parallax_deg, FOCAL) is not None
 
 
 def test_control_separation_axis_has_teeth():
-    """Injecting error that grows with frame gap must show as a positive rho."""
+    """Injecting error that grows with frame gap must show as a positive rank correlation."""
     depth, K, extr = _scene(n=6)
     for k in range(6):
         depth[k] *= 1.0 + 0.02 * k  # drift: each frame slightly more scaled than the last

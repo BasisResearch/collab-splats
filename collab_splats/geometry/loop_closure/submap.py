@@ -3,9 +3,9 @@ One loop-closure window of frames, poses and dense points.
 
 - poses are world-to-cam in the window's local frame (frame 0 at identity)
 - world-frame reads apply the optimized per-frame SL(4) homographies from the pose graph
+- ported from MIT-SPARK/VGGT-SLAM @ fd3fd218 (BSD-2-Clause): vggt_slam/submap.py, adapted
 """
 
-# Ported from VGGT-SLAM (github.com/MIT-SPARK/VGGT-SLAM), adapted for collab-splats.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+
+from collab_splats.geometry.transforms import decompose_camera, intrinsics_4x4
 
 if TYPE_CHECKING:
     from .graph import PoseGraph
@@ -24,39 +26,49 @@ class Submap:
     """
     One window of frames from a single forward pass, in that window's local frame.
 
-    - poses are world-to-cam (frame 0 ≈ identity); `assert_world_to_cam` checks it
-    - dense fields (points/colors/conf) are per pixel; conf_threshold is their 25th percentile
-    - is_lc_submap marks a 2-frame loop carrier, which never contributes points
+    - poses are world-to-cam, frame 0 ≈ identity; the LC wrapper checks it per window
+    - dense fields (points/colors/conf) are per pixel, full resolution (fat Submap, as VGGT-SLAM)
+    - points are unprojected depth in the window's frame-0 camera, as VGGT-SLAM's pointclouds
+    - is_lc_submap: see wrapper._run_lc_loop
+
+    Args:
+        submap_id: key in the GraphMap; windows first, then loop carriers.
+        poses: world-to-cam homogeneous poses, (K, 4, 4) float32.
+        intrinsics: camera intrinsics, (K, 3, 3) float32.
+        retrieval_vectors: DINO-SALAD global descriptors, (K, D) float32.
+        image_paths: one source image per frame.
+        frames: raw image tensors on CPU, (K, 3, H, W).
+        is_lc_submap: True for a 2-frame loop carrier.
+        frame_start: global index of the first frame in the full sequence.
+        points: dense local points, (K, H, W, 3) float32.
+        colors: per-pixel RGB, (K, H, W, 3) uint8.
+        conf: per-pixel depth confidence, (K, H, W) float32.
+        conf_percentile: percentile of conf that sets conf_threshold; VGGT-SLAM --conf_threshold.
+        conf_threshold: confidence cutoff; the conf_percentile percentile of conf when not given.
     """
 
     submap_id: int
-    poses: np.ndarray  # (K, 4, 4) float32 — world-to-cam homogeneous
-    intrinsics: np.ndarray  # (K, 3, 3) float32 — camera intrinsics
-    retrieval_vectors: torch.Tensor  # (K, D) float32 — DINO-SALAD global descriptors
+    poses: np.ndarray
+    intrinsics: np.ndarray
+    retrieval_vectors: torch.Tensor
     image_paths: list[Path]
-    frames: torch.Tensor | None = None  # (K, 3, H, W) — raw image tensors on CPU
+    frames: torch.Tensor | None = None
     is_lc_submap: bool = False
-    frame_start: int = 0  # global index of this submap's first frame in the full sequence
-    world_points: np.ndarray | None = field(
-        default=None, repr=False
-    )  # (K, P, 3) float32 — per-frame 3D points in local frame
-    world_points_conf: np.ndarray | None = field(default=None, repr=False)  # (K, P) float32 — per-point confidence
-    # Dense per-frame data (fat Submap, mirrors VGGT-SLAM): full-resolution points/colors/conf.
-    points: np.ndarray | None = field(default=None, repr=False)  # (K, H, W, 3) float32 — dense local points
-    colors: np.ndarray | None = field(default=None, repr=False)  # (K, H, W, 3) uint8 — per-pixel RGB
-    conf: np.ndarray | None = field(default=None, repr=False)  # (K, H, W) float32 — per-pixel confidence
-    conf_masks: np.ndarray | None = field(default=None, repr=False)  # (K, H, W) bool — conf >= threshold
-    conf_threshold: float | None = None  # percentile-derived confidence cutoff
-
-    # VGGT-SLAM's default confidence percentile for thresholding dense points.
-    _CONF_PCT = 25.0
+    frame_start: int = 0
+    points: np.ndarray | None = field(default=None, repr=False)
+    colors: np.ndarray | None = field(default=None, repr=False)
+    conf: np.ndarray | None = field(default=None, repr=False)
+    conf_percentile: float = 25.0
+    conf_threshold: float | None = None
 
     def __post_init__(self) -> None:
         """
         Derive conf_threshold from dense conf when none was given.
+
+        - percentile over every frame's conf, + 1e-6, as MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/submap.py:36-41
         """
         if self.conf is not None and self.conf.size > 0 and self.conf_threshold is None:
-            self.conf_threshold = float(np.percentile(self.conf, self._CONF_PCT)) + 1e-6
+            self.conf_threshold = float(np.percentile(self.conf, self.conf_percentile)) + 1e-6
 
     def set_dense_points(self, points: np.ndarray, colors: np.ndarray, conf: np.ndarray) -> None:
         """
@@ -71,11 +83,11 @@ class Submap:
         self.colors = colors
         self.conf = conf
         if conf is not None and conf.size > 0:
-            self.conf_threshold = float(np.percentile(conf, self._CONF_PCT)) + 1e-6
+            self.conf_threshold = float(np.percentile(conf, self.conf_percentile)) + 1e-6
 
-    ########################################
-    ###### Graph-corrected world reads #####
-    ########################################
+    ####################################################################
+    # Graph-corrected world reads
+    ####################################################################
 
     def get_points_in_world_frame(self, graph: PoseGraph, skip_first: int = 0) -> np.ndarray:
         """
@@ -86,7 +98,7 @@ class Submap:
 
         Args:
             graph: optimized PoseGraph holding one homography per frame.
-            skip_first: leading frames to drop (overlap owned by the previous submap).
+            skip_first: leading frames to drop; see LoopClosureConfig for overlap.
 
         Returns:
             World-frame points, (M, 3) float32; empty when every frame is skipped.
@@ -100,18 +112,22 @@ class Submap:
             raise ValueError(f"Submap {self.submap_id} has no conf; cannot compute world-frame points")
         out = []
         for i in range(skip_first, self.points.shape[0]):
+            # Lift the frame's points to homogeneous and apply its homography
             H = graph.get_homography(self.frame_start + i).astype(np.float64)
             flat = self.points[i].reshape(-1, 3).astype(np.float64)  # (H*W, 3)
             hom = np.hstack([flat, np.ones((flat.shape[0], 1), dtype=np.float64)])
             out_hom = (H @ hom.T).T  # (H*W, 4)
-            # Dehomogenize by /w, guarding near-zero w (projective plane-at-infinity).
+
+            # Dehomogenize by w, guarding near-zero w (plane at infinity)
             w = out_hom[:, 3:4]
             w = np.where(np.abs(w) < 1e-10, 1e-10, w)
             world = out_hom[:, :3] / w
-            # Confidence mask this frame's points — same predicate/order as get_points_colors.
+
+            # Confidence mask; same predicate and order as get_points_colors
             mask = self.conf[i].reshape(-1) > self.conf_threshold
             out.append(world[mask])
-        # skip_first can consume every frame (a tail submap that is pure overlap) — return empty.
+
+        # A pure-overlap tail submap skips every frame; return empty
         if not out:
             return np.empty((0, 3), dtype=np.float32)
         return np.vstack(out).astype(np.float32)
@@ -139,7 +155,7 @@ class Submap:
         World-to-cam poses decomposed from K @ inv(H_opt), one per frame.
 
         - must equal `PoseGraph.extract_extrinsics` for these frames
-        - stores R.T, not upstream's R: `decompose_camera` returns camera-to-world R
+        - stores R.T, not upstream's R; see transforms.decompose_camera
 
         Args:
             graph: optimized PoseGraph holding one homography per frame.
@@ -147,41 +163,17 @@ class Submap:
         Returns:
             World-to-cam poses, (N, 4, 4) float32.
         """
-        # Inline import breaks the graph↔submap circular import.
-        from .graph import decompose_camera
-
         poses = []
         for i in range(self.poses.shape[0]):
-            K_4x4 = np.eye(4, dtype=np.float64)
-            K_4x4[:3, :3] = self.intrinsics[i].astype(np.float64)
+            # Projection K @ inv(H_opt), normalized so its last entry is 1
+            K_4x4 = intrinsics_4x4(self.intrinsics[i].astype(np.float64))
             proj = K_4x4 @ np.linalg.inv(graph.get_homography(self.frame_start + i))
             proj = proj / proj[-1, -1]
+
+            # Decompose, then store as world-to-cam; see transforms.decompose_camera
             _, rot, trans, _ = decompose_camera(proj[:3, :])
             pose = np.eye(4, dtype=np.float32)
             pose[:3, :3] = rot.T.astype(np.float32)
             pose[:3, 3] = trans.astype(np.float32)
             poses.append(pose)
         return np.stack(poses, axis=0)
-
-
-def assert_world_to_cam(poses: np.ndarray, atol: float = 0.1) -> None:
-    """
-    Check that a window's poses are world-to-cam with frame 0 at the origin.
-
-    - call on raw["extrinsic"] to catch a backend that returns cam-to-world
-
-    Args:
-        poses: window poses, (K, 4, 4).
-        atol: absolute tolerance on poses[0] versus identity.
-
-    Raises:
-        ValueError: if poses is not (K, 4, 4) or poses[0] is not near identity.
-    """
-    if poses.ndim != 3 or poses.shape[1:] != (4, 4):
-        raise ValueError(f"poses must be (K, 4, 4), got {poses.shape}")
-    if not np.allclose(poses[0], np.eye(4, dtype=poses.dtype), atol=atol):
-        raise ValueError(
-            f"Pose convention violation: expected poses[0] ≈ eye(4) (world-to-cam, "
-            f"first frame at origin), got:\n{poses[0]}\n"
-            "If your backend outputs cam-to-world, invert before creating Submap."
-        )

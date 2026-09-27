@@ -2,7 +2,8 @@ import numpy as np
 import torch
 from pathlib import Path
 from collab_splats.geometry.loop_closure import Submap
-from collab_splats.geometry.loop_closure import LoopClosureConfig, LoopMatch, LoopMatchQueue
+from collab_splats.geometry.loop_closure import LoopClosureConfig
+from collab_splats.geometry.loop_closure.matching import LoopMatch, LoopMatchQueue
 
 
 def _make_submap(k=4, h=224, w=224, d=128, submap_id=0):
@@ -75,7 +76,7 @@ def test_loop_match_queue_equal_score_tiebreak():
     assert len(matches) == 3
 
 
-from collab_splats.geometry.loop_closure import find_loop_closures
+from collab_splats.geometry.loop_closure.matching import find_loop_closures
 
 
 def test_find_loop_closures_detects_similar():
@@ -146,7 +147,7 @@ def test_find_loop_closures_no_match():
 
 
 def test_loop_match_queue_nms():
-    from collab_splats.geometry.loop_closure import LoopMatch
+    from collab_splats.geometry.loop_closure.matching import LoopMatch
     from collab_splats.geometry.loop_closure.matching import LoopMatchQueue
 
     # frames [10, 12, 50, 53, 100] — 10+12 cluster, 50+53 cluster, 100 alone

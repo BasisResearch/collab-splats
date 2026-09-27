@@ -35,7 +35,6 @@ $PY scripts/eval.py \
 ```
 - `--backbone`: `vggt_omega | vggtx | mapanything | loger`. Per-model LC layer + verify-threshold calibrations are applied automatically.
 - `--conditions`: `baseline | ba | lc | ba_track-density-N | incremental_ba-N`.
-- `--lc_scale_method` (default **`rotation_only`**; also `none`). **Keep the default for numbers comparable to `baselines/`.**
 - `--submap_size` for >100-frame sequences (windowed); omit for single-pass short clips.
 
 **2 — compare across models and/or datasets (config-driven grid).**
@@ -46,7 +45,7 @@ $PY scripts/eval.py --config configs/cross_model_chess.yaml            # compare
 $PY scripts/eval.py --config configs/7scenes.yaml                      # chess/fire/office × backbones × conditions
 $PY scripts/eval.py --config configs/7scenes.yaml --dry_run            # print the per-cell plan, run nothing
 ```
-Presets pin `scale_method: rotation_only` so grid runs reproduce the frozen `baselines/` numbers. Author a new experiment by copying a config in `configs/`.
+Author a new experiment by copying a config in `configs/`.
 
 **3 — compare arbitrary trajectories already on disk.**
 Drop each method's `<name>.tum` (+ a `gt.tum`) into a dir; aggregate them into one table:

@@ -1,8 +1,9 @@
 """
 Submap collection for loop closure, with ordered and world-frame reads.
+
+- ported from MIT-SPARK/VGGT-SLAM @ fd3fd218 (BSD-2-Clause): vggt_slam/map.py (GraphMap), adapted
 """
 
-# Ported from VGGT-SLAM (github.com/MIT-SPARK/VGGT-SLAM), adapted for collab-splats.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -21,6 +22,9 @@ class GraphMap:
     """
 
     def __init__(self) -> None:
+        """
+        Start with no submaps.
+        """
         self.submaps: dict[int, Submap] = {}
 
     def add_submap(self, submap: Submap) -> None:
@@ -33,6 +37,12 @@ class GraphMap:
         self.submaps[submap.submap_id] = submap
 
     def __len__(self) -> int:
+        """
+        Number of stored submaps.
+
+        Returns:
+            Count of submaps, loop carriers included.
+        """
         return len(self.submaps)
 
     def ordered_submaps_by_key(self) -> list[Submap]:
@@ -49,26 +59,29 @@ class GraphMap:
         Confidence-masked world-frame cloud over every submap with dense points.
 
         - skips loop-carrier submaps and submaps without dense points
-        - without overlap, every seam between submaps is projected twice
+        - overlap: see LoopClosureConfig
 
         Args:
             graph: optimized PoseGraph holding one homography per frame.
-            overlap: leading frames dropped from each non-first submap, which the
-                previous submap already owns.
+            overlap: leading frames dropped from each non-first submap.
 
         Returns:
             (points, colors): (M, 3) float32 world points and (M, 3) uint8 RGB.
         """
         pts_chunks, col_chunks = [], []
         for s in self.ordered_submaps_by_key():
-            # Skip LC submaps (2-frame loop carriers) and degraded submaps without
-            # dense points (MapAnything degraded path) — neither contributes cloud.
+            # No cloud from loop carriers or submaps without dense points
+            # - carriers: see wrapper._run_lc_loop
+            # - no dense points: MapAnything degraded path
             if s.is_lc_submap or s.points is None:
                 continue
-            # Non-first submaps: drop the leading overlap frames the earlier submap owns.
+
+            # Drop a non-first submap's overlap frames; see LoopClosureConfig
             skip = overlap if s.frame_start > 0 else 0
             pts_chunks.append(s.get_points_in_world_frame(graph, skip_first=skip))
             col_chunks.append(s.get_points_colors(skip_first=skip))
+
+        # Stack the chunks; an empty map gives empty arrays
         points = np.vstack(pts_chunks) if pts_chunks else np.zeros((0, 3), dtype=np.float32)
         colors = np.vstack(col_chunks) if col_chunks else np.zeros((0, 3), dtype=np.uint8)
         return points, colors

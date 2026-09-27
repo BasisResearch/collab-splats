@@ -68,11 +68,11 @@ PUSH_EXCLUDES = (
     "*.[Mm][Pp]4",
     "*.[Mm][Oo][Vv]",
     "*.[Aa][Vv][Ii]",
-    # COLMAP match database is a local build artifact, rebuildable from the zarr feature
-    # cache + poses (geometry/verification.py). Anchored at <backend>/colmap depth.
+    # COLMAP match database left by the removed geometric verification on older scenes
+    # - local build artifact; anchored at <backend>/colmap depth
     "/*/colmap/database.db",
     # InstantSfM's SIFT database (pointcloud/sfm/instantsfm.py) — same class of artifact, its own
-    # name so it never collides with the verification DB above. Rebuilt from the staged images.
+    # name so it never collides with the database.db above. Rebuilt from the staged images.
     "/*/colmap/instantsfm.db",
 )
 

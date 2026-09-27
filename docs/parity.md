@@ -13,36 +13,61 @@ The one place the two external parity references are described.
 | reference | repo | pinned commit | role |
 |---|---|---|---|
 | VGGT-SPARK | [MIT-SPARK/VGGT_SPARK](https://github.com/MIT-SPARK/VGGT_SPARK) | `6e6e16107b88e8e76c751826af10d4295d87ecd2` | VGGT-1B fork: `forward(compute_similarity=True)` returns `image_match_ratio`; VGGT-SLAM's backbone |
-| VGGT-SLAM | [MIT-SPARK/VGGT-SLAM](https://github.com/MIT-SPARK/VGGT-SLAM) | `604efe852c5f2d24caab03579f3d93879f0c7acf` | reference SLAM system (VGGT-SLAM 2.0, incl. the `vggt-slam2` update) |
+| VGGT-SLAM | [MIT-SPARK/VGGT-SLAM](https://github.com/MIT-SPARK/VGGT-SLAM) | `fd3fd218d1fc5edb1a7ea3490263b9aec3b96300` | reference SLAM system (VGGT-SLAM 2.0, incl. the `vggt-slam2` update); BSD-2-Clause |
 
 Pin caveats:
 
 - VGGT-SPARK `6e6e161`: an upstream commit (2026-02-13, "small update to readme instructions")
-- VGGT-SLAM `604efe8`: NOT on GitHub — a local commit in our deleted clone
-  - adds a `VGGT_SLAM_SCALE_SE3` env flag on top of upstream (spec `2026-07-08-lc-parity-validation-design.md`)
-  - its upstream parent was not recorded; reproduce from upstream `main` of that period
-- our port attributions cite repo + file (+ line), not a commit
+- VGGT-SLAM `fd3fd218` (2026-06-04, "removing unused files and adding bug fix for loop closure verification"): previously pinned to a local commit 604efe8, re-pinned 2026-09-26
+- our port attributions cite `MIT-SPARK/VGGT-SLAM @ fd3fd218, <path>:<lines>`; every line range is checked against that commit
 
 ---
 
 ## What we port from VGGT-SLAM
 
+All paths are at `MIT-SPARK/VGGT-SLAM @ fd3fd218`, used under its BSD-2-Clause license (Copyright (c) 2025, MIT-SPARK).
+
 | our module | upstream source |
 |---|---|
-| `geometry/loop_closure/graph.py` `PoseGraph` | `vggt_slam/graph.py` (SL4 backend: `BetweenFactorSL4`, sigma 0.05 edges, 1e-6 first-frame prior) |
-| `graph.py` `decompose_camera` | `vggt_slam/slam_utils.py:decompose_camera` (`no_inverse=True` branch) |
+| `geometry/loop_closure/graph.py` `PoseGraph` | `vggt_slam/graph.py:PoseGraph` (SL4 backend: `BetweenFactorSL4`, sigma 0.05 edges, 1e-6 first-frame prior, `graph.py:19-23`); edge construction from `vggt_slam/solver.py:118-195` (`add_edge`) |
+| `geometry/transforms.py` `decompose_camera` | `vggt_slam/slam_utils.py:45-83` (`decompose_camera`): R from the default branch (`:77`), t from the `no_inverse=True` branch (`:80`) |
 | `graph.py` `estimate_scale_pairwise` | `vggt_slam/scale_solver.py:estimate_scale_pairwise` |
-| `graph.py` loop-edge chain + confidence fallback | `solver.py:118-170` (`add_edge`), `solver.py:129-151`, `solver.py:132-143` |
-| `geometry/loop_closure/submap.py` `Submap` | VGGT-SLAM `Submap` (fat: dense points/colors/conf) |
-| `geometry/loop_closure/map.py` `GraphMap` | `map.py` |
-| `geometry/loop_closure/matching.py` | `loop_closure.py` (`LoopMatch`, `LoopMatchQueue`, `find_loop_closures`), per decision 015 |
-| `geometry/loop_closure/wrapper.py` `LoopClosure` | `Solver` structure (`run_predictions` / `add_points`); graph construction stays in `PoseGraph` |
+| `graph.py` loop-edge chain + confidence fallback | `vggt_slam/solver.py:270-287` (LC submap + `add_edge` pair), `:129-146` (anchor scale), `:129-138` (confidence fallback) |
+| `geometry/loop_closure/submap.py` `Submap` | `vggt_slam/submap.py:Submap` (fat: dense points/colors/conf) |
+| `geometry/loop_closure/map.py` `GraphMap` | `vggt_slam/map.py:GraphMap` |
+| `geometry/loop_closure/matching.py` | `vggt_slam/loop_closure.py` (`LoopMatch`, `LoopMatchQueue`, `find_loop_closures`) + `vggt_slam/map.py:retrieve_best_score_frame`, per decision 015 |
+| `geometry/loop_closure/wrapper.py` `LoopClosure` | `main.py:109-130` (window loop) + `vggt_slam/solver.py` `Solver` structure (`run_predictions` / `add_points`); graph construction stays in `PoseGraph` |
 | `pointcloud/utils.py` `cross_frame_attention_ratio` | VGGT-SPARK `get_similarity()` + `mean_top_quarter()` |
 
 Config defaults that mirror VGGT-SLAM (`LoopClosureConfig`, `wrapper.py`):
 
-- `submap_overlap=1`, `conf_threshold=25.0`, `lc_retrieval_threshold=0.95`
-- `scale_method="rotation_only"` is VGGT-SLAM's inter-submap scale method
+- `submap_overlap=1`, `conf_percentile=25.0`, `lc_retrieval_threshold=0.95`
+- `conf_percentile` is upstream's `--conf_threshold 25` (`main.py:32`): each submap's gate is `percentile(depth_conf, 25) + 1e-6` (`vggt_slam/submap.py:36-41`); until 2026-09-26 it was `conf_threshold`, a raw gate on the stride-8 points
+- scale inputs follow `vggt_slam/solver.py:129-146` on density and gate: dense per-pixel points, gated by the prior submap's threshold (`:131`)
+- kept different, on purpose: the point frame; see [Scale point frame](#scale-point-frame-a-measured-divergence) below
+- kept different: `estimate_scale_pairwise` drops points with `|x| < 1e-8` (upstream `scale_solver.py:15-25` has no filter); loop anchors use each frame's own K where upstream uses `proj_mats[-1]` / `proj_mats[0]` (`solver.py:140`)
+- inter-submap scale is always `rotation_only`, VGGT-SLAM's method; the `scale_method` field was deleted in geometry-round3 (2026-09-26) along with its `none` alternative
+
+### Scale point frame: a measured divergence
+
+Upstream reads both frames' points in their own submap's frame-0 camera; ours moves each into its own camera first.
+
+- upstream: `t1` / `t2` are `get_frame_pointcloud(...)` as stored (`vggt_slam/solver.py:141-142`), i.e. unprojected in frame 0 (`:222`)
+- ours: each frame's points go through that frame's world-to-cam pose (`graph.py` `calculate_pairwise_frame_scale`, via `transforms.transform_points`), both frames, sequential edge and loop anchors alike
+- why: in frame 0 the two norms share no origin, so the ratio is `|R p + t| / |p|`, biased by the camera's translation inside the submap
+- upstream's default `--submap_size 16` (`main.py:28`) keeps that translation small; ours run 20 (`LoopClosureConfig`), 64 (`configs/loop_closure.yaml`) and 50 (the chess eval below)
+- history: the back-transform predates 2026-09-26; commit `65d2def3` removed it to match upstream, the next commit restored it after the ATE below
+
+7-Scenes chess seq-01, 500 frames, `submap_size=50`, ATE (m, Sim3-aligned RMSE), `baseline` / `lc`:
+
+| backbone | before `65d2def3` | frame-0 read (`65d2def3`) | overlap-camera read (current) |
+|---|---|---|---|
+| vggtx | 0.0457 / 0.0327 | 0.108 / 0.133 | 0.0471 / 0.0324 |
+| vggt_omega | 0.0154 / 0.0149 | 0.149 / 0.115 | 0.0152 / 0.0152 |
+| mapanything | 0.1306 / 0.0406 | 0.100 / 0.094 | 0.1225 / 0.0367 |
+
+- the frame-0 read regresses vggtx and vggt_omega 2-10x in both conditions, baseline (sequential edges only) included, and mapanything `lc` 2.3x; mapanything `baseline` alone improves (0.131 -> 0.100)
+- current differs from "before" only through the dense points and the percentile gate, kept from `65d2def3`
 
 ---
 
@@ -59,7 +84,7 @@ Method:
 Conditions:
 
 - `baseline`: windowed submaps, LC off; `lc`: loop closure on
-- matched config: `submap_size=16`, `submap_overlap=1`, `max_loops=1`/submap, `conf_threshold=25`, `lc_thres=0.95`
+- matched config: `submap_size=16`, `submap_overlap=1`, `max_loops=1`/submap, `conf_threshold=25` (then a raw gate; see the defaults above), `lc_thres=0.95`
 - `min_disparity` = VGGT-SLAM keyframe tracker threshold (paper default 50; 5 = loop-rich probe)
 - `@25%` / `@50%` = keyframe-prefix arms (scaling / false-loop negatives)
 
@@ -108,7 +133,7 @@ Source: `evals/baselines/cross_model/_core_matrix_table.md` (SPARK rows, removed
 
 ### Disparity sweep (chess, `max_frames` 200)
 
-Source: `evals/baselines/disparity_sweep/{slam,ours}_d*/` (removed; ours = `vggt_spark`, `--lc_scale_method none`)
+Source: `evals/baselines/disparity_sweep/{slam,ours}_d*/` (removed; ours = `vggt_spark`, `--lc_scale_method none`; measured before geometry-round3 deleted `scale_method`, so `none` can no longer be rerun)
 
 | min_disparity | SLAM keyframes | SLAM ATE (m) | ours baseline ATE (m) | ours lc ATE (m) |
 |---|---|---|---|---|

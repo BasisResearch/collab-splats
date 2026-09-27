@@ -2,7 +2,8 @@
 Levenberg-Marquardt bundle adjustment over VGGSfM tracks.
 
 - BundleAdjustmentConfig: solver, filter and track-extraction settings
-- BundleAdjustment: refines poses and focal of a `pointcloud.zarr` result
+- BundleAdjustment: refines poses and focal from arrays, K at model resolution
+- check_model_resolution: the K-grid guard callers run before refine
 """
 
 from __future__ import annotations
@@ -12,9 +13,9 @@ import hashlib
 import json
 import logging
 import shutil
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 import pypose as pp
@@ -32,102 +33,120 @@ from zarr.codecs import BloscCodec
 from collab_splats.geometry.transforms import (
     extrinsics_to_homogeneous,
     invert_poses,
+    project_to_so3,
     umeyama_sim3,
 )
 
-if TYPE_CHECKING:
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-
-__all__ = ["BundleAdjustment", "BundleAdjustmentConfig"]
+__all__ = ["BundleAdjustment", "BundleAdjustmentConfig", "check_model_resolution"]
 
 logger = logging.getLogger(__name__)
 
 
-def _compute_tracks_cache_key(result: "FeedforwardResult", cfg: "BundleAdjustmentConfig") -> str:
-    """SHA-256 track-cache key over image paths and extraction config."""
-    meta = {
-        "image_paths": sorted(str(p) for p in (result.image_paths or [])),
-        "max_query_pts": cfg.max_query_pts,
-        "query_frame_num": cfg.query_frame_num,
-        "fine_tracking": cfg.fine_tracking,
-    }
-    return hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()
-
-
-########################################################
-########## Configuration ##############################
-########################################################
+########################################################################
+# Configuration
+########################################################################
 
 
 @dataclass
 class BundleAdjustmentConfig:
     """
-    LM bundle adjustment settings.
+    LM bundle adjustment settings, grouped by the step that reads them.
 
-    - increment_size: 0 runs one global BA; 1..N-1 grows the frame set by that many per solve
-    - shared_camera: True fits one focal for the scene; False fits one focal per frame
-    - max_reproj_error=None: skips the pre-solve reprojection filter
+    - tracks: VGGSfM extraction and its cache
+    - filter: which observations enter the solve
+    - solve: the LM problem itself
+    - runtime: where it runs
+
+    Args:
+        max_query_pts: extraction query points (upstream demo default).
+        query_frame_num: extraction query frames (upstream demo default).
+        fine_tracking: VGGSfM fine refinement; coarse-only tracks are ~1-2 px off.
+        tracks_cache_dir: zarr track-cache dir; None always extracts.
+        vis_thresh: min VGGSfM visibility score for an observation.
+        max_reproj_error: pre-solve pixel reprojection gate; None skips the filter.
+        min_inliers_per_frame: frames below this inlier count sit out the solve.
+        lm_steps: LM iterations per solve, all run, no early stop.
+        shared_camera: one focal per scene (per-frame K spread is model noise); False fits one per frame.
+        increment_size: 0 = one global solve; 1..N-1 = frames added per incremental solve.
+        device: CUDA device ("cuda", "cuda:1"), None = auto; CPU unsupported (bae LM is CUDA-only).
     """
 
-    max_reproj_error: float = 4.0  # pixel reprojection gate before the solve; lower drops more observations
-    lm_steps: int = 40  # LM iterations per solve; all are run, no early stop
-    shared_camera: bool = True  # one physical camera per scene; per-frame K spread is model noise
-    vis_thresh: float = 0.2  # min VGGSfM visibility score for an observation to enter BA
-    fine_tracking: bool = True  # VGGSfM fine refinement stage (upstream always on; coarse-only ~1-2px error)
-    min_inliers_per_frame: int = 64  # frames with fewer inlier observations are left out of the solve
-    max_query_pts: int = 4096  # track extraction: max query points (upstream demo default)
-    query_frame_num: int = 8  # track extraction: number of query frames (upstream demo default)
-    device: str | None = None  # CUDA device (e.g. "cuda", "cuda:1"); None = auto. CPU unsupported (bae LM is CUDA-only)
-    increment_size: int = 0  # frames added per step; 0 = disabled (global BA); 1..N-1 = incremental
-    tracks_cache_dir: Path | None = None  # zarr cache dir for tracks; None = always extract
+    # Tracks
+    max_query_pts: int = 4096
+    query_frame_num: int = 8
+    fine_tracking: bool = True
+    tracks_cache_dir: Path | None = None
+
+    # Filter
+    vis_thresh: float = 0.2
+    max_reproj_error: float | None = 4.0
+    min_inliers_per_frame: int = 64
+
+    # Solve
+    lm_steps: int = 40
+    shared_camera: bool = True
+    increment_size: int = 0
+
+    # Runtime
+    device: str | None = None
 
 
-########################################################
-########## BundleAdjustment ###########################
-########################################################
+########################################################################
+# BundleAdjustment
+########################################################################
 
 
 class BundleAdjustment:
     """
     Refines camera poses and focal via VGGSfM tracks and LM bundle adjustment.
 
-    - refines a `pointcloud.zarr` result whose K is at model resolution
+    - refines arrays whose K is at model resolution; see check_model_resolution
     - the refine stage refuses sfm results
-    - does not reproject points; call creator.reproject(result) afterwards if needed
+    - does not reproject points; the caller re-derives them under the new poses
     """
 
     def __init__(self, config: BundleAdjustmentConfig | None = None) -> None:
+        """
+        Store the settings and start an empty loss history.
+
+        - config None uses the defaults
+        """
         self.config = config or BundleAdjustmentConfig()
+
         # Populated per _optimize() call with that call's per-step LM losses
         self.loss_history: list[list[float]] = []
 
-    def _load_or_extract_tracks(self, result: "FeedforwardResult") -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(tracks, vis_scores, pts3d_tracks) from the zarr cache or a fresh VGGSfM extraction."""
+    def extract_tracks(
+        self,
+        images: np.ndarray,
+        confidence: np.ndarray,
+        world_points: np.ndarray,
+        image_paths: list | None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        VGGSfM tracks for the frames; cached under tracks_cache_dir when one is set.
+
+        - no cache dir or no image_paths: always extracts, nothing is cached
+        - a key mismatch or an unreadable store is deleted and rebuilt
+
+        Args:
+            images: (N, 3, H, W) model-grid frames, the track source.
+            confidence: (N, H, W) per-pixel confidence for query-point sampling.
+            world_points: (N, H, W, 3) the tracks are lifted from.
+            image_paths: frame paths for the cache key; None skips the cache.
+
+        Returns:
+            tracks (N, P, 2), vis_scores (N, P) and pts3d_tracks (P, 3), all float32.
+        """
         cfg = self.config
 
-        def _extract() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-            logger.info(
-                "Extracting VGGSfM tracks: %d frames, max_query_pts=%d, query_frame_num=%d, fine_tracking=%s (slow step)",
-                len(result.images),
-                cfg.max_query_pts,
-                cfg.query_frame_num,
-                cfg.fine_tracking,
-            )
-            return _extract_tracks_vggsfm(
-                result.images,
-                result.confidence,
-                result.world_points,
-                max_query_pts=cfg.max_query_pts,
-                query_frame_num=cfg.query_frame_num,
-                fine_tracking=cfg.fine_tracking,
-                device=cfg.device,
-            )
+        # No cache configured, or nothing to key it on
+        if cfg.tracks_cache_dir is None or not image_paths:
+            return extract_tracks_vggsfm(images, confidence, world_points, cfg)
 
-        if cfg.tracks_cache_dir is None or not result.image_paths:
-            return _extract()
-
+        # Cache location and the key a valid store must carry
         cache_path = Path(cfg.tracks_cache_dir) / "tracks.zarr"
-        expected_key = _compute_tracks_cache_key(result, cfg)
+        expected_key = _compute_tracks_cache_key(image_paths, world_points, cfg)
 
         # Attempt to read from existing cache; validate key before using
         if cache_path.exists():
@@ -141,15 +160,18 @@ class BundleAdjustment:
                         store["pts3d_tracks"][:],
                     )
                 logger.warning("Track cache key mismatch, re-extracting: %s", cache_path)
-            # unreadable store: missing array -> KeyError
-            # bad/missing metadata -> JSONDecodeError / GroupNotFoundError (ValueError, OSError)
+
+            # Unreadable store: rebuild it
+            # - missing array: KeyError
+            # - bad or missing metadata: JSONDecodeError / GroupNotFoundError (ValueError, OSError)
             except (KeyError, ValueError, OSError) as exc:
                 logger.warning("Track cache unreadable (%s), re-extracting: %s", exc, cache_path)
             shutil.rmtree(cache_path)
 
         # Extract and persist to zarr cache
-        tracks, vis_scores, pts3d_tracks = _extract()
+        tracks, vis_scores, pts3d_tracks = extract_tracks_vggsfm(images, confidence, world_points, cfg)
 
+        # One lz4 chunk per array; the key stamp makes the store valid
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         lz4 = BloscCodec(cname="lz4")
         store = zarr.open(str(cache_path), mode="w")
@@ -160,39 +182,48 @@ class BundleAdjustment:
 
         return tracks, vis_scores, pts3d_tracks
 
-    def _refine_allonce(
+    def _refine_global(
         self,
-        result: "FeedforwardResult",
+        extrinsics: np.ndarray,
         tracks: np.ndarray,
         vis_scores: np.ndarray,
         pts3d_tracks: np.ndarray,
-        intrinsics_model: np.ndarray,
+        intrinsics: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Run one BA over all N frames at once."""
-        extrinsics_3x4 = result.extrinsics[:, :3, :]
-        _, refined_extrinsics, refined_intrinsics_model = self._optimize(
+        """
+        One BA solve over all N frames at once.
+
+        - (N, 4, 4) world-to-cam in; returns refined (N, 3, 4) extrinsics and (N, 3, 3) K
+        """
+        _, refined_extrinsics, refined_intrinsics = self._optimize(
             pts3d_tracks,
-            extrinsics_3x4,
-            intrinsics_model,
+            extrinsics[:, :3, :],
+            intrinsics,
             tracks,
             vis_scores,
         )
-        return refined_extrinsics, refined_intrinsics_model
+        return refined_extrinsics, refined_intrinsics
 
     def _refine_incremental(
         self,
-        result: "FeedforwardResult",
+        extrinsics: np.ndarray,
         tracks: np.ndarray,
         vis_scores: np.ndarray,
         pts3d_tracks: np.ndarray,
-        intrinsics_model: np.ndarray,
+        intrinsics: np.ndarray,
         increment_size: int,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Grow the frame set by increment_size per step, warm-starting each BA from the last."""
-        N = len(result.images)
+        """
+        Grow the frame set by increment_size per step, warm-starting each BA from the last.
+
+        - all steps share one track extraction; each solves tracks[:k]
+        - (N, 4, 4) world-to-cam in; returns refined (N, 3, 4) extrinsics and (N, 3, 3) K
+        """
+        N = len(extrinsics)
+
         # Initialize warm state from the input poses
-        refined_extrinsics = result.extrinsics[:, :3, :].copy()
-        refined_intrinsics = intrinsics_model.copy()
+        refined_extrinsics = extrinsics[:, :3, :].copy()
+        refined_intrinsics = intrinsics.copy()
 
         # Step sequence ends at exactly N; a 1-frame window cannot be adjusted, so it is skipped
         steps = sorted({min(k, N) for k in range(increment_size, N + increment_size, increment_size)} - {1})
@@ -211,89 +242,93 @@ class BundleAdjustment:
 
         return refined_extrinsics, refined_intrinsics
 
-    def refine(self, result: "FeedforwardResult") -> "FeedforwardResult":
+    def refine(
+        self,
+        images: np.ndarray,
+        confidence: np.ndarray,
+        world_points: np.ndarray,
+        extrinsics: np.ndarray,
+        intrinsics: np.ndarray,
+        image_paths: list | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Refine camera poses and focal of a result.
+        Refine camera poses and focal against VGGSfM tracks.
 
-        - points, colors and pixel_indices are unchanged; call creator.reproject(result) after
+        - K must be at model resolution; callers run check_model_resolution first
+        - points are not touched; the caller re-derives them under the new poses
 
         Args:
-            result: reconstruction with images, confidence, world_points, extrinsics, K,
-                original_coords and image_paths (track-cache key).
+            images: (N, 3, H, W) model-grid frames, the track source.
+            confidence: (N, H, W) per-pixel confidence for query-point sampling.
+            world_points: (N, H, W, 3) the tracks are lifted from.
+            extrinsics: (N, 4, 4) world-to-cam start poses.
+            intrinsics: (N, 3, 3) model-resolution K.
+            image_paths: frame paths for the track-cache key; None skips the cache.
 
         Returns:
-            A copy of `result` with refined (N, 4, 4) extrinsics and (N, 3, 3) intrinsics.
+            (N, 4, 4) refined extrinsics and (N, 3, 3) refined intrinsics.
 
         Raises:
-            ValueError: K is at original resolution, or fewer than 2 frames or 2 points stay
-                active after filtering in the global solve or any incremental window.
+            ValueError: fewer than 2 frames or 2 points stay active after filtering, in the global
+                solve or any incremental window.
             RuntimeError: the resolved device is not CUDA (bae LM is CUDA-only).
         """
         self.loss_history = []
+        N = len(images)
         logger.info(
             "BA refine start: %d frames (increment_size=%d, lm_steps=%d, max_reproj_error=%s)",
-            len(result.images),
+            N,
             self.config.increment_size,
             self.config.lm_steps,
             self.config.max_reproj_error,
         )
 
-        # VGGSfM tracks live on the model grid, so K must too; checked before the slow extraction
-        _check_model_resolution(result.intrinsics, result.images, result.original_coords)
-        intrinsics_model = result.intrinsics
-
         # Load cached tracks or extract via VGGSfM (one extraction shared across all k-steps)
-        tracks, vis_scores, pts3d_tracks = self._load_or_extract_tracks(result)
+        tracks, vis_scores, pts3d_tracks = self.extract_tracks(images, confidence, world_points, image_paths)
         logger.info("Tracks ready: %d points across %d frames", tracks.shape[1], tracks.shape[0])
 
-        N = len(result.images)
+        # One global solve, or an incremental one when increment_size < N
         increment_size = self.config.increment_size
         if increment_size == 0 or increment_size >= N:
-            logger.info("All-at-once BA over %d frames", N)
-            refined_extrinsics, refined_intrinsics_model = self._refine_allonce(
-                result,
+            logger.info("Global BA over %d frames", N)
+            refined_extrinsics, refined_intrinsics = self._refine_global(
+                extrinsics,
                 tracks,
                 vis_scores,
                 pts3d_tracks,
-                intrinsics_model,
+                intrinsics,
             )
         else:
-            refined_extrinsics, refined_intrinsics_model = self._refine_incremental(
-                result,
+            refined_extrinsics, refined_intrinsics = self._refine_incremental(
+                extrinsics,
                 tracks,
                 vis_scores,
                 pts3d_tracks,
-                intrinsics_model,
+                intrinsics,
                 increment_size,
             )
 
-        refined_extrinsics_4x4 = extrinsics_to_homogeneous(refined_extrinsics)
         # Report the final loss when a curve was captured
         if self.loss_history and self.loss_history[-1]:
             logger.info("BA refine done: final loss %.6e", self.loss_history[-1][-1])
         else:
             logger.info("BA refine done")
-        return replace(result, extrinsics=refined_extrinsics_4x4, intrinsics=refined_intrinsics_model)
+        return extrinsics_to_homogeneous(refined_extrinsics), refined_intrinsics
 
     def _optimize(
         self,
-        pts3d: np.ndarray,  # (P, 3)    initial 3D keypoint positions
-        extrinsics: np.ndarray,  # (N, 3, 4) world-to-camera poses
-        intrinsics: np.ndarray,  # (N, 3, 3) camera intrinsics
-        tracks: np.ndarray,  # (N, P, 2) 2D pixel observations from VGGSfM
-        vis_scores: np.ndarray,  # (N, P)    visibility scores in [0, 1]
+        pts3d: np.ndarray,
+        extrinsics: np.ndarray,
+        intrinsics: np.ndarray,
+        tracks: np.ndarray,
+        vis_scores: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Refine 3D points and camera poses with Levenberg-Marquardt BA.
 
-        Returns:
-            refined_pts3d:        (P, 3)    float64
-            refined_extrinsics:   (N, 3, 4) float32
-            refined_intrinsics:   (N, 3, 3) float32
-
-        Raises:
-            ValueError: fewer than 2 frames or 2 points stay active after filtering.
-            RuntimeError: the resolved device is not CUDA (bae LM is CUDA-only).
+        - appends this solve's per-step losses to self.loss_history
+        - frames the inlier gate drops are carried by the active-set Sim(3), not refined
+        - (N, 3, 4) world-to-cam in; returns pts3d (P, 3) float64, extrinsics (N, 3, 4) and K (N, 3, 3) float32
         """
         cfg = self.config
         max_reproj = cfg.max_reproj_error
@@ -335,6 +370,7 @@ class BundleAdjustment:
                 "CPU bundle adjustment is not supported."
             )
 
+        # Flatten the active observations into (frame, point) index pairs
         frame_idx, pt_idx = np.where(vis[np.ix_(active_frames, active_pts)])
         logger.info(
             "LM optimize: %d/%d frames, %d/%d points, %d observations, up to %d steps",
@@ -352,12 +388,11 @@ class BundleAdjustment:
         # Build SE3 camera tensor from (K, 3, 4) extrinsics; pad to (K, 4, 4) for mat2SE3
         ext_sub = extrinsics[active_frames].astype(np.float64)
         ext_4x4 = extrinsics_to_homogeneous(ext_sub)
+
         # Snap rotations to the nearest orthogonal matrix (SVD, det > 0)
         # - float32 rotations from some backends fail pypose's mat2SE3 check
         # - already-orthogonal rotations pass through unchanged
-        U, _, Vt = np.linalg.svd(ext_4x4[:, :3, :3])
-        U[np.linalg.det(U @ Vt) < 0, :, -1] *= -1
-        ext_4x4[:, :3, :3] = U @ Vt
+        ext_4x4[:, :3, :3] = project_to_so3(ext_4x4[:, :3, :3])
         cameras_se3 = pp.mat2SE3(torch.tensor(ext_4x4, dtype=torch.float64, device=device))
 
         # SIMPLE_PINHOLE: average fx/fy as single focal length per camera
@@ -405,6 +440,7 @@ class BundleAdjustment:
                 solver=_get_default_solver(device=device),
                 reject=10,
             )
+
             # Bind target=None so bae LM.step can call the model
             # - pypose>=0.7 RobustModel.forward requires target; bae passes none
             # - residuals then fall back to the model output, the intended objective
@@ -430,7 +466,7 @@ class BundleAdjustment:
         refined_pts3d[active_pts] = opt_pts.astype(np.float64)
 
         # Carry frames the inlier gate dropped into the refined gauge
-        # - BA fixes no frame and no scale, so the active set can drift as a whole
+        # - see _carry_dropped_frames
         n_dropped = vis.shape[0] - len(active_frames)
         if n_dropped:
             inactive = np.setdiff1d(np.arange(vis.shape[0]), active_frames)
@@ -470,12 +506,121 @@ class BundleAdjustment:
         return refined_pts3d, refined_extrinsics, refined_intrinsics
 
 
-########################################################
-########## Helpers ####################################
-########################################################
+########################################################################
+# BA model
+########################################################################
 
 
-def _check_model_resolution(intrinsics: np.ndarray, images: Any, original_coords: np.ndarray) -> None:
+@map_transform
+def _reproject_per_camera(pts: torch.Tensor, cam_params: torch.Tensor, principal_point: torch.Tensor) -> torch.Tensor:
+    """
+    Pinhole projection with a per-camera focal.
+
+    - @map_transform vectorizes it for the bae LM Jacobian
+    - cam_params: SE3 (7) plus focal (1); every argument has one row per observation
+    """
+    pts_cam = pp.SE3(cam_params[..., :7]).Act(pts)
+    pts_2d = pts_cam[..., :2] / pts_cam[..., 2].unsqueeze(-1)
+    return pts_2d * cam_params[..., 7:] + principal_point
+
+
+@map_transform
+def _reproject_shared(
+    pts: torch.Tensor, cam_params: torch.Tensor, principal_point: torch.Tensor, focal: torch.Tensor
+) -> torch.Tensor:
+    """
+    Pinhole projection with one focal shared by every camera.
+
+    - @map_transform vectorizes it for the bae LM Jacobian
+    - cam_params: SE3 (7); focal: the shared focal broadcast; one row per observation
+    """
+    pts_cam = pp.SE3(cam_params[..., :7]).Act(pts)
+    pts_2d = pts_cam[..., :2] / pts_cam[..., 2].unsqueeze(-1)
+    return pts_2d * focal + principal_point
+
+
+class _BAModel(nn.Module):
+    """
+    Reprojection residual module for pypose Levenberg-Marquardt optimization.
+
+    - parameters: pose (SE3, plus focal per camera), pts, and shared_intr when the focal is shared
+    """
+
+    def __init__(
+        self,
+        cam_params: torch.Tensor,
+        pts_3d: torch.Tensor,
+        shared_focal: torch.Tensor | None,
+        shared_camera: bool,
+    ) -> None:
+        """
+        Wrap poses, landmarks and the optional shared focal as trackable parameters.
+
+        - cam_params: (K, 7) SE3, or (K, 8) SE3 plus focal; pts_3d: (L, 3)
+        - shared_focal: (1, 1) when shared_camera, else None
+        """
+        super().__init__()
+
+        # Trackable parameters for the bae sparse Jacobian
+        # - trim_SE3_grad: 7-D SE3 pose takes a 6-DoF se3 step, trailing focal steps as-is
+        self.pose = nn.Parameter(TrackingTensor(cam_params))
+        self.pts = nn.Parameter(TrackingTensor(pts_3d))
+        self.pose.trim_SE3_grad = True
+        self.shared_intr = nn.Parameter(TrackingTensor(shared_focal)) if shared_focal is not None else None
+        self.shared_camera = shared_camera
+
+    def forward(
+        self,
+        points_2d: torch.Tensor,
+        camera_indices: torch.Tensor,
+        point_indices: torch.Tensor,
+        principal_points: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Reprojection residuals, predicted minus observed, for all M observations.
+
+        - points_2d (M, 2) observed pixels; camera_indices / point_indices (M,) rows into pose / pts
+        - principal_points: (K, 2), one per camera; returns (M, 2)
+        """
+        # Gather the landmark, camera and principal point of each observation
+        pts = self.pts[point_indices]
+        cam = self.pose[camera_indices]
+        ctr = principal_points[camera_indices]
+
+        if self.shared_camera:
+            # Broadcast shared focal to match observation count (M,)
+            focal = self.shared_intr[torch.zeros_like(camera_indices)]
+            pts_proj = _reproject_shared(pts, cam, ctr, focal)
+        else:
+            pts_proj = _reproject_per_camera(pts, cam, ctr)
+
+        return pts_proj - points_2d
+
+
+def _get_default_solver(device: str | None = None) -> Any:
+    """
+    Sparse linear solver for bae LM: CuDSS when CUDA is requested and available, else PCG.
+
+    - device None auto-detects CUDA; "cpu" always gives PCG
+    - a CUDA request without a working CuDSS logs a warning and falls back to PCG
+    """
+    resolved = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    if "cuda" in resolved:
+        try:
+            from bae.sparse.solve import CuDirectSparseSolver
+
+            return CuDirectSparseSolver()
+        except (ImportError, RuntimeError) as exc:
+            logger.warning("BA: CuDSS solver unavailable (%r), falling back to PCG", exc)
+    return PCG()
+
+
+########################################################################
+# Helpers
+########################################################################
+
+
+def check_model_resolution(intrinsics: np.ndarray, images: Any, original_coords: np.ndarray) -> None:
     """
     Raise unless K is at model (depth) resolution, the `pointcloud.zarr` contract.
 
@@ -515,10 +660,11 @@ def _filter_observations(
     min_inliers_per_frame: int,
 ) -> np.ndarray:
     """
-    Boolean (N, P) observation mask for the BA solve.
+    Boolean (N, P) observation mask for the BA solve; True enters the solve.
 
     - order: visibility gate, reprojection filter, frame min-inlier drop, landmark drop (<2 views or out of range)
     - order follows upstream VGGT demo_colmap
+    - max_reproj None skips the reprojection filter
     """
     # Visibility gate: keep observations the tracker is confident about
     vis = vis_scores > vis_thresh
@@ -526,6 +672,7 @@ def _filter_observations(
     # Remove observations with high reprojection error under the current poses
     if max_reproj is not None:
         proj2d, proj_cam = project_3D_points_np(pts3d, extrinsics, intrinsics)
+
         # Behind-camera points get large sentinel projection so they fail the threshold
         behind = proj_cam[:, 2, :] <= 0
         proj2d = proj2d.copy()
@@ -545,29 +692,6 @@ def _filter_observations(
     return vis
 
 
-def _get_default_solver(device: str | None = None) -> Any:
-    """
-    Sparse linear solver for bae LM: CuDSS when CUDA is requested and available, else PCG.
-
-    - a CUDA request without a working CuDSS logs a warning and falls back to PCG
-
-    Args:
-        device: resolved device string; None auto-detects CUDA, "cpu" always gives PCG.
-
-    Returns:
-        A bae solver instance.
-    """
-    resolved = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    if "cuda" in resolved:
-        try:
-            from bae.sparse.solve import CuDirectSparseSolver
-
-            return CuDirectSparseSolver()
-        except (ImportError, RuntimeError) as exc:
-            logger.warning("BA: CuDSS solver unavailable (%r), falling back to PCG", exc)
-    return PCG()
-
-
 def _carry_dropped_frames(
     refined_extrinsics: np.ndarray,
     extrinsics: np.ndarray,
@@ -577,16 +701,8 @@ def _carry_dropped_frames(
     Transform frames outside active_frames by the Sim(3) the active set underwent.
 
     - BA fixes no frame and no scale, so the refined set can drift as a whole
-    - without this, dropped frames stay in the pre-BA gauge
-
-    Args:
-        refined_extrinsics: (N, 3, 4) poses with active rows already refined.
-        extrinsics: (N, 3, 4) original pre-BA poses.
-        active_frames: (K,) indices refined by the solve.
-
-    Returns:
-        (extrinsics, scale): a copy with dropped frames carried, and the Sim(3) scale.
-        scale is None when nothing was dropped or the gauge could not be estimated.
+    - refined_extrinsics: (N, 3, 4), active rows refined; extrinsics: the pre-BA poses
+    - returns (carried copy, Sim(3) scale), or (input, None) when nothing dropped or < 3 active frames
     """
     inactive = np.setdiff1d(np.arange(refined_extrinsics.shape[0]), active_frames)
     if len(inactive) == 0 or len(active_frames) < 3:
@@ -597,8 +713,9 @@ def _carry_dropped_frames(
     dst_c = invert_poses(extrinsics_to_homogeneous(refined_extrinsics[active_frames].astype(np.float64)))[:, :3, 3]
     s, R_g, t_g = umeyama_sim3(src_c, dst_c)
 
-    # World gauge X' = s R_g X + t_g maps a world-to-cam [R|t] to [R R_g^T | s t - R R_g^T t_g],
-    # which puts the dropped camera's center at s R_g C + t_g — the same map the points took.
+    # Apply the gauge to each dropped world-to-cam [R|t]
+    # - world gauge X' = s R_g X + t_g maps [R|t] to [R R_g^T | s t - R R_g^T t_g]
+    # - puts the dropped camera's center at s R_g C + t_g, the same map the points took
     out = refined_extrinsics.copy()
     R_in = refined_extrinsics[inactive, :, :3].astype(np.float64)
     t_in = refined_extrinsics[inactive, :, 3].astype(np.float64)
@@ -608,25 +725,52 @@ def _carry_dropped_frames(
     return out, float(s)
 
 
-def _extract_tracks_vggsfm(
+def _compute_tracks_cache_key(image_paths: list, world_points: np.ndarray, cfg: BundleAdjustmentConfig) -> str:
+    """
+    SHA-256 track-cache key over image paths, world points and extraction config.
+
+    - any frame, world_points or track-setting change invalidates the key; image_paths order does not
+    - world_points digest: two backbones over the same images must not share tracks; ~1-3 s at 300 frames
+    """
+    meta = {
+        "image_paths": sorted(str(p) for p in image_paths),
+        "world_points": hashlib.sha256(np.ascontiguousarray(world_points).tobytes()).hexdigest(),
+        "max_query_pts": cfg.max_query_pts,
+        "query_frame_num": cfg.query_frame_num,
+        "fine_tracking": cfg.fine_tracking,
+    }
+    return hashlib.sha256(json.dumps(meta, sort_keys=True).encode()).hexdigest()
+
+
+def extract_tracks_vggsfm(
     images: torch.Tensor,
     conf: torch.Tensor | None,
     world_points: np.ndarray | None,
-    *,
-    max_query_pts: int,
-    query_frame_num: int,
-    fine_tracking: bool,
-    device: str | None,
+    cfg: BundleAdjustmentConfig,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Predict cross-frame 2D tracks via VGGSfM (ALIKED+SP keypoints).
+    Predict cross-frame 2D tracks via VGGSfM (ALIKED+SP keypoints), with the config's knobs.
+
+    - no cache; BundleAdjustment.extract_tracks adds one
+    - conf None: no confidence-guided queries; world_points None: no 3D lifting; both: pad to square
+
+    Args:
+        images: (N, 3, H, W) frames, tensor or float32 numpy.
+        conf: (N, H, W) or (N, 1, H, W) per-pixel confidence, or None.
+        world_points: (N, H, W, 3) points the tracks are lifted from, or None.
+        cfg: track-extraction knobs (max_query_pts, query_frame_num, fine_tracking, ...).
 
     Returns:
-        tracks:     (N, P, 2) float32 — 2D pixel coords per frame per point.
-        vis_scores: (N, P)    float32 — visibility score in [0, 1].
-        pts3d:      (P, 3)    float32 — world-space 3D positions at keypoints.
+        tracks (N, P, 2) pixels, vis_scores (N, P) in [0, 1] and pts3d (P, 3) world, all float32.
     """
-    target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(
+        "Extracting VGGSfM tracks: %d frames, max_query_pts=%d, query_frame_num=%d, fine_tracking=%s (slow step)",
+        len(images),
+        cfg.max_query_pts,
+        cfg.query_frame_num,
+        cfg.fine_tracking,
+    )
+    target_device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     # numpy images: sfm's result_from_reconstruction stores float32 arrays, not tensors
     if isinstance(images, np.ndarray):
@@ -636,16 +780,19 @@ def _extract_tracks_vggsfm(
     # - predict_tracks places the tracker on images.device and never relocates
     images = images.to(target_device)
     img_device = images.device
+
     # VGGSfM tracker uses grid_sample; not implemented for BFloat16 on CUDA
     images = images.float()
 
+    # Confidence on the image device, normalized to (N, H, W)
+    # - predict_tracks does not accept (N, 1, H, W)
     conf_tensor: torch.Tensor | None = None
     if conf is not None:
         conf_tensor = conf.to(img_device)
-        # Normalize to (N, H, W) — predict_tracks does not accept (N, 1, H, W)
         if conf_tensor.ndim == 4 and conf_tensor.shape[1] == 1:
             conf_tensor = conf_tensor.squeeze(1)
 
+    # World points as a tensor on the image device
     pts3d_tensor: torch.Tensor | None = None
     if world_points is not None:
         pts3d_tensor = torch.tensor(world_points, dtype=images.dtype, device=img_device)
@@ -660,76 +807,21 @@ def _extract_tracks_vggsfm(
             conf_tensor = F.pad(conf_tensor, (0, pad_w, 0, pad_h))
             pts3d_tensor = F.pad(pts3d_tensor, (0, 0, 0, pad_w, 0, pad_h))
 
-    # Move conf/pts to CPU: VGGSfM mixes CPU numpy indexing with GPU tensors internally.
-    # no_grad prevents pred_track from retaining a gradient that breaks .numpy()
+    # Predict tracks with conf and points on CPU, without grad
+    # - CPU: VGGSfM mixes CPU numpy indexing with GPU tensors internally
+    # - no_grad: pred_track would otherwise retain a gradient that breaks .numpy()
     with torch.no_grad():
         pred_tracks, pred_vis_scores, _pred_confs, pred_pts3d, _pred_colors = predict_tracks(
             images,
             conf=conf_tensor.cpu() if conf_tensor is not None else None,
             points_3d=pts3d_tensor.cpu() if pts3d_tensor is not None else None,
-            max_query_pts=max_query_pts,
-            query_frame_num=query_frame_num,
-            fine_tracking=fine_tracking,
+            max_query_pts=cfg.max_query_pts,
+            query_frame_num=cfg.query_frame_num,
+            fine_tracking=cfg.fine_tracking,
         )
 
+    # Return float32 numpy arrays
     tracks = np.asarray(pred_tracks).astype(np.float32)
     vis_scores = np.asarray(pred_vis_scores).astype(np.float32)
     pts3d = np.asarray(pred_pts3d).astype(np.float32)
     return tracks, vis_scores, pts3d
-
-
-@map_transform
-def _reproject_per_camera(pts: torch.Tensor, cam_params: torch.Tensor, principal_point: torch.Tensor) -> torch.Tensor:
-    """Per-element pinhole projection with per-camera focal; @map_transform vectorizes for bae LM Jacobian."""
-    pts_cam = pp.SE3(cam_params[..., :7]).Act(pts)
-    pts_2d = pts_cam[..., :2] / pts_cam[..., 2].unsqueeze(-1)
-    return pts_2d * cam_params[..., 7:] + principal_point
-
-
-@map_transform
-def _reproject_shared(
-    pts: torch.Tensor, cam_params: torch.Tensor, principal_point: torch.Tensor, focal: torch.Tensor
-) -> torch.Tensor:
-    """Pinhole projection with a shared focal; @map_transform vectorizes it for the bae LM Jacobian."""
-    pts_cam = pp.SE3(cam_params[..., :7]).Act(pts)
-    pts_2d = pts_cam[..., :2] / pts_cam[..., 2].unsqueeze(-1)
-    return pts_2d * focal + principal_point
-
-
-class _BAModel(nn.Module):
-    """Reprojection residual module for pypose Levenberg-Marquardt optimization."""
-
-    def __init__(
-        self,
-        cam_params: torch.Tensor,  # (K, 7) SE3 or (K, 8) SE3+focal
-        pts_3d: torch.Tensor,  # (L, 3) 3D landmark positions
-        shared_focal: torch.Tensor | None,  # (1, 1) if shared_camera, else None
-        shared_camera: bool,
-    ) -> None:
-        super().__init__()
-        self.pose = nn.Parameter(TrackingTensor(cam_params))
-        self.pts = nn.Parameter(TrackingTensor(pts_3d))
-        self.pose.trim_SE3_grad = True
-        self.shared_intr = nn.Parameter(TrackingTensor(shared_focal)) if shared_focal is not None else None
-        self.shared_camera = shared_camera
-
-    def forward(
-        self,
-        points_2d: torch.Tensor,
-        camera_indices: torch.Tensor,
-        point_indices: torch.Tensor,
-        principal_points: torch.Tensor,
-    ) -> torch.Tensor:
-        """Return reprojection residuals (predicted - observed) for all M observations."""
-        pts = self.pts[point_indices]
-        cam = self.pose[camera_indices]
-        ctr = principal_points[camera_indices]
-
-        if self.shared_camera:
-            # Broadcast shared focal to match observation count (M,)
-            focal = self.shared_intr[torch.zeros_like(camera_indices)]
-            pts_proj = _reproject_shared(pts, cam, ctr, focal)
-        else:
-            pts_proj = _reproject_per_camera(pts, cam, ctr)
-
-        return pts_proj - points_2d

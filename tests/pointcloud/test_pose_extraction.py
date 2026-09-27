@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.graph import decompose_camera
 from collab_splats.geometry.loop_closure.submap import Submap
+from collab_splats.geometry.transforms import decompose_camera
 from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 
@@ -33,8 +33,7 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
         retrieval_vectors=np.zeros((k, 64), dtype=np.float32),
         image_paths=[f"frame_{i:04d}.png" for i in range(k)],
         frame_start=submap_id * k,
-        world_points=world_points.astype(np.float32),
-        world_points_conf=None,
+        points=world_points.astype(np.float32).reshape(k, 1, -1, 3),
     )
 
 

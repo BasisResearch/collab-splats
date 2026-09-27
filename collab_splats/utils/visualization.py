@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyvista as pv
 
+from collab_splats.geometry.transforms import transform_points
+
 if TYPE_CHECKING:
     import torch
 
@@ -350,8 +352,7 @@ def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
 
     # Transform camera-space vertices to world space via c2w = inv(w2c)
     c2w = np.linalg.inv(pose)
-    pts_h = np.column_stack([frustum.points, np.ones(len(frustum.points))])
-    frustum.points = (c2w @ pts_h.T).T[:, :3]
+    frustum.points = transform_points(frustum.points, c2w)
 
     return frustum
 

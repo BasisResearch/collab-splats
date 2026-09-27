@@ -159,7 +159,7 @@ process that ALSO collected a module importing `collab_splats.pointcloud.feedfor
 module import**, and under TF32 the batched vs pairwise match paths flip near-threshold
 matches (measured 969 vs 967), breaking the byte-equal parity assertion. Deterministic:
 `pytest tests/localization/test_local_matcher.py tests/geometry/test_verification.py`
-reproduced it 3/3 on an idle GPU; the file alone passed 20/20 and the single test passed
+reproduced it 3/3 on an idle GPU (test_verification.py was deleted with verification, 2026-09-27); the file alone passed 20/20 and the single test passed
 5/5 (serial and under a synthetic matmul load) — an earlier same-day diagnosis blaming
 concurrent CUDA processes was wrong; both original failures had a polluting module in the
 same process.
@@ -255,7 +255,7 @@ ATE + viewer unaffected). Until then: keep long scenes ≤ ~1000 keyframes on th
 The VGGT-SLAM loop-closure refactor assembles its output in `LoopClosure._assemble_result`
 (GraphMap dense cloud, correction-at-read) instead of `base._postprocess`. `_assemble_result`
 populates `points/colors/extrinsics/intrinsics` but **not** the optional `FeedforwardResult.images`
-tensor. The old `_postprocess` set `images=images`; BA's track extractor (`_extract_tracks_vggsfm`)
+tensor. The old `_postprocess` set `images=images`; BA's track extractor (`extract_tracks_vggsfm`)
 does `images.to(device)`, so running the eval `ba` condition on the windowed path now raises
 `AttributeError: 'NoneType' object has no attribute 'to'`.
 

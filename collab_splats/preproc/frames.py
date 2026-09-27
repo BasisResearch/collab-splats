@@ -11,10 +11,11 @@ import json
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import cv2
 import numpy as np
+
+from collab_splats.utils.io import write_json
 
 logger = logging.getLogger(__name__)
 
@@ -40,20 +41,6 @@ def _manifest_path(dir: Path | str) -> Path:
     frames.json, which sits beside the images directory rather than inside it.
     """
     return Path(dir).parent / _MANIFEST_NAME
-
-
-def _jsonable(value: Any) -> Any:
-    """
-    numpy scalar or NaN -> a plain JSON value (NaN becomes null).
-    """
-    if isinstance(value, np.integer):
-        return int(value)
-    if isinstance(value, np.bool_):
-        return bool(value)
-    if isinstance(value, (np.floating, float)):
-        value = float(value)
-        return None if np.isnan(value) else value
-    return value
 
 
 ########################
@@ -139,12 +126,13 @@ def write_frames(
         paths.append(path)
 
     # Row-oriented: a reader wants one frame's record, not one column
+    # - write_json turns numpy scalars into python values and nan into null
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "provenance": dict(provenance),
-        "frames": [{k: _jsonable(v) for k, v in record.items()} for record in records],
+        "frames": list(records),
     }
-    _manifest_path(dir).write_text(json.dumps(manifest, indent=2))
+    write_json(_manifest_path(dir), manifest)
 
     logger.info("frames: wrote %d PNGs to %s", len(paths), dir)
     return paths

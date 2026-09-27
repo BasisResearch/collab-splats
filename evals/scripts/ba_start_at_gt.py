@@ -32,8 +32,8 @@ from trajectory_metrics import ate_translation  # noqa: E402
 
 from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig  # noqa: E402
 from collab_splats.geometry.bundle_adjustment import (  # noqa: E402
-    _check_model_resolution,
     _compute_tracks_cache_key,
+    check_model_resolution,
 )
 from collab_splats.geometry.transforms import umeyama_sim3  # noqa: E402
 from collab_splats.pointcloud import get_creator  # noqa: E402
@@ -47,8 +47,8 @@ BACKBONE = "vggt_omega"
 MAX_FRAMES = 100
 
 # Stable image dir: eval.py symlinks into mkdtemp, and _compute_tracks_cache_key hashes
-# image_paths, so a temp dir makes the track cache unhittable across runs. A fixed dir
-# lets run B reuse run A's extraction.
+# image_paths plus world_points, so a temp dir makes the track cache unhittable across
+# runs. A fixed dir lets run B reuse run A's extraction.
 IMG_DIR = OUT / "images"
 CACHE = OUT / "cache"
 # Extraction already done by the ba_convergence_chess run — same images, same knobs
@@ -131,16 +131,21 @@ def main() -> None:
             raise SystemExit(f"track cache has {n_src} frames, reconstruction has {len(result.images)}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(SRC_TRACKS, dst)
-        zarr.open(str(dst), mode="r+").attrs["cache_key"] = _compute_tracks_cache_key(result, cfg)
+
+        # Deliberate: stamps this run's key (paths + world_points digest) onto another run's tracks
+        cache_key = _compute_tracks_cache_key(result.image_paths, result.world_points, cfg)
+        zarr.open(str(dst), mode="r+").attrs["cache_key"] = cache_key
         logger.info("adopted existing track cache (%d frames, %d points) from %s",
                     n_src, src["tracks"].shape[1], SRC_TRACKS)
 
     # Dump BA's exact inputs so a points-only evaluation uses the real model-res K and poses
-    # - the guard raises on a pre-contract original-res K, before extraction, as refine() does
-    _check_model_resolution(result.intrinsics, result.images, result.original_coords)
+    # - the guard raises on a pre-contract original-res K, before extraction, as the refine callers do
+    check_model_resolution(result.intrinsics, result.images, result.original_coords)
     intr_model = result.intrinsics
     ba_probe = BundleAdjustment(cfg)
-    tracks, vis_scores, pts3d_tracks = ba_probe._load_or_extract_tracks(result)
+    tracks, vis_scores, pts3d_tracks = ba_probe.extract_tracks(
+        result.images, result.confidence, result.world_points, result.image_paths
+    )
     np.savez(
         OUT / "ba_inputs.npz",
         poses_model=model_poses, poses_gt_recon=gt_recon, intrinsics_model=intr_model,
@@ -157,12 +162,14 @@ def main() -> None:
         ate_start = ate_translation(start.extrinsics.astype(np.float32), ds.gt_poses)
         logger.info("=== %s === starting ATE %.6f", name, ate_start["rmse"])
 
-        refined = ba.refine(start)
+        ext, _ = ba.refine(
+            start.images, start.confidence, start.world_points, start.extrinsics, start.intrinsics, start.image_paths
+        )
         hist = ba.loss_history[-1] if ba.loss_history else []
-        ate_end = ate_translation(refined.extrinsics.astype(np.float32), ds.gt_poses)
+        ate_end = ate_translation(ext.astype(np.float32), ds.gt_poses)
 
         # Pose movement from the starting point, in camera-centre distance
-        moved = float(np.linalg.norm(cam_centres(refined.extrinsics.astype(np.float64))
+        moved = float(np.linalg.norm(cam_centres(ext.astype(np.float64))
                                      - cam_centres(start_poses), axis=1).mean())
         report[name] = {
             "ate_start": ate_start["rmse"],

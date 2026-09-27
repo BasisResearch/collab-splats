@@ -23,10 +23,8 @@ def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
 
 def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0) -> Submap:
     k = poses.shape[0]
-    # Submap.world_points is (K, P, 3) per the production contract (_raw_to_world_points
-    # in feedforward/base.py returns (K, P, 3)). Flatten any per-pixel (K, H, W, 3) grid
-    # into the (K, P, 3) layout closure.py expects.
-    wp = np.asarray(world_points, dtype=np.float32).reshape(k, -1, 3)
+    # Submap.points is a dense (K, H, W, 3) grid; lay any (K, P, 3) input out as H = 1
+    pts = np.asarray(world_points, dtype=np.float32).reshape(k, 1, -1, 3)
     return Submap(
         submap_id=submap_id,
         frames=None,
@@ -35,8 +33,7 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
         retrieval_vectors=np.zeros((k, 64), dtype=np.float32),
         image_paths=[f"frame_{i:04d}.png" for i in range(k)],
         frame_start=submap_id * k,
-        world_points=wp,
-        world_points_conf=None,
+        points=pts,
     )
 
 

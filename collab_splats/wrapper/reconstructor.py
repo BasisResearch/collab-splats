@@ -7,7 +7,6 @@ import importlib.metadata
 import json
 import logging
 import shutil
-import time
 import warnings
 from functools import lru_cache
 from pathlib import Path
@@ -22,7 +21,15 @@ import zarr
 from mergedeep import merge
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
+from collab_splats.geometry.bundle_adjustment import (
+    BundleAdjustment,
+    BundleAdjustmentConfig,
+    check_model_resolution,
+)
+from collab_splats.geometry.metrics import compute_reconstruction_quality
 from collab_splats.geometry.transforms import invert_poses
+from collab_splats.localization.extractors import LocalMatcher
+from collab_splats.localization.localizer import CameraLocalizer
 from collab_splats.mesh import (
     clean_repair_mesh,
     fuse_tsdf,
@@ -33,7 +40,12 @@ from collab_splats.mesh.io import render_tsdf_inputs, upsample_depths
 from collab_splats.mesh.tsdf import check_bands
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.depth_align import result_from_reconstruction
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.feedforward.base import (
+    FeedforwardResult,
+    _rescale_reconstruction_to_original_dimensions,
+    build_pycolmap_reconstruction,
+    compute_multiview_depth_confidence,
+)
 from collab_splats.pointcloud.sfm import InstantSfMCreator
 from collab_splats.pointcloud.utils import (
     clean_pointcloud,
@@ -58,6 +70,7 @@ from collab_splats.semantics.utils import (
     load_feature_maps,
     write_point_features,
 )
+from collab_splats.utils.io import write_json
 
 if TYPE_CHECKING:
     from collab_splats.viewer import Viewer
@@ -76,7 +89,15 @@ _FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
 # nothing dispatches to them — listing them here would let a config load cleanly and then
 # die mid-run, after preproc had already burned its time.
 _SFM_BACKENDS = {"instantsfm"}
+
+# Report's occlusion band: looser than the backends' 0.01 mask so disagreement stays in the stats
+_REPORT_REL_THRESH = 0.05
+
 _VALID_METHODS = {"feedforward", "sfm"}
+
+# The removed verify stage and pointcloud.geometric_verification flag both point here
+_VERIFY_REMOVED = "geometric verification was removed (2026-09-27): drop the verify stage and geometric_verification"
+
 _STAGE_ORDER = [
     "preproc",
     "pointcloud",
@@ -85,7 +106,6 @@ _STAGE_ORDER = [
     "splats",
     "mesh",
     "localize",
-    "verify",
     "reconstruction_quality_report",
 ]
 _STAGE_DEPS: dict[str, list[str]] = {
@@ -101,16 +121,10 @@ _STAGE_DEPS: dict[str, list[str]] = {
     "splats": ["pointcloud"],
     "mesh": ["pointcloud"],
     "localize": ["pointcloud"],
-    # verify reuses the localize feature cache but builds it itself when absent, so its
-    # only hard dependency is the reconstruction
-    "verify": ["pointcloud"],
-    # reconstruction_quality_report loads verification.json when verify has produced it and
-    # reports the epipolar channel unavailable when it has not, so its only hard dependency is
-    # the reconstruction
     "reconstruction_quality_report": ["pointcloud"],
 }
 # A stage is re-runnable on its own iff nothing depends on it → {refine, semantics, splats, mesh,
-# localize, verify, reconstruction_quality_report}.
+# localize, reconstruction_quality_report}.
 # Derived from the graph above rather than hardcoded: a future stage that depends on mesh drops
 # mesh from this set automatically, so callers gating on it can never disagree with _STAGE_DEPS.
 LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in _STAGE_DEPS.values()))
@@ -370,7 +384,7 @@ def _run_feedforward(
     so callers can keep the viser server reachable after this function returns.
 
     ``loop_closure`` is either a bool (enable with all LoopClosureConfig defaults) or
-    a dict of knobs (submap_size, submap_overlap, scale_method, …); an ``enabled`` key
+    a dict of knobs (submap_size, submap_overlap, conf_threshold, …); an ``enabled`` key
     in the dict toggles it, defaulting to True when any knobs are given.
 
     ``creator_kwargs`` is the per-backend ``pointcloud.<backend>`` config block, forwarded
@@ -745,10 +759,6 @@ def _build_localization_db(
     keypoints/descriptors to group local_features/{extractor_name}/reconstruction. top_k
     is the pairwise (vismatch) matching fan-out; the descriptor path ignores it.
     """
-    # Heavy deps kept inline so the module imports without GPU/model libs
-    from collab_splats.localization.extractors import LocalMatcher
-    from collab_splats.localization.localizer import CameraLocalizer
-
     # overwrite: drop the stale reconstruction group so from_feedforward's cache check
     # misses and the index is re-extracted + re-saved (from_feedforward has no
     # overwrite notion of its own — an existing group always cache-hits).
@@ -770,7 +780,7 @@ def _build_localization_db(
 
     # The .jpg suffix is deliberate and stays even though the store writes .png. These ids are
     # opaque labels: CameraLocalizer stores them verbatim in the zarr attrs, every consumer
-    # joins on the frame_NNNNNN stem (verify() here, geometry/metrics.py), and nothing reads
+    # joins on the frame_NNNNNN stem (geometry/metrics.py), and nothing reads
     # the extension or resolves an id to a file. Rewriting it to .png would make
     # from_feedforward's whole-string staleness check miss against every localization DB
     # already on disk and under environments-processed/ — a migration, not a rename.
@@ -845,6 +855,12 @@ class Reconstructor:
             raise ValueError(
                 "config key 'preprocessing' was renamed to 'preproc' (2026-08-22); " "rename the section in your config"
             )
+
+        # Removed geometric verification
+        # - truthy only: published run_config.yaml files carry `geometric_verification: false`,
+        #   and a leaf re-run keeps their pointcloud section
+        if config.get("pointcloud", {}).get("geometric_verification"):
+            raise ValueError(_VERIFY_REMOVED)
 
         # Single-arg .get() returns None if absent — the membership checks below reject None,
         # so no inline value defaults are needed (base.yaml is the sole default source).
@@ -1151,17 +1167,6 @@ class Reconstructor:
         if self.config["pointcloud"]["method"] == "sfm":
             raise ValueError("refine_poses is not supported for pointcloud.method: sfm")
 
-        # Heavy deps imported lazily, matching the other stage methods
-        from collab_splats.geometry.bundle_adjustment import (
-            BundleAdjustment,
-            BundleAdjustmentConfig,
-        )
-        from collab_splats.pointcloud.feedforward.base import (
-            FeedforwardResult,
-            _rescale_reconstruction_to_original_dimensions,
-            build_pycolmap_reconstruction,
-        )
-
         # Skip when already refined — run_pipeline refuses NAMED re-runs generically, so this
         # mirrors the other stage methods' silent skip for config-driven repeat runs.
         marker = self.backend_dir / "colmap" / "refine.json"
@@ -1177,9 +1182,14 @@ class Reconstructor:
         ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
 
         # Refine poses with LM BA, then re-derive the point set under the new cameras
+        # - VGGSfM tracks live on the model grid, so K must too; checked before the slow extraction
+        check_model_resolution(ff.intrinsics, ff.images, ff.original_coords)
         cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir)
         ba = BundleAdjustment(cfg)
-        ff = ba.refine(ff).reproject()
+        extrinsics, intrinsics = ba.refine(
+            ff.images, ff.confidence, ff.world_points, ff.extrinsics, ff.intrinsics, ff.image_paths
+        )
+        ff = dataclasses.replace(ff, extrinsics=extrinsics, intrinsics=intrinsics).reproject()
 
         # Rewrite COLMAP through the creators' exact write path: build at model res from the
         # refined result, then rescale K + image dims back to original resolution.
@@ -1218,15 +1228,13 @@ class Reconstructor:
 
         # Marker + provenance in one file: BA config and per-step LM loss history
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            json.dumps(
-                {
-                    "config": {k: str(v) if isinstance(v, Path) else v for k, v in dataclasses.asdict(cfg).items()},
-                    "loss_history": ba.loss_history,
-                    "n_frames": len(ff.image_paths),
-                },
-                indent=2,
-            )
+        write_json(
+            marker,
+            {
+                "config": {k: str(v) if isinstance(v, Path) else v for k, v in dataclasses.asdict(cfg).items()},
+                "loss_history": ba.loss_history,
+                "n_frames": len(ff.image_paths),
+            },
         )
 
         self.pointcloud = result
@@ -1377,85 +1385,6 @@ class Reconstructor:
             overwrite=overwrite,
         )
 
-    def verify(self, overwrite: bool = False) -> Path:
-        """Geometrically verify poses/points: pycolmap triangulation over feature tracks.
-
-        Reuses the localization extractor's zarr feature cache (building it if absent) and
-        writes colmap/{verified/, verification.json, database.db}. Reports only — nothing
-        upstream is mutated.
-        """
-        out_json = self.backend_dir / "colmap" / "verification.json"
-        if not overwrite and self._stage_output_exists("verify"):
-            logger.info("Verification exists at %s, skipping", out_json)
-            return out_json
-
-        result = self._resolve_result()
-        if result is None:
-            raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
-
-        # One extractor serves localization and verification by design — the cache is
-        # keyed by extractor, so sharing it means one extraction pass, zero drift.
-        t = time.perf_counter()
-        self.build_localization_db()
-        logger.info("verify(): build_localization_db took %.1f s", time.perf_counter() - t)
-        extractor_name = self.config["localization"]["matcher"]
-
-        # Heavy deps kept inline so the module imports without GPU/model libs
-        from collab_splats.geometry.verification import verify_reconstruction
-        from collab_splats.localization.extractors import LocalMatcher
-        from collab_splats.localization.localizer import load_localization_db
-
-        t = time.perf_counter()
-        matcher = LocalMatcher(extractor_name)
-        logger.info("verify(): LocalMatcher construction took %.1f s", time.perf_counter() - t)
-        t = time.perf_counter()
-        features, ids, _ = load_localization_db(self.pointcloud_zarr, extractor_name)
-        logger.info("verify(): load_localization_db took %.1f s", time.perf_counter() - t)
-        # Loma matches from stored features (keypoints_normalized). A cache from before
-        # that array existed gets rebuilt once (~1 min) — no degraded fallback path.
-        # getattr: duck-typed test stubs and non-split matchers lack the attribute.
-        if getattr(matcher, "_split_loma_forward", False) and any(f.keypoints_normalized is None for f in features):
-            logger.info("verify(): feature cache lacks keypoints_normalized — rebuilding localization DB")
-            t = time.perf_counter()
-            self.build_localization_db(overwrite=True)
-            logger.info("verify(): build_localization_db(overwrite=True) took %.1f s", time.perf_counter() - t)
-            t = time.perf_counter()
-            features, ids, _ = load_localization_db(self.pointcloud_zarr, extractor_name)
-            logger.info("verify(): load_localization_db (rebuilt) took %.1f s", time.perf_counter() - t)
-        # The cache ids are frame_XXXXXX.jpg, the reconstruction registers frame_XXXXXX
-        # (no extension) — compare stems so a reordered/rebuilt cache cannot slip through.
-        recon = result.reconstruction
-        recon_names = [recon.images[i].name for i in sorted(recon.images)]
-        if [Path(n).stem for n in ids] != [Path(n).stem for n in recon_names]:
-            raise ValueError(
-                "Feature cache and reconstruction disagree on frame order/naming — "
-                "rebuild the localization DB (overwrite=True)."
-            )
-        # Pairwise matchers re-match images, not cached descriptors. The images MUST be
-        # the exact frames the cache was extracted from — _build_localization_db feeds
-        # images/ frames to extract() — because match-time index recovery lands on the
-        # extract-time keypoint tables (the probe's cross-call condition holds for
-        # identical inputs only), and those tables are what verification exports to the
-        # COLMAP DB. Model-res ff.images would index a different table entirely.
-        # verify_reconstruction itself hard-refuses index-incapable pairwise matchers.
-        # _scene_frames caches the stack per directory, so a second verify() in the same
-        # process re-reads nothing. (The descriptor branch in verify_reconstruction
-        # ignores `images`, so the read is wasted work only on that path.)
-        images = _scene_frames(self.images_dir)
-        # Sequential pairs only in v1 (pycolmap SequentialPairGenerator inside).
-        # Loop pairs are a follow-on: COLMAP's own loop_detection needs a SIFT vocab
-        # tree (unusable with learned descriptors) and retrieval descriptors are not
-        # cached anywhere a processed scene guarantees.
-        verify_reconstruction(
-            recon=recon,
-            features=features,
-            matcher=matcher,
-            output_dir=self.backend_dir / "colmap",
-            images=images,
-        )
-        logger.info("Verification written to %s", out_json)
-        return out_json
-
     def splats(self, overwrite: bool = False) -> Path:
         """
         Train Gaussian splats from the pointcloud stage. Returns path to splats/ckpt.pt.
@@ -1476,7 +1405,7 @@ class Reconstructor:
         cfg = SplatsConfig.from_dict(self.config["splats"])
 
         # Frames in COLMAP image order, looked up in images/ by the frame index in each name.
-        # _scene_frames caches the whole-directory stack, so a verify() earlier in the same
+        # _scene_frames caches the whole-directory stack, so an earlier read in the same
         # process re-reads nothing; rows are then picked by position out of that stack.
         frame_indices = [frames.frame_idx_from_path(path) for path in result.image_paths]
         rows_by_frame_idx = {
@@ -1564,15 +1493,12 @@ class Reconstructor:
 
     def reconstruction_quality_report(self, overwrite: bool = False) -> Path:
         """
-        Reference-free error report: three measurements, one reconstruction_quality_report.json.
+        Reference-free error report: columnar tables, one reconstruction_quality_report.json.
 
         - named for the artifact it writes; distinct from the video quality report (capture)
-        - nothing to measure: that measurement records {"available": false, "reason": ...}
-        - a failing measurement or a malformed verification.json raises
-        - a failing verify() is caught; epipolar then reports no verification.json
-        - geometric_verification true, no verification.json: runs verify, which writes
-          colmap/verification.json, colmap/verified/, colmap/database.db and local_features
-        - geometric_verification false (default): writes only the report; no model or matcher runs
+        - null photometric table without images; columns listed in geometry/metrics.py
+        - a failing measurement, or a stale report on disk, raises
+        - runs no model and no matcher; reads the zarr and images/ only
 
         Args:
             overwrite: rebuild the report even when it already exists on disk.
@@ -1582,32 +1508,54 @@ class Reconstructor:
         """
         out_json = self.backend_dir / "reconstruction_quality_report.json"
         if not overwrite and self._stage_output_exists("reconstruction_quality_report"):
+            if "frames" not in json.loads(out_json.read_text()):
+                raise ValueError(
+                    f"{out_json} is a stale reconstruction quality report (no 'frames'); delete it and re-run"
+                )
             logger.info("Reconstruction quality report exists at %s, skipping", out_json)
             return out_json
         if self._resolve_result() is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        # Epipolar rows: loaded when verify produced them, else reported unavailable
-        # - building them here would override an explicit `geometric_verification: false`
-        # - verify cost measured 47.6 min and +6.29 GB RSS at 300 frames; this stage always runs
-        # - {"available": false, "reason": ...} is the report-only outcome, not a failure
-        verification_json = self.backend_dir / "colmap" / "verification.json"
-        if self.config["pointcloud"]["geometric_verification"] and not verification_json.exists():
-            try:
-                self.verify()
-            except Exception:  # noqa: BLE001 — a report must never fail a reconstruction
-                logger.warning("verify failed; epipolar rows will be unavailable", exc_info=True)
-
-        # Heavy deps inline so the module imports without GPU/model libs
-        from collab_splats.geometry.metrics import build_reconstruction_quality_report
-
-        build_reconstruction_quality_report(
-            zarr_path=self.pointcloud_zarr,
-            verification_json=verification_json,
-            images_dir=self.images_dir,
-            output_path=out_json,
-            backend=self.config["pointcloud"]["backend"],
+        # Load the result and run the dense multiview pass once
+        # - abs_thresh 0.0 keeps the pass scale-invariant across backbones
+        ff = FeedforwardResult.load_zarr(self.pointcloud_zarr)
+        collected: dict = {}
+        compute_multiview_depth_confidence(
+            ff.depth, ff.intrinsics, ff.extrinsics, abs_thresh=0.0, rel_thresh=_REPORT_REL_THRESH, collect=collected
         )
+
+        # Optional keyframes for photometric
+        # - read_frames is in filename order, the reconstruction's order; capped at N
+        images = None
+        if frames.frame_paths(self.images_dir):
+            images = frames.read_frames(self.images_dir)[: len(ff.depth)].astype(np.float32)
+
+        tables = compute_reconstruction_quality(
+            collected,
+            ff.depth,
+            ff.intrinsics,
+            ff.extrinsics,
+            ff.original_coords,
+            [Path(str(p)).name for p in ff.image_paths],
+            ff.confidence,
+            images,
+        )
+        report = {
+            "scene": {
+                "backend": self.config["pointcloud"]["backend"],
+                "n_frames": len(ff.depth),
+                "model_resolution": f"{ff.model_width}x{ff.model_height}",
+                "image_width": int(ff.original_coords[0][4]),
+                "zarr": str(self.pointcloud_zarr),
+            },
+            "params": {"rel_thresh": _REPORT_REL_THRESH},
+            **tables,
+        }
+
+        # Atomic write: a crash mid-dump must not leave a half file that reuse-by-existence trusts
+        out_json.parent.mkdir(parents=True, exist_ok=True)
+        write_json(out_json, report)
         logger.info("Reconstruction quality report written to %s", out_json)
         return out_json
 
@@ -1636,8 +1584,6 @@ class Reconstructor:
             return pointcloud_zarr.exists() and _localization_db_exists(
                 pointcloud_zarr, self.config["localization"]["matcher"]
             )
-        if stage == "verify":
-            return (self.backend_dir / "colmap" / "verification.json").exists()
         if stage == "reconstruction_quality_report":
             return (self.backend_dir / "reconstruction_quality_report.json").exists()
         return False
@@ -1659,14 +1605,18 @@ class Reconstructor:
 
         Args:
             stages: Subset of ["preproc", "pointcloud", "refine", "semantics", "splats", "mesh",
-                    "localize", "verify", "reconstruction_quality_report"].
+                    "localize", "reconstruction_quality_report"].
                     Default: all enabled stages from config.
             overwrite: Re-run stages even if output exists.
 
         Raises:
-            ValueError: If stages list violates dependency ordering, or if a named LEAF_STAGES
-                stage already has output on disk and overwrite is False.
+            ValueError: If stages list violates dependency ordering, names the removed verify
+                stage, or names a LEAF_STAGES stage whose output is on disk and overwrite is False.
         """
+        # The removed verify stage: say so, not an unknown-stage no-op
+        if stages is not None and "verify" in stages:
+            raise ValueError(_VERIFY_REMOVED)
+
         # Naming a stage means asking for it; inheriting it from config does not. Capture the
         # distinction before `stages` is reassigned below.
         named = stages is not None
@@ -1683,15 +1633,8 @@ class Reconstructor:
                 stages.append("mesh")
             if self.config["localization"]["enabled"]:
                 stages.append("localize")
-            if self.config["pointcloud"]["geometric_verification"]:
-                stages.append("verify")
-            # Always on, no config boolean. Every other diagnostic ships behind a
-            # default-false flag, and the one boolean this would have had is the boolean that
-            # keeps it off. Affordable because it runs no model and no matcher — it reads the
-            # zarr the reconstruction just wrote — and because verify, when enabled, is appended
-            # just above and has already run by then: the report loads its output rather than
-            # triggering it. A direct reconstruction_quality_report() call can still run verify;
-            # see its docstring.
+            # Report always on, no enable boolean
+            # - runs no model and no matcher, only reads the zarr just written
             stages.append("reconstruction_quality_report")
 
         # Validate stage dependencies before starting any work. A dependency is
@@ -1733,8 +1676,6 @@ class Reconstructor:
                 self.mesh(result=result, overwrite=overwrite)
             elif stage == "localize":
                 self.build_localization_db(overwrite=overwrite)
-            elif stage == "verify":
-                self.verify(overwrite=overwrite)
             elif stage == "reconstruction_quality_report":
                 self.reconstruction_quality_report(overwrite=overwrite)
 

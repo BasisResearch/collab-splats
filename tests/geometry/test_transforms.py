@@ -6,7 +6,11 @@ from collab_splats.geometry.transforms import (
     extrinsics_to_homogeneous,
     invert_poses,
     extract_intrinsics,
+    intrinsics_4x4,
+    intrinsics_to_original,
+    project_to_so3,
     rotation_align_vectors,
+    transform_points,
     _compute_weighted_median,
     umeyama_se3,
     umeyama_sim3,
@@ -23,6 +27,25 @@ def _random_rigid(*shape):
     poses[..., :3, 3:] = t
     poses[..., 3, 3] = 1.0
     return poses.astype(np.float64)
+
+
+def test_transform_points_matches_homogeneous_matmul():
+    rng = np.random.default_rng(0)
+    Q, _ = np.linalg.qr(rng.standard_normal((3, 3)))
+    T = np.eye(4)
+    T[:3, :3], T[:3, 3] = Q, [0.5, -2.0, 3.0]
+    pts = rng.standard_normal((6, 5, 3))  # leading batch shape, like an (H, W, 3) grid
+    hom = np.concatenate([pts, np.ones((6, 5, 1))], axis=-1)
+    np.testing.assert_allclose(transform_points(pts, T), (hom @ T.T)[..., :3], atol=1e-12)
+
+
+def test_transform_points_inverse_roundtrip():
+    rng = np.random.default_rng(1)
+    Q, _ = np.linalg.qr(rng.standard_normal((3, 3)))
+    T = np.eye(4)
+    T[:3, :3], T[:3, 3] = Q, [1.0, 2.0, -0.5]
+    pts = rng.standard_normal((10, 3))
+    np.testing.assert_allclose(transform_points(transform_points(pts, T), invert_poses(T)), pts, atol=1e-12)
 
 
 def test_extrinsics_to_homogeneous_batched():
@@ -83,6 +106,76 @@ def test_extract_intrinsics_returns_floats():
     K = np.eye(3, dtype=np.float32)
     fx, fy, cx, cy = extract_intrinsics(K)
     assert isinstance(fx, float)
+
+
+@pytest.mark.parametrize("batch", [(), (5,)])
+def test_intrinsics_4x4_embeds_k_top_left(batch):
+    K = np.random.default_rng(0).uniform(1.0, 500.0, size=batch + (3, 3)).astype(np.float32)
+    out = intrinsics_4x4(K)
+    assert out.shape == batch + (4, 4)
+    assert out.dtype == np.float32
+    np.testing.assert_array_equal(out[..., :3, :3], K)
+    np.testing.assert_array_equal(out[..., 3, 3], 1.0)
+    np.testing.assert_array_equal(out[..., 3, :3], 0.0)
+    np.testing.assert_array_equal(out[..., :3, 3], 0.0)
+
+
+def test_intrinsics_to_original_known_answer():
+    """Crop (11,7)-(59,47) resized to a 12x8 model grid: sx=0.25, sy=0.2."""
+    K = np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]])
+    out = intrinsics_to_original(K, (11.0, 7.0, 59.0, 47.0), (8, 12))
+    assert out.dtype == np.float64
+    np.testing.assert_allclose(out, [[40.0, 0, 35.0], [0, 50.0, 27.0], [0, 0, 1]])
+
+
+def test_intrinsics_to_original_round_trips_a_projection_through_the_crop_box():
+    """A model-K projection mapped through the crop box lands on the original-K pixel.
+
+    - non-square crop, off-centre origin, distinct fx/fy, so swapping sx/sy or dropping tl fails
+    - batched call equals the per-frame calls, so (N, 3, 3) with (N, 4) broadcasts per row
+    """
+    rng = np.random.default_rng(0)
+    crops = np.array([[16.0, 8.0, 48.0, 40.0], [5.0, 30.0, 105.0, 90.0]])
+    model_hw = (24, 40)
+    K_model = np.array([[[30.0, 0, 19.5], [0, 22.0, 11.5], [0, 0, 1]], [[35.0, 0, 20.0], [0, 18.0, 12.0], [0, 0, 1]]])
+    K_orig = intrinsics_to_original(K_model, crops, model_hw)
+
+    for k in range(2):
+        np.testing.assert_array_equal(K_orig[k], intrinsics_to_original(K_model[k], crops[k], model_hw))
+
+        # Project camera-frame points on both grids
+        X = rng.uniform([-1, -1, 2], [1, 1, 6], size=(50, 3))
+        uv_model = (X @ K_model[k].T)[:, :2] / X[:, 2:]
+        uv_orig = (X @ K_orig[k].T)[:, :2] / X[:, 2:]
+
+        # Map model pixels through the crop box by hand
+        tl_x, tl_y, cr_x, cr_y = crops[k]
+        scale = np.array([(cr_x - tl_x) / model_hw[1], (cr_y - tl_y) / model_hw[0]])
+        np.testing.assert_allclose(uv_model * scale + [tl_x, tl_y], uv_orig, rtol=0, atol=1e-9)
+
+
+def test_project_to_so3_returns_nearest_rotation_with_det_one():
+    rng = np.random.default_rng(0)
+    M = rng.normal(size=(5, 3, 3))
+    R = project_to_so3(M)
+    assert np.allclose(R @ np.swapaxes(R, -1, -2), np.eye(3), atol=1e-10)
+    assert np.allclose(np.linalg.det(R), 1.0)
+
+
+def test_project_to_so3_fixes_a_reflection_and_keeps_a_rotation_bit_exact():
+    refl = np.diag([1.0, 1.0, -1.0])
+    assert np.isclose(np.linalg.det(project_to_so3(refl)), 1.0)
+    c, s = np.cos(0.3), np.sin(0.3)
+    Rz = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.0]])
+    U, _, Vt = np.linalg.svd(Rz)
+    assert np.array_equal(project_to_so3(Rz), U @ Vt)
+
+
+def test_project_to_so3_batch_flips_only_the_reflected_member():
+    refl = np.diag([1.0, 1.0, -1.0])
+    batch = project_to_so3(np.stack([np.eye(3), refl]))
+    assert np.array_equal(batch[0], project_to_so3(np.eye(3)))
+    assert np.allclose(np.linalg.det(batch), 1.0)
 
 
 def test_opengl_to_opencv_shape():

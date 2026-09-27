@@ -4,25 +4,28 @@ Submap pose-graph loop closure around a feedforward creator's forward pass.
 - wrapper: LoopClosure / LoopClosureConfig, the creator wrapper (lazy import)
 - submap / map / graph: per-submap state, submap collection, factor graph
 - matching: loop candidate retrieval
+- exports only what non-test callers import; import the rest from submodules
 """
 
-from .graph import (
-    PoseGraph,
-    decompose_camera,
-    dedup_overlap,
-    estimate_scale_pairwise,
-)
-from .map import GraphMap
-from .matching import (
-    LoopMatch,
-    LoopMatchQueue,
-    find_loop_closures,
-)
-from .submap import Submap, assert_world_to_cam
+from .graph import PoseGraph
+from .submap import Submap
 
 
 def __getattr__(name: str) -> type:
-    # Lazy import: wrapper -> collab_splats.pointcloud -> geometry.transforms cycles
+    """
+    Lazy export of the wrapper's LoopClosure and LoopClosureConfig.
+
+    - lazy because wrapper -> collab_splats.pointcloud -> geometry.transforms is a cycle
+
+    Args:
+        name: attribute looked up on the package.
+
+    Returns:
+        The requested wrapper class.
+
+    Raises:
+        AttributeError: for any other name.
+    """
     if name == "LoopClosure":
         from .wrapper import LoopClosure
 
@@ -34,17 +37,4 @@ def __getattr__(name: str) -> type:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = [
-    "LoopClosure",
-    "GraphMap",
-    "Submap",
-    "assert_world_to_cam",
-    "LoopClosureConfig",
-    "LoopMatch",
-    "LoopMatchQueue",
-    "find_loop_closures",
-    "dedup_overlap",
-    "PoseGraph",
-    "decompose_camera",
-    "estimate_scale_pairwise",
-]
+__all__ = ["LoopClosure", "LoopClosureConfig", "PoseGraph", "Submap"]

@@ -142,7 +142,7 @@ the environment or passed on the command line.
 
 ### Re-running one stage against a processed scene
 
-`--stages` naming only *leaf* stages — `refine`, `mesh`, `semantics`, `splats`, `localize`, `verify`,
+`--stages` naming only *leaf* stages — `refine`, `mesh`, `semantics`, `splats`, `localize`,
 `reconstruction_quality_report` — pulls the scene back
 out of `environments-processed` instead of rebuilding it from its curated video:
 
@@ -191,38 +191,33 @@ for every stage that is *not* re-running is preserved verbatim.
 Nothing here deletes a remote object. The push is still `rclone copy`, so a re-run overwrites
 the artifacts it produced and leaves everything else in place.
 
-`verify` is a leaf stage: `--stages verify` re-runs geometric verification against a
-processed scene (needs `colmap/` + `pointcloud.zarr` locally). Outputs under
-`<backend>/colmap/`: `verified/` (COLMAP model whose points carry real feature tracks;
-poses/cameras identical to `sparse/0`), `verification.json` (per-pair epipolar +
-relative-pose stats, per-frame track survival and reprojection error), and `database.db`
-(local build artifact, excluded from pushes). `sparse/0` is never modified.
-
 - `<backend>/reconstruction_quality_report.json` — reference-free scene error
-  report. One per-pair table (keyed on frame index, so epipolar and depth columns
-  join), a per-frame table, per-frame percentile ranks, running-error curves along
-  the trajectory, and rank correlations for error-vs-depth, error-vs-separation and
-  confidence-vs-error. Written by the always-on `reconstruction_quality_report` leaf
-  stage; re-runnable with `--stages reconstruction_quality_report --overwrite`.
+  report. Columnar tables, `{column: [values]}`, beside a `scene` block (backend,
+  n_frames, model_resolution, image_width, zarr) and a `params` block (rel_thresh). Column meanings:
+  `docs/source/api/geometry.rst`.
+
+  | table | grid | row | columns |
+  |---|---|---|---|
+  | `frames` | mixed | one per frame | frame_idx (null off the `frame_{idx:06d}` contract), covered_fraction (0..1, original), median_abs_rel_depth_error (model), confidence_median (model; backbone-native, not comparable across backbones) |
+  | `depth_pairs` | model | one per ordered direction | idx1, idx2, n_pixels, median_depth, median_rel_depth_error (signed s − 1), iqr_rel_depth_error, median_parallax_deg |
+  | `depth_residual_histogram` | model | — | counts, bin_edges over r/(1+\|r\|) |
+  | `photometric_pairs` | original | i < j | idx1, idx2, photometric_ncc (zero-mean NCC), n_pixels |
+
+  Written atomically (`.json.tmp` then rename) by the always-on
+  `reconstruction_quality_report` leaf stage; re-runnable with
+  `--stages reconstruction_quality_report --overwrite`. A report on disk in the old
+  format (no `frames`) raises — delete it and re-run.
 
   Named for what it scores. The sibling artefact `video_quality_report.json` scores
   the capture — blur, exposure, parallax — before any reconstruction exists; this one
   scores the reconstruction built from it.
 
-  The stage runs no model and no matcher. It loads `colmap/verification.json`
-  when it exists; in a full pipeline run verify is ordered ahead of it, so the
-  report reads verify's output rather than triggering it. With the shipping
-  default (`geometric_verification: false`) no such file is produced, the
-  epipolar block records `{"available": false, "reason": ...}`, and the depth and
-  photometric channels still emit — the report never reaches around an explicit
-  opt-out to charge a default run for verify. To get the epipolar channel, set
-  `pointcloud.geometric_verification: true` or run `--stages verify`. Note that
-  `--stages reconstruction_quality_report` on its own, with the flag on and no
-  `verification.json` present, *will* run verify first and pay its cost.
+  The stage runs no model and no matcher; `photometric_pairs` is null only when `images/`
+  is absent.
 
   **Report-only: nothing here feeds back into the reconstruction.** No verdict,
-  no grade, no cause — distributions and cumulative error only. Every block
-  stamps its `grid` (`model` or `original`) and `resolution`; units are
+  no grade, no cause — raw per-row values only. Each table's grid (`model` or
+  `original`) is fixed and listed above; units are
   scale-free or normalized throughout, because 1 recon unit is not 1 meter and
   the factor differs per scene and per backbone. Pixel counts are not comparable
   across backbones, so reprojection is reported in px *and* as a fraction of
@@ -429,6 +424,13 @@ READ by the clean step" in `base.yaml` itself; `depth_align` chose between the `
 **Migration (2026-09-24):** `preproc.quality.on_empty_slot` moved to `preproc.on_empty_slot`;
 a `run_config.yaml` still setting the old key raises a `TypeError` from `filter_frame_quality`.
 
+**Migration (2026-09-27):** geometric verification was removed — the `verify` stage and
+`pointcloud.geometric_verification`. `--stages verify` and a config with
+`geometric_verification: true` raise a `ValueError`; `geometric_verification: false`, which
+every published `run_config.yaml` carries, is still accepted and ignored, so leaf re-runs of
+those scenes keep working. `colmap/verification.json`, `colmap/verified/` and
+`colmap/database.db` are no longer written; old files on disk are ignored.
+
 ### Localization matchers
 
 `localization.matcher` is a vismatch model name, constructed as
@@ -447,13 +449,6 @@ Two blocklists in `collab_splats/localization/extractors.py` gate vismatch names
 `_VISMATCH_LICENSE_BLOCKLIST` (non-commercial licenses) and
 `_VISMATCH_DEP_BLOCKLIST` (models whose deps are broken in this environment).
 Blocked names raise `ValueError` at construction time with the reason.
-
-With `pointcloud.geometric_verification: true` the same matcher's feature cache
-feeds pycolmap, which requires index-stable sparse models (keypoint table indices
-that survive re-extraction). Index-incapable matchers (dense/semi-dense vismatch
-models, per-pair-refined variants like `xfeat-star`) hard-error at verification
-time rather than silently degrading — pick an index-stable matcher or disable
-verification.
 
 ### The `loger` backend
 
@@ -539,9 +534,9 @@ VDA metric weights are CC-BY-NC-4.0.
 
 InstantSfM reads the scene-root `images/` store directly — nothing stages a per-run image
 copy any more (`pointcloud/sfm.py`), so the COLMAP image names are the keyframe filenames.
-`colmap/instantsfm.db` has its own name so it never collides with the `verify` stage's
-`colmap/database.db`; both are anchored in `PUSH_EXCLUDES` and stay local. Downstream
-stages — `mesh`, `splats` (depth loss), `semantics`, `localize`, `verify` — consume
+`colmap/instantsfm.db` has its own name so it never collides with a `colmap/database.db`
+left by the removed geometric verification; both are anchored in `PUSH_EXCLUDES` and stay local. Downstream
+stages — `mesh`, `splats` (depth loss), `semantics`, `localize`, `reconstruction_quality_report` — consume
 `pointcloud.zarr` unchanged; consumers that read `confidence` handle its absence
 (mesh fuses unmasked with a log line even when `mesh.conf_percentile` is set, the feature
 lift uses uniform weights, splats depth targets are unmasked).
@@ -647,7 +642,7 @@ scene root (raw 2D patch maps, regenerable from frames + extractor — note the 
 which is what keeps `<backend>/semantics/**` in the push), the source video, which the remote
 driver fetches into the very scene dir it later pushes and which already lives in
 `environments-curated`, and the two COLMAP match databases — `<backend>/colmap/database.db`
-(verify) and `<backend>/colmap/instantsfm.db` (instantsfm SIFT), both rebuildable local
+(removed geometric verification, still on older scenes) and `<backend>/colmap/instantsfm.db` (instantsfm SIFT), both rebuildable local
 artifacts. The scene-root `images/` store **is** pushed — it is the sole persistent keyframe
 store, so localization or a correspondence plot against a published scene works directly,
 with no re-decode of the curated video.

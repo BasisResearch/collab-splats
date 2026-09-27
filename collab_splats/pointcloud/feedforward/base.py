@@ -36,9 +36,12 @@ from tqdm.auto import tqdm
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 from zarr.codecs import BloscCodec
 
-from collab_splats.geometry.metrics import bounded_residual, residual_bin_edges
+from collab_splats.geometry.metrics import (
+    PairStats,
+    bounded_residual,
+    residual_bin_edges,
+)
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
-from collab_splats.geometry.verification import PairStats
 from collab_splats.preproc import frames as fr
 
 from ..base import BasePointcloudCreator, PointcloudResult

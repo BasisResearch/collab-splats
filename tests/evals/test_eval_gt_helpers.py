@@ -233,7 +233,7 @@ def test_make_creator_threads_tracks_cache_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
     for cond in ("ba", "ba_percam", "ba_coarse", "ba_track-density-4096", "incremental_ba-5"):
         _, ba_cfg = eval_gt._make_creator(cond, backbone="vggtx", tracks_cache_dir=tmp_path)
-        assert ba_cfg.tracks_cache_dir == tmp_path / "vggtx", f"{cond} dropped tracks_cache_dir"
+        assert ba_cfg.tracks_cache_dir == tmp_path, f"{cond} dropped tracks_cache_dir"
 
 
 def test_make_creator_threads_tracks_cache_dir_windowed(monkeypatch, tmp_path):
@@ -245,24 +245,7 @@ def test_make_creator_threads_tracks_cache_dir_windowed(monkeypatch, tmp_path):
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
     for cond in ("ba", "ba_percam", "ba_coarse"):
         _, ba_cfg = eval_gt._make_creator(cond, submap_size=50, backbone="vggtx", tracks_cache_dir=tmp_path)
-        assert ba_cfg.tracks_cache_dir == tmp_path / "vggtx", f"windowed {cond} dropped tracks_cache_dir"
-
-
-def test_make_creator_tracks_cache_dir_is_per_backbone(monkeypatch, tmp_path):
-    """Two backbones never share a track cache slot.
-
-    Tracks are seeded from the backbone's own world_points, but the cache key hashes
-    only image paths + extraction knobs — a flat dir would serve one backbone's tracks
-    to another under a matching key.
-    """
-    from unittest.mock import MagicMock
-
-    import eval as eval_gt
-
-    monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
-    _, a = eval_gt._make_creator("ba", backbone="vggtx", tracks_cache_dir=tmp_path)
-    _, b = eval_gt._make_creator("ba", backbone="mapanything", tracks_cache_dir=tmp_path)
-    assert a.tracks_cache_dir != b.tracks_cache_dir
+        assert ba_cfg.tracks_cache_dir == tmp_path, f"windowed {cond} dropped tracks_cache_dir"
 
 
 def test_make_creator_tracks_cache_dir_defaults_to_none(monkeypatch):

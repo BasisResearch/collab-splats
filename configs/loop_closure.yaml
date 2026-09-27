@@ -45,7 +45,6 @@ pointcloud:
                               # (1 = matches VGGT-SLAM, see docs/parity.md; a single-frame hinge; fragile)
     lc_retrieval_threshold: 0.95  # DINO-SALAD loop gate; lower = stricter acceptance
     max_loops_per_submap: 2
-    scale_method: rotation_only    # rotation_only | none
   viz:
     enabled: true             # live viser Viewer during loop closure
     port: 8080

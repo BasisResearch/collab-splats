@@ -34,7 +34,7 @@ class MatchResult:
     """Matched pixel coordinates between a query and one reference image.
 
     idx_q/idx_db are the keypoint-table indices behind the pixel pairs — COLMAP's match
-    format, consumed by geometry/verification.py. None when the matcher cannot provide
+    format (its consumer, geometry verification, was removed 2026-09-27). None when the matcher cannot provide
     stable indices (per-pair subpixel refinement moves the same keypoint to different
     coordinates in different pairs, so no single table row describes it).
     """

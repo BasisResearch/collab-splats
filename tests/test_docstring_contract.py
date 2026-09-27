@@ -361,6 +361,87 @@ def _silent_fallbacks(src: str) -> list[str]:
     return out
 
 
+def _nested_defs(src: str) -> list[str]:
+    """
+    Functions defined inside functions.
+
+    - lambdas are not defs; methods of a class are not nested
+
+    Args:
+        src: module source.
+
+    Returns:
+        "<line>: nested def <inner> in <outer>" per offender.
+    """
+    funcs = (ast.FunctionDef, ast.AsyncFunctionDef)
+    out, seen = [], set()
+
+    # ast.walk is breadth-first, so each inner def is reported against its outermost function
+    for outer in ast.walk(ast.parse(src)):
+        if not isinstance(outer, funcs):
+            continue
+        for inner in ast.walk(outer):
+            if inner is not outer and isinstance(inner, funcs) and inner.lineno not in seen:
+                seen.add(inner.lineno)
+                out.append(f"{inner.lineno}: nested def {inner.name} in {outer.name}")
+    return out
+
+
+def _quote_line_docstrings(src: str) -> list[str]:
+    """
+    Docstrings whose summary starts on the opening-quote line.
+
+    Args:
+        src: module source.
+
+    Returns:
+        "<label>: summary on the quote line" per offender.
+    """
+    tree = ast.parse(src)
+    nodes = [tree] + [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    out = []
+    for n in nodes:
+        doc = ast.get_docstring(n, clean=False)
+        if doc is not None and not doc.startswith("\n"):
+            out.append(f"{getattr(n, 'name', 'module')}: summary on the quote line")
+    return out
+
+
+def _prose_comment_pairs(src: str) -> list[str]:
+    """
+    Two-line comment runs whose second line is not a bullet.
+
+    - MIN_RUN already covers runs of 3+; this closes the 2-line gap
+    - dividers and runs led by RUN_SKIP_PREFIXES are skipped
+
+    Args:
+        src: module source.
+
+    Returns:
+        "<line>: 2-line comment is prose" per offender.
+    """
+    lines = src.splitlines()
+    out = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].strip().startswith("#"):
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and lines[j].strip().startswith("#"):
+            j += 1
+        run = [lines[k].strip()[1:] for k in range(i, j)]
+        text = [r for r in run if r.strip()]
+
+        # Flag a 2-line run whose second line is prose, not a bullet
+        if j - i == 2 and len(text) == 2 and not text[0].strip().startswith(RUN_SKIP_PREFIXES):
+            second = text[1]
+            if not second.strip().startswith("- "):
+                out.append(f"{i + 1}: 2-line comment is prose — {text[0].strip()[:60]!r}")
+        i = j
+    return out
+
+
 RELEASE_CHECKS = {
     "numeric-constant": _numeric_constants,
     "banned-word": _banned_words,
@@ -438,3 +519,48 @@ def test_silent_fallback_check_flags_or_number_and_swallowed_exception():
         "try:\n    pass\nexcept ValueError:\n    pass\n"
     )
     assert _silent_fallbacks(src) == ["1: `or 30.0` fallback", "5: except Exception without re-raise"]
+
+
+# Round-3 checks: enforced for geometry only; other packages are a changelog follow-up
+ROUND3_CHECKS = {
+    "nested-def": _nested_defs,
+    "quote-line-docstring": _quote_line_docstrings,
+    "prose-comment-pair": _prose_comment_pairs,
+}
+
+
+@pytest.mark.parametrize(
+    ("path", "check"),
+    [
+        pytest.param(p, name, id=f"{pid}::{name}")
+        for p, pid in zip(SOURCES, SOURCE_IDS)
+        if p.relative_to(ROOT / "collab_splats").parts[0] == "geometry"
+        for name in ROUND3_CHECKS
+    ],
+)
+def test_round3_rules(path, check):
+    bad = ROUND3_CHECKS[check](path.read_text())
+    assert not bad, "\n".join(bad)
+
+
+def test_nested_def_check_flags_an_inner_function():
+    src = (
+        "def f() -> None:\n    def g() -> None:\n        pass\n    g()\n\n"
+        "class C:\n    def m(self) -> None:\n        pass\n"
+    )
+    assert _nested_defs(src) == ["2: nested def g in f"]
+
+
+def test_quote_line_docstring_check_flags_a_one_liner():
+    ok = 'def f() -> None:\n    """\n    Summary.\n    """\n'
+    bad = 'def _g() -> None:\n    """Summary."""\n'
+    assert _quote_line_docstrings(ok) == []
+    assert _quote_line_docstrings(bad) == ["_g: summary on the quote line"]
+
+
+def test_prose_comment_pair_check_flags_prose_and_spares_bullets():
+    assert _prose_comment_pairs("# a header\n# - a bullet\nx = 1\n") == []
+    assert _prose_comment_pairs("# first sentence of prose\n# second sentence\nx = 1\n") == [
+        "1: 2-line comment is prose — 'first sentence of prose'"
+    ]
+    assert _prose_comment_pairs("# a header\n#    continued\nx = 1\n") == ["1: 2-line comment is prose — 'a header'"]

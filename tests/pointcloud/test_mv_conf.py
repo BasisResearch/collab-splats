@@ -469,7 +469,6 @@ def test_collect_fills_index_keyed_rows_and_the_one_histogram():
     out = _collect(depth, K, extr)
     assert out["rel_depth_error_counts"].sum() > 0
     assert (out["pairs"][0].idx1, out["pairs"][0].idx2) == (0, 1)
-    assert out["pairs"][0].name1 is None  # index is the key; no filenames invented
     # Edges travel with the counts: they are sized from this scene, so counts alone are unreadable.
     assert len(out["rel_depth_error_edges"]) == len(out["rel_depth_error_counts"]) + 1
     n, h, w = depth.shape

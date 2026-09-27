@@ -14,7 +14,6 @@ Rasterization and the splat stage's artifacts.
 - GS-SR refactored ``pgsr_scene.py`` Oct 2025: same constructs sit elsewhere on its current main
 """
 
-import json
 import logging
 from collections.abc import Iterator
 from dataclasses import asdict
@@ -32,6 +31,7 @@ from torch import Tensor
 
 from collab_splats.splats.cameras import CameraOpt
 from collab_splats.splats.pgsr import plane_depth as compute_plane_depth
+from collab_splats.utils.io import write_json
 from collab_splats.utils.progress import progress
 
 # Annotation-only: importing any of these back at runtime would be circular
@@ -395,7 +395,7 @@ def write_outputs(
         summary[f"{name}_mean"] = float(np.mean([frame[name] for frame in per_frame]))
 
     report = {"summary": summary, "per_frame": per_frame}
-    (out_dir / "splats_quality_report.json").write_text(json.dumps(report, indent=2))
+    write_json(out_dir / "splats_quality_report.json", report)
 
     # The log names the model's own primitive unit
     # - scaffold counts ANCHORS, and its rendered count is per-view

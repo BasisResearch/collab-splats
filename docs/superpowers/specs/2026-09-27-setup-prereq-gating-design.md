@@ -8,7 +8,7 @@ Date: 2026-09-27 · Branch: `clean/final` · Status: design approved, plan pendi
 demands nvcc unconditionally on line one.
 
 - Runtime Docker image ships no nvcc by design → `setup.sh` exits 1 before doing anything.
-- Measured 2026-09-27 in the runtime pod: `uv sync --locked --all-extras --dry-run` against
+- Measured 2026-09-27 in the runtime pod (motivates the fix): `uv sync --locked --all-extras --dry-run` against
   `/opt/venv/reconstruction` builds **none** of bae / gsplat / fused-ssim / nvdiffrast — only
   editable collab-data / collab-splats reinstall + InstantSfM extras prune (setup.sh re-adds).
   The nvcc gate is the only thing failing.
@@ -19,7 +19,7 @@ demands nvcc unconditionally on line one.
 | Layer | Owner |
 |---|---|
 | NVIDIA driver + GPU | user |
-| gcc/g++, CUDA 12.1 toolkit (nvcc) | user; `setup.sh` checks only when needed |
+| gcc/g++, CUDA 12.1 toolkit (nvcc) | user; `setup.sh` warns if absent, prints recipe if a build fails |
 | uv | user |
 | venv, locked deps, CUDA extension compiles, CCCL overlay, InstantSfM extras, `third_party/` clones, weights | `setup.sh` |
 
@@ -29,32 +29,39 @@ root for the symlink, YAGNI).
 
 ## setup.sh changes
 
-### 1. Gate toolkit on "will compile"
+Minimal: no dry-run parsing, no version checks. uv already reports whether it must compile.
 
-- Before the nvcc block: `uv sync --locked --all-extras --dry-run` with the same flags the real
-  sync will use (`--no-install-project` when `SETUP_DEPS_ONLY=1`).
-- Grep the plan for `^ \+ (bae|gsplat|fused-ssim|nvdiffrast) ` → `NEEDS_CUDA_BUILD=1`.
-- `NEEDS_CUDA_BUILD=0` → skip nvcc check AND CCCL overlay; log one line saying so.
-- `NEEDS_CUDA_BUILD=1` → existing nvcc + CCCL block, unchanged in behavior.
-- dry-run itself failing (e.g. stale lock) → let the real `uv sync --locked` report it; treat as
-  `NEEDS_CUDA_BUILD=1` so no build ever proceeds without a toolkit.
-- Move the collab-data presence check above the dry-run (the resolve needs the path dep).
+### 1. nvcc missing → warn, don't exit
 
-### 2. Clearer prerequisite errors
+- Move the recipe heredoc into a function `cuda_toolkit_help` (text unchanged, plus one line:
+  "or use the Docker image; driver + toolkit are yours to provide — README Prerequisites").
+- `/usr/local/cuda/bin/nvcc` present → current behavior (CUDA_HOME, PATH, CCCL overlay).
+- absent → `HAVE_NVCC=0`, one-line warning ("no nvcc — fine if the CUDA extensions are already
+  built"), skip the CCCL overlay block entirely.
 
-nvcc missing (only reachable when a compile is needed) message states:
+### 2. Recipe on failure
 
-- which packages need compiling (from the dry-run list)
-- the three options: use the Docker image; `apt-get install cuda-nvcc-12-1 cuda-libraries-dev-12-1`;
-  the micromamba recipe (kept as-is)
-- that the driver/toolkit are the user's responsibility (link README Prerequisites)
+- Both `uv sync` calls (deps-only and full) get
+  `|| { [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help; exit 1; }`.
+- Built env (runtime Docker pod): nothing compiles → sync succeeds, warning is the only trace.
+- Bare host, no toolkit: uv fails on the first CUDA build; recipe prints directly under uv's
+  error (uv's error already names the package).
 
-nvcc present but release ≠ 12.1 → **warning**, not failure (torch cpp_extension tolerates a
-minor-version mismatch; major mismatch it rejects itself).
+### 3. Header comment
+
+One line documenting `SETUP_DEPS_ONLY=1` (Docker pass 1: lock only, no project install, keeps
+the CUDA compile layer cached across source edits). Flag stays — removing it would recompile
+gsplat (~2.5 h) on every source edit, and moving it into the Dockerfile duplicates the
+nvcc/CCCL/MAX_JOBS env.
+
+### Rejected
+
+- dry-run gate (grep uv's human output): ~15 lines, version-fragile, duplicated flags.
+- CUDA 12.1 version warning: torch rejects major mismatch itself; no minor-mismatch incident.
+- `setup/cuda_toolkit.sh` helper: untested, needs root for the symlink.
 
 ### Out of scope
 
-- `SETUP_DEPS_ONLY` / Docker two-pass flow: unchanged.
 - Smoke test at the end: unchanged (already works without nvcc — checks AOT `.so` presence).
 - `/workspace/setup_profile.sh` (outside repo; `apt install rclone` downgrade) — separate.
 
@@ -77,11 +84,9 @@ do not touch, commit Install hunks only.
 
 ## Testing
 
-- Runtime pod (no nvcc): `bash setup.sh` completes; log shows toolkit skipped; smoke test passes;
-  InstantSfM extras present after.
-- Gate logic: run the grep against a captured dry-run with and without a `+ gsplat @ git+...`
-  line (captured text in plan, no new pytest — shell only).
-- Forced compile path without nvcc: `UV_PROJECT_ENVIRONMENT=<scratch empty venv>` dry-run → gate
-  trips → new error message printed, exit 1, before any build starts.
-- No Docker rebuild required (setup.sh change invalidates the cached CUDA layer — flag to user
-  before next build; builder has nvcc so behavior there is identical).
+- Runtime pod (no nvcc): `bash setup.sh` completes; log shows the no-nvcc warning; smoke test
+  passes; InstantSfM extras present after.
+- Forced compile without nvcc: `UV_PROJECT_ENVIRONMENT=<scratch empty venv>` (in scratchpad,
+  deleted after) → uv fails on a CUDA build → recipe printed under the error, exit 1.
+- No Docker rebuild required. Editing setup.sh invalidates the cached CUDA layer — flag to user
+  before the next build; builder has nvcc so behavior there is identical.

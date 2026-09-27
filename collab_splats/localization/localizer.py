@@ -15,7 +15,8 @@ import torch
 import torch.nn.functional as F
 import zarr
 from PIL import Image
-from zarr.codecs import BloscCodec
+
+from collab_splats.utils.io import LZ4, to_uint8_hwc
 
 from .extractors import LocalFeatures, LocalMatcher
 from .retrieval import BaseRetrievalExtractor
@@ -307,7 +308,6 @@ class CameraLocalizer:
                             written to the extractor-level group. Replaces any prior
                             attrs wholesale; extractor_name is always stamped.
         """
-        lz4 = BloscCodec(cname="lz4")
         zarr_path = pathlib.Path(zarr_path)
         store = zarr.open(str(zarr_path), mode="a")
 
@@ -340,11 +340,11 @@ class CameraLocalizer:
         rec_group.attrs["image_paths"] = [str(p) for p in self._image_paths]
         rec_group.attrs["hw"] = list(self._image_hw)
 
-        rec_group.create_array("frame_offsets", data=offsets, chunks=offsets.shape, compressors=lz4)
-        rec_group.create_array("keypoints", data=all_kpts, chunks=(max(all_kpts.shape[0], 1), 2), compressors=lz4)
+        rec_group.create_array("frame_offsets", data=offsets, chunks=offsets.shape, compressors=LZ4)
+        rec_group.create_array("keypoints", data=all_kpts, chunks=(max(all_kpts.shape[0], 1), 2), compressors=LZ4)
         d_dim = all_descs.shape[1] if all_descs.shape[1] > 0 else 1
         rec_group.create_array(
-            "descriptors", data=all_descs, chunks=(max(all_descs.shape[0], 1), d_dim), compressors=lz4
+            "descriptors", data=all_descs, chunks=(max(all_descs.shape[0], 1), d_dim), compressors=LZ4
         )
 
         # scores: optional per-keypoint saliency — skip if all None
@@ -356,7 +356,7 @@ class CameraLocalizer:
                     for f in self._frame_features
                 ]
             ).astype(np.float32)
-            rec_group.create_array("scores", data=all_scores, chunks=(max(all_scores.shape[0], 1),), compressors=lz4)
+            rec_group.create_array("scores", data=all_scores, chunks=(max(all_scores.shape[0], 1),), compressors=LZ4)
 
         # scales: optional per-keypoint extraction scale — skip if all None
         has_scales = any(f.scales is not None for f in self._frame_features)
@@ -367,7 +367,7 @@ class CameraLocalizer:
                     for f in self._frame_features
                 ]
             ).astype(np.float32)
-            rec_group.create_array("scales", data=all_scales, chunks=(max(all_scales.shape[0], 1),), compressors=lz4)
+            rec_group.create_array("scales", data=all_scales, chunks=(max(all_scales.shape[0], 1),), compressors=LZ4)
 
         # keypoints_normalized: loma-split pre-transform coords the learned matcher consumes.
         # Written only when EVERY frame carries them — a zero-filled normalized table would be
@@ -383,7 +383,7 @@ class CameraLocalizer:
                 "keypoints_normalized",
                 data=all_norm,
                 chunks=(max(all_norm.shape[0], 1), 2),
-                compressors=lz4,
+                compressors=LZ4,
             )
 
         logger.info(
@@ -595,8 +595,9 @@ class CameraLocalizer:
         """
         image_path = pathlib.Path(image_path)
 
-        # Duplicate guard — _image_paths holds string labels, compare on str
-        if str(image_path) in self._image_paths:
+        # Duplicate guard on stems: frame identity, not the label's extension
+        # - old DBs hold localized .jpg ids; re-localizing the same frame now writes .png
+        if image_path.stem in {pathlib.Path(p).stem for p in self._image_paths}:
             logger.warning(
                 "CameraLocalizer.add_localized_frame: %s already in index, skipping",
                 image_path.name,
@@ -632,7 +633,6 @@ class CameraLocalizer:
         provenance: "dict | None" = None,
     ) -> None:
         """Append one localized frame to the localized/ zarr group."""
-        lz4 = BloscCodec(cname="lz4")
         store = zarr.open(str(zarr_path), mode="a")
         loc_key = f"local_features/{extractor_name}/localized"
 
@@ -647,20 +647,20 @@ class CameraLocalizer:
             offsets = np.array([0, len(kpts_np)], dtype=np.int64)
             loc_group.attrs["image_paths"] = [str(image_path)]
             loc_group.attrs["provenance"] = [provenance or {}]
-            loc_group.create_array("frame_offsets", data=offsets, chunks=(max(offsets.shape[0], 2),), compressors=lz4)
-            loc_group.create_array("keypoints", data=kpts_np, chunks=(max(kpts_np.shape[0], 1), 2), compressors=lz4)
+            loc_group.create_array("frame_offsets", data=offsets, chunks=(max(offsets.shape[0], 2),), compressors=LZ4)
+            loc_group.create_array("keypoints", data=kpts_np, chunks=(max(kpts_np.shape[0], 1), 2), compressors=LZ4)
             loc_group.create_array(
                 "descriptors",
                 data=descs_np,
                 chunks=(max(descs_np.shape[0], 1), max(descs_np.shape[1], 1)),
-                compressors=lz4,
+                compressors=LZ4,
             )
             if scores_np is not None:
-                loc_group.create_array("scores", data=scores_np, chunks=(max(scores_np.shape[0], 1),), compressors=lz4)
+                loc_group.create_array("scores", data=scores_np, chunks=(max(scores_np.shape[0], 1),), compressors=LZ4)
             if scales_np is not None:
-                loc_group.create_array("scales", data=scales_np, chunks=(max(scales_np.shape[0], 1),), compressors=lz4)
-            loc_group.create_array("extrinsics", data=pose[np.newaxis], chunks=(1, 4, 4), compressors=lz4)
-            loc_group.create_array("intrinsics", data=intrinsics[np.newaxis], chunks=(1, 3, 3), compressors=lz4)
+                loc_group.create_array("scales", data=scales_np, chunks=(max(scales_np.shape[0], 1),), compressors=LZ4)
+            loc_group.create_array("extrinsics", data=pose[np.newaxis], chunks=(1, 4, 4), compressors=LZ4)
+            loc_group.create_array("intrinsics", data=intrinsics[np.newaxis], chunks=(1, 3, 3), compressors=LZ4)
         else:
             # Append to existing group
             loc_group = store[loc_key]
@@ -741,13 +741,9 @@ class CameraLocalizer:
 
         Returns (ref_images uint8 HWC list, ref_global_desc (N, D) float32, retrieval).
         """
-        # ff.images is (N, 3, H, W) — convert to HWC uint8 RGB arrays
-        imgs = ff_images.detach().cpu().numpy() if torch.is_tensor(ff_images) else np.asarray(ff_images)
-        if imgs.ndim == 4 and imgs.shape[1] == 3 and imgs.shape[-1] != 3:
-            imgs = imgs.transpose(0, 2, 3, 1)
-        if imgs.max() <= 1.5:  # MapAnything stores [0, 1]; VGGT stores [0, 255]
-            imgs = imgs * 255.0
-        ref_images = [im.astype(np.uint8) for im in np.round(imgs)]
+        # ff.images is (N, 3, H, W) float in [0, 1] -> HWC uint8 RGB per frame; .float() lifts VGGT-X's bf16
+        imgs = ff_images.detach().float().cpu().numpy() if torch.is_tensor(ff_images) else np.asarray(ff_images)
+        ref_images = list(to_uint8_hwc(imgs, channels_first=True))
 
         # DinoSalad retrieval gate: one L2-normalized global descriptor per ref frame
         retrieval = BaseRetrievalExtractor.get("dino-salad")()
@@ -827,9 +823,10 @@ class CameraLocalizer:
                 store = zarr.open(str(zarr_path), mode="r")
                 rec_key = f"local_features/{extractor_name}/reconstruction"
                 if rec_key in store:
-                    # Staleness check: compare cached labels against ids (else result.image_paths)
-                    cached_paths = [str(p) for p in store[rec_key].attrs["image_paths"]]
-                    expected = [str(x) for x in (ids if ids is not None else result.image_paths)]
+                    # Staleness check on stems: frame identity, not the label's extension
+                    # - DBs on disk hold frame_NNNNNN.jpg ids; new builds write .png
+                    cached_paths = [Path(str(p)).stem for p in store[rec_key].attrs["image_paths"]]
+                    expected = [Path(str(x)).stem for x in (ids if ids is not None else result.image_paths)]
                     if cached_paths != expected:
                         logger.warning("CameraLocalizer: cached image_paths differ from expected — cache may be stale")
                     logger.info("CameraLocalizer: cache hit for '%s', loading from zarr", extractor_name)

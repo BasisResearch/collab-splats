@@ -415,6 +415,22 @@ def test_add_localized_frame_duplicate_skipped(tmp_path):
     assert len(localizer._frame_features) == 3  # 2 rec + 1 loc, not 4
 
 
+def test_add_localized_frame_duplicate_skipped_across_extensions(tmp_path):
+    """A legacy .jpg localized frame blocks re-adding the same query frame as .png."""
+    pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=2)
+    image_paths = _make_image_files(tmp_path, n=2)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+
+    new_pose = np.eye(4, dtype=np.float32)
+    new_feats = _make_features()
+
+    # Old DBs hold the .jpg id; re-localizing the same frame now writes .png
+    localizer.add_localized_frame(tmp_path / "X_f000010.jpg", new_pose, intrinsics[0], new_feats)
+    localizer.add_localized_frame(tmp_path / "X_f000010.png", new_pose, intrinsics[0], new_feats)
+
+    assert len(localizer._frame_features) == 3  # 2 rec + 1 loc, not 4
+
+
 def test_load_index_includes_localized_frames(tmp_path):
     """After add + reload, localized frame is in the loaded index."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
@@ -550,3 +566,27 @@ def test_load_localization_db_missing_raises(tmp_path):
     zarr_path = _empty_zarr(tmp_path)
     with pytest.raises(KeyError, match="disk"):
         load_localization_db(zarr_path, "disk")
+
+
+# ── Task 9 test ──────────────────────────────────────────────────────────────
+
+
+def test_cache_staleness_ignores_the_id_extension(tmp_path, caplog):
+    """A DB built with frame_NNN.jpg ids is not stale for frame_NNN.png ids; other stems are."""
+    pts3d, world_points, extrinsics, intrinsics = _make_scene()
+    image_paths = _make_image_files(tmp_path / "imgs", n=3)  # frame_000.jpg ...
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    zarr_path = _empty_zarr(tmp_path)
+    localizer.save_index(zarr_path, "disk")
+    result = _make_ff_result(world_points, extrinsics, image_paths)
+
+    def stale_warned(ids):
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="collab_splats.localization.localizer"):
+            CameraLocalizer.from_feedforward(
+                result, ids=ids, extractor=MagicMock(), zarr_path=zarr_path, extractor_name="disk"
+            )
+        return "stale" in caplog.text
+
+    assert not stale_warned([f"frame_{i:03d}.png" for i in range(3)])
+    assert stale_warned([f"frame_{i:03d}.png" for i in (0, 1, 5)])

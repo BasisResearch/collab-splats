@@ -13,6 +13,8 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from collab_splats.utils.torch_utils import get_device
+
 ######## Feature transfer
 
 
@@ -51,7 +53,7 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     feats = features[valid_mask]
 
     # Move the aggregation to the GPU (float32); one .cpu() at the end
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_device()
     d = torch.as_tensor(np.ascontiguousarray(distances), dtype=torch.float32, device=device)
     idx = torch.as_tensor(np.ascontiguousarray(indices), dtype=torch.long, device=device)
     f = torch.as_tensor(np.ascontiguousarray(feats), dtype=torch.float32, device=device)

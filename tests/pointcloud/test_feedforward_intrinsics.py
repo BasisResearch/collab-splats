@@ -8,11 +8,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
+import pycolmap
 import pytest
 import torch
 from PIL import Image as PILImage
 
 from collab_splats.pointcloud.feedforward.base import (
+    _CAMERA_PARAM_IDXS,
     FeedforwardResult,
     _rescale_reconstruction_to_original_dimensions,
 )
@@ -191,10 +193,8 @@ def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
     _rescale_reconstruction_to_original_dimensions
     (collab_splats/pointcloud/feedforward/base.py) is duck-typed
     over pycolmap — it touches only .images/.cameras, .model.name, .params, .width,
-    .height, .name, .camera_id (to look the camera up) and .points2D (iterated only
-    when shift_point2d_to_original_res=True, which this helper leaves at its default
-    False, so an empty list suffices).  A SimpleNamespace stands in because constructing a real
-    pycolmap.Reconstruction needs a Frame binding (`Check failed: image.HasFrameId()`)
+    .height, .name and .camera_id (to look the camera up).  A SimpleNamespace stands in
+    because constructing a real pycolmap.Reconstruction needs a Frame binding (`Check failed: image.HasFrameId()`)
     that is pure ceremony for a camera-only assertion.
     """
     model_w, model_h = model_wh
@@ -206,14 +206,13 @@ def _rescaled_camera_params(camera_model, params, model_wh, orig_wh):
         height=model_h,
     )
     reconstruction = SimpleNamespace(
-        images={1: SimpleNamespace(camera_id=1, name="0.png", points2D=[])},
+        images={1: SimpleNamespace(camera_id=1, name="0.png")},
         cameras={1: camera},
     )
     _rescale_reconstruction_to_original_dimensions(
         reconstruction,
         [Path("0.png")],
-        # Rows are [x0, y0, x1, y1, W, H]; the rescale reads only the last two, as
-        # real_image_size in _rescale_reconstruction_to_original_dimensions.
+        # A full-frame box gives s = model / orig and tl = (0, 0) on both axes.
         np.array([[0, 0, orig_w, orig_h, orig_w, orig_h]], dtype=np.float32),
         (model_w, model_h),
     )
@@ -290,3 +289,215 @@ def test_simple_pinhole_would_lose_the_focal_loger_keeps():
     # Measured: 1606.5041 against a true 1600.0 — +6.504 px, +0.41%
     assert params[0] == pytest.approx(1606.5041, abs=1e-3)
     assert params[0] != pytest.approx(f, rel=1e-3)
+
+
+def _rescale_one(camera_model, params, box, model_wh):
+    """Run the real rescale on one duck-typed camera; returns (params, width, height)."""
+    camera = SimpleNamespace(
+        model=SimpleNamespace(name=camera_model),
+        params=np.array(params, dtype=np.float64),
+        width=model_wh[0],
+        height=model_wh[1],
+    )
+    reconstruction = SimpleNamespace(
+        images={1: SimpleNamespace(camera_id=1, name="0.png")},
+        cameras={1: camera},
+    )
+    _rescale_reconstruction_to_original_dimensions(
+        reconstruction,
+        [Path("0.png")],
+        np.array([box], dtype=np.float32),
+        model_wh,
+    )
+    return camera.params, camera.width, camera.height
+
+
+def test_rescale_maps_a_cropped_portrait_camera_to_original_pixels():
+    """VGGT-X portrait: 1080x1920 center-cropped to 1080x1080 (tl_y = 420), model 518x518."""
+    box = [0, 420, 1080, 1500, 1080, 1920]
+    s = 518 / 1080
+    model_params = [900 * s, 880 * s, 470 * s, (1010 - 420) * s]  # fx, fy, cx, cy on the model grid
+
+    params, width, height = _rescale_one("PINHOLE", model_params, box, (518, 518))
+
+    np.testing.assert_allclose(params, [900, 880, 470, 1010], rtol=1e-5)
+    assert (width, height) == (1080, 1920)
+
+
+def test_rescale_keeps_distortion_params_for_opencv():
+    """OPENCV params are fx, fy, cx, cy, k1, k2, p1, p2 — the tail is distortion, not cx/cy."""
+    box = [0, 0, 1036, 1036, 1036, 1036]  # full frame, 2x
+    params, _, _ = _rescale_one("OPENCV", [100, 100, 259, 259, 0.1, 0.2, 0.01, 0.02], box, (518, 518))
+
+    np.testing.assert_allclose(params, [200, 200, 518, 518, 0.1, 0.2, 0.01, 0.02], rtol=1e-6)
+
+
+def test_rescale_non_square_crop_with_nonzero_tl_does_not_swap_axes():
+    """A non-square crop with tl_x, tl_y both nonzero pins per-axis, not per-image, scale.
+
+    Crop [100, 50, 900, 650] out of a 1000x700 original is 800x600, resized onto the
+    non-square 518x392 model grid: sx = 518/800 = 0.6475 != sy = 392/600 = 0.6533...
+    A square crop (sx == sy) hides an sx/sy swap in the K update; this box makes the
+    two axes numerically distinct.
+    """
+    box = [100, 50, 900, 650, 1000, 700]
+    tl_x, tl_y = 100.0, 50.0
+    sx, sy = 518 / 800, 392 / 600
+
+    # Pick original-pixel intrinsics by hand, then project them onto the model grid
+    fx, fy, cx, cy = 900.0, 850.0, 500.0, 350.0
+    model_params = [fx * sx, fy * sy, (cx - tl_x) * sx, (cy - tl_y) * sy]
+
+    params, width, height = _rescale_one("PINHOLE", model_params, box, (518, 392))
+
+    # rtol=1e-5: original_image_sizes is float32, so the box carries ~2.5e-8
+    # relative error through the divisions above (measured).
+    np.testing.assert_allclose(params, [fx, fy, cx, cy], rtol=1e-5)
+    assert (width, height) == (1000, 700)
+
+
+def test_rescale_uses_each_images_own_crop_box():
+    """Two images with different crop boxes must each rescale by their OWN box.
+
+    Image 1 is full-frame (1000x1000, s = 0.518); image 2 is the same portrait
+    crop used elsewhere in this file (1080x1920 cropped to 1080x1080, s = 518/1080).
+    Using original_image_sizes[0] for every image would rescale image 2 with
+    image 1's box, giving the wrong focal and principal point for it.
+    """
+    box1 = [0, 0, 1000, 1000, 1000, 1000]
+    s1 = 518 / 1000
+    box2 = [0, 420, 1080, 1500, 1080, 1920]
+    s2 = 518 / 1080
+
+    camera1 = SimpleNamespace(
+        model=SimpleNamespace(name="PINHOLE"),
+        params=np.array([1000 * s1, 1000 * s1, 500 * s1, 500 * s1], dtype=np.float64),
+        width=518,
+        height=518,
+    )
+    camera2 = SimpleNamespace(
+        model=SimpleNamespace(name="PINHOLE"),
+        params=np.array([900 * s2, 880 * s2, 470 * s2, (1010 - 420) * s2], dtype=np.float64),
+        width=518,
+        height=518,
+    )
+    reconstruction = SimpleNamespace(
+        images={
+            1: SimpleNamespace(camera_id=1, name="0.png"),
+            2: SimpleNamespace(camera_id=2, name="1.png"),
+        },
+        cameras={1: camera1, 2: camera2},
+    )
+
+    _rescale_reconstruction_to_original_dimensions(
+        reconstruction,
+        [Path("0.png"), Path("1.png")],
+        np.array([box1, box2], dtype=np.float32),
+        (518, 518),
+    )
+
+    np.testing.assert_allclose(camera1.params, [1000, 1000, 500, 500], rtol=1e-5)
+    assert (camera1.width, camera1.height) == (1000, 1000)
+
+    np.testing.assert_allclose(camera2.params, [900, 880, 470, 1010], rtol=1e-5)
+    assert (camera2.width, camera2.height) == (1080, 1920)
+
+
+def test_rescale_param_index_table_matches_pycolmap():
+    """The model -> (focal, principal point) index table mirrors pycolmap's own."""
+    # Guard against a vacuously empty table before the per-model loop below
+    assert {"PINHOLE", "SIMPLE_PINHOLE"} <= _CAMERA_PARAM_IDXS.keys()
+
+    for model, (focal, pp) in _CAMERA_PARAM_IDXS.items():
+        cam = pycolmap.Camera(model=model, width=10, height=10)
+        assert (list(cam.focal_length_idxs()), list(cam.principal_point_idxs())) == (focal, pp), model
+
+
+# ── VGGT-X crop box describes upstream crop mode ───────────────────────────────
+
+
+def _upstream_crop_grid(orig_w: int, orig_h: int) -> tuple[float, float, int, int]:
+    """
+    Upstream crop mode's (sx, sy, start_y, model_h) for one original size.
+
+    - Linketic/VGGT-X @ 26d1b95, vggt/utils/load_fn.py:237-251
+    - resize to (518, round(h*518/w/14)*14), then center-crop a taller height to 518 rows
+    """
+    new_h = round(orig_h * 518 / orig_w / 14) * 14
+    start_y = (new_h - 518) // 2 if new_h > 518 else 0
+    return 518 / orig_w, new_h / orig_h, start_y, min(new_h, 518)
+
+
+@pytest.mark.parametrize(
+    "orig_wh",
+    [
+        (1080, 1920),  # portrait: new_h 924, y scale 924/1920, not 518/1080
+        (1000, 1040),  # near-square portrait, still cropped: new_h rounds 538.7 down to 532 > 518
+        (1920, 1080),  # landscape: no crop, height resized to 294
+        (1000, 1000),  # square: no crop
+    ],
+)
+def test_vggtx_crop_box_round_trips_the_model_k(orig_wh):
+    """
+    A K moved onto the upstream model grid comes back through the box unchanged.
+    """
+    from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
+    from collab_splats.pointcloud.feedforward.vggtx import _compute_vggtx_crop_coords
+
+    orig_w, orig_h = orig_wh
+    box = _compute_vggtx_crop_coords([orig_wh])[0]
+
+    # Model K from the true upstream transform: per-axis scale, then the crop shifts cy
+    sx, sy, start_y, model_h = _upstream_crop_grid(orig_w, orig_h)
+    K = np.array([[1000.0, 0.0, orig_w / 2], [0.0, 1000.0, orig_h / 2], [0.0, 0.0, 1.0]])
+    K_model = np.array(
+        [[1000.0 * sx, 0.0, orig_w / 2 * sx], [0.0, 1000.0 * sy, orig_h / 2 * sy - start_y], [0.0, 0.0, 1.0]]
+    )
+
+    crop_hw = (box[3] - box[1], box[2] - box[0])
+    back = rescale_intrinsics(K_model, (model_h, 518), crop_hw)
+    back = shift_intrinsics(back, box[:2])
+    np.testing.assert_allclose(back, K, atol=1e-2)
+
+
+@pytest.mark.parametrize(
+    "orig_wh",
+    [
+        (100, 104),  # near-square portrait, cropped: new_h 532; old box off 1.61 levels
+        (108, 192),  # 9:16 portrait, cropped: new_h 924; old box off 0.49 levels
+        (100, 101),  # near-square portrait, no crop: new_h 518, full-frame box under both formulas
+        (192, 108),  # landscape: new_h 294, no crop
+        (100, 100),  # square: new_h 518, no crop
+    ],
+)
+def test_vggtx_crop_box_maps_loader_rows_to_their_source_rows(orig_wh):
+    """
+    Each row the real upstream loader outputs holds the source row the box maps it to.
+
+    - frame is a vertical gray ramp, so a pixel's value encodes its source y
+    - the old 518/orig_w y scale is off by mean 1.61 levels at 100x104, 0.49 at 108x192
+    - tolerance 0.4 level: the correct box measures 0.27-0.32 (uint8 ramp quantization)
+    """
+    from vggt.utils.load_fn import load_and_preprocess_images
+
+    from collab_splats.pointcloud.feedforward.base import frames_as_pil_source
+    from collab_splats.pointcloud.feedforward.vggtx import _compute_vggtx_crop_coords
+
+    orig_w, orig_h = orig_wh
+    box = _compute_vggtx_crop_coords([orig_wh])[0]
+
+    # Vertical ramp: row y holds 255 * (y + 0.5) / orig_h, its pixel-center coordinate
+    ramp = np.round((np.arange(orig_h) + 0.5) / orig_h * 255).astype(np.uint8)
+    frame = np.broadcast_to(ramp[:, None, None], (orig_h, orig_w, 3)).copy()
+    with frames_as_pil_source([frame]):
+        out = load_and_preprocess_images(["frame.png"], mode="crop")[0, 0].numpy() * 255
+
+    # Loader grid must be the grid the box is paired with downstream
+    _, _, _, model_h = _upstream_crop_grid(orig_w, orig_h)
+    assert out.shape == (model_h, 518)
+
+    # Model row centers through the box into source y; skip 3 rows of bicubic edge clamping
+    rows = np.arange(model_h) + 0.5
+    src_y = box[1] + rows * (box[3] - box[1]) / model_h
+    err = np.abs(out[:, 259] - src_y / orig_h * 255)[3:-3]
+    assert err.mean() < 0.4, f"mean row error {err.mean():.3f} gray levels"

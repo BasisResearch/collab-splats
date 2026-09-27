@@ -21,10 +21,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import zarr
-from PIL import Image
 
 from collab_splats.preproc.frames import IMAGE_EXTS, frame_paths
 from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.utils.io import UNREADABLE_STORE, open_valid, read_image
 from collab_splats.utils.torch_utils import batch_iterator
 
 # Type-only: features/base.py imports this module, so a runtime import would cycle
@@ -32,9 +32,6 @@ if TYPE_CHECKING:
     from collab_splats.semantics.features.base import BaseFeatureExtractor
 
 logger = logging.getLogger(__name__)
-
-# Errors a missing, corrupt or half-written zarr store raises; anything else is a bug
-_UNREADABLE_STORE = (OSError, ValueError, KeyError, TypeError)
 
 __all__ = [
     "ae_path",
@@ -254,19 +251,14 @@ def extract_feature_cache(
     N = len(paths)
 
     # A cache is valid when the extractor name and frame count both match
-    if zarr_path.exists():
-        try:
-            z = zarr.open(str(zarr_path), mode="r")
-            if z.attrs.get("extractor") == extractor.name and z.attrs.get("n_frames") == N:
-                logger.info("Feature cache valid, skipping extraction: %s", zarr_path)
-                return zarr_path
-        except _UNREADABLE_STORE:
-            logger.warning("Cache at %s is corrupt or unreadable, re-extracting", zarr_path)
+    if open_valid(zarr_path, {"extractor": extractor.name, "n_frames": N}) is not None:
+        logger.info("Feature cache valid, skipping extraction: %s", zarr_path)
+        return zarr_path
 
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
 
     # Probe the first frame to learn (D, H_p, W_p) before allocating the store
-    first_frame = Image.open(paths[0]).convert("RGB")
+    first_frame = read_image(paths[0])
     with torch.no_grad():
         [first_feat] = extractor.forward([first_frame])
     D, H_p, W_p = first_feat.shape
@@ -284,9 +276,9 @@ def extract_feature_cache(
 
     # Iterate the rest lazily — never more than one frame in RAM
     for i in range(1, N):
-        pil_img = Image.open(paths[i]).convert("RGB")
+        frame = read_image(paths[i])
         with torch.no_grad():
-            [feat] = extractor.forward([pil_img])
+            [feat] = extractor.forward([frame])
         arr[i] = feat.cpu().float().numpy()
         logger.debug("extract_feature_cache: %d/%d frames written", i + 1, N)
 
@@ -391,7 +383,7 @@ def point_features_cached(semantics_dir: Path) -> bool:
         attrs = zarr.open(str(lifted_store_path(sem_dir, extractor)), mode="r").attrs
         return int(attrs["latent_dim"]) >= int(attrs["input_dim"])
     # Predicate, so an unreadable store answers False instead of raising
-    except _UNREADABLE_STORE:
+    except UNREADABLE_STORE:
         logger.warning("Lifted store for %s in %s is corrupt or unreadable, reporting not cached", extractor, sem_dir)
         return False
 

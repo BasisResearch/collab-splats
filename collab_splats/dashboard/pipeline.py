@@ -46,7 +46,8 @@ from collab_splats.semantics.utils import (
     point_features_cached,
     write_point_features,
 )
-from collab_splats.utils.image import open_image
+from collab_splats.utils.io import read_image, to_uint8_hwc
+from collab_splats.utils.torch_utils import get_device
 
 # VGGTOmegaCreator requires the vggt-omega submodule; only available when installed.
 try:
@@ -202,7 +203,7 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     of the full D (e.g. 768) is ~D/latent× cheaper. The latent codes are cached as they are; the
     decode to D happens on read (load_point_features). Everything except the lift runs on the GPU.
     """
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_device()
     feature_maps = load_feature_maps(cache_store_path(semantics_dir))  # list of (D, H_p, W_p) on CPU
     input_dim = feature_maps[0].shape[0]
 
@@ -410,11 +411,9 @@ def run_pipeline(
             images = result.images
             if isinstance(images, torch.Tensor):
                 images = images.detach().to("cpu", torch.float32).numpy()
-            images = np.asarray(images)
-            # images is [0, 255] on VGGT-X but [0, 1] on MapAnything — decide the scale once
-            # off the whole array, never per frame (a dark frame reads as [0, 1] and blows up).
-            rgb_scale = 255.0 if images.max() <= 1.0 else 1.0
-            rgbs = (images.transpose(0, 2, 3, 1) * rgb_scale).clip(0, 255).astype(np.uint8)
+
+            # images is [0, 1] on every backend; round to uint8 HWC once for the fusion
+            rgbs = to_uint8_hwc(images, channels_first=True)
             mesh_path = fuse_tsdf(
                 depths,
                 rgbs,
@@ -504,14 +503,33 @@ def _stamp_db_provenance(zarr_path: Path, extractor_name: str, out_dir: Path) ->
     cfg_path = Path(out_dir) / "run_config.yaml"
     attrs: dict = {"extractor": extractor_name}
     if cfg_path.exists():
-        run_cfg = RunConfig.from_yaml(cfg_path)
-        attrs.update(
-            {
-                "backbone": run_cfg.env_model,
-                "frame_indices": list(run_cfg.frame_indices),
-                "video_ref": run_cfg.video_ref,
-            }
-        )
+        data = yaml.safe_load(cfg_path.read_text()) or {}
+
+        # Two writers share this file name
+        # - batch.py: the Reconstructor config, nested under pointcloud:
+        # - the dashboard: a flat RunConfig
+        if isinstance(data.get("pointcloud"), dict):
+            images_dir = Path(out_dir) / "images"
+            frame_paths = fr.frame_paths(images_dir) if images_dir.is_dir() else []
+
+            # Absent or null values stamp null; str(None) would forge a "None" path
+            input_path = data.get("input_path")
+            attrs.update(
+                {
+                    "backbone": data["pointcloud"].get("backend"),
+                    "frame_indices": [fr.frame_idx_from_path(p) for p in frame_paths],
+                    "video_ref": None if input_path is None else str(input_path),
+                }
+            )
+        else:
+            run_cfg = RunConfig.from_yaml(cfg_path)
+            attrs.update(
+                {
+                    "backbone": run_cfg.env_model,
+                    "frame_indices": list(run_cfg.frame_indices),
+                    "video_ref": run_cfg.video_ref,
+                }
+            )
     store = zarr.open(str(zarr_path), mode="a")
     group = store.require_group(f"local_features/{extractor_name}")
     for k, v in attrs.items():
@@ -550,7 +568,7 @@ def _build_localizer(
     # Boundary adapter: build (images, ids) from the scene's images/ directory when present,
     # else from the result's export paths. Lazy genexpr → zero reads on a cache hit.
     paths = fr.frame_paths(images_dir) if images_dir is not None else [Path(p) for p in result.image_paths]
-    images = (np.asarray(open_image(p).convert("RGB")) for p in paths)
+    images = (read_image(p) for p in paths)
     ids = [p.name for p in paths]
 
     localizer = CameraLocalizer.from_feedforward(
@@ -598,6 +616,30 @@ def read_localized_group(zarr_path: Path, extractor: str, out_dir: Path) -> "tup
     # image_paths attrs were recorded on the building machine — only basenames are portable
     names = [Path(p).name for p in group.attrs.get("image_paths", [])]
     return poses, [Path(out_dir) / "localized_frames" / n for n in names]
+
+
+def _local_ref_path(out_dir: Path, label: str, source: str) -> Path:
+    """
+    Resolve a DB id to this machine's file: images/ by stem, localized_frames/ by name.
+
+    Args:
+        out_dir: scene output directory.
+        label: DB id as recorded on the building machine.
+        source: 'reconstruction' or 'localized'.
+
+    Returns:
+        The existing file with the id's stem, else the id's name under the expected directory.
+    """
+    if source != "reconstruction":
+        return Path(out_dir) / "localized_frames" / Path(label).name
+
+    # Ids may carry .jpg while the store writes .png; the stem is the frame identity
+    images_dir = Path(out_dir) / "images"
+    for ext in fr.IMAGE_EXTS:
+        candidate = images_dir / f"{Path(label).stem}{ext}"
+        if candidate.exists():
+            return candidate
+    return images_dir / Path(label).name
 
 
 def load_browse_data(
@@ -691,7 +733,7 @@ def run_localization(
                 op_log.update_progress(85, "localize: appending to DB")
                 img_dir = out_dir / "localized_frames"
                 img_dir.mkdir(parents=True, exist_ok=True)
-                img_path = img_dir / f"{Path(query_video).stem}_f{frame_idx:06d}.jpg"
+                img_path = img_dir / f"{Path(query_video).stem}_f{frame_idx:06d}.png"
                 Image.fromarray(frame).save(img_path)
                 localizer.add_localized_frame(
                     img_path,
@@ -705,11 +747,9 @@ def run_localization(
                 op_log.update_progress(92, "localize: pushing to environments-processed (background)")
                 _push_async(source, out_dir, scene, op_log)
 
-            # DB ids are basenames recorded on the machine that built the DB; resolve each to a
-            # local file — reconstruction frames live in images/, localized ones in localized_frames/.
+            # DB ids were recorded on the building machine; resolve each to a local file
             ref_image_paths = [
-                out_dir / ("images" if src == "reconstruction" else "localized_frames") / Path(p).name
-                for p, src in zip(localizer.image_paths, localizer.frame_sources)
+                _local_ref_path(out_dir, p, src) for p, src in zip(localizer.image_paths, localizer.frame_sources)
             ]
 
             output = LocalizationRunOutput(

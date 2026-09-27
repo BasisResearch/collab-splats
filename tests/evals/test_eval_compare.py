@@ -216,3 +216,14 @@ def test_collect_grid_metrics_and_format(tmp_path):
     md = format_markdown_rows(rows)
     data_lines = [ln for ln in md.splitlines() if ln.startswith("|") and "---" not in ln and "ATE RMSE" not in ln]
     assert len(data_lines) == 2
+
+
+def test_format_markdown_rows_renders_a_null_metric_as_nan():
+    """write_json turns a nan ATE into null; the table must print nan, not raise on None."""
+    from eval_compare import format_markdown_rows
+
+    rows = [{"_cell": "c", "ate": {"rmse": None}, "rpe": {}, "auc": {"auc_30": 0.5}}]
+
+    table = format_markdown_rows(rows)
+
+    assert "| c | nan |" in table

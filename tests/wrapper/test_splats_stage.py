@@ -17,7 +17,9 @@ import torch
 import yaml
 import zarr
 
+from collab_splats.mesh.io import upsample_depths
 from collab_splats.splats.trainer import SplatsConfig
+from collab_splats.splats.utils import prepare_target
 from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES
 from tests.wrapper._stubs import _stub_reconstructor
 
@@ -52,6 +54,7 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
         image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
         depth=depth,
         confidence=torch.ones(3, 4, 4),
+        original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
     )
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
@@ -67,10 +70,10 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
     assert images[0, 0, 0, 0] == 20 and images[2, 0, 0, 0] == 0  # follows image_paths (reversed), not store order
     assert world_to_cam.shape == (3, 4, 4) and intrinsics.shape == (3, 3, 3) and points.shape == (200, 3)
     assert out_dir == recon.backend_dir / "splats"
-    # Model-res depth is handed over as-is; train() resizes per view (prepare_target)
-    assert depth_targets.shape == (3, 4, 4)
+    # Model-res depth is lifted onto the 8x8 frames through each row's crop box
+    assert depth_targets.shape == (3, 8, 8)
     # Depth rows reordered to image_paths (reversed): row 0 is frame 2, row 2 is frame 0
-    assert depth_targets[0, 0, 0] == 3 and depth_targets[2, 0, 0] == 1
+    assert depth_targets[0, 0, 0] == pytest.approx(3) and depth_targets[2, 0, 0] == pytest.approx(1)
 
 
 def test_splats_stage_rejects_frames_missing_from_feedforward(tmp_path):
@@ -151,6 +154,7 @@ def test_splats_conf_percentile_log_reports_the_zero_target_fraction(tmp_path, c
         image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
         depth=depth,
         confidence=None,
+        original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
     )
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
 
@@ -221,6 +225,7 @@ def test_splats_sfm_aligned_zarr_uses_zarr_depth(tmp_path):
         image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
         depth=depth,
         confidence=None,  # sfm scenes carry no confidence — unmasked targets
+        original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
     )
     group = zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
     group.attrs["depth_scale"] = "colmap"
@@ -231,9 +236,9 @@ def test_splats_sfm_aligned_zarr_uses_zarr_depth(tmp_path):
         recon.splats()
 
     depth_targets = train.call_args.kwargs["depth_targets"]
-    assert depth_targets.shape == (3, 4, 4)
+    assert depth_targets.shape == (3, 8, 8)
     # Rows reordered to image_paths (reversed): row 0 is frame 2, row 2 is frame 0
-    assert depth_targets[0, 0, 0] == 3 and depth_targets[2, 0, 0] == 1
+    assert depth_targets[0, 0, 0] == pytest.approx(3) and depth_targets[2, 0, 0] == pytest.approx(1)
 
 
 def test_splats_sfm_legacy_zarr_refused(tmp_path):
@@ -268,3 +273,50 @@ def test_mesh_sfm_aligned_zarr_fuses(tmp_path):
         out = recon.mesh()
     fuse.assert_called_once()
     assert out == recon.backend_dir / "mesh" / "mesh.ply"
+
+
+def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
+    """
+    Cropped backends: model-res depth fills only its crop box of the frame, never the whole frame.
+
+    - model 8x4 into a 20x10 frame through a 16x8 crop at a per-frame offset
+    - column-ramp depth, so a plain stretch and a crop-aware lift disagree on position
+    - boxes differ per store row, so a target paired with the wrong row's box is caught
+    """
+    recon = _stub_reconstructor(tmp_path, height=10, width=20)
+
+    # Store rows 0..2; each frame's crop sits at a different offset inside the 20x10 frame
+    ramp = np.tile(np.arange(1, 9, dtype=np.float32), (4, 1))
+    depth = np.stack([ramp * (view + 1) for view in range(3)])
+    boxes = np.array([[2 + view, 1, 18 + view, 9, 20, 10] for view in range(3)], np.float32)
+    feedforward = SimpleNamespace(
+        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
+        depth=depth,
+        confidence=None,
+        original_coords=boxes,
+    )
+    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
+    with (
+        patch("collab_splats.splats.trainer.train") as train,
+        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+    ):
+        recon.splats()
+
+    # What the trainer supervises with: each view's target after train()'s own per-view resize
+    images = train.call_args.args[1]
+    depth_targets = train.call_args.kwargs["depth_targets"]
+    seen = np.stack(
+        [prepare_target(images[row], depth_targets[row], "cpu")["depth"][0, ..., 0].numpy() for row in range(3)]
+    )
+
+    # Outside each crop box there is no target; a full-frame stretch fills it
+    order = [2, 1, 0]  # image_paths is reversed store order
+    for row, store_row in enumerate(order):
+        tl_x, tl_y, cr_x, cr_y = boxes[store_row, :4].astype(int)
+        inside = np.zeros((10, 20), bool)
+        inside[tl_y:cr_y, tl_x:cr_x] = True
+        assert np.all(seen[row][~inside] == 0)
+        assert np.all(seen[row][inside] > 0)
+
+    # Inside, the values are the mesh stage's lift of the matching row through its own box
+    np.testing.assert_allclose(seen, upsample_depths(depth[order], images, boxes[order, :4]))

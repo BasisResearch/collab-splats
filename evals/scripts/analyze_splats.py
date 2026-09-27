@@ -16,7 +16,6 @@ Usage (tmux, never a notebook):
 """
 
 import argparse
-import json
 import logging
 import shutil
 import time
@@ -31,6 +30,7 @@ from collab_splats.mesh.io import render_tsdf_inputs
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.splats.rendering import load_checkpoint, render_views
+from collab_splats.utils.io import to_uint8_hwc, write_json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -293,8 +293,7 @@ def main() -> None:
         depths = np.where(keep, depths, 0.0)
 
     # images is (N, 3, H, W) float in [0, 1]; fuse_tsdf takes (N, H, W, 3) uint8
-    rgbs = np.asarray(ff.images).transpose(0, 2, 3, 1)
-    rgbs = np.ascontiguousarray((np.clip(rgbs, 0.0, 1.0) * 255).round().astype(np.uint8))
+    rgbs = to_uint8_hwc(np.asarray(ff.images), channels_first=True)
 
     mesh_rows = [build_mesh("feedforward", (depths, rgbs, invert_poses(ff.extrinsics), ff.intrinsics), args.results)]
 
@@ -311,7 +310,7 @@ def main() -> None:
         "meshes": mesh_rows,
     }
     out_path = args.results / "analysis.json"
-    out_path.write_text(json.dumps(analysis, indent=2))
+    write_json(out_path, analysis)
     logger.info("Wrote %s", out_path)
     print()
     print(normals_table(normal_rows))

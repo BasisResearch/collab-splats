@@ -95,3 +95,48 @@ def test_rpe_nonzero_translation_error():
     pred = _make_poses(pred_t)
     result = rpe(pred, gt)
     assert result["trans_rmse"] > 0.05
+
+
+def _random_c2w(n: int, seed: int) -> np.ndarray:
+    """Non-identity camera-to-world poses: random rotations, spread-out centers."""
+    rng = np.random.default_rng(seed)
+    poses = np.tile(np.eye(4), (n, 1, 1))
+    poses[:, :3, :3] = R.random(n, random_state=seed).as_matrix()
+    poses[:, :3, 3] = rng.normal(scale=3.0, size=(n, 3))
+    return poses
+
+
+def test_rpe_is_zero_for_a_sim3_copy_of_gt():
+    """w2c input: a pred that is gt under a world Sim3 (scale 2.5, rotated, shifted) has no RPE."""
+    gt_c2w = _random_c2w(8, seed=0)
+    R_w = R.from_euler("xyz", [30, -50, 70], degrees=True).as_matrix()
+    s, t_w = 2.5, np.array([4.0, -1.0, 2.0])
+    pred_c2w = gt_c2w.copy()
+    pred_c2w[:, :3, :3] = R_w @ gt_c2w[:, :3, :3]
+    pred_c2w[:, :3, 3] = s * gt_c2w[:, :3, 3] @ R_w.T + t_w
+
+    result = rpe(np.linalg.inv(pred_c2w), np.linalg.inv(gt_c2w), delta=1)
+
+    assert result["trans_rmse"] < 1e-6
+    assert result["rot_rmse_deg"] < 1e-4
+
+
+def test_rpe_rotation_error_isolated_to_the_perturbed_frame():
+    """One frame rotated by theta about its own x axis: pairs (k-1,k) and (k,k+1) each err theta."""
+    n, k, theta = 8, 4, 5.0
+    gt_c2w = _random_c2w(n, seed=1)
+    pred_c2w = gt_c2w.copy()
+    R_x = R.from_euler("x", theta, degrees=True).as_matrix()
+    pred_c2w[k, :3, :3] = gt_c2w[k, :3, :3] @ R_x
+
+    result = rpe(np.linalg.inv(pred_c2w), np.linalg.inv(gt_c2w), delta=1)
+
+    # Two of the n-1 pairs carry theta, the rest zero
+    assert result["rot_rmse_deg"] == pytest.approx(theta * np.sqrt(2 / (n - 1)), rel=1e-6)
+
+    # Translation error lands on pair (k,k+1) only: frame k's center is unchanged
+    # - that pair's step, seen from camera k, turns by R_x: |R_x^T u - u|, u = R_k^T (c_{k+1} - c_k)
+    # - the wrong-frame formula (relative poses of w2c) gives a different value
+    u = gt_c2w[k, :3, :3].T @ (gt_c2w[k + 1, :3, 3] - gt_c2w[k, :3, 3])
+    expected_trans = np.linalg.norm(R_x.T @ u - u) / np.sqrt(n - 1)
+    assert result["trans_rmse"] == pytest.approx(expected_trans, rel=1e-6)

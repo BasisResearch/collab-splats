@@ -27,7 +27,6 @@ Output: summary table + evals/results/similarity_calibration.json
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import random
@@ -39,6 +38,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torchvision.transforms as T
+from PIL import Image
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -47,6 +47,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
+from collab_splats.utils.io import read_image, write_json
 
 ########################################
 ####### Aggregation helpers ############
@@ -137,14 +138,12 @@ def retrieve_pairs(
     salad = _load_salad_model(device)
     transform = _salad_input_transform()
 
-    from PIL import Image
-
     # Compute embeddings for all frames
     log.info("Computing SALAD embeddings for %d frames...", len(frames))
     embeddings: list[torch.Tensor] = []
     with torch.no_grad():
         for p in frames:
-            img = Image.open(p).convert("RGB")
+            img = Image.fromarray(read_image(p))
             t = transform(img).unsqueeze(0).to(device)
             emb = salad(t)  # (1, D)
             embeddings.append(emb.squeeze(0).cpu())
@@ -391,8 +390,7 @@ def main() -> None:
     if args.layer_index is not None:
         suffix += f"_layer{args.layer_index}"
     out_path = args.out.with_name(stem + suffix + args.out.suffix)
-    with open(out_path, "w") as f:
-        json.dump({"mode": args.mode, "layer_index_override": args.layer_index, "results": results}, f, indent=2)
+    write_json(out_path, {"mode": args.mode, "layer_index_override": args.layer_index, "results": results})
     log.info("Results → %s", out_path)
 
 

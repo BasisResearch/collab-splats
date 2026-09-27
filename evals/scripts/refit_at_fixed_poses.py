@@ -22,6 +22,8 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from collab_splats.utils.torch_utils import get_device
+
 NPZ = "evals/results/ba_start_at_gt/ba_inputs.npz"
 VIS_THRESH = 0.2
 BLOCK = 4096  # landmarks per chunk; (N, BLOCK, 2, 3) Jacobian is the memory driver
@@ -41,7 +43,7 @@ n_obs = int(vis.sum())
 print(f"observation set: {P:,} landmarks, {n_obs:,} observations across {N} frames")
 assert (P, n_obs) == (37257, 1966262), "observation set does not match the LM solve"
 
-dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+dev = torch.device(get_device())
 X_seed = torch.from_numpy(pts_seed).to(dev)
 obs_all = torch.from_numpy(tracks).to(dev)
 mask_all = torch.from_numpy(vis).to(dev)

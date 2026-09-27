@@ -13,6 +13,8 @@ import numpy as np
 import pycolmap
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
+from collab_splats.geometry.transforms import rescale_intrinsics
+
 from .feedforward.base import FeedforwardResult
 
 logger = logging.getLogger(__name__)
@@ -264,9 +266,9 @@ def result_from_reconstruction(
         )
     sx, sy = w / orig_w, h / orig_h
     intrinsics = np.stack([reconstruction.cameras[im.camera_id].calibration_matrix() for im in images_sorted])
-    intrinsics = intrinsics.astype(np.float32)
-    intrinsics[:, 0, :] *= sx
-    intrinsics[:, 1, :] *= sy
+
+    # Resize K from the keyframe grid to the depth grid; no crop, so no shift
+    intrinsics = rescale_intrinsics(intrinsics, (orig_h, orig_w), (h, w)).astype(np.float32)
 
     # Align VDA depth to the COLMAP world FIRST — world_points below must come from the aligned
     # depth (t is not scale-invariant, so scaled world points would be wrong).

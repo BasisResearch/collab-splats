@@ -384,3 +384,23 @@ def test_result_from_reconstruction_refuses_a_frames_to_depth_row_mismatch():
         depth_align.result_from_reconstruction(
             recon, depths, np.concatenate([images, images[:1]]), names, min_obs=1
         )
+
+
+def test_result_from_reconstruction_k_maps_back_through_its_box():
+    """
+    Stored K resized and shifted back through original_coords is the original K: one convention, not two.
+    """
+    from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
+
+    recon, depths, images, names = _scene_inputs(n=2)
+
+    out, _ = depth_align.result_from_reconstruction(recon, depths, images, names, min_obs=1)
+
+    fx, fy, cx, cy = K_PARAMS
+    K_orig = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
+    box = out.original_coords[:, :4]
+    crop_hw = np.stack([box[:, 3] - box[:, 1], box[:, 2] - box[:, 0]], axis=-1)
+    back = rescale_intrinsics(out.intrinsics, (DEPTH_H, DEPTH_W), crop_hw)
+    back = shift_intrinsics(back, box[:, :2])
+    assert out.intrinsics.dtype == np.float32
+    np.testing.assert_allclose(back, np.broadcast_to(K_orig, back.shape), rtol=1e-6)

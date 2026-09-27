@@ -125,3 +125,13 @@ def test_write_frames_png_compression_is_a_kwarg(tmp_path):
         return fr.write_frames(tmp_path / sub / "images", _frames(1, 64, 64), _records([0]), {}, **kw)[0].stat().st_size
 
     assert size("l0", png_compression=0) > size("default") > size("l9", png_compression=9)
+
+
+def test_read_frames_names_an_undecodable_frame(tmp_path):
+    """A zero-byte PNG must raise by path, not as an opaque cvtColor assert."""
+    images = tmp_path / "images"
+    images.mkdir()
+    (images / "frame_000000.png").write_bytes(b"")
+
+    with pytest.raises(FileNotFoundError, match="frame_000000.png"):
+        fr.read_frames(images)

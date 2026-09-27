@@ -66,6 +66,7 @@ from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 from collab_splats.pointcloud import get_creator
 from collab_splats.pointcloud.sfm import InstantSfMCreator
 from collab_splats.pointcloud.vda import generate_vda_depth, vda_depth_complete
+from collab_splats.utils.io import write_json
 
 # InstantSfM conditions: condition name -> use_depths. Classical global SfM (pycolmap
 # SIFT + InstantSfM global mapper), not a feedforward backbone — --backbone and --submap_size
@@ -422,7 +423,7 @@ def _save_outputs(
         # LC summary: number of accepted loop-closure submaps applied.
         if "n_loops_applied" in m:
             metrics_json[cond]["n_loops_applied"] = m["n_loops_applied"]
-    (output_dir / "metrics.json").write_text(json.dumps(metrics_json, indent=2))
+    write_json(output_dir / "metrics.json", metrics_json)
 
     # trajectories.npz — poses + pre-computed per-frame ATE for notebook
     npz_data = {"gt": trajectories["gt"]}
@@ -598,15 +599,14 @@ def _subprocess_mode(args: argparse.Namespace) -> None:
     )
     elapsed = time.perf_counter() - t0
 
-    args._result_file.write_text(
-        json.dumps(
-            {
-                "extrinsics": pred.tolist(),
-                "time_s": round(elapsed, 2),
-                "backbone": backbone,
-                "n_loops_applied": n_loops_applied,
-            }
-        )
+    write_json(
+        args._result_file,
+        {
+            "extrinsics": pred.tolist(),
+            "time_s": round(elapsed, 2),
+            "backbone": backbone,
+            "n_loops_applied": n_loops_applied,
+        },
     )
     print(f"  time={elapsed:.1f}s")
 
@@ -667,7 +667,7 @@ def _run_grid(config_path: Path, dry_run: bool = False) -> None:
     rows = collect_grid_metrics(cfg.output_dir)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     (cfg.output_dir / "comparison.md").write_text(format_markdown_rows(rows))
-    (cfg.output_dir / "comparison.json").write_text(json.dumps(rows, indent=2))
+    write_json(cfg.output_dir / "comparison.json", rows)
     print(f"Aggregated {len(rows)} cells -> {cfg.output_dir}/comparison.md")
 
 
@@ -858,7 +858,7 @@ def main() -> None:
     if args.output_ate is not None:
         ate_by_condition = {c: m["ate"]["rmse"] for c, m in metrics.items()}
         args.output_ate.parent.mkdir(parents=True, exist_ok=True)
-        args.output_ate.write_text(json.dumps(ate_by_condition, indent=2))
+        write_json(args.output_ate, ate_by_condition)
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ These tasks are started but not complete — do not assume their targets are don
 - **sky-mask** — ONNX sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
-- **consistency** — dedup audit; phase 1 = convention bugs (RPE frame, crop-box K, MapAnything box, NaN JSON, PNG ids, DB provenance) on worktree `.worktrees/consistency` / branch `clean/consistency`; phases 2-3 (utils/io.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md))
+- **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
 
 ## Recently Completed
 
@@ -71,7 +71,7 @@ collab_splats/
     utils.py               # lift_features, reproject_pixels, clean_pointcloud, confidence_mask, subsample_points
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
     transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV, project_to_so3,
-                           #   decompose_camera, intrinsics_4x4, intrinsics_to_original
+                           #   decompose_camera, intrinsics_4x4, rescale_intrinsics, shift_intrinsics
     bundle_adjustment.py   # Levenberg-Marquardt BA: array-in refine, check_model_resolution
     metrics.py             # compute_reconstruction_quality -> reconstruction_quality_report.json
     loop_closure/          # submap pose graph (SL4/SE3), DINO-SALAD retrieval gate, LoopClosure wrapper

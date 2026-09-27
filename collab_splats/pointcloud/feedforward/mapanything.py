@@ -104,6 +104,37 @@ _MA_RESIZE_MODE_MAP: dict[str, str] = {
 }
 
 
+def _mapanything_crop_coords(frame_hw: list[tuple[int, int]], model_w: int, model_h: int) -> np.ndarray:
+    """
+    Crop box of MapAnything's loader per frame, in original pixels.
+
+    - upstream: facebookresearch/map-anything @ c845b8f, mapanything/utils/cropping.py:231-240
+      (scale = max(target / size) + 1e-8, floored resize) and :441-447 (centered crop)
+    - force=True upstream (cropping.py:193): smaller frames are upscaled, never left as-is
+    - box arithmetic follows upstream's intrinsics-derived scale (max(target / size) + 1e-8,
+      the same scale `camera_matrix_of_crop` uses), not PIL's per-axis pixel ratio rw / w —
+      the two differ by at most a few px at 4K
+
+    Args:
+        frame_hw: (height, width) of each original frame.
+        model_w: model grid width.
+        model_h: model grid height.
+
+    Returns:
+        (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h].
+    """
+    rows = []
+    for h, w in frame_hw:
+        # Resize so the image covers the target, as upstream does
+        scale = max(model_w / w, model_h / h) + 1e-8
+        rw, rh = int(np.floor(w * scale)), int(np.floor(h * scale))
+
+        # Centered crop on the resized grid, mapped back to original pixels
+        left, top = (rw - model_w) // 2, (rh - model_h) // 2
+        rows.append([left / scale, top / scale, (left + model_w) / scale, (top + model_h) / scale, w, h])
+    return np.array(rows, dtype=np.float32)
+
+
 @dataclass
 class MapAnythingCreator(BaseFeedforwardCreator):
     """
@@ -222,11 +253,8 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         model_h: int = views[0]["img"].shape[-2]
         model_w: int = views[0]["img"].shape[-1]
 
-        # Original image dimensions come from each frame's own (H, W)
-        original_coords = np.array(
-            [[0, 0, model_w, model_h, int(f.shape[1]), int(f.shape[0])] for f in frames],
-            dtype=np.float32,
-        )
+        # Crop box in original pixels, reproducing load_images' resize-then-center-crop
+        original_coords = _mapanything_crop_coords([f.shape[:2] for f in frames], model_w, model_h)
 
         # Validate views against MapAnything's input requirements, then convert
         # - target is the internal format model.forward() expects (ray directions,

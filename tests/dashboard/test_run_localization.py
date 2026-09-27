@@ -7,11 +7,13 @@ import numpy as np
 import pytest
 import yaml
 import zarr
+from PIL import Image
 
 import collab_splats.dashboard.pipeline as pipeline
 from collab_splats.dashboard.config import LocalizationConfig
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.localization.localizer import LocalizationResult
+from collab_splats.utils.io import read_image
 
 # Flat curated scene id — the reconstruction being localized against.
 SCENE = "2024_02_06-office-vid"
@@ -250,3 +252,62 @@ def test_stamp_db_provenance_writes_attrs(tmp_path):
     assert g.attrs["backbone"] == "vggtx"
     assert g.attrs["frame_indices"] == [0, 5, 10]
     assert g.attrs["extractor"] == "loma-g"
+
+
+def test_ref_paths_resolve_jpg_ids_to_png_store_files(tmp_path, wired):
+    """Reconstruction ids end in .jpg; images/ holds .png. The resolved path must exist."""
+    images_dir = tmp_path / SCENE / "images"
+    images_dir.mkdir(parents=True)
+    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images_dir / "00000.png")
+
+    out, _ = _run(tmp_path, wired)
+
+    assert out.ref_image_paths[0] == images_dir / "00000.png"
+    assert out.ref_image_paths[1] == images_dir / "00001.jpg"  # no file on disk: label kept
+
+
+def test_appended_query_frame_is_lossless_png(tmp_path, wired, monkeypatch):
+    """The query frame written for the DB decodes byte-identical to the array localized."""
+    noise = np.random.default_rng(0).integers(0, 256, size=(48, 64, 3), dtype=np.uint8)
+    monkeypatch.setattr(pipeline, "extract_frame", lambda video, idx: noise)
+
+    _run(tmp_path, wired, append=True)
+
+    (saved,) = (tmp_path / SCENE / "localized_frames").iterdir()
+    assert saved.suffix == ".png"
+    np.testing.assert_array_equal(np.asarray(Image.open(saved)), noise)
+
+
+def test_build_localizer_decodes_ref_frames_ignoring_exif_orientation(tmp_path, monkeypatch):
+    """DB ref frames decode through read_image in stored-pixel order, as the feedforward loaders do."""
+    # 20x40 JPEG tagged EXIF orientation 6: an EXIF-following decode would give 40x20
+    jpg = tmp_path / "rotated.jpg"
+    pixels = np.zeros((20, 40, 3), np.uint8)
+    pixels[:, :10] = 255
+    im = Image.fromarray(pixels)
+    exif = im.getexif()
+    exif[0x0112] = 6
+    im.save(jpg, exif=exif, quality=95)
+
+    # Capture the images genexpr handed to from_feedforward; the matcher is never built for real
+    seen = {}
+
+    class _Capture:
+        @staticmethod
+        def from_feedforward(result, *, images, ids, **kwargs):
+            seen["images"] = list(images)
+            seen["ids"] = ids
+            return MagicMock()
+
+    monkeypatch.setattr("collab_splats.localization.CameraLocalizer", _Capture)
+    monkeypatch.setattr("collab_splats.localization.extractors.LocalMatcher", MagicMock())
+
+    result = MagicMock(image_paths=[str(jpg)])
+    pipeline._build_localizer(
+        result, LocalizationConfig(matcher="disk-lightglue"), tmp_path / "db.zarr", OperationLog()
+    )
+
+    (decoded,) = seen["images"]
+    assert decoded.shape == (20, 40, 3)
+    np.testing.assert_array_equal(decoded, read_image(jpg))
+    assert seen["ids"] == ["rotated.jpg"]

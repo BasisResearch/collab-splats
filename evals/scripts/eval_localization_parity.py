@@ -22,7 +22,6 @@ Usage (tmux, never a notebook — GPU compute):
 """
 
 import argparse
-import json
 import logging
 import time
 from datetime import datetime
@@ -34,6 +33,7 @@ import torch
 from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.localizer import CameraLocalizer
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.utils.io import to_uint8_hwc, write_json
 from collab_splats.utils.torch_utils import pytorch_gc
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -104,14 +104,20 @@ def _stats(vals: list[float]) -> dict | None:
     return {"n": int(v.size), "median": float(np.median(v)), "p90": float(np.percentile(v, 90))}
 
 
-def _model_res_images(ff_images) -> list[np.ndarray]:
-    """ff.images (N,3,H,W) tensor -> list of HWC uint8 RGB (mirrors _build_pairwise_refs)."""
-    imgs = ff_images.detach().cpu().numpy() if torch.is_tensor(ff_images) else np.asarray(ff_images)
-    if imgs.ndim == 4 and imgs.shape[1] == 3 and imgs.shape[-1] != 3:
-        imgs = imgs.transpose(0, 2, 3, 1)
-    if imgs.max() <= 1.5:  # MapAnything stores [0, 1]; VGGT stores [0, 255]
-        imgs = imgs * 255.0
-    return [im.astype(np.uint8) for im in np.round(imgs)]
+def _model_res_images(ff_images: torch.Tensor | np.ndarray) -> list[np.ndarray]:
+    """
+    Model-res reference images, built exactly as _build_pairwise_refs builds them.
+
+    - a tensor is lifted to float32 first: VGGT-X keeps bf16, which numpy cannot hold
+
+    Args:
+        ff_images: ff.images, (N, 3, H, W) float in [0, 1].
+
+    Returns:
+        N (H, W, 3) uint8 RGB arrays.
+    """
+    imgs = ff_images.detach().float().cpu().numpy() if torch.is_tensor(ff_images) else np.asarray(ff_images)
+    return list(to_uint8_hwc(imgs, channels_first=True))
 
 
 ########################################
@@ -255,7 +261,7 @@ def main() -> None:
         "anchors": _ANCHORS,
         "matchers": results,
     }
-    out.write_text(json.dumps(report, indent=2, default=float))
+    write_json(out, report)
     logger.info("Report: %s", out)
 
 

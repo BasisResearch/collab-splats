@@ -342,3 +342,22 @@ def test_save_omits_keypoints_normalized_when_any_frame_lacks_it(tmp_path):
     _localizer_replaying(feats).save_index(tmp_path / "ff.zarr", "loma")
     loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
     assert all(f.keypoints_normalized is None for f in loaded)
+
+
+def test_build_pairwise_refs_rejects_0_255_images(monkeypatch):
+    """The old <=1.5 guess silently rescaled; a [0, 255] tensor is now a named error."""
+    monkeypatch.setattr(BaseRetrievalExtractor, "get", lambda name: pytest.fail("retrieval reached"))
+    with pytest.raises(ValueError, match=r"\[0, 1\]"):
+        CameraLocalizer._build_pairwise_refs(torch.full((1, 3, 4, 4), 200.0))
+
+
+def test_build_pairwise_refs_accepts_bf16_images(monkeypatch):
+    """VGGT-X keeps images as a bf16 tensor, which numpy cannot hold; refs still come out uint8."""
+    retrieval = MagicMock()
+    retrieval.forward.return_value = torch.ones(1, 4)
+    monkeypatch.setattr(BaseRetrievalExtractor, "get", lambda name: lambda: retrieval)
+
+    ref_images, _, _ = CameraLocalizer._build_pairwise_refs(torch.full((1, 3, 4, 4), 0.5, dtype=torch.bfloat16))
+    assert ref_images[0].shape == (4, 4, 3)
+    assert ref_images[0].dtype == np.uint8
+    assert (ref_images[0] == 128).all()

@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from kornia.feature import match_mnn
 
+from collab_splats.utils.torch_utils import get_device
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +121,7 @@ class LocalMatcher:
         import vismatch
 
         self._model_name = model_name
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = device or get_device()
         self._matcher = vismatch.get_matcher(model_name, device=self._device)
         # Loma split: extract-once/match-from-features fast path (spec §2). One wrapper
         # class, one boolean — byte-parity with the plain forward is enforced by GPU suite tests.

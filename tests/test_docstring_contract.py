@@ -7,8 +7,8 @@ The documentation contract for the cleaned-up packages.
 - every parameter and return is annotated in the SIGNATURE and named (without a
   duplicated type) in the docstring
 - multi-line ``#`` comment runs state the problem, then bullet the detail
-- extend PACKAGES as the remaining modules are cleaned up
-- release checks (017) run on every file and must pass for packages in RELEASED
+- extend PACKAGES (or MODULES, for one file) as the remaining modules are cleaned up
+- release checks (017) run on every file and must pass for packages in RELEASED and for MODULES
 """
 
 import ast
@@ -20,6 +20,9 @@ import tokenize
 import pytest
 
 PACKAGES = ("preproc", "semantics", "pointcloud", "geometry")
+
+# Single modules held to the contract, release checks included, before their whole package is
+MODULES = ("utils/io.py",)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -35,7 +38,7 @@ MIN_RUN = 3
 
 def _sources() -> list[pathlib.Path]:
     """
-    Every .py file in the packages the contract covers.
+    Every .py file in the packages the contract covers, plus its single MODULES.
 
     Returns:
         Paths, sorted, relative to the repo root.
@@ -43,6 +46,7 @@ def _sources() -> list[pathlib.Path]:
     out = []
     for pkg in PACKAGES:
         out += sorted((ROOT / "collab_splats" / pkg).rglob("*.py"))
+    out += [ROOT / "collab_splats" / m for m in MODULES]
     return out
 
 
@@ -453,15 +457,17 @@ RELEASE_CHECKS = {
 
 def _release_params() -> list:
     """
-    One param per (file, check); files outside RELEASED are known failures.
+    One param per (file, check); files outside RELEASED and MODULES are known failures.
 
     Returns:
         pytest params with ids "<file>::<check>".
     """
     params = []
     for path, pid in zip(SOURCES, SOURCE_IDS):
-        pkg = path.relative_to(ROOT / "collab_splats").parts[0]
-        marks = [] if pkg in RELEASED else [pytest.mark.xfail(strict=False, reason=f"{pkg}: release cleanup pending")]
+        rel = path.relative_to(ROOT / "collab_splats")
+        pkg = rel.parts[0]
+        released = pkg in RELEASED or str(rel) in MODULES
+        marks = [] if released else [pytest.mark.xfail(strict=False, reason=f"{pkg}: release cleanup pending")]
         for name in RELEASE_CHECKS:
             params.append(pytest.param(path, name, marks=marks, id=f"{pid}::{name}"))
     return params

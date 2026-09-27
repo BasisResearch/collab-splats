@@ -41,7 +41,12 @@ from collab_splats.geometry.metrics import (
     bounded_residual,
     residual_bin_edges,
 )
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+from collab_splats.geometry.transforms import (
+    extrinsics_to_homogeneous,
+    invert_poses,
+    rescale_intrinsics,
+    shift_intrinsics,
+)
 from collab_splats.preproc import frames as fr
 
 from ..base import BasePointcloudCreator, PointcloudResult
@@ -879,41 +884,50 @@ def build_pycolmap_reconstruction(
     return recon
 
 
+# pycolmap param positions per camera model: (focal idxs, principal-point idxs)
+# - mirrors Camera.focal_length_idxs() / principal_point_idxs(); a test pins the match
+# - a table, not the pycolmap calls, because the rescale is duck-typed over the camera
+_CAMERA_PARAM_IDXS: dict[str, tuple[list[int], list[int]]] = {
+    "SIMPLE_PINHOLE": ([0], [1, 2]),
+    "PINHOLE": ([0, 1], [2, 3]),
+    "SIMPLE_RADIAL": ([0], [1, 2]),
+    "RADIAL": ([0], [1, 2]),
+    "OPENCV": ([0, 1], [2, 3]),
+    "OPENCV_FISHEYE": ([0, 1], [2, 3]),
+}
+
+
 def _rescale_reconstruction_to_original_dimensions(
     reconstruction: Any,
     image_paths: list[Path],
     original_image_sizes: np.ndarray,
     image_size: tuple[int, int],
-    shared_camera: bool = False,
-    shift_point2d_to_original_res: bool = False,
     verbose: bool = False,
 ) -> Any:
-    """Rescale a reconstruction from model resolution to original image dimensions.
+    """
+    Map a model-resolution reconstruction's cameras to original pixels.
 
-    Feedforward models run inference at a fixed resolution (e.g. 518px). This
-    function maps camera intrinsics and image dimensions back to the original
-    image size so the reconstruction is metrically consistent with the source data.
+    - feedforward models infer on a fixed grid (e.g. 518px) after a crop-then-resize
+    - K goes through the crop box: f / s, c / s + tl, with s = model / crop per axis
+    - only focal and principal-point params change; distortion params are left as-is
+    - Point2D observations are untouched: feedforward reconstructions carry none
 
     Args:
-        reconstruction:             pycolmap Reconstruction object.
-        image_paths:                List of Path objects for the images.
-        original_image_sizes:       (N, 6) array with format
-                                    [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h].
-        image_size:                 Model inference resolution as (width, height).
-        shared_camera:              If True, use a single shared camera for all images.
-        shift_point2d_to_original_res: If True, shift Point2D observations to original res.
-        verbose:                    Print progress if True.
+        reconstruction: pycolmap Reconstruction, mutated in place.
+        image_paths: image paths, indexed by image_id - 1.
+        original_image_sizes: (N, 6) [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], crop in original pixels.
+        image_size: model inference resolution as (width, height).
+        verbose: log progress if True.
+
+    Returns:
+        The same reconstruction, rescaled.
     """
     if verbose:
         original_width, original_height = original_image_sizes[0, -2:]
         console.log(f"Rescaling reconstruction from {image_size[0]}x{image_size[1]} " f"to original dimensions")
         console.log(f"  Original image sizes (WxH): {int(original_width)}x{int(original_height)}")
 
-    # Initialize per-loop shared-camera bookkeeping (used only when shared_camera=True)
-    rescale_camera = True
-    shared_intrinsics = None
-    shared_width = None
-    shared_height = None
+    model_hw = (image_size[1], image_size[0])
 
     # Rescale intrinsics and image dimensions for each frame
     for pyimageid in reconstruction.images:
@@ -922,51 +936,33 @@ def _rescale_reconstruction_to_original_dimensions(
 
         pyimage.name = image_paths[pyimageid - 1].name
 
+        box = original_image_sizes[pyimageid - 1]
+        real_image_size = box[-2:]
+
+        # Model-grid K from the camera params
+        focal_idxs, pp_idxs = _CAMERA_PARAM_IDXS[pycamera.model.name]
         pred_params = copy.deepcopy(pycamera.params)
+        K = np.eye(3)
+        K[0, 0], K[1, 1] = pred_params[focal_idxs[0]], pred_params[focal_idxs[-1]]
+        K[0, 2], K[1, 2] = pred_params[pp_idxs[0]], pred_params[pp_idxs[1]]
 
-        real_image_size = original_image_sizes[pyimageid - 1, -2:]
-        # scale_x/scale_y: ratio of original image size to model inference size
-        # - multiplying camera params by them maps model-resolution pixel coordinates back
-        #   to original-resolution pixel coordinates
-        scale_x = real_image_size[0] / image_size[0]
-        scale_y = real_image_size[1] / image_size[1]
+        # Undo the resize: K from the model grid to the crop's (H, W) size
+        crop_hw = (box[3] - box[1], box[2] - box[0])
+        K = rescale_intrinsics(K, model_hw, crop_hw)
 
-        if rescale_camera and (not shared_camera or shared_intrinsics is None):
-            if pycamera.model.name == "SIMPLE_PINHOLE":
-                pred_params[0] *= max(scale_x, scale_y)
-            elif pycamera.model.name in ("PINHOLE", "OPENCV", "RADIAL", "OPENCV_FISHEYE"):
-                pred_params[0] *= scale_x
-                pred_params[1] *= scale_y
+        # Undo the crop: move the principal point by the crop's top-left corner
+        K = shift_intrinsics(K, box[:2])
 
-            pred_params[-2] *= scale_x
-            pred_params[-1] *= scale_y
+        # Write K back; single-focal models keep the larger axis focal, as before
+        if len(focal_idxs) == 1:
+            pred_params[focal_idxs[0]] = max(K[0, 0], K[1, 1])
+        else:
+            pred_params[focal_idxs[0]], pred_params[focal_idxs[1]] = K[0, 0], K[1, 1]
+        pred_params[pp_idxs[0]], pred_params[pp_idxs[1]] = K[0, 2], K[1, 2]
 
-            if shared_camera:
-                shared_intrinsics = pred_params
-                shared_width = int(real_image_size[0])
-                shared_height = int(real_image_size[1])
-
-                pycamera.params = shared_intrinsics
-                pycamera.width = shared_width
-                pycamera.height = shared_height
-            else:
-                pycamera.params = pred_params
-                pycamera.width = int(real_image_size[0])
-                pycamera.height = int(real_image_size[1])
-
-        # Propagate shared intrinsics to subsequent frames when shared_camera=True
-        if shared_camera and shared_intrinsics is not None:
-            pycamera.params = shared_intrinsics
-            pycamera.width = shared_width
-            pycamera.height = shared_height
-
-        # Shift Point2D observations from model-resolution to original-resolution coords
-        if shift_point2d_to_original_res:
-            top_left = original_image_sizes[pyimageid - 1, :2]
-            scale_x = real_image_size[0] / image_size[0]
-            scale_y = real_image_size[1] / image_size[1]
-            for point2D in pyimage.points2D:
-                point2D.xy = (point2D.xy - top_left) * np.array([scale_x, scale_y])
+        pycamera.params = pred_params
+        pycamera.width = int(real_image_size[0])
+        pycamera.height = int(real_image_size[1])
 
     if verbose:
         console.log("Rescaled reconstruction to original dimensions")

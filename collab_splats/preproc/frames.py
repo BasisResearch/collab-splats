@@ -15,7 +15,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from collab_splats.utils.io import write_json
+from collab_splats.utils.io import read_image, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ def read_frames(dir: Path | str, idxs: Sequence[int] | None = None) -> np.ndarra
             raise KeyError(f"read_frames: frame_idx {missing[:5]} not in {dir}")
         paths = [by_idx[int(i)] for i in idxs]
 
-    return np.stack([cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in paths])
+    return np.stack([read_image(p) for p in paths])
 
 
 def read_manifest(dir: Path | str) -> dict:

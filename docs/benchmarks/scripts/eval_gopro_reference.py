@@ -36,7 +36,6 @@ Used for `docs/benchmarks/2026-08-14-loger-vs-omega-gopro.md`.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
@@ -65,6 +64,7 @@ from trajectory_io import write_tum
 
 sys.path.insert(0, str(_REPO_ROOT))
 from collab_splats.geometry.transforms import invert_poses
+from collab_splats.utils.io import write_json
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +237,7 @@ def main() -> None:
                 np.linalg.norm(np.diff(positions_ref, axis=0), axis=1).sum()
             ),
         }
-        (args.results_dir / f"{name}_alignment.json").write_text(json.dumps(sidecar, indent=2))
+        write_json(args.results_dir / f"{name}_alignment.json", sidecar)
         logger.info(
             "%s: rel-rot median %.3f deg (floor %.3f, %s), path %.2f vs %.2f m GPS",
             name, median, floor, "fit OK" if fit_ok else "FIT SUSPECT",

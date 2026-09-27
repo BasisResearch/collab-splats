@@ -5,7 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import matplotlib.figure
 import numpy as np
+from PIL import Image
 
 from collab_splats.dashboard.config import LocalizationConfig
 from collab_splats.dashboard.localize import (
@@ -17,6 +19,7 @@ from collab_splats.dashboard.localize import (
 )
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.preproc import frames as fr
+from collab_splats.utils.io import read_image
 
 # Flat curated scene ids: reconstruction scene + the scene supplying the query video.
 SCENE = "2026_05_07-birds-clip_03"
@@ -47,6 +50,36 @@ def test_camera_centers_inverts_world_to_camera():
     ext[0, :3, 3] = [-1.0, -2.0, -3.0]
     centers = camera_centers(ext)
     np.testing.assert_allclose(centers[0], [1.0, 2.0, 3.0], atol=1e-6)
+
+
+def _rot(axis: str, deg: float) -> np.ndarray:
+    """Right-handed rotation about one coordinate axis."""
+    c, s = np.cos(np.radians(deg)), np.sin(np.radians(deg))
+    i, j = {"x": (1, 2), "y": (2, 0), "z": (0, 1)}[axis]
+    R = np.eye(3)
+    R[i, i], R[i, j], R[j, i], R[j, j] = c, -s, s, c
+    return R
+
+
+def test_camera_centers_uses_the_rotation_transpose():
+    # Two cameras with dense, non-symmetric rotations, so every wrong convention differs
+    # - -R t (no transpose), +R^T t (sign), t (reads w2c as c2w) all miss the centers
+    centers_true = np.array([[1.0, 2.0, 3.0], [-4.0, 0.5, 2.5]])
+    rotations = [_rot("z", 30) @ _rot("x", 50) @ _rot("y", -20), _rot("y", 110) @ _rot("x", -35)]
+    ext = np.tile(np.eye(4), (2, 1, 1))
+    for k, (R, c) in enumerate(zip(rotations, centers_true)):
+        ext[k, :3, :3] = R
+        ext[k, :3, 3] = -R @ c
+
+    # Guard the fixture itself: the wrong conventions really are far from the truth
+    for wrong in (
+        -np.einsum("nij,nj->ni", ext[:, :3, :3], ext[:, :3, 3]),
+        np.einsum("nji,nj->ni", ext[:, :3, :3], ext[:, :3, 3]),
+        ext[:, :3, 3],
+    ):
+        assert np.abs(wrong - centers_true).max() > 0.5
+
+    np.testing.assert_allclose(camera_centers(ext), centers_true, atol=1e-12)
 
 
 def test_subsample_step_thresholds():
@@ -514,3 +547,56 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
         assert len(q_px) == len(r_px) == len(mask)
     # Reconstruction frame came from images/ (known pixel value), not the localized JPG
     assert np.array_equal(calls[0][0], store_pixels)
+
+
+def test_build_result_figures_decodes_localized_ref_ignoring_exif_orientation(tmp_path, monkeypatch):
+    """A localized ref JPEG decodes through read_image in stored-pixel order, EXIF tag ignored."""
+    page = _page(tmp_path)
+
+    # Capture the ref array plot_correspondences receives
+    calls = []
+
+    def _capture(query_image, ref_image, *args, **kwargs):
+        calls.append(ref_image)
+        return matplotlib.figure.Figure()
+
+    monkeypatch.setattr(
+        "collab_splats.localization.viz.plot_inlier_distribution",
+        lambda ref_frame_indices, inlier_mask, n_frames=0, frame_sources=None: matplotlib.figure.Figure(),
+    )
+    monkeypatch.setattr("collab_splats.localization.viz.plot_correspondences", _capture)
+
+    # 20x40 JPEG tagged EXIF orientation 6: an EXIF-following decode would give 40x20
+    jpg = tmp_path / "localized_0001.jpg"
+    pixels = np.zeros((20, 40, 3), np.uint8)
+    pixels[:, :10] = 255
+    im = Image.fromarray(pixels)
+    exif = im.getexif()
+    exif[0x0112] = 6
+    im.save(jpg, exif=exif, quality=95)
+
+    # One localized ref (disk branch) owning one correspondence
+    loc = SimpleNamespace(
+        pose=np.eye(4, dtype=np.float32),
+        n_correspondences=1,
+        n_inliers=1,
+        pts2d=np.array([[0, 0]], np.float32),
+        pts2d_ref=np.array([[1, 1]], np.float32),
+        ref_frame_indices=np.array([0], np.int32),
+        inlier_mask=np.array([True]),
+        ranked_ref_frames=[0],
+    )
+    out = SimpleNamespace(
+        result=loc,
+        query_frame=np.zeros((4, 4, 3), np.uint8),
+        query_intrinsics=500.0 * np.eye(3, dtype=np.float32),
+        intrinsics_source="estimated (experimental)",
+        ref_image_paths=[str(jpg)],
+        ref_extrinsics=np.eye(4, dtype=np.float32)[None],
+        frame_sources=["localized"],
+    )
+    page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"))
+
+    (ref_image,) = calls
+    assert ref_image.shape == (20, 40, 3)
+    np.testing.assert_array_equal(ref_image, read_image(jpg))

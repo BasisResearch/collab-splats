@@ -125,6 +125,7 @@ def test_splats_depth_targets_skip_masking_when_confidence_absent(tmp_path, capl
         image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(2)],
         depth=np.ones((2, 4, 4), dtype=np.float32),
         confidence=None,
+        original_coords=np.tile(np.array([0, 0, 4, 4, 4, 4], np.float32), (2, 1)),  # full-frame box
     )
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
 
@@ -136,5 +137,5 @@ def test_splats_depth_targets_skip_masking_when_confidence_absent(tmp_path, capl
         recon.splats()
 
     depth_targets = train.call_args.kwargs["depth_targets"]
-    np.testing.assert_array_equal(depth_targets, feedforward.depth)  # unmasked
+    np.testing.assert_allclose(depth_targets, feedforward.depth, rtol=1e-6)  # unmasked
     assert any("no confidence" in r.message for r in caplog.records)

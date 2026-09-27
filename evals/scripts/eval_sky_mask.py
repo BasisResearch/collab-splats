@@ -10,7 +10,6 @@ A/B one scene's mesh with and without mesh.mask_sky.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import shutil
 from pathlib import Path
@@ -22,6 +21,7 @@ import yaml
 
 from collab_splats.preproc import frames
 from collab_splats.semantics.segmentation import sky_masks
+from collab_splats.utils.io import read_image, write_json
 from collab_splats.wrapper.reconstructor import Reconstructor
 from evals.scripts.analyze_splats import mesh_stats
 
@@ -162,7 +162,7 @@ def write_mask_contact_sheet(images_dir: Path, out_path: Path, stride: int = 10)
 
     tiles = []
     for path, idx, mask in zip(paths, idxs, masks):
-        rgb = cv2.cvtColor(cv2.imread(str(path)), cv2.COLOR_BGR2RGB)
+        rgb = read_image(path)
 
         composite = rgb.copy()
         composite[mask] = (0.25 * rgb[mask] + 0.75 * np.array([255, 0, 0], np.float32)).astype(np.uint8)
@@ -239,7 +239,7 @@ def main() -> None:
     recon = load_recon(args.config, mask_sky=True)
     write_mask_contact_sheet(recon.images_dir, args.results / "sky_masks.png", stride=args.stride)
 
-    (args.results / "stats.json").write_text(json.dumps({"off": off, "on": on}, indent=2))
+    write_json(args.results / "stats.json", {"off": off, "on": on})
     table = comparison_table(off, on)
     (args.results / "table.md").write_text(table)
     print(table)

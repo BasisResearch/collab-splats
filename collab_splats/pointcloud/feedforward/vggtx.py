@@ -72,10 +72,11 @@ def _compute_vggtx_crop_coords(
         new_h = round(new_h_raw / 14) * 14  # divisible-by-14 rounding used upstream
 
         if new_h > target_size:
-            # Height crop applied — map crop boundaries back to original-image pixels
+            # Height crop applied; the resized height is new_h, so y scales by new_h / orig_h
+            sy = new_h / orig_h
             start_y_resized = (new_h - target_size) // 2
-            tl_y = start_y_resized / scale
-            cr_y = (start_y_resized + target_size) / scale
+            tl_y = start_y_resized / sy
+            cr_y = (start_y_resized + target_size) / sy
         else:
             tl_y = 0.0
             cr_y = float(orig_h)

@@ -12,7 +12,7 @@ from salad.models_salad.aggregators.salad import SALAD
 from salad.models_salad.backbones.dinov2 import DINOv2
 
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
-from collab_splats.utils.torch_utils import RegistryMixin
+from collab_splats.utils.torch_utils import RegistryMixin, get_device
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
 
     def __init__(self, device: str | None = None):
         super().__init__()
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = device or get_device()
 
         # Attr names match VPRModel so dino_salad.ckpt keys (backbone.* / aggregator.*) load cleanly
         self.backbone = DINOv2(
@@ -122,7 +122,7 @@ class PECLIPExtractor(BaseRetrievalExtractor):
 
     def __init__(self, model_id: str = _MODEL_ID, device: str | None = None):
         super().__init__()
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = device or get_device()
         self._model, _, self._preprocess = open_clip.create_model_and_transforms(model_id)
         self._model.to(self._device)
         self._model.eval()

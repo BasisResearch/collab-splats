@@ -77,7 +77,7 @@ Every task was dry-run in a `git archive` copy of `clean/final` (scratch, no git
 
 **Files:** none (setup only)
 
-- [ ] **Step 1: Check for in-progress git operations and create the worktree**
+- [x] **Step 1: Check for in-progress git operations and create the worktree**
 
 ```bash
 cd /workspace/collab-splats && ls .git/sequencer 2>/dev/null; git status --short | head
@@ -88,13 +88,13 @@ git -C .worktrees/consistency log --oneline -1
 Expected: no `sequencer` listing; the worktree log line shows the current `clean/final` tip. Write that SHA
 into the "Fork point" line at the bottom of this plan (commit it on `clean/consistency` in Task 12).
 
-- [ ] **Step 2: Symlink gitignored third_party so guarded tests do not skip**
+- [x] **Step 2: Symlink gitignored third_party so guarded tests do not skip**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && mkdir -p third_party && for d in /workspace/collab-splats/third_party/*; do ln -sfn "$d" third_party/; done && ls third_party
 ```
 
-- [ ] **Step 3: Out-of-tree stubs for the venv gaps**
+- [x] **Step 3: Out-of-tree stubs for the venv gaps**
 
 ```bash
 mkdir -p /tmp/claude-0/consistency-stubs/nvdiffrast && touch /tmp/claude-0/consistency-stubs/nvdiffrast/__init__.py /tmp/claude-0/consistency-stubs/nvdiffrast/torch.py && cat > /tmp/claude-0/consistency-stubs/consistency_stubs.py <<'PY'
@@ -117,7 +117,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0
 
 Expected: the three files collect and run (a summary line, not a collection error).
 
-- [ ] **Step 4: Record the control gate on the fork point**
+- [x] **Step 4: Record the control gate on the fork point**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -c "import collab_splats; print(collab_splats.__file__)" && for p in evals geometry pointcloud localization dashboard wrapper; do echo "== $p"; PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/$p -q -p no:cacheprovider 2>&1 | grep -E "passed|failed|error" | tail -1; done | tee /tmp/claude-0/consistency-control.txt
@@ -137,7 +137,7 @@ These are the baseline. Task 12 diffs against them; only a new failure blocks.
 - Modify: `evals/trajectory_metrics.py:1-6` (module docstring), `:76-104` (`rpe`)
 - Test: `tests/evals/test_trajectory_metrics.py` (append)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/evals/test_trajectory_metrics.py`:
 
@@ -179,7 +179,7 @@ def test_rpe_rotation_error_isolated_to_the_perturbed_frame():
     assert result["rot_rmse_deg"] == pytest.approx(theta * np.sqrt(2 / (n - 1)), rel=1e-6)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/evals/test_trajectory_metrics.py -q -k "sim3_copy or perturbed_frame"
@@ -189,7 +189,7 @@ Expected: `test_rpe_is_zero_for_a_sim3_copy_of_gt` FAILS (measured: trans_rmse 1
 perturbed-frame test PASSES on old code — it pins the rotation formula, it is not the bug detector.
 If the Sim3 test passes, stop: the fixture cannot see the bug; fix the fixture first.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `evals/trajectory_metrics.py`, change the module docstring's last bullet to:
 
@@ -253,7 +253,7 @@ def rpe(pred: np.ndarray, gt: np.ndarray, delta: int = 1) -> dict:
 The `len(pred) >= 3` guard exists because `umeyama_sim3` raises below 3 points, and
 `tests/evals/test_pose_graph_diagnostics.py:186` calls `rpe` with 2 poses.
 
-- [ ] **Step 4: Run the RPE tests and the existing callers' tests**
+- [x] **Step 4: Run the RPE tests and the existing callers' tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/evals/test_trajectory_metrics.py tests/evals/test_pose_graph_diagnostics.py -q
@@ -262,7 +262,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 Expected: all pass, including the pre-existing `test_rpe_perfect`, `test_rpe_returns_correct_keys`,
 `test_rpe_returns_error_dict`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add evals/trajectory_metrics.py tests/evals/test_trajectory_metrics.py && git commit -m "fix(evals): rpe inverts w2c input and removes the Sim3 scale
@@ -281,7 +281,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `evals/scripts/eval_verification.py:62-63`
 - Create: `tests/evals/test_eval_verification.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/evals/test_eval_verification.py`:
 
@@ -318,7 +318,7 @@ def test_recon_to_arrays_reads_k_for_any_pinhole_model():
     np.testing.assert_allclose(K_pinhole[0], [[500, 0, 330], [0, 500, 250], [0, 0, 1]])
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/evals/test_eval_verification.py -q
@@ -328,7 +328,7 @@ Expected: FAIL with `ValueError: not enough values to unpack (expected 4, got 3)
 If it fails on import instead (`vismatch` missing), the import chain changed; check
 `python -c "import evals.scripts.eval_verification"` and fix the import, not the assertion.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `_recon_to_arrays`, replace
 
@@ -343,7 +343,7 @@ with
         intr.append(np.asarray(cam.calibration_matrix(), dtype=np.float32))  # any camera model
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+- [x] **Step 4: Run to verify it passes**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/evals/test_eval_verification.py -q
@@ -351,7 +351,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: 1 passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add evals/scripts/eval_verification.py tests/evals/test_eval_verification.py && git commit -m "fix(evals): eval_verification reads K via calibration_matrix
@@ -371,7 +371,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `collab_splats/geometry/metrics.py:696-699` (report write)
 - Test: `tests/geometry/test_verification.py` (append)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/geometry/test_verification.py` (add `from collab_splats.geometry.verification import clean_for_json`
 to the existing verification import line):
@@ -404,7 +404,7 @@ def test_clean_for_json_makes_numpy_and_nonfinite_payloads_strict_json():
     }
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py -q -k strict_json
@@ -413,7 +413,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 Expected: FAIL with `TypeError: Object of type float32 is not JSON serializable` (or
 `ValueError: Out of range float values`).
 
-- [ ] **Step 3: Implement `clean_for_json`**
+- [x] **Step 3: Implement `clean_for_json`**
 
 Replace the function in `collab_splats/geometry/verification.py`:
 
@@ -444,7 +444,7 @@ def clean_for_json(obj: object) -> object:
     return obj
 ```
 
-- [ ] **Step 4: Make the metrics write strict**
+- [x] **Step 4: Make the metrics write strict**
 
 In `collab_splats/geometry/metrics.py` replace
 
@@ -464,7 +464,7 @@ with
     output_path.write_text(json.dumps(clean_for_json(report), indent=2, allow_nan=False))
 ```
 
-- [ ] **Step 5: Run the geometry JSON tests**
+- [x] **Step 5: Run the geometry JSON tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_verification.py tests/geometry/test_metrics.py -q
@@ -474,7 +474,7 @@ Expected: all pass. A failure in a `test_metrics.py` end-to-end report test mean
 a type `clean_for_json` still misses (e.g. a `Path`); add that type to `clean_for_json` with a
 case in the Step 1 test, never restore `default=`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/geometry/verification.py collab_splats/geometry/metrics.py tests/geometry/test_verification.py && git commit -m "fix(geometry): clean_for_json nulls numpy NaN and inf
@@ -498,7 +498,7 @@ at both write sites.
 - Modify: `collab_splats/geometry/metrics.py:239-266` (delete `_scale_intrinsics_to_original`), `:342-347` (call site)
 - Test: `tests/geometry/test_transforms.py` (append); `tests/geometry/test_metrics.py:17,1240-1244` (port)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/geometry/test_transforms.py` (add `rescale_intrinsics` to its import block):
 
@@ -556,7 +556,7 @@ def test_rescale_intrinsics_known_answer():
 
 and add `from collab_splats.geometry.transforms import rescale_intrinsics` to its imports.
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_transforms.py -q -k rescale_intrinsics
@@ -564,7 +564,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: collection error `ImportError: cannot import name 'rescale_intrinsics'`.
 
-- [ ] **Step 3: Implement `rescale_intrinsics`**
+- [x] **Step 3: Implement `rescale_intrinsics`**
 
 In `collab_splats/geometry/transforms.py`, insert before the "Point-set alignment" divider (line 245):
 
@@ -628,7 +628,7 @@ def rescale_intrinsics(
     return out
 ```
 
-- [ ] **Step 4: Adopt it in metrics.py**
+- [x] **Step 4: Adopt it in metrics.py**
 
 Delete `_scale_intrinsics_to_original` (metrics.py lines 239-266, the whole function) and add
 `from collab_splats.geometry.transforms import rescale_intrinsics` to the imports. Replace the loop
@@ -651,7 +651,7 @@ with
         depth, intrinsics = lifted_d, lifted_K
 ```
 
-- [ ] **Step 5: Run geometry tests and the docstring contract**
+- [x] **Step 5: Run geometry tests and the docstring contract**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/geometry/test_transforms.py tests/geometry/test_metrics.py tests/test_docstring_contract.py -q
@@ -659,7 +659,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/geometry/transforms.py collab_splats/geometry/metrics.py tests/geometry/test_transforms.py tests/geometry/test_metrics.py && git commit -m "feat(geometry): rescale_intrinsics maps K through the crop box
@@ -678,7 +678,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `collab_splats/pointcloud/feedforward/base.py:878-966`
 - Test: `tests/pointcloud/test_feedforward_intrinsics.py` (append)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/pointcloud/test_feedforward_intrinsics.py`:
 
@@ -751,7 +751,7 @@ def test_rescale_param_index_table_matches_pycolmap():
 by design — see the `_rescaled_camera_params` docstring. If the file already imports pycolmap at
 the top by the time this runs, move the import up.)
 
-- [ ] **Step 2: Run to verify they fail**
+- [x] **Step 2: Run to verify they fail**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_feedforward_intrinsics.py -q -k "cropped_portrait or point2d or distortion or index_table"
@@ -761,7 +761,7 @@ Expected: `cropped_portrait` FAILS (fx scaled by 1080/518 and 1920/518 per axis,
 FAILS (`(xy - tl) * scale`), `distortion` FAILS (p1, p2 multiplied by 2), `index_table` FAILS on
 import (`_CAMERA_PARAM_IDXS` missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `collab_splats/pointcloud/feedforward/base.py`, add `from collab_splats.geometry.transforms import rescale_intrinsics`
 to the imports (check the existing `collab_splats.geometry` import line first and extend it). Add just
@@ -851,7 +851,7 @@ Also update the docstring's `original_image_sizes` entry to say
 Note the SIMPLE_PINHOLE rule: the old code multiplied f by `max(orig_w/model_w, orig_h/model_h)`;
 `max(K[0,0], K[1,1])` after the crop-aware map is the same rule on a full-frame box.
 
-- [ ] **Step 4: Run the whole intrinsics file, including the existing full-frame tests**
+- [x] **Step 4: Run the whole intrinsics file, including the existing full-frame tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/test_feedforward_intrinsics.py tests/test_docstring_contract.py -q
@@ -859,7 +859,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: all pass, the LoGeR round-trip tests unchanged.
 
-- [ ] **Step 5: Run the pointcloud and wrapper gates (refine path calls this at `reconstructor.py:1195`)**
+- [x] **Step 5: Run the pointcloud and wrapper gates (refine path calls this at `reconstructor.py:1195`)**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud tests/wrapper -q -rfE -p no:cacheprovider 2>&1 | grep -E "^(FAILED|ERROR)|passed|failed" 
@@ -867,7 +867,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: the failure list is a subset of `/tmp/claude-0/consistency-control-failures.txt`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/pointcloud/feedforward/base.py tests/pointcloud/test_feedforward_intrinsics.py && git commit -m "fix(pointcloud): crop-aware rescale of the COLMAP export to original pixels
@@ -887,7 +887,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `evals/scripts/eval_splats.py:73-107` (`_native_images_and_intrinsics`)
 - Test: `tests/evals/test_eval_splats.py` (append)
 
-- [ ] **Step 1: Fix the fixture's box, then write the failing test**
+- [x] **Step 1: Fix the fixture's box, then write the failing test**
 
 `_write_ff_zarr` (test_eval_splats.py:30) records `[0, 0, w, h, orig_w, orig_h]`: a model-sized crop
 at the top-left, which under the crop convention means scale 1. The existing native test
@@ -924,7 +924,7 @@ def test_native_intrinsics_undo_the_crop(tmp_path):
 Add to the imports: `from pathlib import Path`, `from types import SimpleNamespace`, and
 `_native_images_and_intrinsics` on the existing `evals.scripts.eval_splats` import line.
 
-- [ ] **Step 2: Run to verify it fails, and that the fixture edit alone breaks nothing**
+- [x] **Step 2: Run to verify it fails, and that the fixture edit alone breaks nothing**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/evals/test_eval_splats.py -q
@@ -933,7 +933,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0
 Expected: only `test_native_intrinsics_undo_the_crop` FAILS — old code gives fy = 20 * 64/16 = 80
 (expected 40). Every pre-existing test still passes (old code ignores `[:4]`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `evals/scripts/eval_splats.py`, add `from collab_splats.geometry.transforms import rescale_intrinsics`
 to the imports. Replace
@@ -967,7 +967,7 @@ and change the docstring's first bullet to:
       frame's crop box from ``original_coords`` maps model-res K to native pixels.
 ```
 
-- [ ] **Step 4: Run the eval_splats tests**
+- [x] **Step 4: Run the eval_splats tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/evals/test_eval_splats.py -q
@@ -975,7 +975,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add evals/scripts/eval_splats.py tests/evals/test_eval_splats.py && git commit -m "fix(evals): eval_splats maps K through the crop box
@@ -997,7 +997,7 @@ rescale, `:443-447` centred crop) scales by `max(target / size) + 1e-8`, floors,
 - Modify: `collab_splats/pointcloud/feedforward/mapanything.py:224-228`
 - Test: `tests/pointcloud/feedforward/test_mapanything_creator.py` (append)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append:
 
@@ -1029,7 +1029,7 @@ def test_mapanything_crop_coords_match_upstream_crop(hw):
 (Only the two monotone gradient channels are compared; the third wraps and aliases under resampling.
 `(200, 300)` is smaller than the target: upstream upscales it (`force=True`), so the box must too.)
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/feedforward/test_mapanything_creator.py -q -k match_upstream_crop
@@ -1039,7 +1039,7 @@ Expected: FAIL on import (`_mapanything_crop_coords` missing). Before implementi
 test can see the bug: temporarily define in the test `box = np.array([0, 0, model_w, model_h, w, h])`
 instead of the helper call, run, and confirm the mean diff assertion fails for all three sizes. Revert.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `mapanything.py`, add a module-level helper between the `_MA_RESIZE_MODE_MAP` dict and
 `@dataclass class MapAnythingCreator` (above the decorator, not between it and the class):
@@ -1080,7 +1080,7 @@ Replace the `original_coords = np.array(...)` block at lines 224-228 with:
         original_coords = _mapanything_crop_coords([f.shape[:2] for f in frames], model_w, model_h)
 ```
 
-- [ ] **Step 4: Run the MapAnything tests**
+- [x] **Step 4: Run the MapAnything tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/feedforward/test_mapanything_creator.py tests/test_docstring_contract.py -q
@@ -1088,7 +1088,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: all pass (existing tests set `original_coords` to zeros and do not reach `_preprocess`).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/pointcloud/feedforward/mapanything.py tests/pointcloud/feedforward/test_mapanything_creator.py && git commit -m "fix(pointcloud): MapAnything original_coords records its real crop
@@ -1111,7 +1111,7 @@ so in the final report — any MapAnything mesh built before this commit is susp
 - Modify: `collab_splats/dashboard/pipeline.py:499-518` (`_stamp_db_provenance`)
 - Test: `tests/dashboard/test_pipeline.py` (append)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/dashboard/test_pipeline.py` (add imports `yaml`, `zarr`, and
 `from collab_splats.preproc import frames as fr` if missing):
@@ -1149,7 +1149,7 @@ def test_stamp_db_provenance_still_reads_a_dashboard_run_config(tmp_path):
 The file imports the module as `pl` and `RunConfig` already; add
 `from collab_splats.preproc import frames as fr`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_pipeline.py -q -k stamp_db_provenance
@@ -1157,7 +1157,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0
 
 Expected: the Reconstructor test FAILS with `'vggt_omega' == 'mapanything'`; the dashboard test passes.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Replace the body of `_stamp_db_provenance` down to the `store = zarr.open(...)` line with:
 
@@ -1193,7 +1193,7 @@ Replace the body of `_stamp_db_provenance` down to the `store = zarr.open(...)` 
 
 (`yaml` and `fr` are already imported at `pipeline.py:15,31`.)
 
-- [ ] **Step 4: Run the dashboard provenance tests and the config test**
+- [x] **Step 4: Run the dashboard provenance tests and the config test**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_pipeline.py tests/dashboard/test_config.py tests/dashboard/test_run_localization.py -q
@@ -1201,7 +1201,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/dashboard/pipeline.py tests/dashboard/test_pipeline.py && git commit -m "fix(dashboard): stamp DB provenance from a Reconstructor run_config
@@ -1222,7 +1222,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `collab_splats/wrapper/reconstructor.py:770-777`
 - Test: `tests/localization/test_localization_cache.py` (append)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/localization/test_localization_cache.py`:
 
@@ -1248,7 +1248,7 @@ def test_cache_staleness_ignores_the_id_extension(tmp_path, caplog):
     assert stale_warned([f"frame_{i:03d}.png" for i in (0, 1, 5)])
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/localization/test_localization_cache.py -q -k ignores_the_id_extension
@@ -1256,7 +1256,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: FAIL on the first assertion (whole-string compare warns for `.jpg` vs `.png`).
 
-- [ ] **Step 3: Implement the stem compare**
+- [x] **Step 3: Implement the stem compare**
 
 In `localizer.py`, replace
 
@@ -1277,7 +1277,7 @@ with
 
 (Check `Path` is imported in `localizer.py`; add `from pathlib import Path` at the top if not.)
 
-- [ ] **Step 4: Switch the reconstructor ids and delete the stale comment**
+- [x] **Step 4: Switch the reconstructor ids and delete the stale comment**
 
 In `reconstructor.py`, delete the six-line comment starting
 `# The .jpg suffix is deliberate and stays even though the store writes .png.` and change
@@ -1293,7 +1293,7 @@ to
     ids = [f"frame_{int(fi):06d}.png" for fi in frame_indices]
 ```
 
-- [ ] **Step 5: Run localization and wrapper tests**
+- [x] **Step 5: Run localization and wrapper tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/localization tests/wrapper -q -rfE -p no:cacheprovider 2>&1 | grep -E "^(FAILED|ERROR)|passed|failed"
@@ -1302,7 +1302,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 Expected: failures ⊆ control list. A new failure asserting `.jpg` ids from the localize stage is a
 test pinning the old label: change its expected suffix to `.png`, nothing else.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/localization/localizer.py collab_splats/wrapper/reconstructor.py tests/localization/test_localization_cache.py && git commit -m "fix(localization): staleness compares stems; ids name the .png frames
@@ -1320,7 +1320,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `collab_splats/dashboard/pipeline.py:694` (query frame save), `:708-713` (ref path resolve)
 - Test: `tests/dashboard/test_run_localization.py` (append)
 
-- [ ] **Step 1: Read the `_run` / `wired` fixtures**
+- [x] **Step 1: Read the `_run` / `wired` fixtures**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && sed -n 40,135p tests/dashboard/test_run_localization.py
@@ -1329,7 +1329,7 @@ cd /workspace/collab-splats/.worktrees/consistency && sed -n 40,135p tests/dashb
 Note how `_run(tmp_path, wired, append=...)` builds `out_dir = tmp_path / SCENE` and which ids the
 fake localizer reports (`/orig/00000.jpg`, `/orig/00001.jpg`, `/orig/cam_f000007.jpg`).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append:
 
@@ -1362,7 +1362,7 @@ Noise, not the fixture's zeros: an all-zero JPEG decodes exactly, so zeros canno
 If `localized_frames/` is not under `tmp_path / SCENE`, read `run_localization`'s `img_dir` and
 fix the path only. Add `from PIL import Image` if missing.
 
-- [ ] **Step 3: Run to verify they fail**
+- [x] **Step 3: Run to verify they fail**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_run_localization.py -q -k "png_store_files or lossless_png"
@@ -1370,7 +1370,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0
 
 Expected: both FAIL (`images/00000.jpg` returned; saved suffix `.jpg`).
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 In `pipeline.py`, add a helper next to `read_localized_group`:
 
@@ -1425,7 +1425,7 @@ and change line 694's `.jpg` to `.png`:
                 img_path = img_dir / f"{Path(query_video).stem}_f{frame_idx:06d}.png"
 ```
 
-- [ ] **Step 5: Run the dashboard localization tests**
+- [x] **Step 5: Run the dashboard localization tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/dashboard/test_run_localization.py tests/dashboard/test_localize_page.py tests/dashboard/test_pipeline.py -q
@@ -1434,7 +1434,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=.:/tmp/claude-0
 Expected: all pass, including the existing `test_ref_paths_remapped_to_local_images_dir`
 (no file on disk → label kept).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/dashboard/pipeline.py tests/dashboard/test_run_localization.py && git commit -m "fix(dashboard): resolve ref frames by stem; save query frames as PNG
@@ -1456,13 +1456,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 No behavioural test: the string is a label in a fallback branch taken only when upstream's image
 container lacks `filenames`, and nothing reads its extension.
 
-- [ ] **Step 1: Change the fallback**
+- [x] **Step 1: Change the fallback**
 
 ```python
                 filename = self.images.filenames[idx] if hasattr(self.images, "filenames") else f"{idx}.png"
 ```
 
-- [ ] **Step 2: Run the sfm tests**
+- [x] **Step 2: Run the sfm tests**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -m pytest tests/pointcloud/sfm -q
@@ -1470,7 +1470,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: pass (or failures ⊆ control list).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git add collab_splats/pointcloud/sfm/instantsfm.py && git commit -m "fix(pointcloud): instantsfm fallback image name is .png
@@ -1482,7 +1482,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 12: Gate, graph update, bookkeeping
 
-- [ ] **Step 1: Sweep for leftover `.jpg` frame writes and old helpers**
+- [x] **Step 1: Sweep for leftover `.jpg` frame writes and old helpers**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && git grep -n '\.jpg"' -- collab_splats evals/scripts ':!*.ipynb'; git grep -n "_scale_intrinsics_to_original\|default=lambda o: o.item()" -- collab_splats evals tests
@@ -1491,7 +1491,7 @@ cd /workspace/collab-splats/.worktrees/consistency && git grep -n '\.jpg"' -- co
 Expected: only `mesh/io.py` (texture atlas) and read-side extension lists in the first grep; the
 second grep is empty.
 
-- [ ] **Step 2: Per-package gate vs control**
+- [x] **Step 2: Per-package gate vs control**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/reconstruction/bin/python -c "import collab_splats; print(collab_splats.__file__)" && for p in evals geometry pointcloud localization dashboard wrapper; do PYTHONPATH=.:/tmp/claude-0/consistency-stubs /opt/venv/reconstruction/bin/python -m pytest -p consistency_stubs tests/$p -q -rfE -p no:cacheprovider 2>&1 | grep -E "^(FAILED|ERROR)"; done | sort > /tmp/claude-0/consistency-after-failures.txt; comm -13 /tmp/claude-0/consistency-control-failures.txt /tmp/claude-0/consistency-after-failures.txt
@@ -1499,7 +1499,7 @@ cd /workspace/collab-splats/.worktrees/consistency && PYTHONPATH=. /opt/venv/rec
 
 Expected: `comm` prints nothing (no new failures). Also run `tests/test_docstring_contract.py`.
 
-- [ ] **Step 3: Format only the touched files**
+- [x] **Step 3: Format only the touched files**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && /opt/venv/reconstruction/bin/black $(git diff --name-only clean/final -- '*.py') && /opt/venv/reconstruction/bin/isort $(git diff --name-only clean/final -- '*.py') && git diff --stat
@@ -1508,7 +1508,7 @@ cd /workspace/collab-splats/.worktrees/consistency && /opt/venv/reconstruction/b
 Never run repo-wide black. If formatting changed anything, re-run Step 2's gate for those
 packages, then commit as `style: black/isort on phase-1 files`.
 
-- [ ] **Step 4: Update the graph and the plan's fork point**
+- [x] **Step 4: Update the graph and the plan's fork point**
 
 ```bash
 cd /workspace/collab-splats/.worktrees/consistency && graphify update . 
@@ -1517,11 +1517,11 @@ cd /workspace/collab-splats/.worktrees/consistency && graphify update .
 Fill in the fork SHA below, tick the completed checkboxes, and commit the plan on `clean/consistency`
 (`git add -f docs/superpowers/plans/2026-09-26-consistency-phase1.md`).
 
-- [ ] **Step 5: Report**
+- [x] **Step 5: Report**
 
 Report to the user: per-task outcome, the `comm` result, and that MapAnything meshes built before
 Task 7 placed depth in the wrong region. Merging into `clean/final` is the user's call.
 
 ---
 
-Fork point: `<fill in at Task 0>`
+Fork point: `b9c5843a` (clean/final tip at fork); phase-1 tip recorded in this commit's parent

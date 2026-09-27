@@ -346,6 +346,41 @@ def test_extract_feature_cache_reextracts_corrupt_store(tmp_path):
     assert zarr.open(str(store), mode="r").attrs["n_frames"] == 1
 
 
+def test_extract_feature_cache_hands_the_extractor_rgb_arrays(tmp_path):
+    """Frames reach forward() as decoded RGB ndarrays, not lazily-decoded PIL handles."""
+    images = tmp_path / "images"
+    images.mkdir()
+    Image.fromarray(np.full((4, 4, 3), (200, 10, 10), dtype=np.uint8)).save(images / "frame_000000.png")
+
+    extractor = MagicMock()
+    extractor.name = "fake"
+    extractor.patch_size = 2
+    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
+    su.extract_feature_cache(extractor, images, tmp_path)
+
+    [frame] = extractor.forward.call_args.args[0]
+    assert isinstance(frame, np.ndarray)
+    np.testing.assert_array_equal(frame[0, 0], [200, 10, 10])
+
+
+def test_extract_feature_cache_reextracts_on_frame_count_mismatch(tmp_path):
+    """A store whose n_frames disagrees with the directory is stale: re-extract."""
+    images = tmp_path / "images"
+    images.mkdir()
+    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / "frame_000000.png")
+    stale = zarr.open(str(tmp_path / "fake.zarr"), mode="w")
+    stale.attrs.update({"extractor": "fake", "n_frames": 7})
+
+    extractor = MagicMock()
+    extractor.name = "fake"
+    extractor.patch_size = 2
+    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
+    su.extract_feature_cache(extractor, images, tmp_path)
+
+    assert extractor.forward.called
+    assert zarr.open(str(tmp_path / "fake.zarr"), mode="r").attrs["n_frames"] == 1
+
+
 def test_point_features_cached_propagates_unexpected_errors(tmp_path, monkeypatch):
     """The predicate answers False for an unreadable store, but a bug still raises."""
     monkeypatch.setattr(su, "find_lifted_extractor", lambda d: "fake")

@@ -1,22 +1,8 @@
-from .image import open_image, resize_image
-from .torch_utils import (
-    get_device,
-    pytorch_gc,
-    infer_batch_size,
-    batch_iterator,
-    load_hf_weights,
-    load_torchhub_model,
-    RegistryMixin,
-)
+"""
+Low-level helpers shared across collab_splats; import the submodule you need.
 
-__all__ = [
-    "open_image",
-    "resize_image",
-    "get_device",
-    "pytorch_gc",
-    "infer_batch_size",
-    "batch_iterator",
-    "load_hf_weights",
-    "load_torchhub_model",
-    "RegistryMixin",
-]
+- io: image decode, float-to-uint8, JSON reports, zarr codec and validity (torch-free)
+- torch_utils: device, GC, batching, registry
+- image, notebook, progress, visualization: older helpers, imported by path
+- no re-exports: a package-level import would pull torch into every torch-free caller
+"""

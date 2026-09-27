@@ -37,10 +37,22 @@ _LEFT_W = _PREVIEW_MAX_W + 24  # fixed left-column width: flex beside the VTK pa
 
 
 def camera_centers(extrinsics: np.ndarray) -> np.ndarray:
-    """World-space camera centers C = -R^T t from (N, 4, 4) world-to-camera transforms."""
-    R = extrinsics[:, :3, :3]
-    t = extrinsics[:, :3, 3]
-    return -np.einsum("nji,nj->ni", R, t)
+    """
+    World-space camera centers from (N, 4, 4) world-to-camera transforms.
+
+    - the translation column of the inverse pose, C = -R^T t
+
+    Args:
+        extrinsics: (N, 4, 4) world-to-camera rigid transforms.
+
+    Returns:
+        (N, 3) camera centers in world coordinates.
+    """
+
+    # Lazy per this page's NB lazy-import convention (top of file): geometry pulls BA + warp
+    from collab_splats.geometry.transforms import invert_poses
+
+    return invert_poses(extrinsics)[:, :3, 3]
 
 
 def subsample_step(n_cameras: int) -> int:
@@ -649,7 +661,7 @@ class LocalizePage(param.Parameterized):
 
         images_dir: this scene's canonical images/ directory, when present. Only used for
         'reconstruction'-sourced ref frames — 'localized' frames live in localized_frames/
-        JPGs only (never written to images/), so they always fall back to disk reads.
+        only (PNG; older DBs may hold .jpg; never written to images/), so they always fall back to disk reads.
         """
         from collab_splats.localization.viz import (
             correspondences_for_ref,
@@ -674,9 +686,9 @@ class LocalizePage(param.Parameterized):
 
         # Top-k match-pair figures, best-first. Boundary adapter: resolve each ranked ref frame's
         # pixels to an RGB array — 'reconstruction' frames from the canonical images/ directory,
-        # 'localized' frames from their on-disk JPG (never written to images/).
+        # 'localized' frames from their on-disk image, PNG or legacy .jpg (never written to images/).
         from collab_splats.preproc import frames as fr
-        from collab_splats.utils.image import open_image
+        from collab_splats.utils.io import read_image
 
         match_figs = []
         for ref in loc.ranked_ref_frames[: config.top_k_viz]:
@@ -690,7 +702,7 @@ class LocalizePage(param.Parameterized):
                 # localized/ frame → disk (never written to images/)
                 if not Path(out.ref_image_paths[ref]).exists():
                     continue
-                ref_image = np.asarray(open_image(out.ref_image_paths[ref]).convert("RGB"))
+                ref_image = read_image(out.ref_image_paths[ref])
             # ref keypoints live in model-res space (loc.ref_hw) — rescale to the
             # displayed frame's resolution or lines land in the top-left corner
             mfig = plot_correspondences(

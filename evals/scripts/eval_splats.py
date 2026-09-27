@@ -10,7 +10,8 @@ Resolution: like the pipeline's splats stage, training uses the NATIVE frames fr
 images/ directory (found beside pointcloud.zarr, or via --images-dir) with the zarr's model-res K
 rescaled to native size; --model-res trains on the model-res images stored in the zarr instead
 (ablation row).
-Depth targets stay model-res either way — the trainer nearest-resizes them to the frame size.
+Depth targets follow the images: lifted through each frame's crop box onto native frames (as the
+mesh stage does), or left model-res beside model-res images.
 
 CLI/tmux only (GPU training). Results under evals/results/ (gitignored).
 
@@ -30,11 +31,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
+from collab_splats.mesh.io import upsample_depths
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.preproc import frames as fr
 from collab_splats.splats.rendering import load_checkpoint, render_views
 from collab_splats.splats.trainer import SplatsConfig, train
+from collab_splats.utils.io import to_uint8_hwc, write_json
 from evals.scripts.eval_multiview_conf import load_7scenes_depth, median_align, retained_error
 
 logger = logging.getLogger(__name__)
@@ -55,19 +59,26 @@ class SplatInputs:
     intrinsics: np.ndarray  # (N, 3, 3) float32, at the images' resolution
     points: np.ndarray  # (P, 3) float32
     colors: np.ndarray  # (P, 3) uint8
-    depth_targets: np.ndarray | None  # (N, h, w) float32 model-res, 0 = no target
+    depth_targets: np.ndarray | None  # (N, H, W) float32 at the images' resolution, 0 = no target
     resolution: tuple[int, int]  # (H, W) of images
 
 
 def _model_res_images(result: FeedforwardResult) -> np.ndarray:
     """
     The zarr's own model-res images as (N, H, W, 3) uint8.
+
+    - [0, 1] float CHW -> uint8 HWC; a [0, 255] zarr raises
+
+    Args:
+        result: loaded pointcloud.zarr; images is a (N, 3, H, W) float tensor.
+
+    Returns:
+        (N, H, W, 3) uint8.
+
+    Raises:
+        ValueError: images outside [0, 1] (a [0, 255] store), non-finite or not float.
     """
-    # CHW float -> HWC uint8, normalizing the [0,1] vs [0,255] backend drift first
-    images = result.images.numpy().transpose(0, 2, 3, 1)
-    if images.max() <= 1.0:
-        images = images * 255.0
-    return images.round().clip(0, 255).astype(np.uint8)
+    return to_uint8_hwc(result.images.numpy(), channels_first=True)
 
 
 def _native_images_and_intrinsics(
@@ -76,8 +87,8 @@ def _native_images_and_intrinsics(
     """
     Native frames from images/ in ``result.image_paths`` order, with K rescaled model-res -> native.
 
-    - Mirrors ``Reconstructor.splats()`` for the frames and ``_rescale_reconstruction_to_original_dimensions``
-      for K: per frame ``scale = orig / model`` from ``original_coords[i, -2:]``; no crop offset.
+    - Mirrors ``Reconstructor.splats()`` for the frames; K is resized model -> crop size, then
+      shifted by the crop origin from ``original_coords``, giving native pixels.
     - Raises ValueError when the images/ resolution differs from the zarr's recorded original size.
     """
     # Frames looked up by the frame index encoded in each image name; read_frames returns them
@@ -97,14 +108,16 @@ def _native_images_and_intrinsics(
             f"records original sizes (H, W) {recorded}"
         )
 
-    # Per-frame anisotropic rescale of fx, cx (x) and fy, cy (y) from model res to native
-    scale_x = (orig_w / result.model_width).astype(np.float32)
-    scale_y = (orig_h / result.model_height).astype(np.float32)
-    intrinsics = result.intrinsics.astype(np.float32).copy()
-    intrinsics[:, 0, 0] *= scale_x
-    intrinsics[:, 0, 2] *= scale_x
-    intrinsics[:, 1, 1] *= scale_y
-    intrinsics[:, 1, 2] *= scale_y
+    # Crop box per frame and its (H, W) size, in native pixels
+    box = result.original_coords[:, :4]
+    crop_hw = np.stack([box[:, 3] - box[:, 1], box[:, 2] - box[:, 0]], axis=-1)
+    model_hw = (result.model_height, result.model_width)
+
+    # Undo the resize: K from the model grid to the crop's size
+    intrinsics = rescale_intrinsics(result.intrinsics, model_hw, crop_hw)
+
+    # Undo the crop: move the principal point by the crop's top-left corner
+    intrinsics = shift_intrinsics(intrinsics, box[:, :2]).astype(np.float32)
     return images, intrinsics
 
 
@@ -119,10 +132,10 @@ def inputs_from_pointcloud_zarr(
     - images_dir: ``AUTO_IMAGES_DIR`` uses ``path.parent / images`` when it exists (native
       resolution, as the pipeline's splats stage does); an explicit Path forces it; None trains on
       the zarr's model-res images. K always matches the chosen images' resolution.
-    - model-res images: stored (N, 3, H, W) float; VGGT writes [0, 255] while MapAnything writes
-      [0, 1] (the known scale drift between backends), so a store whose max is <= 1 is rescaled.
+    - model-res images: stored (N, 3, H, W) float in [0, 1]; a [0, 255] store raises
     - depth targets: the model's depth masked by the learned-confidence percentile (0 = no target),
-      or unmasked when ``conf_percentile`` is None. Always model-res; the trainer nearest-resizes.
+      or unmasked when ``conf_percentile`` is None; masked on the model grid, then lifted through
+      each frame's crop box when training on native frames.
     """
     path = Path(path)
     load_images = images_dir is None or images_dir == AUTO_IMAGES_DIR
@@ -154,6 +167,10 @@ def inputs_from_pointcloud_zarr(
         if conf_percentile is not None and result.confidence is not None:
             keep = confidence_mask(result.confidence.numpy(), conf_percentile)
             depth_targets = np.where(keep, depth_targets, 0.0).astype(np.float32)
+
+        # Native frames: lift through each crop box, never stretch a cropped grid over the frame
+        if images_dir is not None:
+            depth_targets = upsample_depths(depth_targets, images, result.original_coords[:, :4])
 
     return SplatInputs(
         images=images,
@@ -301,7 +318,7 @@ def main() -> None:
 
     summary_path = args.out / "summary.json"
     summary = {"zarr": str(args.zarr), "resolution": list(inputs.resolution), "rows": rows}
-    summary_path.write_text(json.dumps(summary, indent=2))
+    write_json(summary_path, summary)
     logger.info("wrote %s", summary_path)
     print(_markdown_table(rows))
 

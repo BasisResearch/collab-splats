@@ -16,7 +16,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 from pathlib import Path
 
@@ -28,6 +27,7 @@ from collab_splats.pointcloud.feedforward.base import (
     compute_multiview_depth_confidence,
     multiview_mask,
 )
+from collab_splats.utils.io import write_json
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +151,7 @@ def main() -> None:
             )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps({"zarr": str(args.zarr), "seq": str(args.seq), "scale": s, "rows": rows}, indent=2))
+    write_json(args.out, {"zarr": str(args.zarr), "seq": str(args.seq), "scale": s, "rows": rows})
     logger.info("wrote %s", args.out)
 
 

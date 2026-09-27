@@ -2,7 +2,8 @@
 Ground-truth trajectory metrics: ATE, RPE and pairwise AUC.
 
 - used by evals/scripts/eval.py, evals/scripts/ba_start_at_gt.py and evals/metrics.py
-- ATE and AUC align to ground truth first (Umeyama); RPE is alignment-free
+- ATE and AUC align to ground truth first (Umeyama); RPE removes only the Sim3 scale, which is
+  the one part of the alignment that survives in relative poses
 """
 
 from __future__ import annotations
@@ -74,26 +75,44 @@ def ate_translation(pred: np.ndarray, gt: np.ndarray) -> dict:
 
 
 def rpe(pred: np.ndarray, gt: np.ndarray, delta: int = 1) -> dict:
-    """Relative Pose Error at frame stride delta.
+    """
+    Relative Pose Error at frame stride delta, on world-to-camera input.
+
+    - both trajectories are inverted to camera-to-world before relative poses are formed
+    - pred centers are scaled by the Sim3 scale of `umeyama_sim3`; the alignment's rotation and
+      translation cancel exactly in inv(A_i) @ A_j, so the scale is all that is applied
+    - coincident centers give scale 1 (umeyama_sim3's own rule)
 
     Args:
-        pred:  (N, 4, 4) predicted poses
-        gt:    (N, 4, 4) ground-truth poses
-        delta: frame stride between compared pose pairs
+        pred: (N, 4, 4) predicted world-to-camera poses.
+        gt: (N, 4, 4) ground-truth world-to-camera poses.
+        delta: frame stride between compared pose pairs.
 
     Returns:
-        {'trans_rmse', 'rot_rmse_deg'} relative pose error statistics.
+        {'trans_rmse', 'rot_rmse_deg'}; trans_rmse is in gt units.
+
+    Raises:
+        ValueError: delta >= N, so no pose pairs exist.
     """
     if delta >= len(pred):
         raise ValueError(f"delta={delta} >= N={len(pred)}, no pose pairs available")
-    # Relative pose between frame i and i+delta, for pred and gt independently,
-    # then the error transform between the two relative poses.
-    rel_pred = np.linalg.inv(pred[:-delta]) @ pred[delta:]  # (N-δ, 4, 4)
-    rel_gt = np.linalg.inv(gt[:-delta]) @ gt[delta:]  # (N-δ, 4, 4)
+
+    # World-to-camera in, camera-to-world for the relative-pose formula
+    pred_c2w = np.linalg.inv(pred.astype(np.float64))
+    gt_c2w = np.linalg.inv(gt.astype(np.float64))
+
+    # Sim3 scale from the camera centers; needs 3 centers, so 2-frame input keeps scale 1
+    scale = 1.0
+    if len(pred) >= 3:
+        scale, _, _ = umeyama_sim3(source=pred_c2w[:, :3, 3], target=gt_c2w[:, :3, 3])
+    pred_c2w[:, :3, 3] *= scale
+
+    # Relative pose between frame i and i+delta for each trajectory, then the error transform
+    rel_pred = np.linalg.inv(pred_c2w[:-delta]) @ pred_c2w[delta:]  # (N-δ, 4, 4)
+    rel_gt = np.linalg.inv(gt_c2w[:-delta]) @ gt_c2w[delta:]  # (N-δ, 4, 4)
     err = np.linalg.inv(rel_gt) @ rel_pred  # (N-δ, 4, 4)
 
-    # Translation error is the error transform's norm; rotation error is its
-    # geodesic angle via the standard trace formula.
+    # Translation error is the error transform's norm; rotation error its geodesic angle
     t_err = np.linalg.norm(err[:, :3, 3], axis=1)
     cos_angle = np.clip((np.trace(err[:, :3, :3], axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
     r_err_deg = np.degrees(np.arccos(cos_angle))

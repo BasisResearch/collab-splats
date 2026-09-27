@@ -279,7 +279,7 @@ def _patch_instantsfm_colmap_write() -> None:
                 write_next_bytes(fid, [float(qvec[3]), float(qvec[0]), float(qvec[1]), float(qvec[2])], "dddd")
                 write_next_bytes(fid, tvec.tolist(), "ddd")
                 write_next_bytes(fid, int(self.images.cam_ids[idx]), "i")
-                filename = self.images.filenames[idx] if hasattr(self.images, "filenames") else f"{idx}.jpg"
+                filename = self.images.filenames[idx] if hasattr(self.images, "filenames") else f"{idx}.png"
                 for char in filename:
                     write_next_bytes(fid, char.encode("utf-8"), "c")
                 write_next_bytes(fid, b"\x00", "c")

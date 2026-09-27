@@ -778,13 +778,8 @@ def _build_localization_db(
     frame_indices = [frames.frame_idx_from_path(p) for p in paths]
     images = (cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in paths)
 
-    # The .jpg suffix is deliberate and stays even though the store writes .png. These ids are
-    # opaque labels: CameraLocalizer stores them verbatim in the zarr attrs, every consumer
-    # joins on the frame_NNNNNN stem (geometry/metrics.py), and nothing reads
-    # the extension or resolves an id to a file. Rewriting it to .png would make
-    # from_feedforward's whole-string staleness check miss against every localization DB
-    # already on disk and under environments-processed/ — a migration, not a rename.
-    ids = [f"frame_{int(fi):06d}.jpg" for fi in frame_indices]
+    # Localization ids name the store's own files
+    ids = [f"frame_{int(fi):06d}.png" for fi in frame_indices]
     CameraLocalizer.from_feedforward(
         ff,
         images=images,
@@ -1064,10 +1059,9 @@ class Reconstructor:
         """
         Load the written COLMAP model into a PointcloudResult in images/ order.
         """
-        # Rebuild image_paths from images/ in filename order, so it lines up with the per-frame
-        # arrays the downstream stages index. The creators register COLMAP images as
-        # frame_{source_idx:06d} with NO extension — the frame_*.jpg spelling elsewhere is the
-        # localization id namespace, not this one.
+        # Rebuild image_paths from images/ in filename order
+        # - lines up with the per-frame arrays the downstream stages index
+        # - creators register COLMAP images as frame_{source_idx:06d}, NO extension
         frame_indices = [frames.frame_idx_from_path(p) for p in frames.frame_paths(self.images_dir)]
         image_paths = [Path(f"frame_{int(fi):06d}") for fi in frame_indices]
         return PointcloudResult.from_colmap(self.backend_dir / "colmap", image_paths)
@@ -1421,8 +1415,8 @@ class Reconstructor:
         # CPU-resident by design: train() moves one view to the GPU at a time
         images = _scene_frames(self.images_dir)[[rows_by_frame_idx[fi] for fi in frame_indices]]
 
-        # Depth targets: model-res pointcloud.zarr depth masked like the mesh stage masks it (0 = no
-        # target); train() resizes each view to the frame's resolution with nearest sampling
+        # Depth targets: pointcloud.zarr depth masked and lifted like the mesh stage does it (0 = no
+        # target); train() only resizes them further for its coarse-to-fine schedule
         depth_targets = None
         depth_on = "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0  # from_dict guarantees weight
         if depth_on:
@@ -1476,6 +1470,11 @@ class Reconstructor:
                     conf_percentile,
                     zero_fraction,
                 )
+
+            # Lift model-res depth onto the frame grid through each row's crop box, as the mesh
+            # stage does — a plain resize stretches a cropped/padded model grid over the frame
+            crop_boxes = np.asarray(feedforward.original_coords)[rows, :4]
+            depth_targets = upsample_depths(depth_targets, images, crop_boxes)
 
         train(
             cfg,

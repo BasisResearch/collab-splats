@@ -20,7 +20,11 @@ from pathlib import Path
 import numpy as np
 from tqdm.auto import tqdm
 
-from collab_splats.geometry.transforms import intrinsics_to_original, transform_points
+from collab_splats.geometry.transforms import (
+    rescale_intrinsics,
+    shift_intrinsics,
+    transform_points,
+)
 from collab_splats.preproc import frames
 
 logger = logging.getLogger(__name__)
@@ -230,8 +234,15 @@ def compute_photometric_ncc(
         guides = np.clip(np.asarray(images) * rgb_scale, 0, 255).astype(np.uint8)
         lifted_d = upsample_depths(depth, guides, original_coords[:, :4])
 
-        # Undo crop-then-resize on K: scale is model/crop, not model/canvas
-        lifted_K = intrinsics_to_original(intrinsics, original_coords[:, :4], (model_h, model_w))
+        # Crop box per frame and its (H, W) size, in original pixels
+        box = original_coords[:, :4]
+        crop_hw = np.stack([box[:, 3] - box[:, 1], box[:, 2] - box[:, 0]], axis=-1)
+
+        # Undo the resize: K from the model grid to the crop's size
+        lifted_K = rescale_intrinsics(intrinsics, (model_h, model_w), crop_hw)
+
+        # Undo the crop: move the principal point by the crop's top-left corner
+        lifted_K = shift_intrinsics(lifted_K, box[:, :2])
         depth, intrinsics = lifted_d, lifted_K
 
     # Pixel grid for unprojection

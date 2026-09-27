@@ -14,7 +14,6 @@ No edits to collab_splats/geometry/bundle_adjustment.py; both runs are plain `ba
 """
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 import sys
@@ -37,6 +36,7 @@ from collab_splats.geometry.bundle_adjustment import (  # noqa: E402
 )
 from collab_splats.geometry.transforms import umeyama_sim3  # noqa: E402
 from collab_splats.pointcloud import get_creator  # noqa: E402
+from collab_splats.utils.io import write_json  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("ba_start_at_gt")
@@ -184,7 +184,7 @@ def main() -> None:
             hist[0] if hist else float("nan"), hist[-1] if hist else float("nan"), moved,
         )
 
-    (OUT / ("report_nofilter.json" if no_filter else "report.json")).write_text(json.dumps(report, indent=2))
+    write_json(OUT / ("report_nofilter.json" if no_filter else "report.json"), report)
 
     a, b = report["A_model_start"], report["B_gt_start"]
     print("\n================ VERDICT INPUTS ================")

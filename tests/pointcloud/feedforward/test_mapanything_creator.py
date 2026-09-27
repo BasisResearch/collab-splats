@@ -5,13 +5,19 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+from mapanything.utils import cropping
+from PIL import Image
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import (
     BaseFeedforwardCreator,
     MapAnythingCreator,
 )
-from collab_splats.pointcloud.feedforward.base import MultiviewConfidence, _raw_to_world_points
+from collab_splats.pointcloud.feedforward.base import (
+    MultiviewConfidence,
+    _raw_to_world_points,
+)
+from collab_splats.pointcloud.feedforward.mapanything import _mapanything_crop_coords
 from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel
 
 
@@ -909,3 +915,66 @@ def test_extract_features_warns_when_pts3d_missing(caplog):
     # Poses still derived from the same forward; geometry keys absent
     assert out["poses"].shape == (2, 4, 4)
     assert "world_points" not in out
+
+
+########################################################################
+########## _mapanything_crop_coords: crop box in original pixels #######
+########################################################################
+
+
+@pytest.mark.parametrize("hw", [(1000, 1000), (1080, 1920), (1920, 1080), (200, 300)])
+def test_mapanything_crop_coords_match_upstream_crop(hw):
+    """The box, cropped and resized with PIL, reproduces upstream's model-res image."""
+    h, w = hw
+    # Runtime target is aspect-matched to the frame: a portrait frame gets a portrait
+    # target (294 wide x 518 high), never the landscape 518x294 the creator produces
+    # for landscape/square frames.
+    model_w, model_h = (294, 518) if h > w else (518, 294)
+    yy, xx = np.mgrid[0:h, 0:w]
+    rgb = np.stack([(xx * 255 // w), (yy * 255 // h), ((xx + yy) % 256)], axis=-1).astype(np.uint8)
+
+    upstream = np.asarray(cropping.crop_resize_if_necessary(rgb, resolution=(model_w, model_h))[0], dtype=np.float32)
+    (box,) = _mapanything_crop_coords([(h, w)], model_w, model_h)
+    ours = np.asarray(
+        Image.fromarray(rgb).crop(tuple(float(v) for v in box[:4])).resize((model_w, model_h), Image.LANCZOS),
+        dtype=np.float32,
+    )
+
+    assert box[4:].tolist() == [w, h]
+    # Measured worst case is 0.228 (200x300); 0.3 still catches a 3-px box shift or a
+    # dropped centering pass (see the mutant table in the consistency review report).
+    assert np.abs(ours[..., :2] - upstream[..., :2]).mean() < 0.3
+
+
+def test_mapanything_preprocess_original_coords_matches_crop_coords_helper():
+    """_preprocess's original_coords must match _mapanything_crop_coords at the call site.
+
+    The other _preprocess tests mock load_images and never check original_coords (the
+    third return value), so they would stay green even if the call site reverted to the
+    old model-sized box at the frame's top-left ([0, 0, model_w, model_h, W, H]).
+    """
+    h, w = 1080, 1920
+    model_w, model_h = 518, 294
+    frames = [np.zeros((h, w, 3), dtype=np.uint8)]
+    frame_idxs = [0]
+
+    fake_view = {"img": torch.zeros(1, 3, model_h, model_w), "data_norm_type": "imagenet"}
+    fake_views = [fake_view]
+
+    with (
+        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+            return_value=fake_views,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            return_value=fake_views,
+        ),
+    ):
+        creator = MapAnythingCreator()
+        _, _, original_coords = creator._preprocess(frames, frame_idxs)
+
+    expected = _mapanything_crop_coords([(h, w)], model_w, model_h)
+    np.testing.assert_allclose(original_coords, expected)
+    assert original_coords[0, 0] > 0  # tl_x: the true crop is not flush with the left edge

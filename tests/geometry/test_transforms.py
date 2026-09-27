@@ -7,9 +7,10 @@ from collab_splats.geometry.transforms import (
     invert_poses,
     extract_intrinsics,
     intrinsics_4x4,
-    intrinsics_to_original,
     project_to_so3,
+    rescale_intrinsics,
     rotation_align_vectors,
+    shift_intrinsics,
     transform_points,
     _compute_weighted_median,
     umeyama_se3,
@@ -120,28 +121,36 @@ def test_intrinsics_4x4_embeds_k_top_left(batch):
     np.testing.assert_array_equal(out[..., :3, 3], 0.0)
 
 
-def test_intrinsics_to_original_known_answer():
+def _model_to_original(K: np.ndarray, crops: np.ndarray, model_hw: tuple[int, int]) -> np.ndarray:
+    """Undo crop-then-resize the way callers do: resize model -> crop size, then shift by +tl."""
+    crops = np.asarray(crops, dtype=np.float64)
+    crop_hw = np.stack([crops[..., 3] - crops[..., 1], crops[..., 2] - crops[..., 0]], axis=-1)
+    K = rescale_intrinsics(K, model_hw, crop_hw)
+    return shift_intrinsics(K, crops[..., :2])
+
+
+def test_model_to_original_known_answer():
     """Crop (11,7)-(59,47) resized to a 12x8 model grid: sx=0.25, sy=0.2."""
     K = np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]])
-    out = intrinsics_to_original(K, (11.0, 7.0, 59.0, 47.0), (8, 12))
+    out = _model_to_original(K, (11.0, 7.0, 59.0, 47.0), (8, 12))
     assert out.dtype == np.float64
     np.testing.assert_allclose(out, [[40.0, 0, 35.0], [0, 50.0, 27.0], [0, 0, 1]])
 
 
-def test_intrinsics_to_original_round_trips_a_projection_through_the_crop_box():
+def test_model_to_original_round_trips_a_projection_through_the_crop_box():
     """A model-K projection mapped through the crop box lands on the original-K pixel.
 
     - non-square crop, off-centre origin, distinct fx/fy, so swapping sx/sy or dropping tl fails
-    - batched call equals the per-frame calls, so (N, 3, 3) with (N, 4) broadcasts per row
+    - batched call equals the per-frame calls, so (N, 3, 3) with (N, 2) hw/offset broadcasts per row
     """
     rng = np.random.default_rng(0)
     crops = np.array([[16.0, 8.0, 48.0, 40.0], [5.0, 30.0, 105.0, 90.0]])
     model_hw = (24, 40)
     K_model = np.array([[[30.0, 0, 19.5], [0, 22.0, 11.5], [0, 0, 1]], [[35.0, 0, 20.0], [0, 18.0, 12.0], [0, 0, 1]]])
-    K_orig = intrinsics_to_original(K_model, crops, model_hw)
+    K_orig = _model_to_original(K_model, crops, model_hw)
 
     for k in range(2):
-        np.testing.assert_array_equal(K_orig[k], intrinsics_to_original(K_model[k], crops[k], model_hw))
+        np.testing.assert_array_equal(K_orig[k], _model_to_original(K_model[k], crops[k], model_hw))
 
         # Project camera-frame points on both grids
         X = rng.uniform([-1, -1, 2], [1, 1, 6], size=(50, 3))
@@ -152,6 +161,31 @@ def test_intrinsics_to_original_round_trips_a_projection_through_the_crop_box():
         tl_x, tl_y, cr_x, cr_y = crops[k]
         scale = np.array([(cr_x - tl_x) / model_hw[1], (cr_y - tl_y) / model_hw[0]])
         np.testing.assert_allclose(uv_model * scale + [tl_x, tl_y], uv_orig, rtol=0, atol=1e-9)
+
+
+def test_crop_then_resize_and_its_undo_round_trip_k():
+    """original -> model (shift -tl, resize crop -> model) -> original returns K; ops undo in reverse order."""
+    crops = np.array([[16.0, 8.0, 48.0, 40.0], [5.0, 30.0, 105.0, 90.0]])
+    crop_hw = np.stack([crops[:, 3] - crops[:, 1], crops[:, 2] - crops[:, 0]], axis=-1)
+    model_hw = (24, 40)
+    K = np.array([[[300.0, 0, 60.0], [0, 280.0, 45.0], [0, 0, 1]], [[500.0, 0, 55.0], [0, 520.0, 70.0], [0, 0, 1]]])
+
+    K_model = shift_intrinsics(K, -crops[:, :2])
+    K_model = rescale_intrinsics(K_model, crop_hw, model_hw)
+    np.testing.assert_allclose(_model_to_original(K_model, crops, model_hw), K, rtol=0, atol=1e-12)
+
+
+def test_rescale_intrinsics_scales_whole_rows_including_skew():
+    """x row (fx, skew, cx) by dst_w/src_w, y row (fy, cy) by dst_h/src_h; bottom row untouched."""
+    K = np.array([[500.0, 7.0, 250.0], [0, 400.0, 200.0], [0, 0, 1]])
+    out = rescale_intrinsics(K, (400, 500), (100, 250))
+    np.testing.assert_allclose(out, [[250.0, 3.5, 125.0], [0, 100.0, 50.0], [0, 0, 1]])
+
+
+def test_shift_intrinsics_moves_only_the_principal_point():
+    K = np.array([[500.0, 7.0, 250.0], [0, 400.0, 200.0], [0, 0, 1]])
+    out = shift_intrinsics(K, (-10.0, 30.0))
+    np.testing.assert_array_equal(out, [[500.0, 7.0, 240.0], [0, 400.0, 230.0], [0, 0, 1]])
 
 
 def test_project_to_so3_returns_nearest_rotation_with_det_one():
@@ -496,3 +530,34 @@ def test_bundle_adjustment_does_not_import_loop_closure():
         alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
     ]
     assert not any("loop_closure" in m for m in imported), f"BA imports loop closure: {imported}"
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        [5, 0, 5, 10],
+        [0, 8, 10, 3],
+        [0, 0, float("nan"), 10],
+    ],
+)
+def test_model_to_original_rejects_bad_boxes(box):
+    """Zero width, negative height, NaN width: the crop size reaches rescale_intrinsics as a bad hw."""
+    with pytest.raises(ValueError):
+        _model_to_original(np.eye(3), np.array(box, dtype=float), (4, 4))
+
+
+@pytest.mark.parametrize("src_hw, dst_hw", [((0, 4), (4, 4)), ((4, 4), (4, -2)), ((4, float("nan")), (4, 4))])
+def test_rescale_intrinsics_rejects_bad_sizes(src_hw, dst_hw):
+    with pytest.raises(ValueError):
+        rescale_intrinsics(np.eye(3), src_hw, dst_hw)
+
+
+def test_rescale_intrinsics_rejects_hw_stack_with_single_k():
+    """(3, 3) K can't pair with an (N, 2) hw stack: N doesn't broadcast into K's () leading dims."""
+    with pytest.raises(ValueError, match="broadcast"):
+        rescale_intrinsics(np.eye(3), (4, 4), np.full((2, 2), 8.0))
+
+
+def test_shift_intrinsics_rejects_offset_stack_with_single_k():
+    with pytest.raises(ValueError, match="broadcast"):
+        shift_intrinsics(np.eye(3), np.zeros((2, 2)))

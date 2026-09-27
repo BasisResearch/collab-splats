@@ -116,31 +116,75 @@ def intrinsics_4x4(K: np.ndarray) -> np.ndarray:
     return out
 
 
-def intrinsics_to_original(K: np.ndarray, crop_box: np.ndarray, model_hw: tuple[int, int]) -> np.ndarray:
+def rescale_intrinsics(K: np.ndarray, src_hw: np.ndarray, dst_hw: np.ndarray) -> np.ndarray:
     """
-    Map model-grid K back to original-image pixels by undoing crop-then-resize.
+    Map K from one pixel grid to another of a different size, as an image resize does.
 
-    - scale is model/crop per axis, not model/canvas: the model saw the crop only
-    - the crop origin is added after the scale is undone
-    - K and crop_box broadcast: (3, 3) with (4,), or (N, 3, 3) with (N, 4)
+    - row 0 (fx, skew, cx) scales by dst_w / src_w, row 1 (fy, cy) by dst_h / src_h
+    - pixel-corner convention (cx = W / 2 is the centre), as COLMAP, VGGT and MapAnything use
+    - a crop is a separate shift_intrinsics call; K follows the image ops in the same order
+    - output takes K's shape; the hw leading dims broadcast into K's: (2,) for any K, (N, 2) with (N, 3, 3)
 
     Args:
-        K: (..., 3, 3) intrinsics on the model grid.
-        crop_box: (..., 4) `(tl_x, tl_y, cr_x, cr_y)` in original pixels, `original_coords[:, :4]`.
-        model_hw: model grid (height, width).
+        K: (..., 3, 3) intrinsics on the source grid.
+        src_hw: (..., 2) source grid (height, width).
+        dst_hw: (..., 2) destination grid (height, width).
 
     Returns:
-        (..., 3, 3) float64 K in original-image pixels.
-    """
-    crop = np.asarray(crop_box, dtype=np.float64)
-    tl_x, tl_y, cr_x, cr_y = crop[..., 0], crop[..., 1], crop[..., 2], crop[..., 3]
-    sx, sy = model_hw[1] / (cr_x - tl_x), model_hw[0] / (cr_y - tl_y)
+        (..., 3, 3) float64 K on the destination grid.
 
+    Raises:
+        ValueError: an hw's leading dims don't broadcast into K's, or a height or width is
+            non-positive or NaN.
+    """
+    # Output always takes K's shape; the hw leading dims must broadcast into it
+    src = np.asarray(src_hw, dtype=np.float64)
+    dst = np.asarray(dst_hw, dtype=np.float64)
     out = np.array(K, dtype=np.float64)
-    out[..., 0, 0] = out[..., 0, 0] / sx
-    out[..., 1, 1] = out[..., 1, 1] / sy
-    out[..., 0, 2] = out[..., 0, 2] / sx + tl_x
-    out[..., 1, 2] = out[..., 1, 2] / sy + tl_y
+    for hw in (src, dst):
+        if np.broadcast_shapes(hw.shape[:-1], out.shape[:-2]) != out.shape[:-2]:
+            raise ValueError(f"hw leading dims {hw.shape[:-1]} do not broadcast into K leading dims {out.shape[:-2]}")
+
+    # Positive-form check so a NaN size is rejected too: any comparison against NaN is False
+    bad = ~(src > 0) | ~(dst > 0)
+    if np.any(bad):
+        raise ValueError(f"grid sizes must be positive, got src_hw {src.tolist()} dst_hw {dst.tolist()}")
+
+    # Per-axis dst / src scale on the x and y rows
+    scale = dst / src
+    out[..., 0, :] *= scale[..., 1, None]
+    out[..., 1, :] *= scale[..., 0, None]
+    return out
+
+
+def shift_intrinsics(K: np.ndarray, offset_xy: np.ndarray) -> np.ndarray:
+    """
+    Move K's principal point by a pixel offset, as a crop or its undo does.
+
+    - crop at top-left (tl_x, tl_y): shift by -tl; undo the crop: shift by +tl
+    - focal lengths and skew are unchanged
+    - output takes K's shape; offset_xy's leading dims broadcast into K's
+
+    Args:
+        K: (..., 3, 3) intrinsics.
+        offset_xy: (..., 2) (dx, dy) added to (cx, cy).
+
+    Returns:
+        (..., 3, 3) float64 K with the shifted principal point.
+
+    Raises:
+        ValueError: offset_xy's leading dims don't broadcast into K's.
+    """
+    # Output always takes K's shape; the offset's leading dims must broadcast into it
+    offset = np.asarray(offset_xy, dtype=np.float64)
+    out = np.array(K, dtype=np.float64)
+    if np.broadcast_shapes(offset.shape[:-1], out.shape[:-2]) != out.shape[:-2]:
+        raise ValueError(
+            f"offset leading dims {offset.shape[:-1]} do not broadcast into K leading dims {out.shape[:-2]}"
+        )
+
+    out[..., 0, 2] += offset[..., 0]
+    out[..., 1, 2] += offset[..., 1]
     return out
 
 

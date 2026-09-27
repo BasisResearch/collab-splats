@@ -37,6 +37,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from metrics import compute_ate, compute_rpe, compute_auc
 
+from collab_splats.utils.io import write_json
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ALIGN: dict[str, str] = {
@@ -204,7 +206,7 @@ def main() -> None:
 
     payload = {"methods": out}
     metrics_path = results_dir / "metrics.json"
-    metrics_path.write_text(json.dumps(payload, indent=2))
+    write_json(metrics_path, payload)
 
     print(format_markdown(out))
     print(f"\nWrote {metrics_path}")
@@ -243,14 +245,29 @@ def collect_grid_metrics(output_root: Path) -> list[dict]:
     return rows
 
 
+def _metric(section: dict, key: str) -> float:
+    """
+    One metric from a report section; missing or null (a write_json nan) reads as nan.
+
+    Args:
+        section: one report block, e.g. a row's "ate" dict.
+        key: metric name inside it.
+
+    Returns:
+        The metric, or nan when it is absent or null.
+    """
+    value = section.get(key)
+    return float("nan") if value is None else value
+
+
 def format_markdown_rows(rows: list[dict]) -> str:
     """Render grid rows (cell + ATE/RPE/AUC) as a markdown table."""
     header = "| cell | ATE RMSE | RPE trans | RPE rot deg | AUC@30 |\n" "|---|---|---|---|---|"
     lines = [header]
     for r in sorted(rows, key=lambda x: x.get("_cell", "")):
-        ate = r.get("ate", {}).get("rmse", float("nan"))
-        rpe_t = r.get("rpe", {}).get("trans_rmse", float("nan"))
-        rpe_r = r.get("rpe", {}).get("rot_rmse_deg", float("nan"))
-        auc = r.get("auc", {}).get("auc_30", float("nan"))
+        ate = _metric(r.get("ate", {}), "rmse")
+        rpe_t = _metric(r.get("rpe", {}), "trans_rmse")
+        rpe_r = _metric(r.get("rpe", {}), "rot_rmse_deg")
+        auc = _metric(r.get("auc", {}), "auc_30")
         lines.append(f"| {r.get('_cell','?')} | {ate:.4f} | {rpe_t:.4f} | {rpe_r:.4f} | {auc:.4f} |")
     return "\n".join(lines)

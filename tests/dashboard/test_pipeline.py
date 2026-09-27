@@ -12,6 +12,7 @@ import zarr
 
 from collab_splats.dashboard import pipeline as pl
 from collab_splats.dashboard.config import RunConfig
+from collab_splats.preproc import frames as fr
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.utils import write_point_features
 
@@ -104,6 +105,47 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     assert loaded.video_ref == "2026_05_07-birds-clip_03/clip_03.mp4"
     source.push_outputs.assert_called_with(out, "2026_05_07-birds-clip_03", on_line=ANY)
     op_log.finish_op.assert_called_once()
+
+
+def test_mesh_rgb_rounds_not_truncates(tmp_path):
+    """0.6/255 rounds to 1, where the old astype truncated it to 0."""
+    cfg = RunConfig(env_model="vggt_omega", semantic_extractor="talk2dino")
+    video = tmp_path / "clip_03.mp4"
+    video.write_bytes(b"x")
+
+    fake_result = MagicMock()
+    fake_result.points = list(range(10))
+    fake_result.depth = np.ones((3, 4, 4), np.float32)
+    fake_result.images = np.full((3, 3, 4, 4), 0.6 / 255, np.float32)
+    fake_result.extrinsics = np.tile(np.eye(4), (3, 1, 1))
+    fake_result.intrinsics = np.tile(np.eye(3), (3, 1, 1))
+    creator = MagicMock()
+    creator.outputs = fake_result
+
+    with (
+        patch.object(pl, "sample_fps", return_value=_fake_frames()),
+        patch.object(pl, "load_video_quality", return_value={"frames": {}}),
+        patch.object(pl, "_write_images_dir"),
+        patch.object(pl, "_build_creator", return_value=creator),
+        patch.object(pl, "fuse_tsdf") as mesh,
+        patch.object(pl, "clean_repair_mesh"),
+        patch.object(pl, "_extract_semantics"),
+        patch.object(pl, "_lift_and_compress"),
+        patch.object(pl.threading, "Thread", _InlineThread),
+    ):
+        pl.run_pipeline(
+            video_path=video,
+            scene="2026_05_07-birds-clip_03",
+            config=cfg,
+            op_log=MagicMock(),
+            source=MagicMock(),
+            base_dir=tmp_path / "outputs",
+        )
+
+    rgbs = mesh.call_args.args[1]
+    assert rgbs.shape == (3, 4, 4, 3)
+    assert rgbs.dtype == np.uint8
+    assert (rgbs == 1).all()
 
 
 def test_run_pipeline_does_not_push_on_failure(tmp_path):
@@ -412,3 +454,74 @@ def test_load_browse_data_pulls_scene_into_its_local_dir(tmp_path, monkeypatch):
         op_log=OperationLog(),
     )
     source.pull_processed.assert_called_once_with(scene, out_dir, excludes=pl.PULL_EXCLUDES)
+
+
+def test_stamp_db_provenance_reads_a_reconstructor_run_config(tmp_path):
+    """batch.py writes run_config.yaml as the Reconstructor config; its backbone must be stamped."""
+    (tmp_path / "run_config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "input_path": "/videos/GH010229.MP4",
+                "pointcloud": {"method": "feedforward", "backend": "mapanything"},
+            }
+        )
+    )
+    fr.write_frames(
+        tmp_path / "images",
+        np.zeros((2, 4, 4, 3), dtype=np.uint8),
+        [{"frame_idx": 7}, {"frame_idx": 19}],
+        {},
+    )
+    zarr_path = tmp_path / "pointcloud.zarr"
+    zarr.open(str(zarr_path), mode="w")
+
+    pl._stamp_db_provenance(zarr_path, "loma", tmp_path)
+
+    attrs = dict(zarr.open(str(zarr_path), mode="r")["local_features/loma"].attrs)
+    assert attrs["backbone"] == "mapanything"
+    assert attrs["video_ref"] == "/videos/GH010229.MP4"
+    assert attrs["frame_indices"] == [7, 19]
+
+
+def test_stamp_db_provenance_still_reads_a_dashboard_run_config(tmp_path):
+    """The dashboard's own RunConfig schema keeps working."""
+    RunConfig(env_model="vggtx", frame_indices=[1, 2], video_ref="gs://v.mp4").to_yaml(tmp_path / "run_config.yaml")
+    zarr_path = tmp_path / "pointcloud.zarr"
+    zarr.open(str(zarr_path), mode="w")
+
+    pl._stamp_db_provenance(zarr_path, "loma", tmp_path)
+
+    attrs = dict(zarr.open(str(zarr_path), mode="r")["local_features/loma"].attrs)
+    assert (attrs["backbone"], attrs["frame_indices"], attrs["video_ref"]) == (
+        "vggtx",
+        [1, 2],
+        "gs://v.mp4",
+    )
+
+
+def test_stamp_db_provenance_keeps_a_null_input_path_null(tmp_path):
+    """A null input_path stays null in the attrs, never the string "None"."""
+    (tmp_path / "run_config.yaml").write_text(
+        yaml.safe_dump({"input_path": None, "pointcloud": {"method": "feedforward", "backend": "vggtx"}})
+    )
+    zarr_path = tmp_path / "pointcloud.zarr"
+    zarr.open(str(zarr_path), mode="w")
+
+    pl._stamp_db_provenance(zarr_path, "loma", tmp_path)
+
+    attrs = dict(zarr.open(str(zarr_path), mode="r")["local_features/loma"].attrs)
+    assert attrs["video_ref"] is None
+
+
+def test_stamp_db_provenance_tolerates_a_missing_backend(tmp_path):
+    """A pointcloud block without backend stamps a null backbone instead of raising KeyError."""
+    (tmp_path / "run_config.yaml").write_text(
+        yaml.safe_dump({"input_path": "/videos/a.MP4", "pointcloud": {"method": "feedforward"}})
+    )
+    zarr_path = tmp_path / "pointcloud.zarr"
+    zarr.open(str(zarr_path), mode="w")
+
+    pl._stamp_db_provenance(zarr_path, "loma", tmp_path)
+
+    attrs = dict(zarr.open(str(zarr_path), mode="r")["local_features/loma"].attrs)
+    assert (attrs["backbone"], attrs["video_ref"]) == (None, "/videos/a.MP4")

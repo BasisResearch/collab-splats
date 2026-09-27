@@ -85,9 +85,7 @@ would take the whole working-tree file); confirm with `git diff --cached` first.
    `uv pip install git+...`" text (contradicts the `uv pip` warning above it).
 4. **rclone** — Linux install via `curl https://rclone.org/install.sh | sudo bash`; note Ubuntu
    apt ships 1.53 (2020) and overwrites a newer binary.
-5. **Docker** — add: runtime image has no nvcc by design; `setup.sh` re-run there is safe while
-   `uv.lock` matches the image. Lock bumped a CUDA extension since the build → sync must compile
-   → fails with the recipe; the fix is rebuilding the image, not installing nvcc in the pod.
+5. **Docker** — add: runtime image has no nvcc by design; `setup.sh` re-run there is safe.
 6. **docs/source/getting_started.md** — one line after `bash setup.sh`: prerequisites (driver,
    gcc, CUDA 12.1 toolkit) are the user's; link README. No other docs-site changes.
 

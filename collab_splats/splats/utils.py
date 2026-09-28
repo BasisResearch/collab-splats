@@ -1,7 +1,9 @@
 """
-Scene-geometry, view-scheduling and per-view preparation helpers for splat training.
+Helpers the splat trainer calls around its step loop.
 
-- Pure functions only: no model, optimizer or loss; the trainer calls them around the step loop.
+- scene geometry: scale, point spacing, normalization
+- coarse-to-fine: downscale schedule and per-view targets
+- view schedule: shuffled epochs of view indices
 """
 
 import random
@@ -11,6 +13,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from sklearn.neighbors import NearestNeighbors
 from torch import Tensor
 
 ########################################
@@ -20,14 +23,14 @@ from torch import Tensor
 
 def compute_scene_scale(cam_to_world: Tensor, *, margin: float = 1.1) -> float:
     """
-    gsplat's scene-extent proxy: largest camera distance from the camera centroid, times a margin.
+    Scene extent: the farthest camera from the camera centroid, times a margin.
 
     Args:
         cam_to_world: (N, 4, 4) camera-to-world poses.
-        margin: multiplier on the measured spread; 1.1 matches gsplat's simple_trainer.
+        margin: multiplier on the spread (1.1 as in gsplat).
 
     Returns:
-        Scene extent as a python float, in the units of `cam_to_world`.
+        Scene extent, in the units of `cam_to_world`.
     """
     positions = cam_to_world[:, :3, 3]
     centroid = positions.mean(0)
@@ -35,40 +38,58 @@ def compute_scene_scale(cam_to_world: Tensor, *, margin: float = 1.1) -> float:
     return float(spread) * margin
 
 
-def scene_normalization(cam_to_world: np.ndarray) -> tuple[np.ndarray, float]:
+def knn_spacing(points: np.ndarray, k: int) -> np.ndarray:
     """
-    Splatfacto's Sim3: center = mean camera position, scale = 1 / max |camera coordinate - center|.
-
-    - upstream: nerfstudio ``center_method="poses"`` + ``auto_scale_poses``, L-inf not L2.
-    - no "up" re-orientation: no loss or lr depends on the world's rotation.
+    Per-point RMS distance to its k nearest neighbors (itself excluded).
 
     Args:
-        cam_to_world: (N, 4, 4) float camera-to-world poses in world units.
+        points: (N, 3) positions.
+        k: neighbors per point.
 
     Returns:
-        (center (3,) float32 in world units, scale as a python float in 1 / world units).
+        (N,) spacing, in the units of `points`.
+    """
+    neighbor_dists, _ = NearestNeighbors(n_neighbors=k + 1).fit(points).kneighbors(points)
+    return np.sqrt((neighbor_dists[:, 1:] ** 2).mean(-1))
+
+
+def scene_normalization(cam_to_world: np.ndarray) -> tuple[np.ndarray, float]:
+    """
+    Center and scale that fit the cameras into a unit box, as in splatfacto.
+
+    - center: mean camera position; scale: 1 / largest camera offset (L-inf)
+    - no rotation applied
+
+    Args:
+        cam_to_world: (N, 4, 4) camera-to-world poses in world units.
+
+    Returns:
+        (center (3,) float32, scale float).
     """
     positions = cam_to_world[:, :3, 3]
     center = positions.mean(0)
     spread = float(np.abs(positions - center).max())
+
     if spread <= 0:
         raise ValueError("splats: cannot normalize a scene whose cameras coincide")
+
     return center.astype(np.float32), 1.0 / spread
 
 
 def denormalize_cameras(cam_to_world: Tensor, center: np.ndarray, scale: float) -> None:
     """
-    Undo ``scene_normalization`` on camera translations, in place.
+    Undo `scene_normalization` on camera translations, in place.
 
     Args:
-        cam_to_world: (N, 4, 4) poses in the normalized frame; mutated to world units.
-        center: (3,) the center `scene_normalization` returned.
-        scale: the scale `scene_normalization` returned.
+        cam_to_world: (N, 4, 4) normalized poses; rewritten in world units.
+        center: (3,) center from `scene_normalization`.
+        scale: scale from `scene_normalization`.
 
     Returns:
-        None — `cam_to_world` is modified in place.
+        None; `cam_to_world` is modified in place.
     """
     center_t = torch.as_tensor(center, dtype=torch.float32, device=cam_to_world.device)
+
     with torch.no_grad():
         cam_to_world[:, :3, 3] = cam_to_world[:, :3, 3] / scale + center_t
 
@@ -80,65 +101,63 @@ def denormalize_cameras(cam_to_world: Tensor, center: np.ndarray, scale: float) 
 
 def downscale_factor(step: int, num_downscales: int, resolution_schedule: int) -> int:
     """
-    Coarse-to-fine divisor at a step: 2 ** max(0, num_downscales - step // resolution_schedule).
+    Image downscale factor at a training step, halving toward full resolution.
 
     Args:
         step: current training step.
-        num_downscales: how many halvings the run starts at; 0 disables the schedule.
+        num_downscales: halvings at step 0; 0 turns the schedule off.
         resolution_schedule: steps between halvings.
 
     Returns:
-        Integer divisor, 1 once the schedule has run out.
+        Integer divisor; 1 once the schedule has run out.
     """
     if num_downscales <= 0:
         return 1
+
     return 2 ** max(0, num_downscales - step // resolution_schedule)
 
 
-def downscale_view(image: np.ndarray, intrinsics: Tensor, factor: int) -> tuple[np.ndarray, Tensor]:
+def downscale_image(image: np.ndarray, factor: int) -> np.ndarray:
     """
-    Image (bilinear) and K scaled by 1 / factor; passthrough at factor 1.
+    Image shrunk by an integer factor (bilinear); the input itself at factor 1.
+
+    - does not touch intrinsics; use `rescale_intrinsics` for those
 
     Args:
         image: (H, W, 3) uint8 image.
-        intrinsics: (1, 3, 3) camera matrix in pixels.
         factor: integer divisor from `downscale_factor`.
 
     Returns:
-        ((H // factor, W // factor, 3) image, (1, 3, 3) scaled intrinsics) — the inputs themselves
-        at factor 1, never mutated.
+        (H // factor, W // factor, 3) image.
     """
     if factor == 1:
-        return image, intrinsics
+        return image
 
     height, width = image.shape[:2]
-    small = cv2.resize(image, (width // factor, height // factor), interpolation=cv2.INTER_LINEAR)
-    K_small = intrinsics.clone()
-    K_small[:, :2, :] /= factor
-    return small, K_small
+    return cv2.resize(image, (width // factor, height // factor), interpolation=cv2.INTER_LINEAR)
 
 
 def prepare_target(image: np.ndarray, depth: np.ndarray | None, device: str) -> dict:
     """
-    One view's supervision targets as tensors on `device`.
+    One view's training targets as tensors on `device`.
 
     Args:
         image: (H, W, 3) uint8 image.
-        depth: (h, w) float depth target, possibly at a different resolution, or None.
+        depth: (h, w) depth target at any resolution, 0 = no target, or None.
         device: torch device string.
 
     Returns:
-        {"rgb": (1, H, W, 3) float in [0, 1], "depth": (1, H, W, 1) float or None}. Depth is
-        resized nearest so that zeros (meaning "no target") stay exactly zero.
+        {"rgb": (1, H, W, 3) in [0, 1], "depth": (1, H, W, 1) or None}.
     """
     rgb = torch.from_numpy(image).to(device).float()[None] / 255.0
+
     if depth is None:
         return {"rgb": rgb, "depth": None}
 
     height, width = image.shape[:2]
     depth_nchw = torch.from_numpy(depth).to(device)[None, None]
 
-    # Nearest, never bilinear: 0 means "no target" and must not blend into its neighbors
+    # Nearest, not bilinear, so "no target" zeros don't blend
     depth_nchw = F.interpolate(depth_nchw, size=(height, width), mode="nearest")
     return {"rgb": rgb, "depth": depth_nchw.permute(0, 2, 3, 1)}
 
@@ -150,23 +169,20 @@ def prepare_target(image: np.ndarray, depth: np.ndarray | None, device: str) -> 
 
 def view_order(n_views: int, *, seed: int = 42) -> Iterator[int]:
     """
-    Splatfacto's view schedule: an endless stream of seeded shuffled epochs.
+    Endless stream of view indices: each epoch visits every view once, shuffled.
 
-    - every view: max_steps / n_views (+-1) visits; with replacement, 5.7% relative sd at
-      100 views / 30k steps.
-    - upstream: nerfstudio-project/nerfstudio @ 50e0e3c, full_images_datamanager.py:152-161
-      (seeded shuffle) and :396-399 (`pop(0)` drains and refills the epoch).
-    - trap: upstream pops the front, we yield `reversed(order)` — not equal seed for seed for
-      n_views > 1; `tests/splats/test_utils.py` pins ours.
+    - ported from nerfstudio @ 50e0e3c, full_images_datamanager.py:152-161 and :396-399
+    - order reversed vs upstream, so not identical seed for seed
 
     Args:
         n_views: number of training views.
-        seed: RNG seed; 42 is the value every existing run was trained at.
+        seed: RNG seed.
 
     Yields:
         View indices in [0, n_views), forever.
     """
     rng = random.Random(seed)
+
     while True:
         order = list(range(n_views))
         rng.shuffle(order)

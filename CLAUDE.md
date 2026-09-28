@@ -97,7 +97,7 @@ collab_splats/
     undistort.py           # calibrate_camera (pycolmap) + undistort_frames (pycolmap framing, cv2 pixels)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)
   mesh/                    # TSDF meshing from arrays: io, tsdf, clean, texture, features
-  splats/                  # gsplat training: trainer, gaussian, scaffold, losses, rendering, cameras, pgsr, utils
+  splats/                  # gsplat training: trainer, checkpoint, gaussian, scaffold, losses, rendering, cameras, utils
   wrapper/                 # stage orchestration: Reconstructor (config-driven pipeline), batch drivers
   remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed
   dashboard/               # interactive video/scene browser (reads the FLAT dashboard layout only)

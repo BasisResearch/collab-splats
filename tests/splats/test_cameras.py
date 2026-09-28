@@ -33,8 +33,10 @@ def test_construction_is_the_identity_on_both_halves():
 
 def test_camera_applies_the_pose_delta():
     module = CameraOpt(2)
+
     with torch.no_grad():
         module.translation.weight[1] = torch.tensor([0.1, -0.2, 0.3])
+
     # 90 degrees about z: under an identity rotation the two composition orders are the same matrix
     cam_to_world = torch.eye(4).expand(2, 4, 4).clone()
     cam_to_world[:, :3, :3] = torch.tensor([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
@@ -49,8 +51,10 @@ def test_camera_applies_the_pose_delta():
 
 def test_camera_matches_the_module_dtype():
     module = CameraOpt(2).double()
+
     with torch.no_grad():
         module.translation.weight.normal_(std=0.1)
+
     cam_to_world = torch.eye(4, dtype=torch.float64).expand(2, 4, 4).clone()
 
     assert module.camera(cam_to_world, torch.arange(2)).dtype == torch.float64
@@ -58,8 +62,10 @@ def test_camera_matches_the_module_dtype():
 
 def test_color_applies_per_image_gain_and_bias():
     module = CameraOpt(2, optimize_pose=False, optimize_appearance=True)
+
     with torch.no_grad():
         module.appearance.weight[1] = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.5, 0.0])
+
     rgb = torch.ones(1, 1, 1, 3)
 
     out = module.color(rgb, torch.tensor([1]))
@@ -81,6 +87,7 @@ def test_both_halves_pass_through_when_neither_is_selected():
 
 def test_denormalize_rescales_translation_deltas_only():
     module = CameraOpt(2)
+
     with torch.no_grad():
         module.translation.weight.fill_(2.0)
         module.rotation.weight.fill_(3.0)
@@ -93,8 +100,10 @@ def test_denormalize_rescales_translation_deltas_only():
 
 def test_denormalize_is_a_no_op_without_the_pose_half():
     module = CameraOpt(2, optimize_pose=False, optimize_appearance=True)
+
     with torch.no_grad():
         module.appearance.weight.normal_(std=0.1)
+
     before = module.appearance.weight.clone()
 
     module.denormalize(scale=0.5)

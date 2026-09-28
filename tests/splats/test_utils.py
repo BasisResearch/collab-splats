@@ -12,7 +12,8 @@ from collab_splats.splats.utils import (
     compute_scene_scale,
     denormalize_cameras,
     downscale_factor,
-    downscale_view,
+    downscale_image,
+    knn_spacing,
     prepare_target,
     scene_normalization,
     view_order,
@@ -24,9 +25,11 @@ def _ring_cameras(n_views=4, radius=2.0):
     n_views camera-to-world poses on a ring of the given radius in the xz plane.
     """
     poses = np.stack([np.eye(4, dtype=np.float32) for _ in range(n_views)])
+
     for view in range(n_views):
         angle = 2 * np.pi * view / n_views
         poses[view, :3, 3] = [radius * np.cos(angle), 0.0, radius * np.sin(angle)]
+
     return poses
 
 
@@ -69,6 +72,7 @@ def test_scene_normalization_centers_an_asymmetric_camera_set():
 
 def test_scene_normalization_rejects_coincident_cameras():
     poses = np.stack([np.eye(4, dtype=np.float32)] * 3)
+
     with pytest.raises(ValueError, match="cameras coincide"):
         scene_normalization(poses)
 
@@ -100,41 +104,19 @@ def test_downscale_factor_is_one_when_disabled():
     assert downscale_factor(0, 0, 3000) == 1
 
 
-def test_downscale_view_halves_image_and_intrinsics():
+def test_downscale_image_halves_the_image():
     image = np.zeros((64, 32, 3), np.uint8)
-    intrinsics = torch.tensor([[[10.0, 0.0, 16.0], [0.0, 10.0, 32.0], [0.0, 0.0, 1.0]]])
-
-    small, K_small = downscale_view(image, intrinsics, 2)
-
-    assert small.shape == (32, 16, 3)
-    assert K_small[0, 0, 0] == pytest.approx(5.0)
-    assert K_small[0, 1, 2] == pytest.approx(16.0)
-    # Bottom row is untouched
-    assert K_small[0, 2, 2] == pytest.approx(1.0)
-    # The caller's intrinsics must not be mutated
-    assert intrinsics[0, 0, 0] == pytest.approx(10.0)
+    assert downscale_image(image, 2).shape == (32, 16, 3)
 
 
-def test_downscale_view_scales_by_the_given_factor():
-    image = np.zeros((480, 640, 3), np.uint8)
-    intrinsics = torch.tensor([[[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]]])
-
-    small, K_small = downscale_view(image, intrinsics, 4)
-
-    assert small.shape == (120, 160, 3)
-    assert K_small[0, 0, 0] == pytest.approx(125.0)
-    assert K_small[0, 0, 2] == pytest.approx(80.0)
-    # Bottom row is untouched
-    assert K_small[0, 2, 2] == pytest.approx(1.0)
+def test_downscale_image_floors_an_odd_size():
+    image = np.zeros((45, 63, 3), np.uint8)
+    assert downscale_image(image, 4).shape == (11, 15, 3)
 
 
-def test_downscale_view_passes_through_at_factor_one():
+def test_downscale_image_passes_through_at_factor_one():
     image = np.zeros((8, 8, 3), np.uint8)
-    intrinsics = torch.eye(3)[None]
-    small, K_small = downscale_view(image, intrinsics, 1)
-
-    assert small is image
-    assert K_small is intrinsics
+    assert downscale_image(image, 1) is image
 
 
 def test_prepare_target_scales_rgb_to_unit_range():
@@ -182,13 +164,26 @@ def test_view_order_reproduces_the_sequence_for_an_odd_view_count():
 
 def test_view_order_visits_every_view_once_per_epoch():
     drawn = list(islice(view_order(5), 15))
+
     for start in (0, 5, 10):
         assert sorted(drawn[start : start + 5]) == [0, 1, 2, 3, 4]
 
 
 def test_view_order_seed_is_a_keyword_argument():
     assert list(islice(view_order(4, seed=7), 4)) != list(islice(view_order(4, seed=42), 4))
+
     # Keyword-ONLY: a positional seed must not bind, or the name is not pinned
     # - the count string is pinned, so no unrelated TypeError can pass this
     with pytest.raises(TypeError, match="takes 1 positional argument but 2 were given"):
         view_order(4, 7)
+
+
+def test_knn_spacing_is_the_rms_distance_to_the_k_nearest_neighbors():
+    rng = np.random.default_rng(0)
+    points = rng.uniform(-1, 1, (50, 3))
+    spacing = knn_spacing(points, 3)
+
+    # Brute force: sorted pairwise distances, self (0) excluded
+    dists = np.sort(np.linalg.norm(points[:, None] - points[None], axis=-1), axis=1)[:, 1:4]
+    assert spacing.shape == (50,)
+    assert np.allclose(spacing, np.sqrt((dists**2).mean(-1)))

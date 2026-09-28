@@ -68,6 +68,7 @@ def test_sh_degree_is_rejected_under_scaffold():
     """
     with pytest.raises(ValueError, match="sh_degree"):
         SplatsConfig.from_dict({"representation": "scaffold", "sh_degree": 0})
+
     with pytest.raises(ValueError, match="sh_degree"):
         SplatsConfig.from_dict({"representation": "scaffold", "sh_degree_interval": 500})
 
@@ -108,6 +109,7 @@ def test_appearance_embedding_changes_color_only_when_enabled():
     on = ScaffoldMLPs(ScaffoldConfig(n_offsets=2, feat_dim=8, appearance_dim=6), n_views=5)
     assert on.embedding_appearance is not None
     assert on.embedding_appearance.weight.shape == (5, 6)
+
     with pytest.raises(ValueError, match="camera_id"):
         on(features, camera_id=None)
 
@@ -199,8 +201,20 @@ def test_optimizers_cover_every_anchor_parameter():
     points, colors = _seed_points()
     model = Scaffold(_scaffold_config(n_offsets=2, feat_dim=8), points, colors, 1.0, n_views=1, device="cpu")
     assert set(model.param_optimizers) == set(model.params)
+
     for optimizer in model.param_optimizers.values():
         assert len(optimizer.param_groups) == 1
+
+
+def test_scaffold_adam_epsilon_is_a_kwarg():
+    cfg = _scaffold_config(n_offsets=2, feat_dim=8)
+    points, colors = _seed_points(n=200)
+    default = Scaffold(cfg, points, colors, 1.0, n_views=1, device="cpu")
+    custom = Scaffold(cfg, points, colors, 1.0, n_views=1, device="cpu", adam_eps=1e-8)
+
+    # Every optimizer, the MLP one included, takes the kwarg; the default stays upstream's 1e-15
+    assert {group["eps"] for opt in default.optimizers for group in opt.param_groups} == {1e-15}
+    assert {group["eps"] for opt in custom.optimizers for group in opt.param_groups} == {1e-8}
 
 
 ########################################
@@ -329,6 +343,7 @@ def test_decode_drops_offsets_with_non_positive_opacity():
     with torch.no_grad():
         model.mlps.mlp_opacity[-2].weight.zero_()
         model.mlps.mlp_opacity[-2].bias.copy_(torch.tensor([-5.0, 5.0, -5.0, 5.0]))
+
     decoded, index = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
     n_visible = int(model.visible_anchors(cam_to_world, intrinsics, 64, 64).sum())
     assert len(decoded["means"]) == 2 * n_visible
@@ -372,6 +387,7 @@ def test_decode_frustum_filter_drops_anchors_behind_the_camera():
     # Camera sits at z = -4 looking down +z, so a point far behind it can never be visible
     with torch.no_grad():
         model.params["anchors"][0] = torch.tensor([0.0, 0.0, -100.0])
+
     assert not bool(model.visible_anchors(cam_to_world, intrinsics, 64, 64)[0])
     assert bool(visible.any())
 
@@ -387,9 +403,26 @@ def test_decode_never_returns_zero_gaussians_when_every_offset_is_closed():
     with torch.no_grad():
         model.mlps.mlp_opacity[-2].bias.fill_(-50.0)
         model.mlps.mlp_opacity[-2].weight.zero_()
+
     decoded, decode_index = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
     assert len(decoded["means"]) == 1
     assert len(decode_index) == 1
+
+
+def test_offsets_to_gaussians_keeps_the_most_opaque_offset_when_all_are_closed():
+    anchors = torch.zeros(2, 3)
+    scaling = torch.ones(2, 6)
+    offsets = torch.zeros(2, 3, 3)
+    neural_opacity = torch.tensor([[-0.5], [-0.1], [-0.9], [-0.3], [-0.2], [-0.8]])
+    cov = torch.zeros(6, 7)
+    cov[:, 3] = 1.0
+    color = torch.rand(6, 3)
+
+    keep, gaussians = scaffold_module._offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, 3)
+
+    assert keep.tolist() == [False, True, False, False, False, False]
+    assert gaussians["opacities"].tolist() == pytest.approx([-0.1])
+    assert set(gaussians) == {"means", "scales", "quats", "opacities", "colors"}
 
 
 def test_decode_falls_back_to_every_anchor_when_the_frustum_is_empty():
@@ -402,6 +435,7 @@ def test_decode_falls_back_to_every_anchor_when_the_frustum_is_empty():
     # Push every anchor far behind the camera, which sits at z = -4 looking down +z
     with torch.no_grad():
         model.params["anchors"].data[:] = torch.tensor([0.0, 0.0, -100.0])
+
     assert not bool(model.visible_anchors(cam_to_world, intrinsics, 64, 64).any())
     decoded, _ = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
     assert len(decoded["means"]) > 0
@@ -424,7 +458,7 @@ def test_scaffold_decode_renders_through_gsplat(primitive):
     model = _field(device="cuda")
     cam_to_world, intrinsics = _cam(device="cuda")
     decoded, _ = model.decode(primitive, cam_to_world, intrinsics, 64, 64, camera_id=None)
-    render, info = render_gaussians(primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None, absgrad=False)
+    render, info = render_gaussians(primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None)
     assert render["rgb"].shape == (1, 64, 64, 3)
     assert render["depth"].shape == (1, 64, 64, 1)
     expected_gradient_key = "means2d" if primitive == "3dgs" else "gradient_2dgs"
@@ -439,7 +473,7 @@ def test_render_gradient_reaches_the_anchor_features():
     _open_every_offset(model)
     cam_to_world, intrinsics = _cam(device="cuda")
     decoded, _ = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
-    render, _ = render_gaussians("3dgs", decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None, absgrad=False)
+    render, _ = render_gaussians("3dgs", decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None)
     render["rgb"].sum().backward()
 
     # `grad is not None` and `isfinite` both hold on an all-zero gradient
@@ -545,6 +579,7 @@ def test_accumulation_is_additive_over_steps():
         opacities=torch.tensor([0.25]),
         visible_ids=torch.tensor([1]),
     )
+
     for _ in range(3):
         strategy.accumulate(COUNTING_STEP, info)
 
@@ -652,6 +687,7 @@ def test_growing_adds_an_anchor_at_a_high_gradient_slot(monkeypatch):
     # - seen for most of the window: the gate is a fraction of refine_every, not a single sighting
     with torch.no_grad():
         model.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+
     strategy.offset_gradient_accum[0] = 100.0
     strategy.offset_denom[0] = 100.0
 
@@ -667,8 +703,10 @@ def test_growing_skips_slots_below_threshold():
     model = _field(n_offsets=2)
     n_before = len(model.params["anchors"])
     strategy = _strategy(model)
+
     with torch.no_grad():
         model.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+
     strategy.offset_gradient_accum[0] = model.cfg.grad_threshold * 0.5 * 100.0
     strategy.offset_denom[0] = 100.0
 
@@ -689,8 +727,10 @@ def test_the_seen_gate_opens_at_half_a_refine_window(monkeypatch, window_fractio
     # The mean gradient clears the threshold in both arms, so only the window decides
     # - 0.4 sits below upstream's 0.5 gate, 0.75 above it and below a whole window
     window = model.cfg.refine_every * model.cfg.success_threshold
+
     with torch.no_grad():
         model.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+
     strategy.offset_gradient_accum[0] = 100.0
     strategy.offset_denom[0] = window * window_fraction
 
@@ -709,6 +749,7 @@ def test_growing_leaves_unseen_slots_accumulating(monkeypatch):
     # Slot 0 grows and is consumed; slot 1 has one sighting, far short of the window
     with torch.no_grad():
         model.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+
     strategy.offset_gradient_accum[0] = 100.0
     strategy.offset_denom[0] = 100.0
     strategy.offset_gradient_accum[1] = 7.0
@@ -745,8 +786,10 @@ def test_fine_levels_need_a_coarse_anchor_in_the_same_call(monkeypatch):
     # - level 0 adds nothing, so upstream never reaches the finer levels that would have placed it
     coarse = model.voxel_size * model.cfg.update_init_factor
     anchor = model.params["anchors"][0]
+
     with torch.no_grad():
         model.params["offsets"][0, 0] = (torch.round(anchor / coarse) * coarse - anchor) / model.voxel_size
+
     strategy.offset_gradient_accum[0] = 100.0
     strategy.offset_denom[0] = 100.0
 
@@ -778,16 +821,20 @@ def test_growing_extends_optimizer_state_to_match():
         optimizer.zero_grad(set_to_none=True)
 
     torch.manual_seed(0)
+
     with torch.no_grad():
         model.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+
     strategy.offset_gradient_accum[0] = 100.0
     strategy.offset_denom[0] = 100.0
     strategy.grow(model)
 
     n_anchors = len(model.params["anchors"])
+
     for name, optimizer in model.param_optimizers.items():
         exp_avg = optimizer.state[model.params[name]]["exp_avg"]
         assert len(exp_avg) == n_anchors, name
+
     assert len(strategy.offset_gradient_accum) == n_anchors * model.cfg.n_offsets
     assert len(strategy.anchor_denom) == n_anchors
 
@@ -802,6 +849,7 @@ def test_grown_anchors_inherit_the_source_feature(monkeypatch):
     with torch.no_grad():
         model.params["anchor_feat"][0] = 5.0
         model.params["offsets"][0, 0] = torch.tensor([50.0, 50.0, 50.0])
+
     strategy.offset_gradient_accum[0] = 100.0
     strategy.offset_denom[0] = 100.0
 
@@ -822,9 +870,11 @@ def test_learning_rates_decay_per_head():
     # The schedulers are constructed at step 0, so the groups already carry their initial lrs
     start = {group["name"]: group["lr"] for group in model.mlp_optimizer.param_groups}
     start_offsets = model.param_optimizers["offsets"].param_groups[0]["lr"]
+
     for _ in range(model.cfg.lr_max_steps):
         for scheduler in model.schedulers:
             scheduler.step()
+
     end = {group["name"]: group["lr"] for group in model.mlp_optimizer.param_groups}
     end_offsets = model.param_optimizers["offsets"].param_groups[0]["lr"]
 
@@ -847,6 +897,7 @@ def test_learning_rate_horizon_is_the_config_not_the_run_length():
     for _ in range(1000):
         long_horizon.offset_scheduler.step()
         short_horizon.offset_scheduler.step()
+
     long_lr = long_horizon.param_optimizers["offsets"].param_groups[0]["lr"]
     short_lr = short_horizon.param_optimizers["offsets"].param_groups[0]["lr"]
 
@@ -857,7 +908,7 @@ def test_learning_rate_horizon_is_the_config_not_the_run_length():
 
 def test_defaults_match_the_reference_implementation():
     """
-    GS-SR's shipped scaffold defaults, including the appearance embedding.
+    Scaffold-GS's shipped defaults, including the appearance embedding.
     """
     cfg = ScaffoldConfig()
 
@@ -893,6 +944,7 @@ def test_pruning_caps_the_raw_gaussian_extent():
     """
     model = _field(n_offsets=2)
     strategy = _strategy(model)
+
     with torch.no_grad():
         model.params["scaling"][:, :] = 3.0
 
@@ -912,6 +964,7 @@ def test_the_scale_cap_is_a_keyword_a_caller_can_move():
     """
     model = _field(n_offsets=2)
     strategy = _strategy(model)
+
     with torch.no_grad():
         model.params["scaling"][:, :] = 3.0
 
@@ -963,6 +1016,7 @@ def test_pruning_keeps_anchors_that_were_never_seen():
 def test_pruning_shrinks_optimizer_state_to_match():
     model = _field(n_offsets=2)
     strategy = _strategy(model)
+
     for name, optimizer in model.param_optimizers.items():
         model.params[name].grad = torch.ones_like(model.params[name])
         optimizer.step()
@@ -973,6 +1027,7 @@ def test_pruning_shrinks_optimizer_state_to_match():
     strategy.prune(model)
 
     n_anchors = len(model.params["anchors"])
+
     for name, optimizer in model.param_optimizers.items():
         assert len(optimizer.state[model.params[name]]["exp_avg"]) == n_anchors, name
 
@@ -1032,6 +1087,7 @@ def test_decode_is_invariant_to_denormalization():
                 if isinstance(layer, torch.nn.Linear):
                     torch.nn.init.normal_(layer.weight, std=0.5)
                     torch.nn.init.normal_(layer.bias, std=0.5)
+
     _open_every_offset(model)
     trained, _ = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
 
@@ -1147,8 +1203,10 @@ def _reachable_state(model):
     # The two containers that are Modules rather than dicts, so the walk above only saw their repr
     for name, tensor in model.params.items():
         state[f"params.{name}"] = tensor.detach().clone()
+
     for name, tensor in model.mlps.state_dict().items():
         state[f"mlps.{name}"] = tensor.detach().clone()
+
     return state
 
 
@@ -1181,6 +1239,7 @@ def test_scaffold_lambda_schedulers_reproduce_the_exponential_curve():
     for _ in range(lr_max_steps // 2):
         for scheduler in model.schedulers:
             scheduler.step()
+
     expected = math.sqrt((model.cfg.offset_lr * 2.0) * (model.cfg.offset_lr_final * 2.0))
     assert offset_optimizer.param_groups[0]["lr"] == pytest.approx(expected, rel=1e-4)
 
@@ -1254,6 +1313,7 @@ def test_scaffold_checkpoint_round_trips():
     assert restored.voxel_size == pytest.approx(model.voxel_size)
     restored_mlps = restored.mlps.state_dict()
     assert set(restored_mlps) == set(model.mlps.state_dict())
+
     for name, tensor in model.mlps.state_dict().items():
         assert torch.equal(restored_mlps[name], tensor), name
 
@@ -1422,6 +1482,7 @@ def test_export_gaussians_writes_the_decoded_values_in_the_ply_s_raw_forms():
     with torch.no_grad():
         model.params["scaling"][:, 3:] += 0.75
         model.params["offsets"] += torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+
     assert bool(model.visible_anchors(cam_to_world, intrinsics, 64, 64).all())
 
     baked = model.export_gaussians(cam_to_world, intrinsics, 64, 64)
@@ -1479,6 +1540,7 @@ def test_export_gaussians_clamps_the_all_closed_opacity_decode_returns_raw():
         direction = direction / direction.norm(dim=-1, keepdim=True)
         features = torch.cat([model.params["anchor_feat"], direction], dim=-1)
         neural_opacity = model.mlps(features, camera_id)[0]
+
     assert bool((neural_opacity <= 0).all())
 
     baked = model.export_gaussians(cam_to_world, intrinsics, 64, 64)
@@ -1559,8 +1621,10 @@ def test_export_gaussians_decodes_at_the_unit_mean_view_direction():
     # Anchor 0 goes far behind both cameras, so seen_count is zero for it and the fallback must fire
     with torch.no_grad():
         model.params["anchors"][0] = torch.tensor([0.0, 0.0, -100.0])
+
     seen = torch.ones(model.n_primitives, dtype=torch.bool)
     seen[0] = False
+
     for view in range(len(cam_to_world)):
         visible = model.visible_anchors(cam_to_world[view : view + 1], intrinsics[view : view + 1], 64, 64)
         assert torch.equal(visible, seen)
@@ -1615,9 +1679,9 @@ def test_scaffold_render_rasterizes_with_the_configured_primitive(primitive):
 
 
 @cuda
-def test_scaffold_render_passes_the_extra_signal_flags_through():
+def test_scaffold_render_passes_the_normal_flag_through():
     """
-    The regularizers ask for normals and PGSR asks for planes; neither can be decided in here.
+    The regularizers ask for normals; that cannot be decided in here.
     """
     model = _field(n_offsets=2, device="cuda")
     cam_to_world, intrinsics = _cam(device="cuda")
@@ -1625,44 +1689,43 @@ def test_scaffold_render_passes_the_extra_signal_flags_through():
 
     default, _ = model.render(cam_to_world, intrinsics, 64, 64, camera_id)
     without_normals, _ = model.render(cam_to_world, intrinsics, 64, 64, camera_id, render_normals=False)
-    planar, _ = model.render(cam_to_world, intrinsics, 64, 64, camera_id, render_plane=True)
 
     assert {"normal", "depth_normal"} <= set(default)
     assert not {"normal", "depth_normal"} & set(without_normals)
-    assert {"plane_normal", "plane_distance", "plane_depth", "plane_depth_normal"} <= set(planar)
 
 
 @cuda
 def test_scaffold_render_carries_per_view_state_in_info_not_on_self():
     """
-    PGSR renders a neighbor view and discards its info, so per-render state cannot live on self.
+    A render's per-view state travels in its info, so a second render cannot clobber the first.
     """
     model = _field(n_offsets=2, device="cuda")
     cam_to_world, intrinsics = _cam(device="cuda")
     state_before = _reachable_state(model)
 
-    # The main view: everything post_backward and the regularizers read travels in the return values
+    # The first render: everything post_backward and the regularizers read travels in the return values
     render, info = model.render(cam_to_world, intrinsics, 64, 64, torch.tensor([0], device="cuda"))
     assert {"decode_index", "decoded_opacities", "visible_ids"} <= set(info)
     assert {"log_scales", "opacities"} <= set(render)
-    main_index = info["decode_index"].clone()
-    main_visible = info["visible_ids"].clone()
+    first_index = info["decode_index"].clone()
+    first_visible = info["visible_ids"].clone()
 
-    # The neighbor must see a genuinely DIFFERENT anchor set
-    # - otherwise both comparisons below pass against a render that clobbered the main view's decode
-    neighbor = cam_to_world.clone()
-    neighbor[0, 0, 3] += 3.0
-    _, neighbor_info = model.render(neighbor, intrinsics, 64, 64, torch.tensor([1], device="cuda"))
-    assert not torch.equal(neighbor_info["visible_ids"], main_visible)
+    # The second render must see a genuinely DIFFERENT anchor set
+    # - otherwise both comparisons below pass against a render that clobbered the first render's decode
+    second = cam_to_world.clone()
+    second[0, 0, 3] += 3.0
+    _, second_info = model.render(second, intrinsics, 64, 64, torch.tensor([1], device="cuda"))
+    assert not torch.equal(second_info["visible_ids"], first_visible)
 
-    # post_backward is handed the MAIN info, so it must still describe the main view's decode
-    assert torch.equal(info["decode_index"], main_index)
-    assert torch.equal(info["visible_ids"], main_visible)
+    # post_backward is handed the first render's info, so it must still describe that decode
+    assert torch.equal(info["decode_index"], first_index)
+    assert torch.equal(info["visible_ids"], first_visible)
 
     # Values, not just names
     # - a decode cached on the strategy's accumulators leaves vars(model) untouched
     state_after = _reachable_state(model)
     assert set(state_after) == set(state_before)
+
     for path, value in state_before.items():
         if torch.is_tensor(value):
             assert torch.equal(state_after[path], value), path
@@ -1828,6 +1891,7 @@ def _module_level_bindings(source):
     """
     statements = list(ast.parse(source).body)
     names = set()
+
     while statements:
         node = statements.pop()
 
@@ -1837,10 +1901,12 @@ def _module_level_bindings(source):
 
         # Both assignment forms bind, and a target can be a tuple of several names
         targets = []
+
         if isinstance(node, ast.Assign):
             targets = node.targets
         elif isinstance(node, ast.AnnAssign):
             targets = [node.target]
+
         for target in targets:
             names.update(child.id for child in ast.walk(target) if isinstance(child, ast.Name))
 
@@ -1848,6 +1914,7 @@ def _module_level_bindings(source):
         # - walk its bodies only, never a `with`'s own `as` target
         for field in ("body", "orelse", "finalbody", "handlers"):
             statements.extend(getattr(node, field, None) or [])
+
     return names
 
 

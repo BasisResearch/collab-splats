@@ -15,7 +15,6 @@ from collab_splats.splats.losses import (
     default_losses,
     loss_active,
     loss_weight,
-    neighbor_selection,
     opacity_reg_loss,
     rescale_depth_units,
     scale_reg_loss,
@@ -48,8 +47,10 @@ def _render(height=16, width=16, with_distortion=True):
         "normal": normal,
         "depth_normal": noisy_normal,
     }
+
     if with_distortion:
         render["distortion"] = torch.rand(1, height, width, 1, generator=gen)
+
     return render
 
 
@@ -97,8 +98,6 @@ def test_registry_names():
         "opacity_reg",
         "scale_reg",
         "appearance_reg",
-        "pgsr_normal",
-        "pgsr_multiview",
     }
 
 
@@ -171,6 +170,7 @@ def test_normal_consistency_raises_when_active_without_normals():
     render_no_normals = _render(with_distortion=False)
     del render_no_normals["normal"], render_no_normals["depth_normal"]
     schedule = {"normal_consistency": {"weight": 1.0}}
+
     with pytest.raises(ValueError, match="render_normals"):
         compute_losses(0, render_no_normals, _target(), _gaussians(), schedule, 1.0)
 
@@ -199,6 +199,7 @@ def test_yaml_bool_weight_is_refused_not_coerced():
     # - a loss the author meant to switch on would train at full strength, silently
     with pytest.raises(TypeError, match="yaml booleans"):
         loss_weight(0, {"weight": True})
+
     with pytest.raises(TypeError, match="end_weight"):
         loss_weight(0, {"weight": 0.1, "end": 100, "end_weight": False})
 
@@ -294,6 +295,7 @@ def test_depth_ratio_is_a_convex_blend():
 def test_depth_ratio_without_a_median_normal_raises():
     render = _render()  # no depth_normal_median
     target, gaussians = _target(), _gaussians()
+
     with pytest.raises(ValueError, match="depth_normal_median"):
         OPTIONAL_LOSSES["normal_consistency"](render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 0.6})
 
@@ -503,24 +505,3 @@ def test_rescale_depth_units_leaves_the_callers_schedule_alone():
     assert losses == {"distortion": {"weight": 100.0, "end_weight": 10.0}, "depth": {"weight": 0.5}}
     assert rescaled is not losses
     assert rescaled["distortion"] is not losses["distortion"]
-
-
-def test_neighbor_selection_reads_the_pgsr_multiview_keys():
-    spec = {"weight": 0.1, "num_multi_view": 3, "max_points": 500}
-
-    assert neighbor_selection(spec) == {"num_views": 3, "max_points": 500}
-
-
-def test_neighbor_selection_defaults_are_the_documented_ones():
-    # Read once before the loop, not per step
-    # - so they default here, not at the trainer's call site
-    # - nothing downstream would report a changed default
-    assert neighbor_selection({"weight": 0.1}) == {"num_views": 5, "max_points": 20000}
-
-
-def test_neighbor_selection_casts_to_int():
-    # select_near_views indexes and slices with both, and yaml hands back whatever was typed
-    selected = neighbor_selection({"weight": 0.1, "num_multi_view": 3.0, "max_points": 500.0})
-
-    assert isinstance(selected["num_views"], int)
-    assert isinstance(selected["max_points"], int)

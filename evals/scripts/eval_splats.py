@@ -36,7 +36,7 @@ from collab_splats.mesh.io import upsample_depths
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.preproc import frames as fr
-from collab_splats.splats.rendering import load_checkpoint, render_views
+from collab_splats.splats import load_checkpoint, render_views
 from collab_splats.splats.trainer import SplatsConfig, train
 from collab_splats.utils.io import to_uint8_hwc, write_json
 from evals.scripts.eval_multiview_conf import load_7scenes_depth, median_align, retained_error

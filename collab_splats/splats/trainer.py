@@ -1,24 +1,12 @@
 """
-Gaussian-splat training on upstream gsplat.
+Gaussian-splat training loop on gsplat.
 
-- ``primitive``: rasterizer axis — 3dgs / 2dgs
-- ``representation``: model axis — vanilla ``Gaussians`` / Scaffold-GS anchors
-- both answer one interface, so ``train`` never branches
-- in: frames, COLMAP poses, intrinsics, seed point cloud
-- out: splats.ply, ckpt.pt, splats_quality_report.json
-- default frame: COLMAP world; ``scene_scale`` = 1.1 x the largest camera distance from the
-  camera centroid, as in gsplat's simple_trainer
-- ``scene_scale`` scales only: the means lr, the densification thresholds, the depth loss
-- ``normalize_scene``: splatfacto's unit cube at ``scene_scale`` 1.0; outputs mapped back to
-  world units before writing
-- pose lrs: rotation x WORLD extent, translation x training-frame ``scene_scale``
-- one shared lr: ~79x weaker pose opt (2.3x over-densification by step 2k), or 65x oversized
-  translation steps (-1.6 dB)
-- 2dgs distortion loss is in depth units, so its weight is rescaled too
+- `SplatsConfig`: every training knob, parsed from the `splats:` yaml block
+- `train`: frames, poses and seed points in; splats.ply, ckpt.pt and a quality report out
+- `primitive` picks the rasterizer (3dgs / 2dgs), `representation` the model (vanilla / scaffold)
 """
 
 import logging
-import random
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -27,24 +15,26 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from collab_splats.geometry.transforms import invert_poses, rescale_intrinsics
 from collab_splats.splats.cameras import CameraOpt
-from collab_splats.splats.gaussian import Gaussians
+from collab_splats.splats.checkpoint import (
+    MODEL_CLASSES,
+    REPRESENTATIONS,
+    write_outputs,
+)
 from collab_splats.splats.losses import (
     compute_losses,
     default_losses,
     loss_active,
-    neighbor_selection,
     rescale_depth_units,
     validate_schedule,
 )
-from collab_splats.splats.pgsr import render_neighbor, select_near_views
-from collab_splats.splats.rendering import write_outputs
-from collab_splats.splats.scaffold import Scaffold, ScaffoldConfig
+from collab_splats.splats.scaffold import ScaffoldConfig
 from collab_splats.splats.utils import (
     compute_scene_scale,
     denormalize_cameras,
     downscale_factor,
-    downscale_view,
+    downscale_image,
     prepare_target,
     scene_normalization,
     view_order,
@@ -55,36 +45,31 @@ logger = logging.getLogger(__name__)
 
 PRIMITIVES = ("3dgs", "2dgs")
 
-# Representation -> model class; the config validator takes its allow-list from the same mapping
-MODEL_CLASSES = {"vanilla": Gaussians, "scaffold": Scaffold}
-REPRESENTATIONS = tuple(MODEL_CLASSES)
-
 ########################################
-# Config — every tunable, with gsplat simple_trainer defaults
+# Config
 ########################################
 
 
 @dataclass
 class SplatsConfig:
     """
-    Trainer knobs: the ``splats:`` yaml block minus ``enabled``, at gsplat's example defaults.
+    Training settings: the `splats:` yaml block, defaults from gsplat's example trainer.
     """
 
     primitive: str = "3dgs"
-    representation: str = "vanilla"  # vanilla (per-gaussian params) | scaffold (anchors + MLP decode)
-    scaffold: dict | None = None  # scaffold block; only with representation: scaffold
+    representation: str = "vanilla"  # vanilla | scaffold
+    scaffold: dict | None = None  # only with representation: scaffold
     max_steps: int = 30000
     pose_opt: bool = True
-    appearance_opt: bool = False  # per-image affine color (CameraOpt); train views only
+    appearance_opt: bool = False  # per-image color correction
     losses: dict[str, dict] | None = None  # None -> default_losses(primitive)
 
     # Appearance
     sh_degree: int = 3
-    sh_degree_interval: int = 1000  # one more SH band unlocked every this many steps
+    sh_degree_interval: int = 1000  # steps between SH band unlocks
     init_opacity: float = 0.1
 
-    # Learning rates: means_lr x scene_scale; pose_lr x world extent (rot) / scene_scale (trans);
-    # means and pose decay 0.01x over the run
+    # Learning rates; means_lr and pose_lr are scaled by the scene extent
     means_lr: float = 1.6e-4
     scales_lr: float = 5e-3
     quats_lr: float = 1e-3
@@ -95,35 +80,31 @@ class SplatsConfig:
     appearance_lr: float = 1e-3
 
     # Densification
-    cap_max: int = 1_000_000  # 3dgs (MCMC): Gaussian budget
-    # 2dgs (Default): 2D-gradient split/duplicate threshold
-    # - gsplat's non-absgrad default
-    # - the spec's absgrad-calibrated 8e-4 starved densification: GH010229 160k vs 1.4M, -1.26 dB
+    cap_max: int = 1_000_000  # 3dgs: max Gaussian count
+    # 2dgs: gradient threshold for split/duplicate (gsplat's non-absgrad default)
     grow_grad2d: float = 2e-4
 
     log_every: int = 500
 
-    # Coarse-to-fine (splatfacto): start at 1/2^num_downscales, double every schedule step; 0 off
+    # Coarse-to-fine: start at 1/2^num_downscales, double every resolution_schedule steps; 0 off
     num_downscales: int = 2
     resolution_schedule: int = 3000
 
-    # splatfacto scene normalization
-    # - nerfstudio center_method="poses" + auto_scale_poses
-    # - unit-cube frame at scene_scale = 1.0, not world units x scene_scale
+    # Train in splatfacto's unit-cube frame; outputs are mapped back to world units
     normalize_scene: bool = False
 
     def __post_init__(self):
         """
-        Fill in the default loss schedule, refuse a zero-step run, and parse the scaffold block.
+        Fill in default losses, check max_steps, and parse the scaffold block.
         """
         if self.losses is None:
             self.losses = default_losses(self.primitive)
 
-        # At least one step: lr_gamma divides by max_steps, and final_losses needs a last step
+        # At least one step
         if self.max_steps < 1:
             raise ValueError(f"splats.max_steps must be >= 1, got {self.max_steps}")
 
-        # Parsed scaffold block, off the dataclass fields so asdict(cfg) stays yaml-shaped
+        # Parsed scaffold block, kept off the fields so asdict(cfg) matches the yaml
         if self.representation == "scaffold":
             self.scaffold_config = ScaffoldConfig.from_dict(self.scaffold or {})
         else:
@@ -132,45 +113,50 @@ class SplatsConfig:
     @classmethod
     def from_dict(cls, block: dict) -> "SplatsConfig":
         """
-        Build from the yaml block, rejecting unknown keys and ill-formed or incompatible losses.
+        Config from the `splats:` yaml block, validated.
 
-        - A given ``losses`` mapping REPLACES the per-primitive defaults (no merge).
+        - a given `losses` block replaces the defaults, it is not merged
 
         Args:
-            block: the ``splats:`` yaml mapping; ``enabled`` is accepted and dropped.
+            block: the `splats:` yaml mapping; `enabled` is ignored.
 
         Returns:
-            A SplatsConfig; ValueError on unknown keys, an unknown primitive or representation,
-            a scaffold/SH clash, or an invalid loss schedule.
+            The validated config.
+
+        Raises:
+            ValueError: unknown key, primitive or representation, SH set on scaffold, or bad losses.
         """
-        # Unknown top-level keys are almost always typos — refuse rather than silently default
+        # Unknown keys are likely typos: refuse them
         allowed_keys = {"enabled", *cls.__dataclass_fields__}
         unknown_keys = set(block) - allowed_keys
+
         if unknown_keys:
             raise ValueError(f"splats: unknown keys {sorted(unknown_keys)}; allowed {sorted(allowed_keys)}")
+
         fields = {key: value for key, value in block.items() if key != "enabled"}
         cfg = cls(**fields)
 
-        # The primitive must be one the trainer knows
+        # Known primitive
         if cfg.primitive not in PRIMITIVES:
             raise ValueError(f"splats.primitive must be one of {PRIMITIVES}, got '{cfg.primitive}'")
 
-        # Representation and its block: a scaffold block without the representation is a silent no-op
+        # Known representation; a scaffold block needs representation: scaffold
         if cfg.representation not in REPRESENTATIONS:
             raise ValueError(f"splats.representation must be one of {REPRESENTATIONS}, got '{cfg.representation}'")
+
         if cfg.scaffold is not None and cfg.representation != "scaffold":
             raise ValueError("splats.scaffold requires representation: scaffold")
 
-        # Scaffold decodes RGB from mlp_color, so SH has nothing to act on
-        # - only a DELIBERATE override is an error: base.yaml merges both keys at their defaults
+        # Scaffold has no SH; only a non-default SH value is an error
         sh_keys = ("sh_degree", "sh_degree_interval")
         sh_overridden = any(key in block and block[key] != cls.__dataclass_fields__[key].default for key in sh_keys)
+
         if cfg.representation == "scaffold" and sh_overridden:
             raise ValueError(
                 "splats.sh_degree / sh_degree_interval are vanilla-only; scaffold decodes RGB from mlp_color"
             )
 
-        # Loss schedule shape and primitive compatibility
+        # Loss schedule
         validate_schedule(cfg.losses, cfg.primitive)
 
         return cfg
@@ -196,70 +182,84 @@ def train(
     lr_decay: float = 0.01,
 ) -> None:
     """
-    Train one splat model and write splats.ply, ckpt.pt and splats_quality_report.json to out_dir.
+    Train a splat model and write splats.ply, ckpt.pt and the quality report to `out_dir`.
 
     Args:
-        cfg: the run's SplatsConfig; `representation` picks the model class, `primitive` the
-            rasterizer.
+        cfg: run config.
         images: (n_views, H, W, 3) uint8 frames.
         world_to_cam: (n_views, 4, 4) COLMAP-convention poses.
-        intrinsics: (n_views, 3, 3) camera matrices at frame resolution.
-        points: (P, 3) float32 seed points in the same world frame.
+        intrinsics: (n_views, 3, 3) at frame resolution.
+        points: (P, 3) float32 seed points.
         colors: (P, 3) uint8 seed colors.
         out_dir: output directory; created if absent.
-        depth_targets: optional (n_views, h, w) float32 depth at any resolution, 0 = no target.
-        image_ids: SOURCE frame index per row of `images`, checkpointed so a later stage can
-            find each view's file; a row-position default would silently mismatch any scene
-            not sampled contiguously from frame 0.
-        min_points: fewest seed points that can produce a model.
-        lr_decay: total decay of the position lr over the run, 0.01 = 100x down.
+        depth_targets: optional (n_views, h, w) depth at any resolution; 0 = no target.
+        image_ids: source frame index per row of `images`.
+        min_points: minimum seed point count.
+        lr_decay: total lr decay over the run; 0.01 = 100x down.
 
     Returns:
-        None — everything is written to `out_dir`.
+        None; outputs are written to `out_dir`.
     """
     device = "cuda"
     n_views, height, width = images.shape[:3]
     out_dir = Path(out_dir)
 
-    # Refuse inputs that cannot train: too few seed points, or mismatched per-view arrays
+    # Refuse too few seed points or mismatched per-view counts
     n_points = len(points)
+
     if n_points < min_points:
         raise ValueError(f"splats: need >= {min_points} seed points, got {n_points}")
+
     n_poses = len(world_to_cam)
     n_intrinsics = len(intrinsics)
     n_depth = None if depth_targets is None else len(depth_targets)
     n_ids = len(image_ids)
     per_view_counts = {n_views, n_poses, n_intrinsics, n_ids}
+
     if n_depth is not None:
         per_view_counts.add(n_depth)
+
     if len(per_view_counts) != 1:
         raise ValueError(
             f"splats: frames mismatch — images {n_views}, world_to_cam {n_poses}, "
             f"intrinsics {n_intrinsics}, image_ids {n_ids}, depth_targets {n_depth}"
         )
 
-    # Cameras on the GPU, frames uint8 on the CPU one view at a time
-    # - normalize_scene: unit-cube frame, scene_scale 1.0
-    # - else: world frame, scene_scale carries the extent
-    cam_to_world_np = np.linalg.inv(world_to_cam)
+    # Cameras to the GPU, optionally normalized to a unit cube (frames stay on the CPU)
+    cam_to_world_np = invert_poses(world_to_cam)
     world_extent = compute_scene_scale(torch.from_numpy(cam_to_world_np))
     loss_schedule = cfg.losses
     center = normalize_factor = None
+
     if cfg.normalize_scene:
         center, normalize_factor = scene_normalization(cam_to_world_np)
         cam_to_world_np[:, :3, 3] = (cam_to_world_np[:, :3, 3] - center) * normalize_factor
         points = (points - center) * normalize_factor
+
         if depth_targets is not None:
             depth_targets = depth_targets * normalize_factor
+
         logger.info("splats: normalized scene, center %s scale %.4g", np.round(center, 3), normalize_factor)
 
-        # Losses that live in depth units mean something different in a unit-cube frame
+        # Depth-unit loss settings follow the normalization
         loss_schedule = rescale_depth_units(loss_schedule, normalize_factor)
+
     cam_to_world = torch.from_numpy(cam_to_world_np).float().to(device)
     intrinsics_gpu = torch.from_numpy(intrinsics).float().to(device)
+
+    # Intrinsics per coarse-to-fine factor, on the (H // f, W // f) grid
+    native_hw = np.array([height, width])
+    n_levels = max(cfg.num_downscales, 0) + 1
+    intrinsics_by_factor = {}
+
+    for level in range(n_levels):
+        factor = 2**level
+        scaled = rescale_intrinsics(intrinsics, native_hw, native_hw // factor)
+        intrinsics_by_factor[factor] = torch.from_numpy(scaled).float().to(device)
+
     scene_scale = 1.0 if cfg.normalize_scene else compute_scene_scale(cam_to_world)
 
-    # Model and camera refiner own their own optimizers; nothing below branches on representation
+    # Model and camera refiner, each with its own optimizers
     model = MODEL_CLASSES[cfg.representation](cfg, points, colors, scene_scale, n_views, device, lr_decay=lr_decay)
     refine = CameraOpt.from_config(cfg, n_views, world_extent, scene_scale, lr_decay ** (1.0 / cfg.max_steps), device)
     logger.info(
@@ -270,50 +270,29 @@ def train(
         model.n_primitives,
     )
 
-    # PGSR losses are only defined against the 3dgs kernel
-    # - upstream: yanxian-ll/GS-SR @ 566359be, gssr/scene/scaffold_pgsr_scene.py:11
-    # - upstream scenes: pgsr / scaffold_pgsr / octree_pgsr, no 2dgs pairing
-    pgsr_normal_spec = loss_schedule.get("pgsr_normal")
-    pgsr_mv_spec = loss_schedule.get("pgsr_multiview")
-    if (pgsr_normal_spec is not None or pgsr_mv_spec is not None) and cfg.primitive != "3dgs":
-        raise ValueError(f"pgsr losses need primitive: 3dgs, got {cfg.primitive!r}")
-
-    # Neighbor views for the multi-view losses, scored once: same surface, useful baseline
-    near_ids: list[list[int]] = []
-    if pgsr_mv_spec is not None:
-        near_ids = select_near_views(
-            torch.linalg.inv(cam_to_world),
-            intrinsics_gpu,
-            torch.from_numpy(np.ascontiguousarray(points)).float().to(device),
-            height,
-            width,
-            **neighbor_selection(pgsr_mv_spec),
-        )
-
     start_time = time.perf_counter()
     views = view_order(n_views)
     loss_values: dict[str, float] = {}
     normal_spec = loss_schedule.get("normal_consistency")
+
     for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
-        # Pick one view (splatfacto's permutation schedule) and its (possibly refined) camera
+        # Next view in shuffled order
         view = next(views)
         view_image = images[view]
         view_depth_target = None if depth_targets is None else depth_targets[view]
 
-        # Coarse-to-fine (splatfacto): 1/4 -> 1/2 -> native; prepare_target resizes depth to match
+        # Downscale the view for coarse-to-fine; its target and refined camera
         factor = downscale_factor(step, cfg.num_downscales, cfg.resolution_schedule)
-        view_intrinsics = intrinsics_gpu[view : view + 1]
-        view_image, view_intrinsics = downscale_view(view_image, view_intrinsics, factor)
+        view_image = downscale_image(view_image, factor)
+        view_intrinsics = intrinsics_by_factor[factor][view : view + 1]
         step_height, step_width = view_image.shape[:2]
 
         target = prepare_target(view_image, view_depth_target, device)
         camera_id = torch.tensor([view], device=device)
         view_cam_to_world = refine.camera(cam_to_world[view : view + 1], camera_id)
 
-        # Render with the SH bands unlocked so far
-        # - 3DGS normals cost an extra pass: rendered only once the consistency loss is on
+        # Render; normals only once the normal-consistency loss is active
         render_normals = loss_active(step, normal_spec)
-        render_plane = loss_active(step, pgsr_normal_spec) or loss_active(step, pgsr_mv_spec)
         render, info = model.render(
             view_cam_to_world,
             view_intrinsics,
@@ -322,50 +301,33 @@ def train(
             camera_id,
             step=step,
             render_normals=render_normals,
-            render_plane=render_plane,
         )
 
-        # PGSR multi-view: render one co-visible neighbor
-        # - through its OWN camera id: appearance and pose deltas are per view
-        # - NOT detached: the geometric term pulls both views' plane depths together
-        # - upstream: GS-SR @ 566359be, gssr/scene/pgsr_scene.py:214-223
-        if render_plane and loss_active(step, pgsr_mv_spec) and near_ids[view]:
-            near = near_ids[view][random.randrange(len(near_ids[view]))]
-            near_image, near_intrinsics = downscale_view(images[near], intrinsics_gpu[near : near + 1], factor)
-            near_camera_id = torch.tensor([near], device=device)
-            render["world_to_cam"] = torch.linalg.inv(view_cam_to_world)
-            render["intrinsics"] = view_intrinsics
-            render["pgsr_neighbor"] = render_neighbor(
-                model,
-                near_image,
-                refine.camera(cam_to_world[near : near + 1], near_camera_id),
-                near_intrinsics,
-                near_camera_id,
-            )
-
-        # Per-image color correction, before compositing the background; params feed appearance_reg
+        # Color correction, then composite over a random background
         render["rgb"] = refine.color(render["rgb"], camera_id)
         appearance_params = refine.color_params(camera_id)
+
         if appearance_params is not None:
             render["appearance"] = appearance_params
+
         background = torch.rand(1, 3, device=device)
         transparency = 1.0 - render["alpha"]
         render["rgb"] = render["rgb"] + background * transparency
 
-        # Loss + backward; `info` is the MAIN view's, never the neighbor's
+        # Loss + backward
         model.pre_backward(step, info)
         loss, loss_values = compute_losses(step, render, target, model.params, loss_schedule, scene_scale)
         loss.backward()
 
-        # Optimizer steps for the model (and the cameras), then lr decay
+        # Optimizer and lr scheduler steps
         for optimizer in model.optimizers + refine.optimizers:
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
+
         for scheduler in model.schedulers + refine.schedulers:
             scheduler.step()
 
-        # Densify / prune / relocate AFTER the optimizer step (upstream order)
-        # - refine ops rebuild the Parameters: a later step sees .grad=None and silently skips
+        # Densify / prune after the optimizer step: refine rebuilds the Parameters, so .grad is gone
         model.post_backward(step, info)
 
         if step % cfg.log_every == 0:
@@ -379,16 +341,16 @@ def train(
                 rounded,
             )
 
-    # loss_values is the LAST step's single-view snapshot, not an average
+    # loss_values holds the last step's losses, not an average
     train_seconds = time.perf_counter() - start_time
 
-    # Outputs stay in world units: undo the Sim3 on model, cameras and pose deltas before writing
+    # Map model, cameras and pose deltas back to world units
     if cfg.normalize_scene:
         model.denormalize(center, normalize_factor)
         denormalize_cameras(cam_to_world, center, normalize_factor)
         refine.denormalize(normalize_factor)
 
-    # Pose deltas fold into the stored poses, never checkpointed apart — reapplying would double
+    # Bake the pose deltas into the saved poses
     with torch.no_grad():
         corrected = torch.cat(
             [
@@ -397,7 +359,7 @@ def train(
             ]
         )
 
-    # Writer takes both pose sets: corrected for ckpt/re-renders, uncorrected for the baked ply
+    # Write outputs: corrected poses for ckpt and renders, training poses for the ply
     write_outputs(
         cfg,
         model,

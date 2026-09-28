@@ -3,7 +3,6 @@ SplatsConfig validation and the training loop.
 """
 
 import ast
-import itertools
 import json
 from pathlib import Path
 
@@ -14,13 +13,9 @@ from gsplat.strategy import MCMCStrategy
 
 import collab_splats.splats.gaussian as gaussian_module
 import collab_splats.splats.trainer as trainer_module
+from collab_splats.splats.checkpoint import MODEL_CLASSES, REPRESENTATIONS
 from collab_splats.splats.gaussian import SH_C0
-from collab_splats.splats.trainer import (
-    MODEL_CLASSES,
-    REPRESENTATIONS,
-    SplatsConfig,
-    train,
-)
+from collab_splats.splats.trainer import SplatsConfig, train
 from tests.splats.synthetic import make_scene
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")
@@ -198,6 +193,7 @@ def test_train_short_run_moves_gaussians(monkeypatch, tmp_path, primitive, pose_
     refine = calls[0]["refine"]
     assert refine.has_pose == pose_opt
     assert refine.has_appearance == appearance_opt
+
     if appearance_opt:
         # render["appearance"] must still be populated, or appearance_reg silently drops out
         assert "appearance_reg" in calls[0]["loss_values"]
@@ -257,6 +253,7 @@ def test_bad_spec_key_message_names_the_keys_legal_for_that_loss():
     # normal_consistency also allows depth_ratio, so its message must offer it; depth's must not
     with pytest.raises(ValueError, match=r"expected \{weight\[, depth_ratio, end, end_weight, start\]\}"):
         SplatsConfig.from_dict({"primitive": "2dgs", "losses": {"normal_consistency": {"weight": 0.05, "nope": 1}}})
+
     with pytest.raises(ValueError, match=r"expected \{weight\[, end, end_weight, start\]\}"):
         SplatsConfig.from_dict({"primitive": "2dgs", "losses": {"depth": {"weight": 0.01, "nope": 1}}})
 
@@ -312,6 +309,7 @@ def test_train_scaffold_runs_and_writes_outputs(tmp_path, primitive):
 
     for name in ("splats.ply", "ckpt.pt", "splats_quality_report.json"):
         assert (tmp_path / name).exists(), name
+
     assert not (tmp_path / "splats.zarr").exists()
     checkpoint = torch.load(tmp_path / "ckpt.pt", weights_only=False)
     assert "anchors" in checkpoint["splats"]
@@ -358,6 +356,7 @@ def _branch_test_names(node):
     Every identifier, attribute name and string literal a branch's test condition mentions.
     """
     mentioned = set()
+
     for child in ast.walk(node):
         if isinstance(child, ast.Name):
             mentioned.add(child.id)
@@ -365,6 +364,7 @@ def _branch_test_names(node):
             mentioned.add(child.attr)
         elif isinstance(child, ast.Constant) and isinstance(child.value, str):
             mentioned.add(child.value)
+
     return mentioned
 
 
@@ -525,42 +525,6 @@ def test_train_refuses_an_image_ids_length_that_is_not_the_frame_count(tmp_path)
         train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_ids(images)[:2])
 
 
-@cuda
-def test_neighbor_render_uses_the_neighbors_own_camera_id(monkeypatch, tmp_path):
-    """
-    The neighbor renders through its OWN camera id: appearance and pose deltas are per view.
-    """
-    images, world_to_cam, intrinsics, points, colors, depths = make_scene(n_views=4)
-    calls = _recorder(monkeypatch)
-
-    # Pin both halves of the pair: every step trains view 0, whose only neighbor is view 2
-    monkeypatch.setattr(trainer_module, "view_order", lambda n_views: itertools.repeat(0))
-    monkeypatch.setattr(trainer_module, "select_near_views", lambda *args, **kwargs: [[2], [3], [0], [1]])
-
-    real_render_neighbor = trainer_module.render_neighbor
-    seen = []
-
-    def record_neighbor(model, image, cam_to_world, near_intrinsics, camera_id):
-        seen.append(int(camera_id.item()))
-        return real_render_neighbor(model, image, cam_to_world, near_intrinsics, camera_id)
-
-    monkeypatch.setattr(trainer_module, "render_neighbor", record_neighbor)
-    cfg = SplatsConfig.from_dict(
-        {
-            "primitive": "3dgs",
-            "max_steps": 3,
-            "log_every": 1,
-            "appearance_opt": True,
-            "num_downscales": 0,
-            "losses": {"pgsr_multiview": {"weight": 0.1}},
-        }
-    )
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, depth_targets=depths, image_ids=_ids(images))
-
-    assert len(calls) == 1
-    assert seen and set(seen) == {2}
-
-
 ########################################
 # Public API
 ########################################
@@ -569,14 +533,40 @@ def test_neighbor_render_uses_the_neighbors_own_camera_id(monkeypatch, tmp_path)
 def test_public_api_surface():
     import collab_splats.splats as splats
 
-    # Exactly six: two model classes, the config, the entry point, the ckpt reader, the commit
+    # Exactly seven: two model classes, the config, the entry point, the ckpt reader, the view
+    # re-renderer, the commit
     assert set(splats.__all__) == {
         "GSPLAT_COMMIT",
         "Gaussians",
         "Scaffold",
         "SplatsConfig",
         "load_checkpoint",
+        "render_views",
         "train",
     }
+
     for name in splats.__all__:
         assert hasattr(splats, name), name
+
+
+@cuda
+def test_downscaled_intrinsics_match_the_resized_image(monkeypatch, tmp_path):
+    # Odd size: W // 2 is not W / 2, so K must follow the resized grid, not a plain divide
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=2, height=45, width=63)
+    _recorder(monkeypatch)
+    seen = []
+    real_render = gaussian_module.Gaussians.render
+
+    def record(self, cam_to_world, view_intrinsics, width, height, *args, **kwargs):
+        seen.append((view_intrinsics.detach().cpu().numpy()[0], width, height))
+        return real_render(self, cam_to_world, view_intrinsics, width, height, *args, **kwargs)
+
+    monkeypatch.setattr(gaussian_module.Gaussians, "render", record)
+    cfg = SplatsConfig.from_dict({"primitive": "3dgs", "max_steps": 1, "num_downscales": 1, "resolution_schedule": 10})
+    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_ids(images))
+
+    K, width, height = seen[0]
+    assert (width, height) == (31, 22)
+    assert K[0, 2] == pytest.approx(intrinsics[0, 0, 2] * 31 / 63)
+    assert K[1, 2] == pytest.approx(intrinsics[0, 1, 2] * 22 / 45)
+    assert K[0, 0] == pytest.approx(intrinsics[0, 0, 0] * 31 / 63)

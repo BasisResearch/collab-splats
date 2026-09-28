@@ -109,6 +109,7 @@ def test_gaussians_activate_raw_parameters_for_the_rasterizer():
     # Spread the seed opacities first: constant ones pin the value 0.1, not sigmoid as a function
     with torch.no_grad():
         model.params["opacities"].data = torch.linspace(-3.0, 3.0, len(model.params["opacities"]))
+
     activated = model.activate()
 
     assert torch.allclose(activated["scales"], torch.exp(model.params["scales"]))
@@ -265,7 +266,7 @@ def test_render_warms_up_the_sh_degree(monkeypatch):
     model = _model(sh_degree=3, sh_degree_interval=1000)
     captured = {}
 
-    def _capture(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, absgrad, **kwargs):
+    def _capture(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, **kwargs):
         captured["sh_degree"] = sh_degree
         return {}, {}
 
@@ -285,44 +286,10 @@ def test_render_warms_up_the_sh_degree(monkeypatch):
     assert captured["sh_degree"] == 3
 
 
-def test_render_never_asks_for_absolute_gradients(monkeypatch):
-    captured = {}
-
-    def _capture(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, absgrad, **kwargs):
-        captured["absgrad"] = absgrad
-        return {}, {}
-
-    monkeypatch.setattr("collab_splats.splats.gaussian.render_gaussians", _capture)
-    view = (torch.eye(4)[None], torch.eye(3)[None], 64, 64, torch.zeros(1, dtype=torch.long))
-
-    # 2dgs is the only primitive with an absgrad the render could disagree with
-    # - `render` sends a literal, so this is the only thing holding it equal to make_strategy's
-    default = _model(primitive="2dgs")
-    default.render(*view, step=0)
-    assert default.strategy.absgrad is False
-    assert captured["absgrad"] is default.strategy.absgrad
-
-    # 3dgs is not the same assertion twice: MCMCStrategy has no absgrad, so the literal is all
-    captured.clear()
-    mcmc = _model(primitive="3dgs", cap_max=500)
-    mcmc.render(*view, step=0)
-    assert not hasattr(mcmc.strategy, "absgrad")
-    assert captured["absgrad"] is False
-
-    # Third construction path: a restored model has no strategy at all, and still renders
-    captured.clear()
-    ckpt = default.checkpoint()
-    ckpt["config"] = {"primitive": "2dgs", "sh_degree": 3, "sh_degree_interval": 1000}
-    restored = Gaussians.from_checkpoint(ckpt, "cpu")
-    restored.render(*view, step=0)
-    assert restored.strategy is None
-    assert captured["absgrad"] is False
-
-
 def test_render_hands_the_rasterizer_activated_params_and_the_configured_primitive(monkeypatch):
     captured = {}
 
-    def _capture(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, absgrad, **kwargs):
+    def _capture(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, **kwargs):
         captured["primitive"] = primitive
         captured["decoded"] = decoded
         return {}, {}
@@ -351,7 +318,7 @@ def test_render_forwards_every_positional_in_its_own_slot(monkeypatch):
     model = _model()
     captured = {}
 
-    def _capture(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, absgrad, **kwargs):
+    def _capture(primitive, decoded, cam_to_world, intrinsics, width, height, sh_degree, **kwargs):
         captured.update(
             primitive=primitive,
             decoded=decoded,
@@ -377,11 +344,12 @@ def test_render_forwards_every_positional_in_its_own_slot(monkeypatch):
     # Every activated tensor reaches the rasterizer, not only the two the activation transforms
     expected = model.activate()
     assert set(captured["decoded"]) == set(expected)
+
     for name, tensor in expected.items():
         assert torch.equal(captured["decoded"][name], tensor), name
 
 
-def test_render_forwards_the_normal_and_plane_flags(monkeypatch):
+def test_render_forwards_the_normal_flag(monkeypatch):
     model = _model()
     captured = {}
 
@@ -392,13 +360,13 @@ def test_render_forwards_the_normal_and_plane_flags(monkeypatch):
     monkeypatch.setattr("collab_splats.splats.gaussian.render_gaussians", _capture)
     view = (torch.eye(4)[None], torch.eye(3)[None], 64, 64, torch.zeros(1, dtype=torch.long))
 
-    # Defaults: normals on (the mesh path needs them), PGSR's planar signals off
+    # Default on (the mesh path needs normals)
     model.render(*view, step=0)
-    assert captured == {"render_normals": True, "render_plane": False}
+    assert captured == {"render_normals": True}
 
-    # Both are pass-throughs, so a hardcoded default here would silently ignore the caller
-    model.render(*view, step=0, render_normals=False, render_plane=True)
-    assert captured == {"render_normals": False, "render_plane": True}
+    # A pass-through: a hardcoded default here would silently ignore the caller
+    model.render(*view, step=0, render_normals=False)
+    assert captured == {"render_normals": False}
 
 
 def test_gaussians_seed_the_default_strategy_state_with_the_scene_scale():

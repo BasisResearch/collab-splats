@@ -219,3 +219,11 @@ Grepped over `collab_splats configs scripts tests evals docs/source`:
 - Any change to training behavior beyond the K rescale fix; no new tunables in `SplatsConfig`.
 - `reconstructor.py` comments outside `splats/`.
 - Re-implementing PGSR.
+
+## As shipped
+
+Names that changed during implementation:
+- `utils._knn_spacing` -> public `utils.knn_spacing(points, k)`: imported across modules
+- `Scaffold._offsets_to_gaussians(...)` -> module-level
+  `_offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, n_offsets)`
+- `utils.downscale_view` -> `utils.downscale_image(image, factor)`: K no longer passes through it

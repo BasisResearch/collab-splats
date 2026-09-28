@@ -78,7 +78,7 @@ def test_upsample_depths_rejects_box_outside_canvas():
 
 def _fake_rendering(views, image_ids, hw):
     """
-    Stand-in for collab_splats.splats.rendering: fixed poses, canned views.
+    Stand-in for collab_splats.splats: fixed poses, canned views.
     """
     n = len(views)
 
@@ -115,7 +115,7 @@ def test_render_tsdf_inputs_stacks_views_and_zeroes_empty_pixels(tmp_path, monke
     v0["alpha"][0, 0, 0, 0] = 0.0
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([v0, _view(h, w, depth=3.0)], [0, 1], (h, w)),
     )
     depths, rgbs, c2w, K, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu")
@@ -130,7 +130,7 @@ def test_render_tsdf_inputs_defaults_to_the_expected_depth(tmp_path, monkeypatch
     h, w = 4, 6
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([_view(h, w, depth=9.0, median_depth=5.0)], [0], (h, w)),
     )
     depths, _, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu")
@@ -141,7 +141,7 @@ def test_render_tsdf_inputs_median_source_takes_the_median_depth(tmp_path, monke
     h, w = 4, 6
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([_view(h, w, depth=9.0, median_depth=5.0)], [0], (h, w)),
     )
     depths, _, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu", depth_source="median")
@@ -152,7 +152,7 @@ def test_render_tsdf_inputs_expected_source_ignores_median_depth(tmp_path, monke
     h, w = 4, 6
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([_view(h, w, depth=9.0, median_depth=5.0)], [0], (h, w)),
     )
     depths, _, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu", depth_source="expected")
@@ -163,7 +163,7 @@ def test_render_tsdf_inputs_median_source_falls_back_on_a_3dgs_checkpoint(tmp_pa
     h, w = 4, 6
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([_view(h, w, depth=9.0)], [0], (h, w)),
     )
     depths, _, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu", depth_source="median")
@@ -182,7 +182,7 @@ def test_render_tsdf_inputs_swaps_in_source_frames_by_image_id(tmp_path, monkeyp
     write_frames(images_dir, frames, [{"frame_idx": idx} for idx in (0, 5, 7)], {})
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([_view(h, w, 1.0), _view(h, w, 1.0)], [7, 0], (h, w)),
     )
     _, rgbs, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", images_dir=images_dir, device="cpu")
@@ -196,7 +196,7 @@ def test_render_tsdf_inputs_returns_the_image_ids_it_read(tmp_path, monkeypatch)
     write_frames(images_dir, frames, [{"frame_idx": idx} for idx in (0, 5, 7)], {})
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([_view(h, w, 1.0), _view(h, w, 1.0)], [7, 0], (h, w)),
     )
     _, rgbs, _, _, image_ids = render_tsdf_inputs(tmp_path / "ckpt.pt", images_dir=images_dir, device="cpu")
@@ -211,7 +211,7 @@ def test_render_tsdf_inputs_rejects_frame_size_mismatch(tmp_path, monkeypatch):
     write_frames(images_dir, [np.zeros((8, 8, 3), np.uint8)], [{"frame_idx": 0}], {})
     monkeypatch.setitem(
         sys.modules,
-        "collab_splats.splats.rendering",
+        "collab_splats.splats",
         _fake_rendering([_view(4, 6, 1.0)], [0], (4, 6)),
     )
     with pytest.raises(ValueError, match="checkpoint renders"):

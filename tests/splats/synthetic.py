@@ -21,6 +21,7 @@ def make_scene(n_views=8, height=64, width=64, n_points=200):
     intrinsics = np.array([[FOCAL, 0, width / 2], [0, FOCAL, height / 2], [0, 0, 1]], dtype=np.float32)
 
     images, depths, world_to_cam = [], [], []
+
     for view in range(n_views):
         # Camera on a ring of radius 3, looking at the origin (OpenCV: +z forward)
         angle = 2 * np.pi * view / n_views
@@ -40,15 +41,20 @@ def make_scene(n_views=8, height=64, width=64, n_points=200):
         depth = np.zeros((height, width), np.float32)
         points_cam = (pose[:3, :3] @ points.T + pose[:3, 3:]).T
         far_to_near = np.argsort(-points_cam[:, 2])
+
         for idx in far_to_near:
             z = points_cam[idx, 2]
+
             if z <= 0:
                 continue
+
             pixel = intrinsics[:2, :2] @ (points_cam[idx, :2] / z) + intrinsics[:2, 2]
             u, v = pixel.round().astype(int)
+
             if 1 <= u < width - 1 and 1 <= v < height - 1:
                 image[v - 1 : v + 2, u - 1 : u + 2] = colors[idx]
                 depth[v - 1 : v + 2, u - 1 : u + 2] = z
+
         images.append(image)
         depths.append(depth)
 

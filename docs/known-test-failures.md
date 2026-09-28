@@ -41,26 +41,6 @@ The wider point stands: a hand-rolled config fixture silently rots every time `b
 that `reconstructor.py` reads by subscript. Building the fixture from `base.yaml` with explicit
 overrides would make this class of failure impossible, and is still not done.
 
-## 2026-09-06 — `pgsr_multiview` + `pose_opt: true` produces NaN pose deltas (OPEN, pre-existing bug)
-
-Not a test failure — no test covers this combination — but a real bug, recorded so the next person to
-enable it does not rediscover it from scratch.
-
-**Measured against the PRE-refactor tree (`edd1fafb`), so this is not caused by the splats cleanup.**
-With `losses.pgsr_multiview.weight > 0` and `splats.pose_opt: true`, the pose deltas go NaN within
-50 training steps and the final render dies inside `torch.linalg.inv`.
-
-What was ruled out:
-
-- The loss **value** stays finite the whole way through — it is the **backward** pass that produces
-  the NaN, not the forward.
-- The `geo` and `ncc` sub-weights make no difference at any setting tried.
-- `pgsr_normal` alone (without `pgsr_multiview`) is fine with `pose_opt: true`.
-
-Consequence: the splats parity harness pins `pose_opt: False` on its `3dgs_pgsr` config. That is a
-workaround for this bug, not a preference, and the comment at that config says so. If this is ever
-fixed, the parity baseline for that one config must be re-measured.
-
 ## 2026-09-05 — `av` is declared but missing from `uv.lock`, and `uv lock` cannot regenerate
 
 `pyproject.toml:35` declares `"av>=17.0"` — PyAV is a hard runtime dependency of

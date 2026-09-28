@@ -16,16 +16,19 @@ import torch
 from gsplat.exporter import load_ply_to_splats
 
 from collab_splats.splats.cameras import CameraOpt
+from collab_splats.splats.checkpoint import (
+    REPRESENTATIONS,
+    load_checkpoint,
+    write_outputs,
+)
 from collab_splats.splats.gaussian import Gaussians
 from collab_splats.splats.rendering import (
     gaussian_normals_in_camera_frame,
-    load_checkpoint,
     render_gaussians,
     render_views,
-    write_outputs,
 )
 from collab_splats.splats.scaffold import Scaffold
-from collab_splats.splats.trainer import REPRESENTATIONS, SplatsConfig, train
+from collab_splats.splats.trainer import SplatsConfig, train
 from tests.splats.synthetic import make_scene
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")
@@ -51,7 +54,7 @@ def _render_only_model(gaussians, primitive="3dgs", device="cuda"):
 
 def _render(primitive, gaussians, cam_to_world, intrinsics, width, height, **kwargs):
     """
-    Rasterize a ParameterDict fixture at SH degree 0 with absgrad off.
+    Rasterize a ParameterDict fixture at SH degree 0.
 
     Args:
         primitive: "3dgs" or "2dgs".
@@ -66,7 +69,7 @@ def _render(primitive, gaussians, cam_to_world, intrinsics, width, height, **kwa
         (render, gsplat strategy info).
     """
     model = _render_only_model(gaussians, primitive)
-    return render_gaussians(primitive, model.activate(), cam_to_world, intrinsics, width, height, 0, False, **kwargs)
+    return render_gaussians(primitive, model.activate(), cam_to_world, intrinsics, width, height, 0, **kwargs)
 
 
 def _gaussians(n_points=200, device="cuda"):
@@ -141,16 +144,14 @@ def test_gaussian_normals_face_the_camera():
     cam_to_world, _ = _camera()
     world_to_cam = torch.linalg.inv(cam_to_world)[0]
     scales = torch.exp(gaussians["scales"])
-    normals, means_cam = gaussian_normals_in_camera_frame(gaussians["quats"], scales, gaussians["means"], world_to_cam)
+    normals = gaussian_normals_in_camera_frame(gaussians["quats"], scales, gaussians["means"], world_to_cam)
 
     rotation_w2c = world_to_cam[:3, :3]
     translation_w2c = world_to_cam[:3, 3]
-    expected_means_cam = gaussians["means"] @ rotation_w2c.T + translation_w2c
+    means_cam = gaussians["means"] @ rotation_w2c.T + translation_w2c
     normal_lengths = normals.norm(dim=-1)
     facing = (normals * means_cam).sum(-1)
     assert normals.shape == (200, 3)
-    assert means_cam.shape == (200, 3)
-    assert torch.allclose(means_cam, expected_means_cam, atol=1e-6)
     assert torch.allclose(normal_lengths, torch.ones(200, device="cuda"), atol=1e-5)
     assert (facing <= 1e-6).all()
 
@@ -275,108 +276,13 @@ def test_model_render_is_the_same_call_as_render_gaussians(primitive):
     model = _render_only_model(_gaussians(), primitive)
     camera_id = torch.zeros(1, dtype=torch.long, device="cuda")
 
-    reference, _ = render_gaussians(primitive, model.activate(), cam_to_world, intrinsics, 64, 64, 0, False)
+    reference, _ = render_gaussians(primitive, model.activate(), cam_to_world, intrinsics, 64, 64, 0)
     actual, _ = model.render(cam_to_world, intrinsics, 64, 64, camera_id, step=0)
 
     assert set(actual) == set(reference)
+
     for key, expected in reference.items():
         assert torch.equal(actual[key], expected), key
-
-
-@cuda
-def test_render_plane_rejects_2dgs():
-    # No 2dgs-pgsr upstream: the plane signals have no 2DGS definition
-    cam_to_world, intrinsics = _camera()
-    with pytest.raises(ValueError, match="3DGS-only"):
-        _render("2dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_plane=True)
-
-
-@cuda
-def test_render_plane_adds_exactly_the_four_plane_keys():
-    cam_to_world, intrinsics = _camera()
-    plane, _info = _render("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_plane=True)
-    assert plane["plane_normal"].shape == (1, 64, 64, 3)
-    assert plane["plane_distance"].shape == (1, 64, 64, 1)
-    assert plane["plane_depth"].shape == (1, 64, 64, 1)
-    assert plane["plane_depth_normal"].shape == (1, 64, 64, 3)
-
-    # Without the flag none of them exist; the ordinary keys are unchanged either way
-    ordinary, _info = _render("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64)
-    assert set(ordinary) == {"rgb", "alpha", "depth", "normal", "depth_normal"}
-
-
-@cuda
-def test_render_plane_normal_is_the_raw_accumulated_map():
-    # Upstream returns `rendered_normal` un-normalized
-    # - plane depth divides one accumulated sum by another, so the missing 1/alpha cancels
-    # - normalizing here would break that ratio
-    cam_to_world, intrinsics = _rotated_camera()
-    render, _info = _render("3dgs", _flat_disc(), cam_to_world, intrinsics, 64, 64, render_plane=True)
-    center_alpha = render["alpha"][0, 32, 32, 0]
-    center_plane_normal = render["plane_normal"][0, 32, 32]
-    assert center_alpha > 0.9
-    assert center_alpha < 1.0
-
-    # The disc normal is camera -z, scaled by the accumulated alpha rather than to unit length
-    assert center_plane_normal.norm().item() == pytest.approx(center_alpha.item(), rel=1e-4)
-    assert render["normal"][0, 32, 32].norm().item() == pytest.approx(1.0, rel=1e-4)
-
-
-@cuda
-def test_plane_depth_matches_rasterized_depth_on_a_fronto_parallel_plane():
-    # Two estimators of one surface must coincide on a fronto-parallel plane
-    # - `depth`: alpha-weighted expected z; `plane_depth`: ray-plane `distance / -(n . ray)`
-    # - median over the confident interior, not elementwise
-    # - at the antialiased rim partial coverage separates them for real; allclose there tests the rim
-    cam_to_world, intrinsics = _rotated_camera()
-    render, _info = _render("3dgs", _flat_disc(), cam_to_world, intrinsics, 64, 64, render_plane=True)
-    interior = render["alpha"][..., 0] > 0.9
-    assert interior.sum() > 0
-
-    # The disc sits at the origin with the camera 4 away, so both estimators must read 4
-    plane_depth = render["plane_depth"][..., 0][interior]
-    rasterized_depth = render["depth"][..., 0][interior]
-    assert plane_depth.median().item() == pytest.approx(4.0, rel=1e-3)
-    assert (plane_depth - rasterized_depth).abs().median().item() < 1e-3
-
-    # And the plane depth's own normal is the unit camera-frame normal, not alpha-scaled
-    center_plane_depth_normal = render["plane_depth_normal"][0, 32, 32]
-    assert center_plane_depth_normal.norm().item() == pytest.approx(1.0, rel=1e-4)
-    assert torch.allclose(center_plane_depth_normal, torch.tensor([0.0, 0, -1], device="cuda"), atol=0.05)
-
-
-@cuda
-def test_render_plane_forces_the_extra_signal_pass_on():
-    # Plane signals ride the same four extra channels as the normals
-    # - render_normals=False cannot switch that pass off underneath them
-    cam_to_world, intrinsics = _camera()
-    render, _info = _render(
-        "3dgs",
-        _gaussians(),
-        cam_to_world,
-        intrinsics,
-        64,
-        64,
-        render_normals=False,
-        render_plane=True,
-    )
-    assert {"plane_normal", "plane_distance", "plane_depth", "plane_depth_normal"} <= set(render)
-    assert render["plane_depth"].shape == (1, 64, 64, 1)
-
-    # Turning the pass on brings the normals back with it rather than half-filling the channels
-    assert "normal" in render and "depth_normal" in render
-
-
-@cuda
-def test_plane_path_does_not_perturb_the_ordinary_render():
-    # The plane distance only replaces a channel that was a zero pad
-    # - so color, depth and the normal_consistency inputs come back bit-for-bit identical
-    cam_to_world, intrinsics = _camera()
-    gaussians = _gaussians()
-    ordinary, _info = _render("3dgs", gaussians, cam_to_world, intrinsics, 64, 64)
-    plane, _info = _render("3dgs", gaussians, cam_to_world, intrinsics, 64, 64, render_plane=True)
-    for key in ("rgb", "alpha", "depth", "normal", "depth_normal"):
-        assert torch.equal(plane[key], ordinary[key]), key
 
 
 ########################################
@@ -442,9 +348,11 @@ def _seed_pose_deltas(monkeypatch, shift=0.02):
 
     def seeded(cls, *args, **kwargs):
         module = build(cls, *args, **kwargs)
+
         with torch.no_grad():
             ramp = torch.arange(1, len(module.translation.weight) + 1, device=module.translation.weight.device)
             module.translation.weight += ramp[:, None].float() * shift
+
         return module
 
     monkeypatch.setattr(CameraOpt, "from_config", classmethod(seeded))
@@ -668,6 +576,7 @@ def test_render_views_applies_each_views_own_color_affine(tmp_path):
     _train_stub(tmp_path, n_views=2, appearance_opt=True)
     model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(tmp_path / "ckpt.pt", "cuda")
     per_view = [(1.0, 0.2), (-0.5, 0.05)]
+
     with torch.no_grad():
         for view, (gain, bias) in enumerate(per_view):
             camera_opt.appearance.weight[view] = torch.tensor([gain] * 3 + [bias] * 3, device="cuda")
@@ -675,6 +584,7 @@ def test_render_views_applies_each_views_own_color_affine(tmp_path):
     corrected = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))
 
     assert len(corrected) == len(per_view)
+
     for view, (gain, bias) in enumerate(per_view):
         camera_id = torch.tensor([view], device="cuda")
         raw, _ = model.render(
@@ -692,7 +602,7 @@ def test_render_views_applies_each_views_own_color_affine(tmp_path):
 
 @cuda
 def test_load_checkpoint_refuses_an_unknown_representation(tmp_path):
-    # The class comes off the trainer's MODEL_CLASSES
+    # The class comes off checkpoint.MODEL_CLASSES
     # - the same mapping the config validator takes its allow-list from
     # - an `else Gaussians` fallback rebuilt a vanilla model for ANY unknown name, silently
     _train_stub(tmp_path, n_views=2)
@@ -712,6 +622,7 @@ def test_load_checkpoint_refuses_an_unknown_representation(tmp_path):
     # - the set's width is pinned by its own literal in test_trainer.py
     message = str(excinfo.value)
     assert "ckpt.pt" in message
+
     for representation in REPRESENTATIONS:
         assert f"'{representation}'" in message, message
 
@@ -724,13 +635,13 @@ def test_write_outputs_logs_the_models_own_primitive_unit(tmp_path, caplog, repr
     # The summary line names the model's own primitive unit
     # - n_primitives counts anchors for a scaffold, gaussians for a vanilla model
     # - off the model, not type(model).__name__, which falls through to "gaussians" on any rename
-    with caplog.at_level(logging.INFO, logger="collab_splats.splats.rendering"):
+    with caplog.at_level(logging.INFO, logger="collab_splats.splats.checkpoint"):
         _train_stub(tmp_path, n_views=2, representation=representation)
 
     summaries = [
         record.getMessage()
         for record in caplog.records
-        if record.name == "collab_splats.splats.rendering" and record.getMessage().startswith("splats: ")
+        if record.name == "collab_splats.splats.checkpoint" and record.getMessage().startswith("splats: ")
     ]
     assert len(summaries) == 1
     assert f" {unit}" in summaries[0]
@@ -752,6 +663,7 @@ def test_quality_report_scores_each_frame_against_its_own_image(tmp_path):
     # - the id is a frame index, not a row, so indexing `images` by it would IndexError here
     #   and be a silent mismatch on a real scene
     renders = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))
+
     for view, (frame, render) in enumerate(zip(report["per_frame"], renders)):
         target = torch.from_numpy(images[view]).to(render["rgb"].device).float()[None] / 255.0
         mse = torch.nn.functional.mse_loss(render["rgb"], target).item()
@@ -802,6 +714,7 @@ def test_the_scaffold_ply_holds_the_values_exported_at_the_frame_size(tmp_path, 
     #   and the assertion below passes green with nothing to notice
     swapped = export_gaussians(captured["model"], captured["cam_to_world"], captured["intrinsics"], 24, 40)
     assert len(swapped["means"]) == len(expected["means"]), "fixture drifted — re-measure the margins below"
+
     for name in ("opacities", "sh0", "scales", "quats"):
         margin = (expected[name] - swapped[name]).abs().max().item()
         assert margin > 0.01, f"{name}: a swapped frame size changes nothing, so the check below is vacuous"
@@ -809,6 +722,7 @@ def test_the_scaffold_ply_holds_the_values_exported_at_the_frame_size(tmp_path, 
     # A single-splat fallback would make every comparison below vacuous
     assert len(written["means"]) > 1
     assert len(written["means"]) == len(expected_np["means"])
+
     for name in ("means", "opacities", "sh0", "scales", "quats"):
         assert np.allclose(written[name].numpy(), expected_np[name], rtol=1e-4, atol=1e-6), name
 
@@ -821,3 +735,16 @@ def test_render_views_yields_median_depth_for_2dgs(tmp_path):
     render = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))[0]
 
     assert "median_depth" in render
+
+
+@cuda
+def test_3dgs_normals_do_not_change_rgb_or_depth():
+    # One rasterization call serves both settings; the extra signal must not leak into rgb/depth
+    cam_to_world, intrinsics = _camera()
+    with_normals, _ = _render("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=True)
+    without, _ = _render("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=False)
+
+    assert torch.equal(with_normals["rgb"], without["rgb"])
+    assert torch.equal(with_normals["depth"], without["depth"])
+    assert {"normal", "depth_normal"} <= set(with_normals)
+    assert not {"normal", "depth_normal"} & set(without)

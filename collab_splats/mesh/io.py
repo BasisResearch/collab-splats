@@ -176,7 +176,7 @@ def render_tsdf_inputs(ckpt_path, images_dir=None, device="cuda", depth_source="
     if depth_source not in DEPTH_SOURCES:
         raise ValueError(f"depth_source must be one of {DEPTH_SOURCES}, got {depth_source!r}")
     # Imported here: gsplat needs CUDA at import, and this module must load without it
-    from collab_splats.splats.rendering import load_checkpoint, render_views
+    from collab_splats.splats import load_checkpoint, render_views
 
     model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = load_checkpoint(Path(ckpt_path), device)
 

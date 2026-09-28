@@ -603,7 +603,7 @@ scene root instead: the keyframes are decoded once from the video and shared by 
 backend that reconstructs the scene.
 
 `splats/splats.zarr` was retired on 2026-09-06 — `splats/ckpt.pt` is self-contained (model,
-cameras, image size, config) and `collab_splats.splats.rendering.load_checkpoint` +
+cameras, image size, config) and `collab_splats.splats.load_checkpoint` +
 `render_views` reproduce every render. Scenes processed before that date still have the store;
 nothing reads it, and it can be deleted.
 

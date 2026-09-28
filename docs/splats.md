@@ -14,10 +14,10 @@ from `pointcloud.zarr`.
 | `trainer.py` | `SplatsConfig` and `train()`: setup, loop, finish. No representation branches. |
 | `gaussian.py` | `Gaussians` — vanilla 3DGS/2DGS parameters, `make_strategy`, `SH_C0`. |
 | `scaffold.py` | `Scaffold` — Scaffold-GS anchors, the three MLP heads, `AnchorStrategy`. |
-| `rendering.py` | `render_gaussians` (the one call into gsplat), plus `render_views` / `write_outputs` / `load_checkpoint`. |
+| `rendering.py` | `render_gaussians` (the one call into gsplat), plus `render_views`. |
+| `checkpoint.py` | `write_outputs` / `load_checkpoint`, and `MODEL_CLASSES` (representation -> model class). |
 | `losses.py` | the loss schedule and the optional-loss registry. |
 | `cameras.py` | `CameraOpt` — per-camera pose deltas and per-image color affine, each half optional — and `rotation_6d_to_matrix`. |
-| `pgsr.py` | PGSR planar geometry, neighbor selection, `render_neighbor`. |
 | `utils.py` | scene normalization, coarse-to-fine downscaling, view order, target preparation. |
 
 `train()` builds one model — `Gaussians` or `Scaffold`, chosen by `representation` — and one
@@ -84,6 +84,9 @@ Better surfaces come from `2dgs`; better thin structure and speed from `3dgs`.
   Densification grows and prunes *anchors* (voxel-quantized, on accumulated 2D gradient) rather than
   Gaussians. Color comes from `mlp_color`, so `sh_degree` / `sh_degree_interval` are
   vanilla-only: left at their defaults they are ignored, set deliberately they raise.
+  The anchor model reimplements [Scaffold-GS](https://github.com/city-super/Scaffold-GS) @ `59c833b5`
+  (Inria non-commercial license); the Scaffold x 2DGS combination follows
+  [GS-SR](https://github.com/yanxian-ll/GS-SR) @ `566359be` (no LICENSE file upstream). No code is vendored.
 
 ```yaml
 splats:
@@ -114,7 +117,7 @@ render. They are independent toggles; either, both, or neither.
 
 There is no stored render. `splats.zarr` — per-view `rgb` / `alpha` / `depth` / `normal` — was
 retired on 2026-09-06: `ckpt.pt` is self-contained (model, cameras, image size, config), so
-`collab_splats.splats.rendering.load_checkpoint` + `render_views` reproduce every one of those
+`collab_splats.splats.load_checkpoint` + `render_views` reproduce every one of those
 views on demand, and a stored copy could only go stale against the checkpoint beside it.
 
 ---
@@ -127,8 +130,7 @@ contributes when its weight at the step is > 0; with `end` the weight decays log
 is always on and not configurable.
 
 Registered: `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`,
-`appearance_reg`, `pgsr_normal`, `pgsr_multiview` — the last two are the PGSR planar terms in
-`pgsr.py`, and both need a plane render (`render_plane`), which only the 3dgs kernel produces.
+`appearance_reg`.
 Defaults differ per primitive — `opacity_reg` / `scale_reg` for 3dgs (MCMC needs them), `distortion`
 for 2dgs. Under `scaffold` the two regularizers read the *decoded* opacities and log-scales off the
 render, since there is no per-Gaussian parameter to regularize.

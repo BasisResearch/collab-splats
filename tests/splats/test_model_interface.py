@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.splats import rendering, trainer
+from collab_splats.splats import checkpoint, rendering, trainer
 from collab_splats.splats.gaussian import Gaussians
 from collab_splats.splats.scaffold import Scaffold
 from collab_splats.splats.trainer import SplatsConfig
@@ -21,7 +21,7 @@ from collab_splats.splats.trainer import SplatsConfig
 # gsplat's rasterization kernels are registered for CUDA only; every other test here is CPU-only
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CUDA")
 
-# The interface, in one place: what `trainer.py` and `rendering.py` read off a model
+# The interface, in one place: what `trainer.py`, `rendering.py` and `checkpoint.py` read off a model
 # - `from_checkpoint` is absent: a classmethod, read off the class, pinned by the round-trip test
 INTERFACE_ATTRIBUTES = ["params", "optimizers", "schedulers", "n_primitives", "primitive_unit"]
 INTERFACE_METHODS = [
@@ -85,6 +85,7 @@ def _classes_declaring(attribute):
     Names of every class under `collab_splats/splats/` whose body assigns the given attribute.
     """
     found = set()
+
     for path in sorted(Path(trainer.__file__).parent.glob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
             if not isinstance(node, ast.ClassDef):
@@ -94,8 +95,10 @@ def _classes_declaring(attribute):
             for statement in node.body:
                 targets = [statement.target] if isinstance(statement, ast.AnnAssign) else []
                 targets += getattr(statement, "targets", [])
+
                 if any(isinstance(target, ast.Name) and target.id == attribute for target in targets):
                     found.add(node.name)
+
     return found
 
 
@@ -105,7 +108,10 @@ def _classes_declaring(attribute):
 
 
 def test_the_declared_interface_is_exactly_what_its_consumers_read():
-    consumed = _members_read_off_the_model(trainer.__file__) | _members_read_off_the_model(rendering.__file__)
+    consumed = set()
+
+    for module in (trainer, rendering, checkpoint):
+        consumed |= _members_read_off_the_model(module.__file__)
 
     # Equality, not `consumed <= declared`: a subset passes vacuously if the consumers rename
     # their local away from `model`
@@ -191,7 +197,7 @@ def test_model_render_returns_a_render_dict_and_an_info_dict(model_class):
 def test_model_checkpoint_round_trips(model_class):
     model = _model(model_class)
 
-    # `rendering.write_outputs` stores `asdict(cfg)` under `config`; from_checkpoint reads it back
+    # `checkpoint.write_outputs` stores `asdict(cfg)` under `config`; from_checkpoint reads it back
     ckpt = model.checkpoint()
     ckpt["config"] = asdict(_config(model_class))
     restored = model_class.from_checkpoint(ckpt, "cpu")

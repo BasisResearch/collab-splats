@@ -19,7 +19,7 @@ import tokenize
 
 import pytest
 
-PACKAGES = ("preproc", "semantics", "pointcloud", "geometry")
+PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats")
 
 # Single modules held to the contract, release checks included, before their whole package is
 MODULES = ("utils/io.py",)
@@ -195,7 +195,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 ########################################################################
 
 # Packages that finished their release cleanup; the rest xfail the release checks
-RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry"})
+RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats"})
 
 # Module-level numbers that are facts, not tunables
 FIXED_FACTS = frozenset({"SCHEMA_VERSION"})

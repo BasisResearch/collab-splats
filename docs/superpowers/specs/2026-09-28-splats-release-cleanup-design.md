@@ -80,6 +80,15 @@ with the code in round 2.
   `test_scaffold`, `test_gaussian`, `test_losses`, `test_trainer`; drop
   `collab_splats.splats.pgsr` from `tests/test_cu121_migration.py`.
 
+### 1b. One 3dgs rasterization call
+
+- With `render_plane` gone, the two 3dgs branches in `render_gaussians` (plain, normals) become
+  one `rasterization` call with `extra_signals=None` when `render_normals` is off. Test: both
+  settings return the same `rgb` / `depth` as before on a seeded scene.
+- Considered and skipped (saves <= 3 lines each, or couples the models): shared per-param Adam
+  builder, shared `denormalize`, shared `from_checkpoint` ParameterDict rebuild, a model base
+  class — the interface stays duck-typed, pinned by `test_model_interface.py`.
+
 ### 2. Delete `absgrad`
 
 - Always `False` at both callers: delete the param from `render_gaussians`, the literal in
@@ -151,7 +160,7 @@ with the code in round 2.
 | `gaussian.make_strategy` | keep | 1 caller, readable unit; `prune_*` documented kwargs |
 | `gaussian.Gaussians` | keep | `render_plane`, `absgrad` literal deleted |
 | `rendering.gaussian_normals_in_camera_frame` | keep | `means_cam` return deleted |
-| `rendering.render_gaussians` | keep | `absgrad`, `render_plane` params deleted |
+| `rendering.render_gaussians` | keep | `absgrad`, `render_plane` params deleted; 3dgs branches merged |
 | `rendering.render_views` | keep | external callers |
 | `losses.default_losses` … `appearance_reg_loss`, `OPTIONAL_LOSSES` | keep | live |
 | `losses.LOSS_SPEC_KEYS` | keep | pgsr entries deleted |

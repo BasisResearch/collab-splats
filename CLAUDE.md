@@ -35,11 +35,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **splats-release** (2026-09-28)
 - **geometry-round3** (2026-09-27)
 - **setup-prereq-gating** (2026-09-27)
 - **pycolmap-cuda-docker** (2026-09-26)
 - **geometry-release** (2026-09-25)
-- **semantics-release** (2026-09-25)
 
 Known test failures: `docs/known-test-failures.md`
 

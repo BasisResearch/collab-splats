@@ -7,11 +7,9 @@ import torch
 import torchvision.transforms as T
 from transformers import AutoModel
 
+from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
 from collab_splats.utils.torch_utils import get_device
-
-from .base import BaseFeatureExtractor
-
 
 ########################################################################
 ########## Extractor ###################################################

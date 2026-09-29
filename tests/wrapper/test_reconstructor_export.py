@@ -1,32 +1,35 @@
-"""build_pointcloud writes a real sparse_pc.ply into backend_dir, and its clean step deletes in place."""
+"""build_pointcloud writes a real sparse_pc.ply into backend_dir, holding the creator's cleaned set."""
 
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
-import pycolmap
 
 from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
+from collab_splats.utils.colmap import read_colmap_reconstruction
 from collab_splats.wrapper.reconstructor import Reconstructor
+from tests.pointcloud.conftest import _frame_files, _frames
 
 
-def _pointcloud_result(n_points):
+def _pointcloud_result(xyz):
     """
-    A real PointcloudResult over one registered frame and n_points tracked points.
+    A real PointcloudResult over one full-frame 8x6 camera and the given points.
     """
-    recon = pycolmap.Reconstruction()
-    cam = pycolmap.Camera(model="PINHOLE", width=8, height=6, params=[4.0, 4.0, 4.0, 3.0], camera_id=1)
-    recon.add_camera_with_trivial_rig(cam)
-    recon.add_image_with_trivial_frame(pycolmap.Image(name="frame_000000", camera_id=1, image_id=1), pycolmap.Rigid3d())
-    for i in range(n_points):
-        recon.add_point3D(
-            xyz=np.array([float(i), 0.0, 1.0]),
-            track=pycolmap.Track(),
-            color=np.array([i, 2 * i, 3 * i], dtype=np.uint8),
-        )
+    xyz = np.asarray(xyz, dtype=np.float32)
+    colors = (np.arange(len(xyz))[:, None] * np.array([1, 2, 3])).astype(np.uint8)
     return PointcloudResult(
-        reconstruction=recon,
+        points=xyz,
+        colors=colors,
+        extrinsics=np.eye(4, dtype=np.float32)[None],
+        intrinsics=None,
+        model_intrinsics=np.array([[[4.0, 0.0, 4.0], [0.0, 4.0, 3.0], [0.0, 0.0, 1.0]]], dtype=np.float32),
         image_paths=[Path("frame_000000")],
+        original_coords=np.array([[0, 0, 8, 6, 8, 6]], dtype=np.float32),
+        model_width=8,
+        model_height=6,
     )
 
 
@@ -41,7 +44,7 @@ def test_build_pointcloud_writes_sparse_pc_ply(tmp_path):
         "pointcloud": {"method": "feedforward", "backend": "vggtx", "clean": {"enabled": False}},
     }
     rec = Reconstructor(config)
-    result = _pointcloud_result(3)
+    result = _pointcloud_result([[float(i), 0.0, 1.0] for i in range(3)])
 
     with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(result, None)):
         rec.build_pointcloud(overwrite=True)
@@ -57,38 +60,32 @@ def test_build_pointcloud_writes_sparse_pc_ply(tmp_path):
     assert b"element vertex 3\n" in header
 
 
-def _sorted_rows(xyz):
+@dataclass
+class _ClusterCreator(BaseFeedforwardCreator):
     """
-    Rows of an (N, 3) array in lexicographic order — for comparing point sets order-independently.
+    Feedforward creator whose inference yields 60 clustered points plus one far outlier.
     """
-    return np.asarray(xyz, dtype=np.float64)[np.lexsort(np.asarray(xyz, dtype=np.float64).T[::-1])]
 
-def _clustered_pointcloud_result():
+    def _load_model(self, device: str) -> Any:
+        return None
+
+    def _preprocess(self, paths: list[Path]) -> tuple[Any, np.ndarray]:
+        return None, np.array([[0, 0, 8, 6, 8, 6]], dtype=np.float32)
+
+    def _forward(self, model: Any, views: Any) -> Any:
+        return None
+
+    def _postprocess(self, raw_outputs: Any) -> PointcloudResult:
+        # 60 cluster points clear outlier_mask's nb_neighbors=20 guard; the outlier is far out
+        cluster = np.random.default_rng(0).normal(scale=0.01, size=(60, 3))
+        result = _pointcloud_result(np.vstack([cluster, [[50.0, 50.0, 50.0]]]))
+        rows = np.arange(len(result.points), dtype=np.int32)
+        return replace(result, pixel_indices=np.stack([np.zeros_like(rows), rows % 6, rows % 8], axis=-1))
+
+
+def test_build_pointcloud_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
     """
-    A PointcloudResult whose tracked set is a tight cluster plus one planted far outlier.
-
-    Returns (result, cluster_xyz) so a caller can assert WHICH points survived cleaning.
-    """
-    recon = pycolmap.Reconstruction()
-    cam = pycolmap.Camera(model="PINHOLE", width=8, height=6, params=[4.0, 4.0, 4.0, 3.0], camera_id=1)
-    recon.add_camera_with_trivial_rig(cam)
-    recon.add_image_with_trivial_frame(pycolmap.Image(name="frame_000000", camera_id=1, image_id=1), pycolmap.Rigid3d())
-
-    # 60 cluster points clears clean_pointcloud's nb_neighbors=20 guard; the outlier sits far
-    # enough out that statistical removal rejects it and nothing else.
-    cluster = np.random.default_rng(0).normal(scale=0.01, size=(60, 3))
-    for xyz in np.vstack([cluster, [[50.0, 50.0, 50.0]]]):
-        recon.add_point3D(xyz=xyz, track=pycolmap.Track(), color=np.array([1, 2, 3], dtype=np.uint8))
-
-    return PointcloudResult(reconstruction=recon, image_paths=[Path("frame_000000")]), cluster
-
-
-def test_build_pointcloud_clean_deletes_only_the_outlier(tmp_path):
-    """
-    clean.enabled deletes the rejected point3D ids from the reconstruction in place.
-
-    Asserting the surviving XYZs — not just the count — is what pins the id snapshot
-    (points3D.keys()) to the mask, which is computed over .points (built from .values()).
+    The creator cleans before any write: fresh result, zarr reload, COLMAP model and PLY all agree.
     """
     config = {
         "input_path": str(tmp_path / "video.mp4"),
@@ -96,17 +93,50 @@ def test_build_pointcloud_clean_deletes_only_the_outlier(tmp_path):
         "pointcloud": {"method": "feedforward", "backend": "vggtx", "clean": {"enabled": True}},
     }
     rec = Reconstructor(config)
-    result, cluster = _clustered_pointcloud_result()
+    _frame_files(_frames([(8, 6)]), rec.images_dir)
 
-    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(result, None)):
-        rec.build_pointcloud(overwrite=True)
+    with patch("collab_splats.wrapper.reconstructor.get_creator", return_value=_ClusterCreator):
+        fresh = rec.build_pointcloud(overwrite=True)
 
-    # Exactly one point went, and the survivors are the cluster itself — a keys()/values()
-    # misalignment would keep the far outlier and drop a cluster point instead, failing the
-    # second assert. Compared as a multiset of rows: points3D iteration is by id, not insertion.
-    assert result.reconstruction.num_points3D() == len(cluster)
-    np.testing.assert_allclose(_sorted_rows(result.points), _sorted_rows(cluster), atol=1e-6)
+    # The outlier went before the zarr save; colors and pixel_indices travel with the points
+    assert len(fresh.points) == len(fresh.colors) == len(fresh.pixel_indices) == 60
+    assert np.abs(fresh.points).max() < 1.0
 
-    # The re-exported PLY carries the cleaned set, not the pre-clean one.
+    # A second Reconstructor reloads the stage from disk: the same points, colors and pixels
+    reloaded = Reconstructor(config).build_pointcloud(overwrite=False)
+    np.testing.assert_array_equal(reloaded.points, fresh.points)
+    np.testing.assert_array_equal(reloaded.colors, fresh.colors)
+    stored = PointcloudResult.load_zarr(rec.pointcloud_zarr, load_depth=False, load_world_points=False)
+    np.testing.assert_array_equal(stored.pixel_indices, fresh.pixel_indices)
+
+    # The COLMAP export and the PLY carry the same 60 points
+    assert read_colmap_reconstruction(rec.colmap_model_dir).num_points3D() == 60
     header = (rec.backend_dir / "sparse_pc.ply").read_bytes()[:200]
     assert b"element vertex 60\n" in header
+
+
+def test_build_pointcloud_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp_path):
+    """
+    pointcloud.clean.enabled False reaches the creator: the outlier survives in every artifact.
+    """
+    config = {
+        "input_path": str(tmp_path / "video.mp4"),
+        "output_path": str(tmp_path / "out"),
+        "pointcloud": {"method": "feedforward", "backend": "vggtx", "clean": {"enabled": False}},
+    }
+    rec = Reconstructor(config)
+    _frame_files(_frames([(8, 6)]), rec.images_dir)
+
+    with patch("collab_splats.wrapper.reconstructor.get_creator", return_value=_ClusterCreator):
+        fresh = rec.build_pointcloud(overwrite=True)
+
+    # All 61 points kept, outlier included
+    assert len(fresh.points) == 61
+    assert np.abs(fresh.points).max() == 50.0
+
+    # The zarr, the COLMAP export and the PLY all hold the uncleaned 61
+    stored = PointcloudResult.load_zarr(rec.pointcloud_zarr, load_depth=False, load_world_points=False)
+    assert len(stored.points) == 61
+    assert read_colmap_reconstruction(rec.colmap_model_dir).num_points3D() == 61
+    header = (rec.backend_dir / "sparse_pc.ply").read_bytes()[:200]
+    assert b"element vertex 61\n" in header

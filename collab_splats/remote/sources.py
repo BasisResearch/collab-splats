@@ -74,6 +74,11 @@ PUSH_EXCLUDES = (
     # InstantSfM's SIFT database (pointcloud/sfm/instantsfm.py) — same class of artifact, its own
     # name so it never collides with the database.db above. Rebuilt from the staged images.
     "/*/colmap/instantsfm.db",
+    # ColmapCreator's SIFT database (pointcloud/sfm/colmap.py). Rebuilt from the staged images.
+    "/*/colmap/colmap.db",
+    # HlocCreator's h5 features/matches, pair lists and mapper DB (pointcloud/sfm/hloc.py).
+    # Rebuildable; the model it produced is colmap/sparse/0, which IS pushed.
+    "/*/colmap/hloc/**",
 )
 
 ########

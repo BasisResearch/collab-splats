@@ -19,9 +19,10 @@ from collab_splats.dashboard.viz_utils import (
 )
 from collab_splats.mesh.features import features2vertex
 
-# NB: lift_features (pointcloud.utils) and BaseQueryableExtractor (semantics.features)
-# pull in the heavy feedforward stack (~14s import). They are imported lazily inside the
-# load/query methods so the viewer panes construct immediately at launch.
+# Heavy semantics imports deferred to load/query methods
+# - lift_features (semantics.lifting), BaseQueryableExtractor (semantics.features)
+# - both run semantics/__init__: pulls the extractors and SAM
+# - lazy import keeps viewer pane construction instant at launch
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +38,18 @@ def lift_point_features(result, semantics_dir) -> np.ndarray:
     Legacy path for scenes with no cached lifted store. Returns FULL-dim
     features (no autoencoder involved), directly comparable to text embeddings.
     """
-    # Lazy import: pointcloud.utils pulls the heavy feedforward stack, and semantics.utils
+    # Lazy import: pointcloud.base pulls the heavy feedforward stack, and semantics.*
     # runs semantics/__init__, which pulls the extractors and SAM (~10s warm, measured).
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-    from collab_splats.pointcloud.utils import lift_features
+    from collab_splats.pointcloud.base import PointcloudResult
+    from collab_splats.semantics.lifting import lift_features
     from collab_splats.semantics.utils import cache_store_path, load_feature_maps
 
     # The display path loads the result lean (dense arrays skipped). Lifting needs
     # pixel_indices/depth/confidence — reload them from the source zarr on demand.
     _lift_fields = ("pixel_indices", "depth", "confidence")
     if any(getattr(result, f, None) is None for f in _lift_fields) and getattr(result, "_zarr_path", None):
-        # world_points/features are unused by the lift; skip them to halve peak memory.
-        result = FeedforwardResult.load_zarr(result._zarr_path, load_world_points=False, load_features=False)
+        # world_points is unused by the lift; skip it to halve peak memory.
+        result = PointcloudResult.load_zarr(result._zarr_path, load_world_points=False)
 
     feature_maps = load_feature_maps(cache_store_path(semantics_dir))
     lifted = lift_features(feature_maps, result)
@@ -180,7 +181,7 @@ class SplitViewer:
         semantics_dir: Path | None = None,
         max_points: int = 500_000,
     ) -> None:
-        """Load a FeedforwardResult (+ optional mesh) into both panes.
+        """Load a PointcloudResult (+ optional mesh) into both panes.
 
         Features are NOT lifted here — lifting 500k points takes minutes and is only
         needed for queries. semantics_dir is stashed so the first query can lift lazily

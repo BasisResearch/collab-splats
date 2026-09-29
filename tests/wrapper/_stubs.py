@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.wrapper.reconstructor import Reconstructor
 
@@ -57,13 +57,14 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
 
 def minimal_feedforward_result(n=2, h=8, w=8):
     """
-    FeedforwardResult with unit depth and confidence=None; the smallest thing _run_tsdf_mesh accepts.
+    PointcloudResult with unit depth and confidence=None; the smallest thing _run_tsdf_mesh accepts.
     """
-    return FeedforwardResult(
+    return PointcloudResult(
         points=np.zeros((5, 3), dtype=np.float32),
         colors=np.zeros((5, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
-        intrinsics=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], dtype=np.float32), (n, 1, 1)),
+        intrinsics=None,
+        model_intrinsics=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], dtype=np.float32), (n, 1, 1)),
         image_paths=[f"frame_{i:06d}.jpg" for i in range(n)],
         original_coords=np.array([[0, 0, w, h, w, h]] * n, dtype=np.float32),
         model_width=w,

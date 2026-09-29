@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import types
+import weakref
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec, patch
 
@@ -10,18 +11,17 @@ import pycolmap
 import pytest
 import torch
 import yaml
+import zarr
 from mergedeep import merge
 
 from collab_splats.geometry import metrics
 from collab_splats.mesh import create_tsdf_mesh
-from collab_splats.pointcloud.feedforward.base import (
-    FeedforwardResult,
-    build_pycolmap_reconstruction,
-)
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.preproc.undistort import calibrate_camera
 from collab_splats.wrapper import reconstructor as R
 from collab_splats.wrapper.reconstructor import Reconstructor
+from tests.wrapper._stubs import minimal_feedforward_result
 
 # Import ConfigLoader directly from config.py to avoid wrapper/__init__.py
 spec = importlib.util.spec_from_file_location(
@@ -458,24 +458,21 @@ def test_preprocess_overwrite_reruns(tmp_path):
 def _make_mock_pointcloud_result(tmp_path):
     """Minimal PointcloudResult mock for testing — avoids importing collab_splats.pointcloud."""
     result = MagicMock()
-    result.reconstruction = pycolmap.Reconstruction()  # empty, no images
     result.image_paths = [tmp_path / "images" / "frame_0001.jpg"]
-    # Match the real PointcloudResult.points/.colors shape for an empty reconstruction
+    # Match the real PointcloudResult.points/.colors shape for an empty point set
     # (pointcloud/base.py) — a bare MagicMock's default __len__/__iter__ produces a
     # malformed (0,) array instead of the (0, 3) that this result's consumers
-    # (clean_pointcloud, the splats train call) expect.
+    # (outlier_mask, the splats train call) expect.
     result.points = np.zeros((0, 3), dtype=np.float32)
     result.colors = np.zeros((0, 3), dtype=np.uint8)
     return result
 
 
 def test_build_pointcloud_skips_if_colmap_and_zarr_exist(tmp_path):
-    """Skip rebuild only when BOTH colmap/sparse/0/cameras.bin and pointcloud.zarr exist."""
+    """Skip rebuild only when BOTH the colmap model dir and pointcloud.zarr exist."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
-    colmap_dir.mkdir(parents=True)
-    (colmap_dir / "cameras.bin").touch()
+    rec.colmap_model_dir.mkdir(parents=True)
     # The pointcloud zarr marker is also required; colmap alone no longer skips.
     (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     mock_result = _make_mock_pointcloud_result(tmp_path)
@@ -500,6 +497,39 @@ def test_build_pointcloud_feedforward_vggtx(tmp_path):
     mock_ff.assert_called_once()
     assert result is mock_result
     assert rec.pointcloud is mock_result
+
+
+def test_build_pointcloud_frees_the_dense_arrays_after_save(tmp_path):
+    """
+    self.pointcloud is light once pointcloud.zarr is written: no dense array stays alive.
+    """
+    rec = Reconstructor(_make_config(tmp_path))
+    refs = {}
+
+    # A real result held on self.outputs, as the feedforward _reconstruct leaves it
+    # - weakrefs only: the test itself must not keep a dense array alive
+    class _Creator:
+        def __init__(self, **kwargs):
+            self.outputs = None
+
+        def create_pointcloud(self, source, out_dir, model_dir):
+            self.outputs = minimal_feedforward_result()
+            self.outputs.world_points = np.zeros((2, 8, 8, 3), np.float32)
+            refs["creator"] = weakref.ref(self)
+            for name in ("depth", "images", "world_points"):
+                refs[name] = weakref.ref(getattr(self.outputs, name))
+            return self.outputs
+
+    with patch.object(R, "get_creator", return_value=_Creator), patch.object(R, "pytorch_gc"):
+        rec.build_pointcloud(overwrite=True)
+
+    # Freed by refcount alone, no gc.collect: nothing, creator included, still holds them
+    assert {name: ref() is None for name, ref in refs.items()} == dict.fromkeys(refs, True)
+    assert rec.pointcloud.depth is None and rec.pointcloud.world_points is None
+    assert rec.pointcloud.points.shape == (5, 3)
+
+    # The dense arrays live on in the zarr the downstream stages read
+    assert zarr.open(str(rec.pointcloud_zarr), mode="r")["depth"].shape == (2, 8, 8)
 
 
 def test_build_pointcloud_method_dir_routing(tmp_path):
@@ -589,7 +619,7 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
     out_dir = tmp_path / "semantics"
 
     with (
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", MagicMock()),
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", MagicMock()),
         # Patch the reconstructor's own binding: lift_features is imported at module scope,
         # so patching collab_splats.pointcloud.utils would not reach the name it calls.
         patch.object(rec_mod, "lift_features", return_value=torch.rand(n_points, dim)),
@@ -603,6 +633,7 @@ def _run_lift_and_save(tmp_path, n_components, dim=32, n_points=6):
             n_components,
             target_cosine=None,
             max_epochs=1,
+            images_dir=tmp_path / "images",
         )
     return out_dir
 
@@ -704,10 +735,10 @@ def test_mesh_runs_tsdf(tmp_path):
 
 
 def _tsdf_mesh_doubles(n_colmap=2, n_zarr=2, model_hw=(8, 8)):
-    """(PointcloudResult double with original-res K, FeedforwardResult with model-res K)."""
+    """(in-session result double with full-res K, PointcloudResult loaded from the zarr)."""
     H, W = model_hw
 
-    # COLMAP camera after _rescale_reconstruction_to_original_dimensions: 2x the model grid
+    # Full-res K: 2x the model grid
     result = MagicMock()
     result.extrinsics = np.eye(4, dtype=np.float32)[None].repeat(n_colmap, axis=0)
     result.extrinsics[:, 0, 3] = 7.0  # distinctive, so the two pose sources are separable
@@ -721,11 +752,12 @@ def _tsdf_mesh_doubles(n_colmap=2, n_zarr=2, model_hw=(8, 8)):
     K_model[:, 0, 0] = K_model[:, 1, 1] = float(W)
     K_model[:, 0, 2] = W / 2
     K_model[:, 1, 2] = H / 2
-    ff = FeedforwardResult(
+    ff = PointcloudResult(
         points=np.zeros((1, 3), dtype=np.float32),
         colors=np.zeros((1, 3), dtype=np.uint8),
         extrinsics=np.eye(4, dtype=np.float32)[None].repeat(n_zarr, axis=0),
-        intrinsics=K_model,
+        intrinsics=None,
+        model_intrinsics=K_model,
         image_paths=[Path(f"frame_{i:04d}.png") for i in range(n_zarr)],
         original_coords=np.tile([0, 0, 2 * W, 2 * H, 2 * W, 2 * H], (n_zarr, 1)).astype(np.float32),
         model_width=W,
@@ -736,15 +768,15 @@ def _tsdf_mesh_doubles(n_colmap=2, n_zarr=2, model_hw=(8, 8)):
     return result, ff
 
 
-def test_run_tsdf_mesh_fuses_colmap_intrinsics(tmp_path, monkeypatch):
+def test_run_tsdf_mesh_fuses_full_res_intrinsics(tmp_path, monkeypatch):
     """
-    Model-res depth is lifted onto the frame grid, so COLMAP's original-res K is the right one.
+    Model-res depth is lifted onto the frame grid, so the full-res `intrinsics` is the right K.
 
     Pairing the model grid's depth with the original grid's K is the 2026-08-11 collapse bug
     (5.06M -> 75k vertices); this pins the pairing that fixed it.
     """
     result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
     fuse = MagicMock(return_value=tmp_path / "mesh.ply")
@@ -767,7 +799,7 @@ def _tsdf_mesh_fuse_kwargs(tmp_path, monkeypatch, **overrides):
     Run _run_tsdf_mesh over doubles and return the kwargs create_tsdf_mesh was called with.
     """
     result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
     fuse = MagicMock(return_value=tmp_path / "mesh.ply")
@@ -813,12 +845,12 @@ def test_run_tsdf_mesh_sdf_trunc_mult_scales_the_truncation_band(tmp_path, monke
     assert narrow["voxel_size"] == pytest.approx(0.01)
 
 
-def test_run_tsdf_mesh_uses_colmap_poses(tmp_path, monkeypatch):
+def test_run_tsdf_mesh_uses_result_poses(tmp_path, monkeypatch):
     """
-    COLMAP stays the pose authority — BA and LC corrections land there, not in the zarr.
+    Fusion poses are the passed result's extrinsics — in-session, refined or loop-closed.
     """
     result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
     fuse = MagicMock(return_value=tmp_path / "mesh.ply")
@@ -842,7 +874,7 @@ def test_run_tsdf_mesh_raises_on_frame_count_mismatch(tmp_path, monkeypatch):
     Stage re-runs can pair a COLMAP dir with a pointcloud.zarr from a different run.
     """
     result, ff = _tsdf_mesh_doubles(n_colmap=3, n_zarr=2, model_hw=(16, 16))
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
 
     with pytest.raises(ValueError, match="pointcloud.zarr"):
         R._run_tsdf_mesh(
@@ -861,7 +893,7 @@ def test_run_tsdf_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
     """
     result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
     ff.confidence = np.tile(np.linspace(0.0, 1.0, 16 * 16).reshape(16, 16), (2, 1, 1))
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     seen = {}
 
@@ -1108,19 +1140,21 @@ def test_run_feedforward_attaches_viewer_when_enabled(tmp_path):
     mock_lc_instance = MagicMock(outputs=None)
 
     with (
-        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
-        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch("collab_splats.wrapper.reconstructor.get_creator", return_value=MagicMock(return_value=mock_creator)),
+        patch("collab_splats.wrapper.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
         patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
     ):
         R._run_feedforward(
             backend="vggtx",
             images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
+            model_dir=tmp_path / "model",
             loop_closure=True,
             viz_enabled=True,
             viz_port=9999,
             max_points=500_000,
-            use_multiview_confidence=False,
+            min_views=0,
+            mv_rel_thresh=0.01,
         )
 
     mock_lc_cls.assert_called_once_with(base=mock_creator, config=None)
@@ -1137,18 +1171,20 @@ def test_run_feedforward_builds_lc_config_from_dict(tmp_path):
     mock_lc_instance = MagicMock(outputs=None)
 
     with (
-        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
-        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch("collab_splats.wrapper.reconstructor.get_creator", return_value=MagicMock(return_value=mock_creator)),
+        patch("collab_splats.wrapper.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
     ):
         R._run_feedforward(
             backend="vggtx",
             images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
+            model_dir=tmp_path / "model",
             loop_closure={"enabled": True, "submap_size": 32, "submap_overlap": 2},
             viz_enabled=False,
             viz_port=8080,
             max_points=500_000,
-            use_multiview_confidence=False,
+            min_views=0,
+            mv_rel_thresh=0.01,
         )
 
     # LoopClosure got a config carrying the dict knobs
@@ -1165,18 +1201,20 @@ def test_run_feedforward_dict_enabled_false_skips_lc(tmp_path):
     mock_creator = MagicMock(outputs=None)
 
     with (
-        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
-        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure") as mock_lc_cls,
+        patch("collab_splats.wrapper.reconstructor.get_creator", return_value=MagicMock(return_value=mock_creator)),
+        patch("collab_splats.wrapper.reconstructor.LoopClosure") as mock_lc_cls,
     ):
         R._run_feedforward(
             backend="vggtx",
             images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
+            model_dir=tmp_path / "model",
             loop_closure={"enabled": False, "submap_size": 32},
             viz_enabled=False,
             viz_port=8080,
             max_points=500_000,
-            use_multiview_confidence=False,
+            min_views=0,
+            mv_rel_thresh=0.01,
         )
 
     mock_lc_cls.assert_not_called()
@@ -1186,17 +1224,19 @@ def test_run_feedforward_invalid_lc_knob_raises(tmp_path):
     """An unknown loop_closure knob fails loud with the valid-key list."""
     from collab_splats.wrapper import reconstructor as R
 
-    with (patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=MagicMock()),):
+    with (patch("collab_splats.wrapper.reconstructor.get_creator", return_value=MagicMock(return_value=MagicMock())),):
         with pytest.raises(ValueError, match="Invalid pointcloud.loop_closure knob"):
             R._run_feedforward(
                 backend="vggtx",
                 images_dir=tmp_path / "images",
                 output_dir=tmp_path / "out",
+                model_dir=tmp_path / "model",
                 loop_closure={"bogus_knob": 1},
                 viz_enabled=False,
                 viz_port=8080,
                 max_points=500_000,
-                use_multiview_confidence=False,
+                min_views=0,
+                mv_rel_thresh=0.01,
             )
 
 
@@ -1208,19 +1248,21 @@ def test_run_feedforward_no_viewer_when_viz_disabled(tmp_path):
     mock_lc_instance = MagicMock(outputs=None)
 
     with (
-        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
-        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure", return_value=mock_lc_instance),
+        patch("collab_splats.wrapper.reconstructor.get_creator", return_value=MagicMock(return_value=mock_creator)),
+        patch("collab_splats.wrapper.reconstructor.LoopClosure", return_value=mock_lc_instance),
         patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
     ):
         R._run_feedforward(
             backend="vggtx",
             images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
+            model_dir=tmp_path / "model",
             loop_closure=True,
             viz_enabled=False,
             viz_port=8080,
             max_points=500_000,
-            use_multiview_confidence=False,
+            min_views=0,
+            mv_rel_thresh=0.01,
         )
 
     mock_viewer_cls.assert_not_called()
@@ -1233,19 +1275,21 @@ def test_run_feedforward_no_loop_closure_no_viewer(tmp_path):
     mock_creator = MagicMock(outputs=None)
 
     with (
-        patch("collab_splats.pointcloud.feedforward.VGGTXCreator", return_value=mock_creator),
-        patch("collab_splats.geometry.loop_closure.wrapper.LoopClosure") as mock_lc_cls,
+        patch("collab_splats.wrapper.reconstructor.get_creator", return_value=MagicMock(return_value=mock_creator)),
+        patch("collab_splats.wrapper.reconstructor.LoopClosure") as mock_lc_cls,
         patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
     ):
         R._run_feedforward(
             backend="vggtx",
             images_dir=tmp_path / "images",
             output_dir=tmp_path / "out",
+            model_dir=tmp_path / "model",
             loop_closure=False,
             viz_enabled=True,
             viz_port=8080,
             max_points=500_000,
-            use_multiview_confidence=False,
+            min_views=0,
+            mv_rel_thresh=0.01,
         )
 
     mock_lc_cls.assert_not_called()
@@ -1285,56 +1329,38 @@ def test_leaf_stages_derived_from_dep_graph():
     assert expected == {"refine", "semantics", "splats", "mesh", "localize", "reconstruction_quality_report"}
 
 
-def _seed_disk_reconstruction(rec, frame_idxs, image_names):
-    """Write an images/ store and a COLMAP reconstruction the way a finished run leaves them."""
-    fr.write_frames(
-        rec.images_dir,
-        [np.zeros((4, 6, 3), dtype=np.uint8) for _ in frame_idxs],
-        [{"frame_idx": fi} for fi in frame_idxs],
-        {"video_path": "v.mp4"},
-    )
+def _seed_disk_reconstruction(rec, frame_idxs):
+    """Write the pointcloud.zarr a finished run leaves, rows in the given frame order."""
     n = len(frame_idxs)
-    recon = build_pycolmap_reconstruction(
-        pts3d=np.zeros((1, 3), dtype=np.float32),
+    extrinsics = np.stack([np.eye(4, dtype=np.float32)] * n)
+    extrinsics[:, 2, 3] = np.arange(n, dtype=np.float32)
+    PointcloudResult(
+        points=np.zeros((1, 3), dtype=np.float32),
         colors=np.zeros((1, 3), dtype=np.uint8),
-        extrinsics=np.stack([np.eye(4, dtype=np.float32)] * n),
-        intrinsics=np.stack([np.eye(3, dtype=np.float32)] * n),
-        image_width=6,
-        image_height=4,
-        image_names=image_names,
-    )
-    colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
-    colmap_dir.mkdir(parents=True, exist_ok=True)
-    recon.write(str(colmap_dir))
+        extrinsics=extrinsics,
+        intrinsics=None,
+        model_intrinsics=np.stack([np.eye(3, dtype=np.float32)] * n),
+        image_paths=[Path(f"frame_{fi:06d}") for fi in frame_idxs],
+        original_coords=np.array([[0, 0, 6, 4, 6, 4]] * n, dtype=np.float32),
+        model_width=6,
+        model_height=4,
+        depth=np.ones((n, 4, 6), dtype=np.float32),
+    ).save_zarr(rec.pointcloud_zarr)
 
 
-def test_load_pointcloud_from_disk_matches_registered_image_names(tmp_path):
+def test_load_pointcloud_from_disk_keeps_zarr_row_order(tmp_path):
     """Loading a finished reconstruction off disk — the whole basis of a leaf-stage re-run."""
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
-    # Sparse source indices, as a quality-gated selection always produces: a loader that assumed
-    # row position rather than frame_idx would survive a contiguous 0,1,2 store.
-    frame_idxs = [2, 16]
-    # Names built the way the creators build them — Path(f"frame_{idx:06d}"), no extension
-    # (vggt_omega.py, vggtx.py, mapanything.py) — rather than re-spelled by hand here.
-    _seed_disk_reconstruction(rec, frame_idxs, [Path(f"frame_{i:06d}").name for i in frame_idxs])
+    # Sparse, non-sorted source indices: a loader that re-sorted rows would scramble the poses
+    _seed_disk_reconstruction(rec, [16, 2])
 
     result = rec._load_pointcloud_from_disk()
-    assert [p.name for p in result.image_paths] == ["frame_000002", "frame_000016"]
-    # extrinsics is where a naming mismatch actually bites: it looks every image_path up by name.
-    # Every other test mocks this loader, so nothing else exercises the round trip.
-    assert result.extrinsics.shape == (2, 4, 4)
+    assert [p.name for p in result.image_paths] == ["frame_000016", "frame_000002"]
+    np.testing.assert_array_equal(result.extrinsics[:, 2, 3], [0.0, 1.0])
 
-
-def test_load_pointcloud_from_disk_rejects_a_disagreeing_store(tmp_path):
-    """A store the reconstruction does not describe must name both, not raise a bare KeyError."""
-    config = _make_config(tmp_path)
-    rec = Reconstructor(config)
-    # The reconstruction registers a frame the store never selected, and vice versa.
-    _seed_disk_reconstruction(rec, [2, 16], ["frame_000002", "frame_000099"])
-
-    with pytest.raises(ValueError, match="frame_000016"):
-        rec._load_pointcloud_from_disk()
+    # The light load leaves the dense per-frame arrays on disk
+    assert result.depth is None
 
 
 def test_stage_output_exists_mesh(tmp_path):
@@ -1344,6 +1370,18 @@ def test_stage_output_exists_mesh(tmp_path):
     rec.backend_dir.mkdir(parents=True, exist_ok=True)
     (rec.backend_dir / "mesh.ply").touch()
     assert rec._stage_output_exists("mesh") is True
+
+
+def test_stage_output_exists_pointcloud_needs_zarr_and_colmap(tmp_path):
+    """
+    pointcloud.zarr alone is a partial run; the COLMAP export completes the stage.
+    """
+    rec = Reconstructor(_make_config(tmp_path))
+    rec.pointcloud_zarr.mkdir(parents=True)
+    assert rec._stage_output_exists("pointcloud") is False
+
+    rec.colmap_model_dir.mkdir(parents=True)
+    assert rec._stage_output_exists("pointcloud") is True
 
 
 def test_stage_output_exists_semantics_is_per_extractor(tmp_path):
@@ -1376,9 +1414,7 @@ def test_stage_output_exists_localize(tmp_path):
 
 def _seed_pointcloud_markers(rec):
     """Make _stage_output_exists('pointcloud') true without running the stage."""
-    colmap_dir = rec.backend_dir / "colmap" / "sparse" / "0"
-    colmap_dir.mkdir(parents=True, exist_ok=True)
-    (colmap_dir / "cameras.bin").touch()
+    rec.colmap_model_dir.mkdir(parents=True, exist_ok=True)
     (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True, exist_ok=True)
 
 
@@ -1568,11 +1604,12 @@ def _save_tiny_zarr(rec, n=3, with_confidence=True, confidence=None):
     for k in range(n):
         extrinsics[k][0, 3] = -0.15 * k  # sideways baseline, so pairs have parallax
     K = np.array([[50.0, 0, hw / 2], [0, 50.0, hw / 2], [0, 0, 1.0]], dtype=np.float32)
-    FeedforwardResult(
+    PointcloudResult(
         points=np.zeros((1, 3), np.float32),
         colors=np.zeros((1, 3), np.uint8),
         extrinsics=extrinsics,
-        intrinsics=np.stack([K] * n),
+        intrinsics=None,
+        model_intrinsics=np.stack([K] * n),
         image_paths=[Path(f"frame_{4 * k:06d}.png") for k in range(n)],
         original_coords=np.tile(np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1)),
         model_width=hw,
@@ -1596,7 +1633,7 @@ def _texture_frames(n=3, width=32, height=24):
 
 
 def test_report_json_is_the_columnar_contract(tmp_path):
-    """Top-level keys, scene block and params; nan ships as null and no .json.tmp is left."""
+    """Top-level keys and scene block; nan ships as null and no .json.tmp is left."""
     rec = Reconstructor(_make_config(tmp_path))
     rec._resolve_result = lambda: object()
     _save_tiny_zarr(rec, with_confidence=False)
@@ -1606,13 +1643,15 @@ def test_report_json_is_the_columnar_contract(tmp_path):
     text = out.read_text()
     report = json.loads(text)
     assert set(report) == {
-        "scene", "params", "frames", "depth_pairs", "depth_residual_histogram",
+        "scene",
+        "frames",
+        "depth_pairs",
+        "depth_residual_histogram",
         "photometric_pairs",
     }
     assert report["scene"]["n_frames"] == 3
     assert report["scene"]["model_resolution"] == "16x16"
     assert report["scene"]["image_width"] == 32
-    assert report["params"] == {"rel_thresh": 0.05}
     assert report["frames"]["frame_idx"] == [0, 4, 8]
     assert report["frames"]["confidence_median"] == [None, None, None]
     assert "NaN" not in text
@@ -1644,30 +1683,12 @@ def test_report_writes_nan_as_null(tmp_path):
     assert json.loads(text)["frames"]["confidence_median"] == [pytest.approx(0.9), None, pytest.approx(0.9)]
 
 
-def test_report_threads_its_thresholds_to_the_dense_pass(tmp_path, monkeypatch):
-    """The rel_thresh the report records is the one the dense pass ran with; abs_thresh is 0."""
-    rec = Reconstructor(_make_config(tmp_path))
-    rec._resolve_result = lambda: object()
-    _save_tiny_zarr(rec)
-    seen = {}
-    real = R.compute_multiview_depth_confidence
-
-    def spy(*args, **kwargs):
-        seen.update(kwargs)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(R, "compute_multiview_depth_confidence", spy)
-    report = json.loads(rec.reconstruction_quality_report().read_text())
-    assert seen["rel_thresh"] == report["params"]["rel_thresh"]
-    assert seen["abs_thresh"] == 0.0
-
-
 def test_report_runs_photometric_when_images_exist(tmp_path, monkeypatch):
     """Keyframes present: photometric_pairs is a filled table, not null."""
     rec = Reconstructor(_make_config(tmp_path))
     rec._resolve_result = lambda: object()
     _save_tiny_zarr(rec)
-    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)])
     monkeypatch.setattr(fr, "read_frames", lambda d: _texture_frames())
 
     report = json.loads(rec.reconstruction_quality_report().read_text())
@@ -1679,7 +1700,7 @@ def test_report_raises_when_photometric_raises(tmp_path, monkeypatch):
     rec = Reconstructor(_make_config(tmp_path))
     rec._resolve_result = lambda: object()
     _save_tiny_zarr(rec)
-    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)])
     monkeypatch.setattr(fr, "read_frames", lambda d: _texture_frames())
 
     def _boom(*args, **kwargs):

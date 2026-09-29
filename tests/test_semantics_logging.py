@@ -1,11 +1,12 @@
 # tests/test_semantics_logging.py
 import logging
-import numpy as np
-import torch
-import torchvision.transforms as T
-import pytest
 from typing import List
 from unittest.mock import MagicMock
+
+import numpy as np
+import pytest
+import torch
+import torchvision.transforms as T
 from PIL import Image as PILImage
 
 from collab_splats.semantics.features import (

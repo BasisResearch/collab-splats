@@ -18,7 +18,6 @@ import torch
 
 from tests.pointcloud.test_loger_creator import _tutorial_frames
 from collab_splats.pointcloud.feedforward.loger import (
-    LOGER_CONF_THRESHOLD,
     LoGeRCreator,
     _compute_target_size,
 )
@@ -36,7 +35,7 @@ with torch.no_grad():
 local = preds["local_points"].squeeze(0).cpu().float().numpy()      # (N,H,W,3)
 conf = torch.sigmoid(preds["conf"]).squeeze(0).cpu().float().numpy()
 conf = conf.reshape(n, h, w)
-mask = conf > LOGER_CONF_THRESHOLD
+mask = conf > creator.k_fit_conf_threshold
 print(f"frames={n} model={w}x{h} local={local.shape} mask={mask.mean():.3%}")
 
 # LoGeR's normalised rays. For an ideal pinhole: x = (u - cx)/fx exactly, with NO v term.

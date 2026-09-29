@@ -1,24 +1,23 @@
-import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
-from mapanything.utils import cropping
 from PIL import Image
+
+from mapanything.utils import cropping
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import (
     BaseFeedforwardCreator,
     MapAnythingCreator,
 )
-from collab_splats.pointcloud.feedforward.base import (
-    MultiviewConfidence,
-    _raw_to_world_points,
+from tests.pointcloud.conftest import _frame_files
+from tests.pointcloud.feedforward.conftest import (
+    _FakeMapAnythingModel,
+    _mapanything_boxes,
 )
-from collab_splats.pointcloud.feedforward.mapanything import _mapanything_crop_coords
-from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel
 
 
 def _centered_k(h: int, w: int) -> torch.Tensor:
@@ -31,7 +30,8 @@ def test_mapanything_defaults():
     c = MapAnythingCreator()
     assert c.model_name == "facebook/map-anything"
     assert c.confidence_percentile == 35.0
-    assert c.use_multiview_confidence is True
+    assert c.min_views == 0
+    assert c.mv_rel_thresh == 0.01
     assert c.minibatch_size == 1
 
 
@@ -42,7 +42,7 @@ def test_mapanything_is_feedforward_creator():
 def test_mapanything_missing_image_dir_raises(tmp_path):
     c = MapAnythingCreator()
     with pytest.raises(FileNotFoundError):
-        c.reconstruct(tmp_path / "nonexistent", tmp_path / "out")
+        c.create_pointcloud(tmp_path / "nonexistent", tmp_path / "out", tmp_path / "model")
 
 
 def test_mapanything_forward_calls_model_forward():
@@ -57,22 +57,24 @@ def test_mapanything_forward_calls_model_forward():
 
     creator = MapAnythingCreator(minibatch_size=2)
     creator._processed_views = [{"img": torch.zeros(1, 3, 64, 64)} for _ in range(n)]
+    creator.views = [object()] * n
 
-    result = creator._forward(mock_model, views=None)
+    with patch.object(MapAnythingCreator, "_stack_predictions", return_value="stacked") as mock_stack:
+        result = creator._forward(mock_model, creator.views)
 
     mock_model.forward.assert_called_once_with(
         creator._processed_views,
         memory_efficient_inference=True,
         minibatch_size=2,
     )
-    assert result is mock_raw
+    mock_stack.assert_called_once_with(mock_raw, creator._processed_views, masked=True)
+    assert result == "stacked"
 
 
-def test_mapanything_preprocess_sets_processed_views():
+def test_mapanything_preprocess_sets_processed_views(tmp_path):
     import torch
 
-    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)]
-    frame_idxs = [0, 1]
+    paths = _frame_files([np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path)
 
     fake_views = [{"img": torch.zeros(1, 3, 224, 224), "data_norm_type": "imagenet"} for _ in range(2)]
     fake_validated = fake_views
@@ -90,7 +92,7 @@ def test_mapanything_preprocess_sets_processed_views():
         ) as mock_preprocess,
     ):
         creator = MapAnythingCreator()
-        creator._preprocess(frames, frame_idxs)
+        creator._preprocess(paths)
 
     mock_validate.assert_called_once_with(fake_views)
     mock_preprocess.assert_called_once_with(fake_validated)
@@ -100,7 +102,7 @@ def test_mapanything_preprocess_sets_processed_views():
 def test_mapanything_postprocess_casts_bf16_to_float32():
     """Regression guard: pts3d_cam and pts3d must be float32 before postprocess.
 
-    F.grid_sample inside compute_multiview_depth_confidence requires matching
+    The shared multiview depth check requires matching
     dtypes. torch 2.4 enforces this strictly; 2.1.2 allowed bf16/float32 mismatch.
     """
     import torch
@@ -120,6 +122,7 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
             "pts3d_cam": torch.zeros(1, h, w, 3),
             "mask": torch.ones(1, h, w, 1, dtype=torch.bool),
             "depth_z": torch.ones(1, h, w, 1),
+            "conf": torch.ones(1, h, w),
             "img_no_norm": torch.zeros(1, h, w, 3),
             # Centered pinhole K at the fixture resolution. Identity K puts the principal point
             # at (0, 0), which the mv resolution contract rejects as a K built for another grid.
@@ -130,15 +133,13 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
     ]
 
     creator = MapAnythingCreator()
-    creator._processed_views = [{"img": torch.zeros(1, 3, h, w)} for _ in range(n)]
-    creator.image_paths = [Path(f"/fake/img_{i}.jpg") for i in range(n)]
-    creator.original_coords = np.zeros((n, 6), dtype=np.float32)
+    views = [{"img": torch.zeros(1, 3, h, w)} for _ in range(n)]
 
     with patch(
         "collab_splats.pointcloud.feedforward.mapanything" ".postprocess_model_outputs_for_inference",
         return_value=fake_processed,
     ) as mock_post:
-        creator._postprocess(raw_outputs)
+        creator._stack_predictions(raw_outputs, views, masked=True)
 
     # raw_outputs is mutated in-place before postprocess is called;
     # mock captures the reference so we inspect dtype at call time
@@ -191,6 +192,7 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
             "pts3d_cam": torch.zeros(1, h, w, 3),
             "mask": torch.ones(1, h, w, 1, dtype=torch.bool),
             "depth_z": torch.ones(1, h, w, 1),
+            "conf": torch.ones(1, h, w),
             "img_no_norm": torch.zeros(1, h, w, 3),
             # Centered pinhole K at the fixture resolution. Identity K puts the principal point
             # at (0, 0), which the mv resolution contract rejects as a K built for another grid.
@@ -224,7 +226,7 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
         creator = MapAnythingCreator()
         creator.model = mock_model
 
-        creator.setup_inference(image_dir)
+        creator.setup_inference(sorted(image_dir.glob("*.jpg")))
         assert hasattr(creator, "_processed_views"), "_preprocess must set _processed_views"
         assert creator._processed_views is fake_processed
 
@@ -235,86 +237,9 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
             minibatch_size=1,
         )
 
-        creator.postprocess()
-        assert creator.outputs is not None
-        assert creator.outputs.points.shape[1] == 3
-        assert creator.outputs.extrinsics.shape == (n, 4, 4)
-
-
-def test_reproject_output_shapes():
-    """_reproject returns (P,3) float32 pts3d and (P,3) uint8 colors."""
-    import torch
-
-    creator = MapAnythingCreator()
-    n, h, w = 2, 4, 4
-    raw_outputs = [
-        {
-            "pts3d_cam": torch.zeros(1, h, w, 3, dtype=torch.float32),
-            "mask": torch.ones(1, h, w, 1, dtype=torch.bool),
-            "depth_z": torch.ones(1, h, w, 1, dtype=torch.float32),
-            "img_no_norm": torch.zeros(1, h, w, 3, dtype=torch.float32),
-        }
-        for _ in range(n)
-    ]
-    extrinsics_3x4 = np.tile(np.eye(4)[:3, :], (n, 1, 1)).astype(np.float32)
-    intrinsics = np.tile(np.eye(3), (n, 1, 1)).astype(np.float32)
-
-    pts3d, colors = creator._reproject(raw_outputs, extrinsics_3x4, intrinsics)
-
-    assert pts3d.shape == (n * h * w, 3), f"Expected ({n*h*w}, 3), got {pts3d.shape}"
-    assert pts3d.dtype == np.float32
-    assert colors.shape == (n * h * w, 3)
-    assert colors.dtype == np.uint8
-
-
-def test_reproject_depth_mask_filters_zero_depth():
-    """Points with depth_z <= 0 are excluded from output."""
-    import torch
-
-    creator = MapAnythingCreator()
-    h, w = 4, 4
-    raw_outputs = [
-        {
-            "pts3d_cam": torch.zeros(1, h, w, 3, dtype=torch.float32),
-            "mask": torch.ones(1, h, w, 1, dtype=torch.bool),
-            "depth_z": torch.ones(1, h, w, 1, dtype=torch.float32),
-            "img_no_norm": torch.zeros(1, h, w, 3, dtype=torch.float32),
-        }
-    ]
-    raw_outputs[0]["depth_z"][0, : h // 2, :, 0] = 0.0
-    extrinsics_3x4 = np.eye(4)[:3, :][np.newaxis].astype(np.float32)
-    intrinsics = np.eye(3)[np.newaxis].astype(np.float32)
-
-    pts3d, colors = creator._reproject(raw_outputs, extrinsics_3x4, intrinsics)
-
-    expected_count = h * w - (h // 2) * w
-    assert pts3d.shape[0] == expected_count
-
-
-def test_reproject_identity_extrinsic_preserves_cam_points():
-    """Identity extrinsic (world2cam=I) → world pts == pts3d_cam."""
-    import torch
-
-    creator = MapAnythingCreator()
-    h, w = 2, 2
-    raw_outputs = [
-        {
-            "pts3d_cam": torch.zeros(1, h, w, 3, dtype=torch.float32),
-            "mask": torch.ones(1, h, w, 1, dtype=torch.bool),
-            "depth_z": torch.ones(1, h, w, 1, dtype=torch.float32),
-            "img_no_norm": torch.zeros(1, h, w, 3, dtype=torch.float32),
-        }
-    ]
-    raw_outputs[0]["pts3d_cam"][0] = torch.tensor(
-        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [0.0, 1.0, 2.0]]
-    ).reshape(h, w, 3)
-    extrinsics_3x4 = np.eye(4)[:3, :][np.newaxis].astype(np.float32)
-    intrinsics = np.eye(3)[np.newaxis].astype(np.float32)
-
-    pts3d, _ = creator._reproject(raw_outputs, extrinsics_3x4, intrinsics)
-
-    expected = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [0.0, 1.0, 2.0]], dtype=np.float32)
-    np.testing.assert_allclose(pts3d, expected, atol=1e-5)
+        result = creator._postprocess(creator.raw_outputs)
+        assert result.points.shape[1] == 3
+        assert result.extrinsics.shape == (n, 4, 4)
 
 
 def test_mapanything_forward_transfers_tensors_to_device():
@@ -340,11 +265,15 @@ def test_mapanything_forward_transfers_tensors_to_device():
     cpu_tensor = torch.zeros(1, 3, 4, 4)  # starts on CPU
     creator = MapAnythingCreator()
     creator._processed_views = [{"img": cpu_tensor, "scalar": 1.0}]
+    creator.views = [object()]
 
     # Mock torch.autocast to avoid "unsupported autocast device_type 'meta'" error.
     # autocast is only for dtype conversion; tensor transfer happens before it.
-    with patch("torch.autocast", return_value=nullcontext()):
-        creator._forward(mock_model, views=None)
+    with (
+        patch("torch.autocast", return_value=nullcontext()),
+        patch.object(MapAnythingCreator, "_stack_predictions"),
+    ):
+        creator._forward(mock_model, creator.views)
 
     # Tensor must have been transferred to meta device before model.forward() was called
     assert len(captured_views) == 1
@@ -382,11 +311,10 @@ def test_mapanything_reconstruct_smoke(tmp_path):
         PILImage.fromarray(arr).save(image_dir / f"frame_{i:04d}.jpg")
 
     c = MapAnythingCreator()
-    result = c.reconstruct(image_dir, tmp_path / "out")
+    result = c.create_pointcloud(image_dir, tmp_path / "out", tmp_path / "model")
     assert isinstance(result, PointcloudResult)
     assert result.points.shape[1] == 3
-    assert (tmp_path / "out" / "sparse_pc.ply").exists()
-    assert (tmp_path / "out" / "colmap" / "sparse" / "0" / "cameras.bin").exists()
+    assert (tmp_path / "model" / "cameras.bin").exists()
 
 
 @pytest.mark.gpu
@@ -405,16 +333,11 @@ def test_mapanything_run_inference_smoke(tmp_path):
 
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
 
-    creator = MapAnythingCreator(camera_model="PINHOLE")
-    creator.load_model()
-    creator.setup_inference(bicycle)
-    creator.run_inference()
-    creator.postprocess()
+    creator = MapAnythingCreator()
+    result = creator.create_pointcloud(bicycle, tmp_path / "out")
 
-    assert creator.outputs.confidence is not None, "confidence should be set when use_multiview_confidence=True"
-    assert (
-        not creator.outputs.confidence.isnan().any()
-    ), "confidence contains NaN — dtype cast regression in _postprocess"
+    assert result.confidence is not None, "MapAnything postprocess should populate confidence"
+    assert not result.confidence.isnan().any(), "confidence contains NaN — dtype cast regression in _stack_predictions"
 
 
 # ---------------------------------------------------------------------------
@@ -462,12 +385,15 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
 
 
 def _patch_mapanything_postprocess():
-    """Patch module-level postprocess to yield identity camera_poses for 2 views."""
+    """Patch module-level postprocess to yield identity camera_poses plus geometry for 2 views."""
     import torch
 
     return patch(
         "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
-        return_value=[{"camera_poses": torch.eye(4).unsqueeze(0)} for _ in range(2)],
+        return_value=[
+            {"camera_poses": torch.eye(4).unsqueeze(0), "pts3d": torch.zeros(1, 4, 4, 3), "conf": torch.ones(1, 4, 4)}
+            for _ in range(2)
+        ],
     )
 
 
@@ -552,11 +478,6 @@ def test_mapanything_verify_loop_candidate_not_on_class():
 
 
 @pytest.mark.gpu
-@pytest.mark.xfail(
-    reason="LC + MapAnything: _run_loop_closure_inference expects dict, "
-    "MapAnythingCreator._forward returns list[dict]. Separate bug, see follow-up.",
-    strict=True,
-)
 def test_mapanything_run_inference_loop_closure_smoke(tmp_path):
     pytest.importorskip("mapanything")
     pytest.importorskip("torch")
@@ -568,11 +489,10 @@ def test_mapanything_run_inference_loop_closure_smoke(tmp_path):
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
 
-    base = MapAnythingCreator(camera_model="PINHOLE")
+    base = MapAnythingCreator()
     creator = LoopClosure(base, config=LoopClosureConfig())
-    creator.load_model()
-    creator.setup_inference(bicycle)
-    creator.run_inference()
+    result = creator.create_pointcloud(bicycle, tmp_path / "out")
+    assert result.points.shape[1] == 3
 
 
 ########################################################################
@@ -593,10 +513,9 @@ def test_mapanything_invalid_resize_mode_raises():
         MapAnythingCreator(resize_mode="bogus")
 
 
-def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping():
+def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(tmp_path):
     """resize_mode='fixed' passes resize_mode='fixed_mapping' + resolution_set to load_images."""
-    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)]
-    frame_idxs = [0, 1]
+    paths = _frame_files([np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path)
 
     fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
     fake_views = [fake_view, fake_view]
@@ -613,7 +532,7 @@ def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(
             return_value=fake_views,
         ),
     ):
-        c._preprocess(frames, frame_idxs)
+        c._preprocess(paths)
 
     call_kwargs = mock_li.call_args[1]
     assert call_kwargs.get("resize_mode") == "fixed_mapping"
@@ -621,10 +540,9 @@ def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(
     assert "size" not in call_kwargs
 
 
-def test_mapanything_preprocess_longest_side_calls_load_images_with_size():
+def test_mapanything_preprocess_longest_side_calls_load_images_with_size(tmp_path):
     """resize_mode='longest_side' passes resize_mode='longest_side' + size= to load_images."""
-    frames = [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)]
-    frame_idxs = [0, 1]
+    paths = _frame_files([np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path)
 
     fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
     fake_views = [fake_view, fake_view]
@@ -641,7 +559,7 @@ def test_mapanything_preprocess_longest_side_calls_load_images_with_size():
             return_value=fake_views,
         ),
     ):
-        c._preprocess(frames, frame_idxs)
+        c._preprocess(paths)
 
     call_kwargs = mock_li.call_args[1]
     assert call_kwargs.get("resize_mode") == "longest_side"
@@ -650,7 +568,7 @@ def test_mapanything_preprocess_longest_side_calls_load_images_with_size():
 
 
 def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
-    """After refactor, use_multiview_confidence calls compute_multiview_depth_confidence,
+    """min_views > 0 calls the shared multiview_depth_confidence,
     not the upstream postprocess_model_outputs_for_inference with use_multiview_confidence=True."""
     from unittest.mock import patch
 
@@ -670,22 +588,18 @@ def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
         for _ in range(N):
             preds.append(
                 {
-                    "mask": [torch.ones(1, H, W, 1)],
-                    "depth_z": [torch.ones(1, H, W, 1) * 2.0],
-                    "pts3d": [torch.zeros(1, H, W, 3)],
-                    "img_no_norm": [torch.zeros(1, H, W, 3)],
-                    "camera_poses": [torch.eye(4).unsqueeze(0)],
-                    "intrinsics": [torch.eye(3).unsqueeze(0)],
+                    "mask": torch.ones(1, H, W, 1),
+                    "depth_z": torch.ones(1, H, W, 1) * 2.0,
+                    "conf": torch.ones(1, H, W),
+                    "pts3d": torch.zeros(1, H, W, 3),
+                    "img_no_norm": torch.zeros(1, H, W, 3),
+                    "camera_poses": torch.eye(4).unsqueeze(0),
+                    "intrinsics": torch.eye(3).unsqueeze(0),
                 }
             )
         return preds
 
-    mv_conf_return = MultiviewConfidence(
-        ratio=np.ones((2, 4, 4), dtype=np.float32),
-        inlier_count=np.ones((2, 4, 4), dtype=np.int32),
-        valid_count=np.ones((2, 4, 4), dtype=np.int32),
-        judged=np.ones(2, dtype=bool),
-    )
+    ones = np.ones((2, 4, 4), dtype=np.int32)
 
     with (
         patch(
@@ -693,64 +607,64 @@ def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
             side_effect=fake_postprocess,
         ),
         patch(
-            "collab_splats.pointcloud.feedforward.mapanything.compute_multiview_depth_confidence",
-            return_value=mv_conf_return,
+            "collab_splats.pointcloud.feedforward.base.multiview_depth_confidence",
+            return_value=(ones, ones),
         ) as mock_mv,
     ):
-        creator = MapAnythingCreator(use_multiview_confidence=True)
+        creator = MapAnythingCreator(min_views=1)
         H, W = 4, 4
         creator._processed_views = [{"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(2)]
         creator.image_paths = []
-        creator.original_coords = np.zeros((2, 6), dtype=np.float32)
+        creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1))  # full-frame box
 
-        raw_outputs = [{"dummy": i} for i in range(2)]
-        result = creator._postprocess(raw_outputs)
+        raw_outputs = [{"pts3d_cam": torch.zeros(1), "pts3d": torch.zeros(1)} for _ in range(2)]
+        raw = creator._stack_predictions(raw_outputs, creator._processed_views, masked=True)
+        creator._postprocess(raw)
 
     assert all(
         not v for v in upstream_calls
     ), f"postprocess_model_outputs_for_inference called with use_multiview_confidence=True: {upstream_calls}"
     mock_mv.assert_called_once()
-    # The mv arrays ride out on the result so save_zarr can persist them
-    np.testing.assert_array_equal(result.mv_ratio, mv_conf_return.ratio)
-    np.testing.assert_array_equal(result.mv_inlier_count, mv_conf_return.inlier_count)
-    np.testing.assert_array_equal(result.mv_valid_count, mv_conf_return.valid_count)
 
 
-def test_mapanything_postprocess_leaves_mv_fields_none_when_disabled():
-    """No mv computation means no mv arrays — save_zarr must omit the keys, not write zeros."""
-    creator = MapAnythingCreator(use_multiview_confidence=False)
+def test_mapanything_postprocess_skips_the_multiview_pass_when_disabled():
+    """min_views=0 is off: the O(N^2) pass never runs."""
+    creator = MapAnythingCreator(min_views=0)
     H, W = 4, 4
     n = 2
 
     def fake_postprocess(raw_outputs, processed_views, **kwargs):
         return [
             {
-                "mask": [torch.ones(1, H, W, 1)],
-                "depth_z": [torch.ones(1, H, W, 1) * 2.0],
-                "pts3d": [torch.zeros(1, H, W, 3)],
-                "img_no_norm": [torch.zeros(1, H, W, 3)],
-                "camera_poses": [torch.eye(4).unsqueeze(0)],
-                "intrinsics": [_centered_k(H, W).unsqueeze(0)],
+                "mask": torch.ones(1, H, W, 1),
+                "depth_z": torch.ones(1, H, W, 1) * 2.0,
+                "conf": torch.ones(1, H, W),
+                "pts3d": torch.zeros(1, H, W, 3),
+                "img_no_norm": torch.zeros(1, H, W, 3),
+                "camera_poses": torch.eye(4).unsqueeze(0),
+                "intrinsics": _centered_k(H, W).unsqueeze(0),
             }
             for _ in range(len(raw_outputs))
         ]
 
-    with patch(
-        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
-        side_effect=fake_postprocess,
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+            side_effect=fake_postprocess,
+        ),
+        patch("collab_splats.pointcloud.feedforward.base.multiview_depth_confidence") as mock_mv,
     ):
-        creator._processed_views = [{"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(n)]
+        views = [{"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(n)]
         creator.image_paths = []
-        creator.original_coords = np.zeros((n, 6), dtype=np.float32)
-        result = creator._postprocess([{"dummy": i} for i in range(n)])
+        creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1))  # full-frame box
+        preds = [{"pts3d_cam": torch.zeros(1), "pts3d": torch.zeros(1)} for _ in range(n)]
+        creator._postprocess(creator._stack_predictions(preds, views, masked=True))
 
-    assert result.mv_ratio is None
-    assert result.mv_inlier_count is None
-    assert result.mv_valid_count is None
+    mock_mv.assert_not_called()
 
 
 ########################################################################
-########## _lc_collate_outputs: depth keys for _raw_to_world_points ####
+########## _stack_predictions: the base raw dict #######################
 ########################################################################
 
 
@@ -765,8 +679,11 @@ def _fake_frames(n_frames: int, h: int, w: int):
     """Build (raw_list, processed) pairs mimicking MapAnything forward/postprocess."""
     # Raw preds only need the keys the float-cast touches; postprocess is patched.
     raw_list = [{"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)} for _ in range(n_frames)]
-    # Identity-like K (fx=fy=1, cx=cy=0) so unprojection of depth=1 gives (u, v, 1).
-    intr = torch.eye(3)
+
+    # Upstream mask keeps the left half of every frame
+    mask = torch.zeros(1, h, w, 1, dtype=torch.bool)
+    mask[:, :, : w // 2] = True
+
     processed = []
     for i in range(n_frames):
         c2w = torch.eye(4)
@@ -774,121 +691,102 @@ def _fake_frames(n_frames: int, h: int, w: int):
         processed.append(
             {
                 "camera_poses": c2w.unsqueeze(0),
-                "intrinsics": intr.unsqueeze(0),
+                "intrinsics": _centered_k(h, w).unsqueeze(0),
                 # postprocess always adds denormalized [0, 1] RGB (used for dense colors)
                 "img_no_norm": torch.zeros(1, h, w, 3),
                 "depth_z": torch.ones(1, h, w, 1, dtype=torch.bfloat16),
                 "conf": torch.full((1, h, w), 0.5 + 0.25 * i, dtype=torch.bfloat16),
+                "mask": mask,
             }
         )
     return raw_list, processed
 
 
-def test_lc_collate_outputs_carries_depth_keys():
-    """Collated dict exposes depth/intrinsics_downsampled/depth_conf with correct shapes."""
-    h, w, n = 16, 24, 2
+def _stack(masked: bool, n: int = 2, h: int = 16, w: int = 24) -> dict:
+    """_stack_predictions over _fake_frames with upstream postprocess patched."""
     raw_list, processed = _fake_frames(n, h, w)
-    creator = _make_creator()
-    creator._lc_window_views = [object()] * n
     with patch(
         "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
         return_value=processed,
     ):
-        out = creator._lc_collate_outputs(raw_list)
+        return _make_creator()._stack_predictions(raw_list, [object()] * n, masked=masked)
 
-    # Existing pose keys still present with correct shapes
+
+def test_stack_predictions_unmasked_carries_the_base_raw_keys():
+    """LC window stack: every base raw key at base shapes, no upstream mask."""
+    h, w, n = 16, 24, 2
+    out = _stack(masked=False, n=n, h=h, w=w)
+
     assert out["extrinsic"].shape == (n, 3, 4)
     assert out["intrinsics"].shape == (n, 3, 3)
-
-    # New depth keys: shapes, dtypes, and intrinsics_downsampled == intrinsics
     assert out["depth"].shape == (n, h, w, 1)
     assert out["depth"].dtype == np.float32
     assert out["depth_conf"].shape == (n, h, w)
     assert out["depth_conf"].dtype == np.float32
-    np.testing.assert_array_equal(out["intrinsics_downsampled"], out["intrinsics"])
-
-    # Denormalized per-pixel RGB (dense colors) sourced from postprocess img_no_norm
-    assert out["colors"].shape == (n, h, w, 3)
-    assert out["colors"].dtype == np.uint8
+    assert out["images"].shape == (n, 3, h, w)
+    assert "mask" not in out
 
 
-def test_lc_collate_outputs_feeds_raw_to_world_points():
-    """Collated dict unprojects: identity pose + depth=1 grid → world points at pixel coords."""
+def test_stack_predictions_inverts_c2w_to_w2c():
+    """Upstream camera_poses are c2w; the stacked extrinsic is w2c."""
+    out = _stack(masked=False)
+
+    np.testing.assert_allclose(out["extrinsic"][0], np.eye(4)[:3], atol=1e-6)
+    np.testing.assert_allclose(out["extrinsic"][1][:, 3], [-1.0, -2.0, -3.0], atol=1e-6)
+
+
+def test_stack_predictions_masked_keeps_the_upstream_mask():
+    """Full-sequence stack carries upstream's mask as (N, H, W) bool."""
+    h, w, n = 16, 24, 2
+    out = _stack(masked=True, n=n, h=h, w=w)
+
+    assert out["mask"].shape == (n, h, w)
+    assert out["mask"].dtype == bool
+    assert out["mask"][:, :, : w // 2].all() and not out["mask"][:, :, w // 2 :].any()
+
+
+def test_postprocess_mask_key_replaces_the_confidence_cutoff():
+    """A raw "mask" key decides the kept pixels; conf_threshold is not applied."""
+    h, w, n = 16, 24, 2
+    raw = _stack(masked=True, n=n, h=h, w=w)
+    creator = MapAnythingCreator(min_views=0, conf_threshold=0.9)  # above every conf: would keep nothing
+    creator.image_paths = []
+    creator.original_coords = np.tile(np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1))  # full-frame box
+
+    result = creator._postprocess(raw)
+
+    assert len(result.points) == n * h * (w // 2)
+    assert (result.pixel_indices[:, 2] < w // 2).all()
+
+
+def test_stack_predictions_raises_when_depth_z_missing():
+    """Missing depth_z/conf in postprocess output raises instead of dropping submap geometry."""
     h, w, n = 16, 24, 2
     raw_list, processed = _fake_frames(n, h, w)
-    creator = _make_creator()
-    creator._lc_window_views = [object()] * n
-    with patch(
-        "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
-        return_value=processed,
-    ):
-        out = creator._lc_collate_outputs(raw_list)
 
-    wp, wp_conf = _raw_to_world_points(out, subsample=8)
-    assert wp is not None, "world points must not be None with depth keys present"
-
-    # Grid size: strided pixel lattice arange(0, W, 8) x arange(0, H, 8)
-    us, vs = np.arange(0, w, 8), np.arange(0, h, 8)
-    p = len(us) * len(vs)
-    assert wp.shape == (n, p, 3)
-    assert wp_conf.shape == (n, p)
-
-    # Frame 0: identity extrinsic + identity K + depth=1 → world point (u, v, 1)
-    uu, vv = np.meshgrid(us, vs)
-    expected0 = np.stack([uu.ravel(), vv.ravel(), np.ones(p)], axis=-1).astype(np.float32)
-    np.testing.assert_allclose(wp[0], expected0, atol=1e-5)
-
-    # Frame 1: cam2world translation (1, 2, 3) shifts every world point
-    np.testing.assert_allclose(wp[1], expected0 + np.array([1.0, 2.0, 3.0]), atol=1e-4)
-
-    # Confidence passthrough per frame
-    np.testing.assert_allclose(wp_conf[0], 0.5, atol=1e-6)
-    np.testing.assert_allclose(wp_conf[1], 0.75, atol=1e-6)
-
-
-def test_lc_collate_outputs_warns_when_depth_z_missing(caplog):
-    """Missing depth_z/conf in postprocess output logs a warning; poses still returned."""
-    h, w, n = 16, 24, 2
-    raw_list, processed = _fake_frames(n, h, w)
-    # Strip the geometry keys — some postprocess variants omit them
+    # Strip the geometry keys
     for p in processed:
         del p["depth_z"]
         del p["conf"]
-    creator = _make_creator()
-    creator._lc_window_views = [object()] * n
     with (
         patch(
             "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
             return_value=processed,
         ),
-        caplog.at_level(logging.WARNING, logger="collab_splats.pointcloud.feedforward.mapanything"),
+        pytest.raises(KeyError, match="depth_z"),
     ):
-        out = creator._lc_collate_outputs(raw_list)
-
-    # Warning names the missing keys and the consequence
-    assert any(
-        "depth_z" in rec.message and "world_points" in rec.message
-        for rec in caplog.records
-        if rec.levelno == logging.WARNING
-    ), f"expected depth_z warning, got: {[r.message for r in caplog.records]}"
-
-    # Pose keys survive; geometry keys omitted rather than raising
-    assert out["extrinsic"].shape == (n, 3, 4)
-    assert out["intrinsics"].shape == (n, 3, 3)
-    assert "depth" not in out
-    assert "depth_conf" not in out
+        _make_creator()._stack_predictions(raw_list, [object()] * n, masked=False)
 
 
 ########################################################################
-########## extract_intermediate_features: warn on missing pts3d ########
+########## Missing upstream keys raise, never degrade ##################
 ########################################################################
 
 
-def test_extract_features_warns_when_pts3d_missing(caplog):
-    """Missing pts3d in postprocess output logs a loud warning; poses still returned."""
+def test_extract_raises_when_pts3d_missing():
+    """Postprocess output without pts3d raises instead of dropping LC anchor geometry."""
     h = w = 8
     preds = [{"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)} for _ in range(2)]
-    # Postprocessed output WITHOUT pts3d — geometry unavailable, poses intact.
     processed = [{"camera_poses": torch.eye(4).unsqueeze(0), "conf": torch.rand(1, h, w)} for _ in range(2)]
     creator = _make_creator()
     creator.model = _FakeMapAnythingModel(preds)
@@ -901,29 +799,45 @@ def test_extract_features_warns_when_pts3d_missing(caplog):
             "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
             return_value=processed,
         ),
-        caplog.at_level(logging.WARNING, logger="collab_splats.pointcloud.feedforward.mapanything"),
+        pytest.raises(KeyError, match="pts3d"),
     ):
-        out = creator.extract_intermediate_features(torch.rand(2, 3, h, w))
+        creator.extract_intermediate_features(torch.rand(2, 3, h, w), layer_index=-1)
 
-    # Warning names the missing key and the consequence
-    assert any(
-        "pts3d" in rec.message and "anchor scale" in rec.message
-        for rec in caplog.records
-        if rec.levelno == logging.WARNING
-    ), f"expected pts3d warning, got: {[r.message for r in caplog.records]}"
 
-    # Poses still derived from the same forward; geometry keys absent
-    assert out["poses"].shape == (2, 4, 4)
-    assert "world_points" not in out
+def test_postprocess_raises_when_conf_missing():
+    """Postprocess output without conf raises instead of returning confidence=None."""
+    h = w = 4
+    processed = [
+        {
+            "mask": torch.ones(1, h, w, 1),
+            "depth_z": torch.ones(1, h, w, 1),
+            "pts3d": torch.zeros(1, h, w, 3),
+            "img_no_norm": torch.zeros(1, h, w, 3),
+            "camera_poses": torch.eye(4).unsqueeze(0),
+            "intrinsics": _centered_k(h, w).unsqueeze(0),
+        }
+        for _ in range(2)
+    ]
+    creator = MapAnythingCreator(min_views=0)
+    views = [{"img": torch.zeros(1, 3, h, w)} for _ in range(2)]
+    preds = [{"pts3d_cam": torch.zeros(1), "pts3d": torch.zeros(1)} for _ in range(2)]
+    with (
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
+            return_value=processed,
+        ),
+        pytest.raises(KeyError, match="conf"),
+    ):
+        creator._stack_predictions(preds, views, masked=True)
 
 
 ########################################################################
-########## _mapanything_crop_coords: crop box in original pixels #######
+########## MapAnything crop box (MapAnythingCreator._preprocess) #######
 ########################################################################
 
 
 @pytest.mark.parametrize("hw", [(1000, 1000), (1080, 1920), (1920, 1080), (200, 300)])
-def test_mapanything_crop_coords_match_upstream_crop(hw):
+def test_mapanything_crop_box_matches_upstream_crop(hw):
     """The box, cropped and resized with PIL, reproduces upstream's model-res image."""
     h, w = hw
     # Runtime target is aspect-matched to the frame: a portrait frame gets a portrait
@@ -934,7 +848,7 @@ def test_mapanything_crop_coords_match_upstream_crop(hw):
     rgb = np.stack([(xx * 255 // w), (yy * 255 // h), ((xx + yy) % 256)], axis=-1).astype(np.uint8)
 
     upstream = np.asarray(cropping.crop_resize_if_necessary(rgb, resolution=(model_w, model_h))[0], dtype=np.float32)
-    (box,) = _mapanything_crop_coords([(h, w)], model_w, model_h)
+    (box,) = _mapanything_boxes([(w, h)], model_w, model_h)
     ours = np.asarray(
         Image.fromarray(rgb).crop(tuple(float(v) for v in box[:4])).resize((model_w, model_h), Image.LANCZOS),
         dtype=np.float32,
@@ -944,37 +858,3 @@ def test_mapanything_crop_coords_match_upstream_crop(hw):
     # Measured worst case is 0.228 (200x300); 0.3 still catches a 3-px box shift or a
     # dropped centering pass (see the mutant table in the consistency review report).
     assert np.abs(ours[..., :2] - upstream[..., :2]).mean() < 0.3
-
-
-def test_mapanything_preprocess_original_coords_matches_crop_coords_helper():
-    """_preprocess's original_coords must match _mapanything_crop_coords at the call site.
-
-    The other _preprocess tests mock load_images and never check original_coords (the
-    third return value), so they would stay green even if the call site reverted to the
-    old model-sized box at the frame's top-left ([0, 0, model_w, model_h, W, H]).
-    """
-    h, w = 1080, 1920
-    model_w, model_h = 518, 294
-    frames = [np.zeros((h, w, 3), dtype=np.uint8)]
-    frame_idxs = [0]
-
-    fake_view = {"img": torch.zeros(1, 3, model_h, model_w), "data_norm_type": "imagenet"}
-    fake_views = [fake_view]
-
-    with (
-        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views),
-        patch(
-            "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
-            return_value=fake_views,
-        ),
-        patch(
-            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
-            return_value=fake_views,
-        ),
-    ):
-        creator = MapAnythingCreator()
-        _, _, original_coords = creator._preprocess(frames, frame_idxs)
-
-    expected = _mapanything_crop_coords([(h, w)], model_w, model_h)
-    np.testing.assert_allclose(original_coords, expected)
-    assert original_coords[0, 0] > 0  # tl_x: the true crop is not flush with the left edge

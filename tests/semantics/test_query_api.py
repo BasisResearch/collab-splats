@@ -122,6 +122,7 @@ def test_talk2dino_accepts_model_name():
     """Talk2DinoExtractor uses model_name, not hf_model_id."""
     pytest.importorskip("transformers")
     import inspect
+
     from collab_splats.semantics.features import Talk2DinoExtractor
     sig = inspect.signature(Talk2DinoExtractor.__init__)
     assert "model_name" in sig.parameters
@@ -132,9 +133,10 @@ def test_talk2dino_accepts_model_name():
 def test_talk2dino_forward_returns_spatial():
     """Talk2DinoExtractor.forward() returns (D, pH, pW) with square patch grid."""
     pytest.importorskip("transformers")
-    from collab_splats.semantics.features import Talk2DinoExtractor
-    from PIL import Image
     import numpy as np
+    from PIL import Image
+
+    from collab_splats.semantics.features import Talk2DinoExtractor
     extractor = Talk2DinoExtractor()
     img = Image.fromarray(np.zeros((224, 224, 3), dtype=np.uint8))
     features = extractor.forward([img])

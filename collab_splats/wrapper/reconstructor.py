@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib.metadata
 import json
 import logging
 import shutil
 import warnings
+from collections.abc import Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,17 +15,16 @@ from typing import TYPE_CHECKING, Any
 import cv2
 import numpy as np
 import pycolmap
-import torch
 import yaml
 import zarr
 from mergedeep import merge
-from vggt.utils.geometry import unproject_depth_map_to_point_map
 
 from collab_splats.geometry.bundle_adjustment import (
     BundleAdjustment,
     BundleAdjustmentConfig,
     check_model_resolution,
 )
+from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
 from collab_splats.geometry.metrics import compute_reconstruction_quality
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.localization.extractors import LocalMatcher
@@ -35,21 +34,11 @@ from collab_splats.mesh import (
     create_texture_mesh,
     create_tsdf_mesh,
 )
+from collab_splats.pointcloud import BaseFeedforwardCreator, get_creator
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.pointcloud.depth_align import result_from_reconstruction
-from collab_splats.pointcloud.feedforward.base import (
-    FeedforwardResult,
-    _rescale_reconstruction_to_original_dimensions,
-    build_pycolmap_reconstruction,
-    compute_multiview_depth_confidence,
-)
-from collab_splats.pointcloud.sfm import InstantSfMCreator
-from collab_splats.pointcloud.utils import (
-    clean_pointcloud,
-    confidence_mask,
-    lift_features,
-)
-from collab_splats.pointcloud.vda import generate_vda_depth, vda_depth_complete
+from collab_splats.pointcloud.sfm import SFM_CREATORS
+from collab_splats.pointcloud.sfm.sift_db import PAIRINGS as _SFM_PAIRINGS
+from collab_splats.pointcloud.utils import clean_pointcloud, confidence_mask
 from collab_splats.preproc import frames, get_video_info
 from collab_splats.preproc import viz as preproc_viz
 from collab_splats.preproc.qa import load_video_quality
@@ -60,6 +49,7 @@ from collab_splats.preproc.sampling import (
 )
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.lifting import lift_features
 from collab_splats.semantics.segmentation import sky_masks
 from collab_splats.semantics.utils import (
     extract_feature_cache,
@@ -67,8 +57,10 @@ from collab_splats.semantics.utils import (
     load_feature_maps,
     write_point_features,
 )
+from collab_splats.utils.colmap import write_colmap_reconstruction
 from collab_splats.utils.image import upsample_depths
-from collab_splats.utils.io import write_json
+from collab_splats.utils.io import LZ4, write_json
+from collab_splats.utils.torch_utils import get_device, pytorch_gc, to_numpy
 
 if TYPE_CHECKING:
     from collab_splats.viewer import Viewer
@@ -82,14 +74,21 @@ logger = logging.getLogger(__name__)
 # base.yaml is the single source of defaults; __init__ merges any passed config over it.
 DEFAULT_CONFIG_DIR = Path(__file__).parents[2] / "configs"
 
-_FEEDFORWARD_BACKENDS = {"vggtx", "mapanything", "vggt_omega", "loger"}
-# Only instantsfm is wired into _run_sfm. ColmapCreator/HlocCreator exist and work, but
-# nothing dispatches to them — listing them here would let a config load cleanly and then
-# die mid-run, after preproc had already burned its time.
-_SFM_BACKENDS = {"instantsfm"}
+_FEEDFORWARD_BACKENDS = set(BaseFeedforwardCreator._registry)
+# Every sfm creator _run_sfm can dispatch; config load rejects anything else
+_SFM_BACKENDS = set(SFM_CREATORS)
 
-# Report's occlusion band: looser than the backends' 0.01 mask so disagreement stays in the stats
-_REPORT_REL_THRESH = 0.05
+# Every sfm sub-block key: the creator's init fields
+# - clean comes from pointcloud.clean.enabled, never the sub-block
+# - instantsfm use_depths stays at its creator default: not a config knob
+_SFM_BLOCK_KEYS = {
+    backend: {f.name for f in dataclasses.fields(creator) if f.init} - {"clean"}
+    for backend, creator in SFM_CREATORS.items()
+}
+_SFM_BLOCK_KEYS["instantsfm"] -= {"use_depths"}
+
+# PointcloudResult's dense per-frame fields, dropped from the in-session result once saved
+_DENSE_FIELDS = ("images", "confidence", "world_points", "depth")
 
 _VALID_METHODS = {"feedforward", "sfm"}
 
@@ -109,10 +108,11 @@ _STAGE_ORDER = [
 _STAGE_DEPS: dict[str, list[str]] = {
     "preproc": [],
     "pointcloud": ["preproc"],
-    # refine rewrites pointcloud outputs in place; deliberately NOT a dependency of the
-    # stages below — that would demote them from LEAF_STAGES and break their disk re-run.
-    # Staleness contract: after --stages refine, re-run dependents with overwrite
-    # (configs/README.md). Inline runs are ordered refine-before-dependents, so never stale.
+    # refine rewrites pointcloud outputs in place, point count included
+    # - NOT a dependency of the stages below: that would demote them from LEAF_STAGES
+    # - staleness: after --stages refine, re-run dependents with overwrite (configs/README.md)
+    # - semantics MUST re-run: lifted rows index the pre-refine points, now row-misaligned
+    # - inline runs order refine before dependents, so never stale
     "refine": ["pointcloud"],
     "semantics": ["pointcloud"],
     # splats: trains on COLMAP poses/points + images/; leaf — nothing reads it yet
@@ -131,6 +131,37 @@ LEAF_STAGES = frozenset(s for s in _STAGE_ORDER if not any(s in deps for deps in
 ########################################
 # Helpers
 ########################################
+
+
+def _store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
+    """
+    Rows of the images/ store holding each named frame, in the order named.
+
+    - pointcloud.zarr may hold fewer frames than images/: incremental sfm drops unregistered ones
+    - joined on the source frame index in each name, never on row position or extension
+
+    Args:
+        images_dir: the scene's images/ directory.
+        names: frame names (frame_NNNNNN with any extension or none), e.g. a result's image_paths.
+
+    Returns:
+        Indices into `frames.frame_paths(images_dir)`, one per name.
+
+    Raises:
+        KeyError: when a named frame is not in images/.
+    """
+    rows_by_frame_idx = {frames.frame_idx_from_path(p): row for row, p in enumerate(frames.frame_paths(images_dir))}
+    frame_indices = [frames.frame_idx_from_path(name) for name in names]
+
+    # A frame the store never selected means the two artifacts come from different runs
+    unknown = [fi for fi in frame_indices if fi not in rows_by_frame_idx]
+    if unknown:
+        raise KeyError(
+            f"{len(unknown)} reconstruction frames are not in {images_dir} "
+            f"(frame_idx {unknown[:5]}); the images/ store and the reconstruction describe "
+            "different runs."
+        )
+    return [rows_by_frame_idx[fi] for fi in frame_indices]
 
 
 def _camera_provenance(camera: pycolmap.Camera) -> dict:
@@ -367,43 +398,41 @@ def _run_feedforward(
     viz_enabled: bool,
     viz_port: int,
     max_points: int,
-    use_multiview_confidence: bool,
-    # Keyword-only: these two are optional and order-independent, so a positional caller
-    # must not be able to silently bind one to the other.
+    min_views: int,
+    mv_rel_thresh: float,
+    # Keyword-only: model_dir is required, the others optional
+    # - a positional caller must not silently bind one Path or int to another's slot
     *,
+    model_dir: Path,
+    clean: bool = True,
     max_frames: int | None = None,
     creator_kwargs: dict[str, Any] | None = None,
 ) -> tuple[PointcloudResult, "Viewer | None"]:
-    """Instantiate feedforward creator, optionally wrap with LoopClosure, run reconstruct.
-
-    Saves pointcloud.zarr to output_dir after inference so downstream stages
-    (semantics lift, mesh) can load depth/confidence/pixel data. Returns the
-    PointcloudResult and the created Viewer (None unless loop_closure + viz_enabled),
-    so callers can keep the viser server reachable after this function returns.
-
-    ``loop_closure`` is either a bool (enable with all LoopClosureConfig defaults) or
-    a dict of knobs (submap_size, submap_overlap, conf_threshold, …); an ``enabled`` key
-    in the dict toggles it, defaulting to True when any knobs are given.
-
-    ``creator_kwargs`` is the per-backend ``pointcloud.<backend>`` config block, forwarded
-    verbatim to the creator's constructor. ``max_points`` and ``use_multiview_confidence``
-    are reserved — both are passed explicitly, so redeclaring either raises ValueError.
-
-    ``max_frames`` is ``preproc.max_frames``, used only to decide whether the LoGeR
-    frame-count advisory fires. None means no ceiling was configured, so no advice is due.
     """
-    # Heavy dep imports — kept inline so module loads without GPU/model deps
-    from collab_splats.geometry.loop_closure.wrapper import (
-        LoopClosure,
-        LoopClosureConfig,
-    )
-    from collab_splats.pointcloud.feedforward import (
-        LoGeRCreator,
-        MapAnythingCreator,
-        VGGTOmegaCreator,
-        VGGTXCreator,
-    )
+    Run a feedforward creator, optionally wrapped in loop closure, and save pointcloud.zarr.
 
+    - pointcloud.zarr feeds the semantics lift and mesh stages
+    - the Viewer is returned so the viser server stays reachable after this returns
+
+    Args:
+        backend: feedforward registry key.
+        images_dir: the scene's images/ frame store, read in place.
+        output_dir: backend directory; pointcloud.zarr lands here.
+        loop_closure: bool, or a LoopClosureConfig knob dict whose `enabled` key defaults to True.
+        viz_enabled: attach a viser Viewer; only with loop closure.
+        viz_port: Viewer port.
+        max_points: final point cap, drawn after the SOR clean.
+        min_views: other views that must agree to keep a pixel; 0 turns the multiview filter off.
+        mv_rel_thresh: multiview agreement tolerance as a fraction of depth.
+        model_dir: where the binary COLMAP model is written.
+        clean: pointcloud.clean.enabled; the creator SOR-cleans before any write.
+        max_frames: preproc.max_frames; only gates the LoGeR frame-count advisory.
+        creator_kwargs: the pointcloud.<backend> block; max_points / min_views / mv_rel_thresh / clean are
+            reserved.
+
+    Returns:
+        (PointcloudResult, Viewer | None); the Viewer only with loop closure + viz.
+    """
     # Normalize the bool|dict loop_closure config into (enabled, LoopClosureConfig|None)
     if isinstance(loop_closure, dict):
         # A knobs dict enables LC unless it explicitly sets enabled: false.
@@ -418,17 +447,10 @@ def _run_feedforward(
         lc_enabled = bool(loop_closure)
         lc_config = None
 
-    # LoGeR refuses loop closure in this cut. Refuse here rather than in the creator:
-    # _verify_loop_candidate is concrete on BaseFeedforwardCreator, so an LC run would
-    # otherwise complete a full forward pass before dying inside the LC loop. LC verify
-    # thresholds are calibrated per backbone and none exists for LoGeR. Read the normalised
-    # lc_enabled, not the raw arg — loop_closure={"enabled": False} is a truthy object with
-    # falsy intent, and refusing an explicit disable would be wrong.
-    #
-    # Keep this ahead of any filesystem read, and do NOT merge it into the advisory block
-    # below: validate config before touching the filesystem. A config error is the user's to
-    # fix, an IO error is environmental, and reporting the environmental one first sends them
-    # to the wrong place. Reachable with --stages pointcloud when preproc has not run.
+    # LoGeR refuses loop closure
+    # - no LC verify thresholds are calibrated for LoGeR
+    # - refused before any filesystem read: a config error must not surface as an IO error
+    # - reads the normalized lc_enabled: {"enabled": False} is truthy with falsy intent
     if backend == "loger" and lc_enabled:
         raise ValueError(
             "pointcloud.loop_closure is not supported with backend 'loger'. LoGeR's windowed "
@@ -436,12 +458,9 @@ def _run_feedforward(
             "thresholds are calibrated per backbone. Use vggt_omega, vggtx, or mapanything."
         )
 
-    # preproc.max_frames is a VGGT-Omega GPU property applied in the preproc stage,
-    # which has already run by the time we get here. Flipping to loger under that same
-    # ceiling therefore processes exactly as many frames as Omega would, and LoGeR appears
-    # to buy nothing. Warn rather than change behaviour — LoGeR's true ceiling is unmeasured.
-    # None means no ceiling was configured, so there is no advice to give. Unlike the refusal
-    # above, this one reads the store, so it stays below the config validation.
+    # LoGeR under Omega's frame ceiling buys nothing: warn, don't change behavior
+    # - preproc.max_frames is VGGT-Omega's GPU limit, already applied upstream
+    # - None: no ceiling configured, no advice due
     if backend == "loger":
         n_frames = len(frames.frame_paths(images_dir))
         if max_frames is not None and n_frames <= max_frames:
@@ -454,27 +473,15 @@ def _run_feedforward(
                 max_frames,
             )
 
-    # Select creator class by backend name
-    creator_map = {
-        "vggtx": VGGTXCreator,
-        "mapanything": MapAnythingCreator,
-        "vggt_omega": VGGTOmegaCreator,
-        "loger": LoGeRCreator,
-    }
-    # max_points caps the confidence mask during inference — a memory guard, not a preference.
-    # use_multiview_confidence is the only mv knob exposed: rel_thresh and min_views stay as
-    # calibrated creator field defaults so nobody hand-tunes bare floats in YAML.
-    # Both are passed explicitly, so a duplicate in the per-backend config block would surface
-    # as an opaque TypeError naming neither the key nor its config path. Reject clashes by
-    # name; unknown keys are left to the constructor's own TypeError, which names them.
-    # The reserved set is derived from the explicit kwargs rather than restated, so the two
-    # cannot drift apart.
+    # Reserved creator kwargs: passed explicitly, so a clash in the backend block is refused by name
+    # - otherwise an opaque TypeError naming neither key nor config path
+    # - unknown keys are left to the constructor's TypeError, which names them
     extra = dict(creator_kwargs or {})
-    explicit = {"max_points": max_points, "use_multiview_confidence": use_multiview_confidence}
+    explicit = {"max_points": max_points, "min_views": min_views, "mv_rel_thresh": mv_rel_thresh, "clean": clean}
     clash = sorted(extra.keys() & explicit.keys())
     if clash:
         raise ValueError(f"pointcloud.{backend}.{clash[0]} is not settable; use pointcloud.{clash[0]}")
-    creator = creator_map[backend](**explicit, **extra)
+    creator = get_creator(backend)(**explicit, **extra)
 
     # Wrap with loop closure if requested; viz has nothing to show without it, so only
     # attach the viser Viewer (also a heavy/websocket dep) when both are enabled
@@ -491,29 +498,23 @@ def _run_feedforward(
             # ATE is identical either way — this is purely the live-build experience.
             creator.config.loop_edge_timing = "live"
 
-    # Creators read the scene's images/ directory in place — no staging, no temp export;
-    # build_colmap appends colmap/sparse/0 under output_dir internally
-    result = creator.reconstruct(images_dir, output_dir)
+    # Creators read the scene's images/ directory in place — no staging, no temp export
+    result = creator.create_pointcloud(images_dir, output_dir, model_dir)
 
-    # Persist FeedforwardResult to pointcloud.zarr — required by semantics lift + mesh stages
-    ff_outputs = getattr(creator, "outputs", None)
-    if ff_outputs is not None:
-        zarr_path = output_dir / "pointcloud.zarr"
-        ff_outputs.save_zarr(
-            zarr_path,
-            extra_attrs={"method": "feedforward", "backend": backend},
-        )
-        logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(ff_outputs.points):,}")
-    else:
-        logger.warning("Creator has no outputs after reconstruct — pointcloud.zarr not saved")
+    # Persist the result to pointcloud.zarr — required by semantics lift + mesh stages
+    zarr_path = output_dir / "pointcloud.zarr"
+    result.save_zarr(zarr_path, extra_attrs={"method": "feedforward", "backend": backend})
+    logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(result.points):,}")
+
+    # Drop the dense per-frame arrays: they are on disk now
+    # - the returned result becomes Reconstructor.pointcloud, alive for the whole pipeline
+    # - stages that need depth / world_points / images load the zarr themselves
+    for name in _DENSE_FIELDS:
+        setattr(result, name, None)
 
     # Explicitly release model + GPU memory before next stage (semantics) loads its model
-    import torch as _torch
-
     del creator
-    if _torch.cuda.is_available():
-        _torch.cuda.empty_cache()
-        _torch.cuda.synchronize()
+    pytorch_gc()
     logger.info("Pointcloud model released from GPU")
 
     return result, viewer
@@ -556,8 +557,10 @@ def _lift_and_save(
     n_components: int | None,
     target_cosine: float | None,
     max_epochs: int,
+    *,
+    images_dir: Path,
 ) -> Path:
-    """Load 2D feature cache + FeedforwardResult, lift to 3D, compress, save.
+    """Load 2D feature cache + PointcloudResult, lift to 3D, compress, save.
 
     Writes output_dir/{extractor}_lifted.zarr (latent codes) and, when compressing,
     output_dir/{extractor}_ae.pt (weights + fit metrics) — the pair a consumer needs
@@ -565,11 +568,10 @@ def _lift_and_save(
 
     target_cosine/max_epochs are required, not defaulted: they are the config's single
     autoencoder policy, and a default here would be a fourth copy of it to drift from.
-    """
-    # Kept local to match this file's per-stage-method import convention — not because it
-    # defers load cost. feedforward.base is already resident by the time this module finishes
-    # importing (depth_align pulls it in at module scope), so this local import saves nothing.
 
+    images_dir is the store the 2D cache was extracted from, one row per images/ frame; the
+    rows the pointcloud holds are picked out of it by frame index before lifting.
+    """
     # Validate pointcloud zarr exists before attempting load
     if not pointcloud_zarr.exists():
         raise FileNotFoundError(
@@ -577,11 +579,14 @@ def _lift_and_save(
             "Run build_pointcloud() with a feedforward backend first."
         )
 
-    # Load feature maps from the 2D cache: one (D, H_p, W_p) tensor per frame
+    # Load feature maps from the 2D cache: one (D, H_p, W_p) tensor per images/ frame
     feature_maps = load_feature_maps(zarr_path)
 
-    # Load FeedforwardResult with depth/pixel data for lifting
-    ff_result = FeedforwardResult.load_zarr(pointcloud_zarr)
+    # Load PointcloudResult with depth/pixel data for lifting
+    ff_result = PointcloudResult.load_zarr(pointcloud_zarr)
+
+    # The cache is scene-level (every images/ frame); lift only the pointcloud's rows, in its order
+    feature_maps = [feature_maps[row] for row in _store_rows(images_dir, ff_result.image_paths)]
 
     # Lift 2D features to 3D: (P, D)
     lifted = lift_features(feature_maps, ff_result)
@@ -590,8 +595,7 @@ def _lift_and_save(
     ae = None
     if n_components is not None:
         # Move lifted to GPU for autoencoder training; lift_features returns CPU tensor
-        if torch.cuda.is_available():
-            lifted = lifted.cuda()
+        lifted = lifted.to(get_device())
         ae = FeatureAutoencoder(input_dim=lifted.shape[-1], latent_dim=n_components)
         ae.fit(lifted, epochs=max_epochs, target_cosine=target_cosine)
         lifted = ae.per_point_encode(lifted)
@@ -599,7 +603,7 @@ def _lift_and_save(
     # One writer for both halves of the pair — it also stamps input_dim/latent_dim on the
     # zarr attrs, which is what tells a reader whether the weights are required at all
     # (n_components=None writes full-dim codes and no weights, legitimately).
-    write_point_features(output_dir, extractor_name, lifted.detach().cpu().numpy(), ae)
+    write_point_features(output_dir, extractor_name, to_numpy(lifted), ae)
     return output_dir
 
 
@@ -622,7 +626,7 @@ def _run_tsdf_mesh(
     Fuse depth and RGB into a TSDF mesh, clean it, and optionally texture it.
 
     Args:
-        result: PointcloudResult; supplies COLMAP poses and original-res K on the feedforward path.
+        result: PointcloudResult; supplies poses and full-res K on the feedforward path.
         pointcloud_zarr: the scene's pointcloud.zarr; read on the feedforward path only.
         output_dir: receives mesh.ply, and texture/ when texture is set.
         images_dir: the scene's images/ directory of original-resolution keyframes.
@@ -646,12 +650,12 @@ def _run_tsdf_mesh(
 
         depths, rgbs, c2w, intrinsics, image_ids = render_tsdf_inputs(splats_ckpt, images_dir)
     else:
-        ff = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
+        ff = PointcloudResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
         if ff.depth is None:
             raise ValueError(f"{pointcloud_zarr} has no depth — cannot mesh.")
         if result.extrinsics.shape[0] != ff.depth.shape[0]:
             raise ValueError(
-                f"Frame-count mismatch: COLMAP reconstruction has {result.extrinsics.shape[0]} "
+                f"Frame-count mismatch: the pointcloud result has {result.extrinsics.shape[0]} "
                 f"images but {pointcloud_zarr} has {ff.depth.shape[0]}. They are from different "
                 "runs — re-run the pointcloud stage, or point --stages mesh at the matching scene."
             )
@@ -671,19 +675,18 @@ def _run_tsdf_mesh(
                 keep = confidence_mask(np.asarray(ff.confidence), conf_percentile)
                 depth = np.where(keep, depth, 0.0)
 
-        # Lift model-res depth onto the original frame grid so COLMAP's original-res K is the
+        # Lift model-res depth onto the original frame grid so the full-res K is the
         # right one to fuse with. Pairing one grid's depth with the other grid's K is the
         # 2026-08-11 collapse bug (5.06M -> 75k vertices).
-        rgbs = frames.read_frames(images_dir)
+        # Frames by the zarr's own rows: images/ may hold frames an incremental sfm model dropped
+        image_ids = [frames.frame_idx_from_path(path) for path in ff.image_paths]
+        rgbs = frames.read_frames(images_dir, image_ids)
         depths = upsample_depths(depth, rgbs, np.asarray(ff.original_coords)[:, :4])
         c2w = invert_poses(result.extrinsics)
         intrinsics = result.intrinsics
 
-        # read_frames above took filename order, which sky_masks defaults to
-        image_ids = None
-
     # Sky fuses as a backdrop and seeds floaters; drop its depth after the arms converge
-    # - idxs follows the arm: the checkpoint's ids for splats, filename order for feedforward
+    # - idxs follows the arm: the checkpoint's ids for splats, the zarr's rows for feedforward
     # - the report is a fraction of pixels that HAD depth; a splats stack is mostly zero
     #   already, so dividing by depths.size would understate the cut several-fold
     if mask_sky:
@@ -740,7 +743,7 @@ def _build_localization_db(
 ) -> Path:
     """Build the per-frame local-feature localization cache into pointcloud.zarr.
 
-    Loads the FeedforwardResult, runs the local matcher over every DB frame, and persists
+    Loads the PointcloudResult, runs the local matcher over every DB frame, and persists
     keypoints/descriptors to group local_features/{extractor_name}/reconstruction. top_k
     is the pairwise (vismatch) matching fan-out; the descriptor path ignores it.
     """
@@ -753,18 +756,19 @@ def _build_localization_db(
         if rec_key in store:
             del store[rec_key]
 
-    ff = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=True, load_world_points=True)
+    ff = PointcloudResult.load_zarr(pointcloud_zarr, load_images=True, load_world_points=True)
     extractor = LocalMatcher(extractor_name)
 
-    # Boundary adapter: images/ directory → (images, ids) core objects. Lazy genexpr → zero
-    # reads on a cache hit; one imread per frame on a miss. frame_paths fixes the order, and
-    # both lists are built from that one call so they stay index-aligned.
-    paths = frames.frame_paths(images_dir)
-    frame_indices = [frames.frame_idx_from_path(p) for p in paths]
+    # Boundary adapter: images/ directory → (images, ids) core objects
+    # - lazy genexpr: zero reads on a cache hit, one imread per frame on a miss
+    # - the zarr's image_paths fix the order: from_feedforward pairs row i with ff's geometry row i
+    # - images/ may hold frames an incremental sfm model dropped; those are never read
+    all_paths = frames.frame_paths(images_dir)
+    paths = [all_paths[row] for row in _store_rows(images_dir, ff.image_paths)]
     images = (cv2.cvtColor(cv2.imread(str(p)), cv2.COLOR_BGR2RGB) for p in paths)
 
     # Localization ids name the store's own files
-    ids = [f"frame_{int(fi):06d}.png" for fi in frame_indices]
+    ids = [p.name for p in paths]
     CameraLocalizer.from_feedforward(
         ff,
         images=images,
@@ -869,41 +873,23 @@ class Reconstructor:
                 "exclusive — BA needs per-frame model tensors that LC submaps do not carry."
             )
 
-        # SfM path: BA re-refinement is InstantSfM's own job — refuse the flag
+        # SfM path: every sfm mapper runs its own BA — refuse the flag
         if method == "sfm" and pc.get("bundle_adjustment"):
             raise ValueError(
                 "pointcloud.bundle_adjustment is not supported with method: sfm — "
-                "InstantSfM runs its own global bundle adjustment"
+                "every sfm backend runs its own bundle adjustment"
             )
 
         # SfM path: LC wraps a feedforward creator in sequential submaps — nothing to wrap here
         if method == "sfm" and lc_enabled:
             raise ValueError(
                 "pointcloud.loop_closure is not supported with method: sfm — "
-                "InstantSfM is a global mapper, not a sequential submap pipeline"
+                "sfm backends map the whole frame set at once, not in sequential submaps"
             )
 
-        # InstantSfM sub-block bounds check
-        if method == "sfm" and backend == "instantsfm":
-            instantsfm = pc.get("instantsfm", {})
-
-            # random_seed is consumed long after the run starts — InstantSfM reads it at
-            # _build_config, after the SIFT + exhaustive-matching pass — so a bad value is
-            # rejected here, where a typo costs a config load and not a whole run. The
-            # bound is np.random.seed's domain; InstantSfM passes the value through
-            random_seed = instantsfm.get("random_seed")
-            if random_seed is not None and not (isinstance(random_seed, int) and 0 <= random_seed < 2**32):
-                raise ValueError(
-                    f"pointcloud.instantsfm.random_seed must be null or an int in [0, 2**32), got {random_seed!r}"
-                )
-
-            # min_num_view_per_track is read at the same late point, and a track needs two
-            # views to triangulate at all — a sub-2 value cannot produce geometry
-            min_views = instantsfm.get("min_num_view_per_track")
-            if min_views is not None and not (isinstance(min_views, int) and min_views >= 2):
-                raise ValueError(
-                    f"pointcloud.instantsfm.min_num_view_per_track must be null or an int >= 2, got {min_views!r}"
-                )
+        # sfm sub-block bounds: every key is read after SIFT or the mapper has started
+        if method == "sfm":
+            Reconstructor._validate_sfm_block(pc, backend)
 
         # Mesh truncation band: a band narrower than a voxel leaves gaps between adjacent
         # voxels' zero crossings, so the extracted surface is punctured rather than thin
@@ -912,6 +898,67 @@ class Reconstructor:
             raise ValueError(f"mesh.sdf_trunc_mult must be a number >= 1.0, got {sdf_mult!r}")
 
         return config
+
+    @staticmethod
+    def _validate_sfm_block(pc: dict, backend: str) -> None:
+        """
+        Bounds-check an sfm sub-block at config load.
+
+        - every key is consumed after SIFT or the mapper has started: a typo would cost a whole run
+        - hloc conf names NOT checked against hloc.*.confs: that would import the optional extra
+
+        Args:
+            pc: the config's pointcloud section.
+            backend: a key of SFM_CREATORS.
+        """
+        block = pc[backend]
+
+        # Unknown keys would reach the creator constructor as a TypeError, mid-run
+        unknown = set(block) - _SFM_BLOCK_KEYS[backend]
+        if unknown:
+            raise ValueError(f"pointcloud.{backend} has unknown keys {sorted(unknown)}")
+
+        # Registered-frame floor: a share in (0, 1], shared by every backend
+        frac = block["min_registered_frac"]
+        if isinstance(frac, bool) or not (isinstance(frac, (int, float)) and 0 < frac <= 1):
+            raise ValueError(f"pointcloud.{backend}.min_registered_frac must be a number in (0, 1], got {frac!r}")
+
+        # Thread cap: an int >= 1 for every backend; bool is an int subclass, so it is rejected explicitly
+        threads = block["num_threads"]
+        if isinstance(threads, bool) or not (isinstance(threads, int) and threads >= 1):
+            raise ValueError(f"pointcloud.{backend}.num_threads must be an int >= 1, got {threads!r}")
+
+        # instantsfm: seed in np.random.seed's domain; a track needs two views to triangulate
+        if backend == "instantsfm":
+            random_seed = block["random_seed"]
+            if random_seed is not None and not (isinstance(random_seed, int) and 0 <= random_seed < 2**32):
+                raise ValueError(
+                    f"pointcloud.instantsfm.random_seed must be null or an int in [0, 2**32), got {random_seed!r}"
+                )
+            min_views = block["min_num_view_per_track"]
+            if min_views is not None and not (isinstance(min_views, int) and min_views >= 2):
+                raise ValueError(
+                    f"pointcloud.instantsfm.min_num_view_per_track must be null or an int >= 2, got {min_views!r}"
+                )
+            return
+
+        # Pairing: one of sift_db's modes, shared by both backends
+        pairing = block["pairing"]
+        if pairing not in _SFM_PAIRINGS:
+            raise ValueError(f"pointcloud.{backend}.pairing must be one of {_SFM_PAIRINGS}, got {pairing!r}")
+
+        # Counts: bool is an int subclass, so it is rejected explicitly
+        for key in ("overlap", "num_retrieved"):
+            value = block[key]
+            if isinstance(value, bool) or not (isinstance(value, int) and value >= 1):
+                raise ValueError(f"pointcloud.{backend}.{key} must be an int >= 1, got {value!r}")
+
+        # hloc conf names: non-empty strings; hloc itself resolves them at run time
+        if backend == "hloc":
+            for key in ("retrieval_conf", "feature_conf", "matcher_conf"):
+                value = block[key]
+                if not (isinstance(value, str) and value):
+                    raise ValueError(f"pointcloud.hloc.{key} must be a non-empty string, got {value!r}")
 
     ########################################
     # Path properties
@@ -933,6 +980,13 @@ class Reconstructor:
         Unified reconstruction zarr for this backend (all pointcloud methods).
         """
         return self.backend_dir / "pointcloud.zarr"
+
+    @property
+    def colmap_model_dir(self) -> Path:
+        """
+        COLMAP binary model for this backend; present only as a whole model.
+        """
+        return self.backend_dir / "colmap" / "sparse" / "0"
 
     @property
     def semantics_cache_dir(self) -> Path:
@@ -982,11 +1036,11 @@ class Reconstructor:
         pc_cfg = self.config["pointcloud"]
         method = pc_cfg["method"]
 
-        # Skip if COLMAP + pointcloud.zarr both exist and overwrite not requested.
-        # Require pointcloud.zarr too — if a previous run was partial (zarr missing),
-        # we must re-run inference rather than loading stale COLMAP.
+        # Skip when pointcloud.zarr and the COLMAP export both exist and overwrite is off
+        # - the result is reloaded from the zarr; the COLMAP model is only a done-marker here
+        # - either one missing means a partial run, so inference runs again
         if not overwrite and self._stage_output_exists("pointcloud"):
-            logger.info("Pointcloud exists at %s, loading from disk", self.backend_dir / "colmap")
+            logger.info("Pointcloud exists at %s, loading from disk", self.pointcloud_zarr)
             self.pointcloud = self._load_pointcloud_from_disk()
             return self.pointcloud
 
@@ -1007,25 +1061,16 @@ class Reconstructor:
                 viz_enabled=pc_cfg["viz"]["enabled"],
                 viz_port=pc_cfg["viz"]["port"],
                 max_points=pc_cfg["max_points"],
-                use_multiview_confidence=pc_cfg["use_multiview_confidence"],
+                min_views=pc_cfg["min_views"],
+                mv_rel_thresh=pc_cfg["mv_rel_thresh"],
+                model_dir=self.colmap_model_dir,
+                clean=pc_cfg["clean"]["enabled"],
                 max_frames=self.config["preproc"]["max_frames"],
                 creator_kwargs=pc_cfg.get(pc_cfg["backend"], {}),
             )
             self.viewer = viewer
 
-        # Statistical outlier removal on the final sparse set. Rejected point3D IDs are deleted
-        # from the reconstruction in place, so the re-exported PLY matches the model.
-        # (pointcloud.zarr was already written from the dense FeedforwardResult and is unaffected.)
-        if pc_cfg["clean"]["enabled"] and result.reconstruction.points3D:
-            point3d_ids = list(result.reconstruction.points3D.keys())
-            keep = clean_pointcloud(result.points)
-            for pid, keep_this in zip(point3d_ids, keep, strict=True):
-                if not keep_this:
-                    result.reconstruction.delete_point3D(pid)
-            logger.info("Pointcloud after cleaning: %d points", result.reconstruction.num_points3D())
-
-        # Re-export the PLY from the FINAL result — clean may have dropped points since
-        # the creator wrote its own copy.
+        # The PLY carries the same cleaned point set as pointcloud.zarr and the COLMAP model
         result.write_ply(self.backend_dir / "sparse_pc.ply")
 
         self.pointcloud = result
@@ -1033,108 +1078,58 @@ class Reconstructor:
 
     def _load_pointcloud_from_disk(self) -> PointcloudResult:
         """
-        Load the written COLMAP model into a PointcloudResult in images/ order.
+        Load pointcloud.zarr's points and cameras; the dense per-frame arrays stay on disk.
+
+        - stages that need depth / world_points / images load the zarr themselves
         """
-        # Rebuild image_paths from images/ in filename order
-        # - lines up with the per-frame arrays the downstream stages index
-        # - creators register COLMAP images as frame_{source_idx:06d}, NO extension
-        frame_indices = [frames.frame_idx_from_path(p) for p in frames.frame_paths(self.images_dir)]
-        image_paths = [Path(f"frame_{int(fi):06d}") for fi in frame_indices]
-        return PointcloudResult.from_colmap(self.backend_dir / "colmap", image_paths)
+        return PointcloudResult.load_zarr(
+            self.pointcloud_zarr,
+            load_depth=False,
+            load_world_points=False,
+            load_confidence=False,
+            load_pixel_indices=False,
+        )
 
     def _run_sfm(self) -> PointcloudResult:
         """
-        SfM pointcloud path: staged keyframes -> VDA metric depth -> InstantSfM global mapping.
+        SfM path: BaseSfmCreator.create_pointcloud over the keyframes -> pointcloud.zarr.
 
-        - Points InstantSfM at the scene's own images/ directory — nothing is staged.
-        - Generates depth_vda/images/npy/<stem>.npy (skipped when present), runs
-          InstantSfMCreator, then builds the dense result already rescaled to the COLMAP world.
-        - Returns the PointcloudResult for the shared tail; writes pointcloud.zarr with the
-          alignment and version provenance on the way.
+        - images/ is read in place: it is already the COLMAP layout
+        - the creator writes colmap/sparse/0; the zarr carries its subset and depth-alignment attrs
+
+        Returns:
+            The PointcloudResult for the shared tail.
         """
         pc_cfg = self.config["pointcloud"]
         backend = pc_cfg["backend"]
 
-        # Unreachable through a constructed Reconstructor — validate_config rejects any sfm
-        # backend outside _SFM_BACKENDS at config load. Kept as defence in depth for direct
-        # _run_sfm calls and for whoever wires ColmapCreator/HlocCreator up later.
-        if backend != "instantsfm":
-            raise NotImplementedError(f"sfm backend {backend!r} is not implemented — only 'instantsfm' is")
-        backend_dir = self.backend_dir
-        backend_dir.mkdir(parents=True, exist_ok=True)
-
-        # The scene's images/ is already the COLMAP image layout InstantSfM wants, so it is read
-        # in place — no JPEG copy is staged, no SIFT database is dropped on a re-stage (the DB
-        # keys itself on the image set now), and COLMAP sees the lossless PNGs the store holds.
-        # `names` are those filenames, taken from the directory rather than reconstructed from a
-        # hardcoded extension; only their stems reach VDA (depth_vda/images/npy/<stem>.npy).
-        images_dir = self.images_dir
-        names = [p.name for p in frames.frame_paths(images_dir)]
-
-        # VDA metric depth for every keyframe, cached across runs by stem. On a gate miss drop
-        # depth_vda/ first — generate_vda_depth only ever adds maps, so a stem left over from a
-        # different keyframe set would keep the set-equality gate false forever and re-run the
-        # full GPU inference on every subsequent run.
-        if not vda_depth_complete(backend_dir, names):
-            shutil.rmtree(backend_dir / "depth_vda", ignore_errors=True)
-
-        # The full-res keyframe stack is built twice on purpose, and freed in between. It is
-        # ~1.87 GB at 300 frames of 1080p and ~5.4 GB at the 875-frame configuration this repo has
-        # run, against a 46.6 GB cgroup cap — holding it live across creator.reconstruct() would
-        # stack that on top of InstantSfM's own peak, in the phase this pipeline has previously
-        # been OOM-killed in. Dropping it here means the two peaks never overlap; the second
-        # decode after the solve is the deliberate cost of that. On a complete depth cache
-        # generate_vda_depth runs no inference and touches this stack only for its len(), so the
-        # first build is wasted there (~3-4 s at 875 frames); skipping it needs generate_vda_depth
-        # to accept frames=None, a signature change deliberately left out of this commit.
-        keyframes = np.ascontiguousarray(frames.read_frames(images_dir))
-        depths = generate_vda_depth(keyframes, backend_dir, names)
-        del keyframes
-
-        # Global SfM via the upstream python API; writes colmap/instantsfm.db + colmap/sparse/0
-        # and returns a model whose image names are the frame_NNNNNN stems
-        creator = InstantSfMCreator(
-            retriangulation=pc_cfg["instantsfm"]["retriangulation"],
-            random_seed=pc_cfg["instantsfm"]["random_seed"],
-            min_num_view_per_track=pc_cfg["instantsfm"]["min_num_view_per_track"],
+        # Creator from the whole block plus the shared clean switch and cap; one call does the rest
+        creator = SFM_CREATORS[backend](
+            clean=pc_cfg["clean"]["enabled"], max_points=pc_cfg["max_points"], **pc_cfg[backend]
         )
-        recon = creator.reconstruct(backend_dir, images_dir=images_dir)
-        del creator
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
+        outputs = creator.create_pointcloud(self.images_dir, self.backend_dir, self.colmap_model_dir)
+        outputs.save_zarr(self.pointcloud_zarr, extra_attrs={"backend": backend, **creator.attrs})
+        logger.info("pointcloud.zarr saved: %s  (%s pts)", self.pointcloud_zarr, f"{len(outputs.points):,}")
 
-        # Re-read rather than held: the solve's peak is gone by here, so this is the cheapest
-        # point to pay the decode back.
-        keyframes = np.ascontiguousarray(frames.read_frames(images_dir))
+        # Drop the dense per-frame arrays: they are on disk now, and self.pointcloud outlives the stage
+        for name in _DENSE_FIELDS:
+            setattr(outputs, name, None)
 
-        # Dense result at VDA depth resolution, already rescaled into the COLMAP world — the zarr
-        # and the model must share one scale (splat depth targets, mesh fusion, localization)
-        outputs, align_attrs = result_from_reconstruction(recon, depths, keyframes, names)
-
-        zarr_path = backend_dir / "pointcloud.zarr"
-        outputs.save_zarr(
-            zarr_path,
-            extra_attrs={
-                "method": "sfm",
-                "backend": "instantsfm",
-                "instantsfm_version": importlib.metadata.version("instantsfm"),
-                **align_attrs,
-            },
-        )
-        logger.info("pointcloud.zarr saved: %s  (%s pts)", zarr_path, f"{len(outputs.points):,}")
-
-        return PointcloudResult(reconstruction=recon, image_paths=outputs.image_paths)
+        return outputs
 
     def refine_poses(self, overwrite: bool = False) -> PointcloudResult:
-        """Refine camera poses via LM bundle adjustment; rewrite pose-derived artifacts.
+        """
+        Refine camera poses via LM bundle adjustment; rewrite pose-derived artifacts.
 
-        One implementation for both triggers: runs inline after the pointcloud stage when
-        pointcloud.bundle_adjustment is enabled, and from disk via --stages refine against
-        a processed scene. Loads everything from pointcloud.zarr — no live creator needed.
+        - one implementation for both triggers: inline after the pointcloud stage when
+          pointcloud.bundle_adjustment is enabled, and from disk via --stages refine
+        - loads everything from pointcloud.zarr — no live creator needed
+        - after reproject: SOR re-clean (pointcloud.clean.enabled), then re-cap to max_points;
+          the point count can change, so lifted semantics must be re-run
         """
         # SfM results are already globally bundle-adjusted; LM re-refinement is undefined here
-        if self.config["pointcloud"]["method"] == "sfm":
+        pc_cfg = self.config["pointcloud"]
+        if pc_cfg["method"] == "sfm":
             raise ValueError("refine_poses is not supported for pointcloud.method: sfm")
 
         # Skip when already refined — run_pipeline refuses NAMED re-runs generically, so this
@@ -1144,55 +1139,54 @@ class Reconstructor:
             logger.info("Poses already refined (%s), skipping refine", marker)
             return self._resolve_result()
 
-        # Load the full FeedforwardResult from zarr: images/confidence/world_points feed track
+        # Load the full PointcloudResult from zarr: images/confidence/world_points feed track
         # extraction, depth+pixel_indices feed the deterministic creator-free reproject.
         zarr_path = self.pointcloud_zarr
         if not zarr_path.exists():
             raise FileNotFoundError(f"refine requires {zarr_path}; run the pointcloud stage first.")
-        ff = FeedforwardResult.load_zarr(zarr_path, load_images=True)
+        ff = PointcloudResult.load_zarr(zarr_path, load_images=True)
 
         # Refine poses with LM BA, then re-derive the point set under the new cameras
         # - VGGSfM tracks live on the model grid, so K must too; checked before the slow extraction
-        check_model_resolution(ff.intrinsics, ff.images, ff.original_coords)
+        # - intrinsics=None: __post_init__ re-derives the full-res K from the refined model-grid K
+        check_model_resolution(ff.model_intrinsics, ff.images, ff.original_coords)
         cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir)
         ba = BundleAdjustment(cfg)
         extrinsics, intrinsics = ba.refine(
-            ff.images, ff.confidence, ff.world_points, ff.extrinsics, ff.intrinsics, ff.image_paths
+            ff.images, ff.confidence, ff.world_points, ff.extrinsics, ff.model_intrinsics, ff.image_paths
         )
-        ff = dataclasses.replace(ff, extrinsics=extrinsics, intrinsics=intrinsics).reproject()
+        ff = dataclasses.replace(ff, extrinsics=extrinsics, model_intrinsics=intrinsics, intrinsics=None).reproject()
 
-        # Rewrite COLMAP through the creators' exact write path: build at model res from the
-        # refined result, then rescale K + image dims back to original resolution.
-        recon = build_pycolmap_reconstruction(
-            ff.points,
-            ff.colors,
-            ff.extrinsics,
-            ff.intrinsics,
-            ff.model_width,
-            ff.model_height,
-            [p.name for p in ff.image_paths],
-        )
-        recon = _rescale_reconstruction_to_original_dimensions(
-            recon, ff.image_paths, ff.original_coords, (ff.model_width, ff.model_height)
-        )
-        sparse_dir = self.backend_dir / "colmap" / "sparse" / "0"
-        sparse_dir.mkdir(parents=True, exist_ok=True)
-        recon.write_binary(str(sparse_dir))
+        # Re-clean under the refined cameras, then re-cap to max_points
+        # - a moved pose can throw a pixel into a new outlier
+        # - the cap binds only when the config lowered it since the pointcloud stage
+        n_before = len(ff.points)
+        ff = clean_pointcloud(ff, remove_outliers=pc_cfg["clean"]["enabled"], max_points=pc_cfg["max_points"])
+        logger.info("refine: %d of %d pts kept after clean + cap", len(ff.points), n_before)
+
+        # Re-export COLMAP under the refined cameras
+        recon = ff.to_colmap()
+        write_colmap_reconstruction(recon, self.colmap_model_dir)
 
         # Write pose-derived arrays back to pointcloud.zarr so zarr and COLMAP never disagree
         # (localization samples world_points; a later --stages refine re-reads these poses).
         store = zarr.open(str(zarr_path), mode="r+")
         store["extrinsics"][:] = ff.extrinsics
         store["intrinsics"][:] = ff.intrinsics
-        store["points"][:] = ff.points
-        if "world_points" in store and ff.depth is not None:
-            wp = unproject_depth_map_to_point_map(ff.depth[..., None], ff.extrinsics[:, :3, :], ff.intrinsics).astype(
-                np.float32
-            )
-            store["world_points"][:] = wp
+        store["model_intrinsics"][:] = ff.model_intrinsics
 
-        # Reload the refined model from disk — it is both the returned result and the source
-        # for the refreshed sparse_pc.ply
+        # Per-point arrays changed length with the clean: rewrite them, a slice-assign cannot resize
+        # - pixel_indices first: reproject rebuilds the points from it
+        # - a mid-loop crash leaves mixed lengths; refine.json is written last, so the
+        #   done-check still refuses to treat that state as refined
+        for name, arr in (("pixel_indices", ff.pixel_indices), ("points", ff.points), ("colors", ff.colors)):
+            store.create_array(name, data=arr, chunks=arr.shape, compressors=LZ4, overwrite=True)
+
+        if "world_points" in store:
+            store["world_points"][:] = ff.world_points
+
+        # Reload the refined zarr light — it is both the returned result and the source for
+        # the refreshed sparse_pc.ply
         result = self._load_pointcloud_from_disk()
         result.write_ply(self.backend_dir / "sparse_pc.ply")
 
@@ -1251,6 +1245,7 @@ class Reconstructor:
             n_components,
             target_cosine=sem_cfg["target_cosine"],
             max_epochs=sem_cfg["max_epochs"],
+            images_dir=self.images_dir,
         )
         return out_dir
 
@@ -1261,7 +1256,7 @@ class Reconstructor:
     ) -> Path:
         """Build a TSDF mesh from `mesh.source` depth: pointcloud.zarr (default) or splats ckpt.pt renders.
 
-        COLMAP is the pose authority on the feedforward path; the splats path fuses the
+        pointcloud.zarr is the pose authority on the feedforward path; the splats path fuses the
         checkpoint's own renders — the poses the splats were rendered with (pose-opt deltas
         included), with alpha as confidence — so splats.zarr is not an input. The splats stage
         is never auto-run — `source: splats` requires ckpt.pt on disk.
@@ -1296,17 +1291,6 @@ class Reconstructor:
                 f"pointcloud.zarr not found at {pointcloud_zarr}. "
                 "Mesh requires pointcloud.zarr depth maps — run the pointcloud stage first."
             )
-        elif self.config["pointcloud"]["method"] == "sfm":
-            # SfM scenes fuse only after zarr depth was aligned to the COLMAP world
-            # (depth_scale attr). A legacy VDA-metric store against COLMAP poses produced
-            # geometry at the wrong scale in the wrong places (measured 3.2x on GH010229).
-            attrs = zarr.open(str(pointcloud_zarr), mode="r").attrs
-            if "depth_scale" not in attrs:
-                raise ValueError(
-                    f"{pointcloud_zarr} predates depth alignment (no depth_scale attr) — "
-                    "re-run the pointcloud stage to align VDA depth to the COLMAP world, "
-                    "or set mesh.source: splats."
-                )
 
         out = _run_tsdf_mesh(
             result=result,
@@ -1374,22 +1358,12 @@ class Reconstructor:
 
         cfg = SplatsConfig.from_dict(self.config["splats"])
 
-        # Frames in COLMAP image order, looked up in images/ by the frame index in each name.
+        # Frames in the result's row order, looked up in images/ by the frame index in each name.
         # _scene_frames caches the whole-directory stack, so an earlier read in the same
         # process re-reads nothing; rows are then picked by position out of that stack.
         frame_indices = [frames.frame_idx_from_path(path) for path in result.image_paths]
-        rows_by_frame_idx = {
-            frames.frame_idx_from_path(p): row for row, p in enumerate(frames.frame_paths(self.images_dir))
-        }
-        unknown = [fi for fi in frame_indices if fi not in rows_by_frame_idx]
-        if unknown:
-            raise KeyError(
-                f"{len(unknown)} reconstruction frames are not in {self.images_dir} "
-                f"(frame_idx {unknown[:5]}); the images/ store and the reconstruction describe "
-                "different runs."
-            )
         # CPU-resident by design: train() moves one view to the GPU at a time
-        images = _scene_frames(self.images_dir)[[rows_by_frame_idx[fi] for fi in frame_indices]]
+        images = _scene_frames(self.images_dir)[_store_rows(self.images_dir, result.image_paths)]
 
         # Depth targets: pointcloud.zarr depth masked and lifted like the mesh stage does it (0 = no
         # target); train() only resizes them further for its coarse-to-fine schedule
@@ -1403,17 +1377,7 @@ class Reconstructor:
                     "Splats depth loss requires depth maps from the pointcloud stage."
                 )
 
-            # SfM scenes: zarr depth is usable only once aligned to the COLMAP world — a
-            # legacy VDA-metric store fed as targets collapsed training (measured PSNR 6.15)
-            if self.config["pointcloud"]["method"] == "sfm":
-                attrs = zarr.open(str(pointcloud_zarr), mode="r").attrs
-                if "depth_scale" not in attrs:
-                    raise ValueError(
-                        f"{pointcloud_zarr} predates depth alignment (no depth_scale attr) — "
-                        "re-run the pointcloud stage to align VDA depth to the COLMAP world."
-                    )
-
-            feedforward = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
+            feedforward = PointcloudResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
             if feedforward.depth is None:
                 raise ValueError(f"{pointcloud_zarr} has no depth — cannot build splats depth targets.")
 
@@ -1432,7 +1396,7 @@ class Reconstructor:
             depth_targets = np.ascontiguousarray(feedforward.depth[rows], dtype=np.float32)
             conf_percentile = self.config["mesh"]["conf_percentile"]
             if conf_percentile is not None and feedforward.confidence is not None:
-                confidence = feedforward.confidence.cpu().numpy()[rows]
+                confidence = to_numpy(feedforward.confidence)[rows]
                 keep = confidence_mask(confidence, conf_percentile)
                 depth_targets = np.where(keep, depth_targets, 0.0).astype(np.float32)
             elif conf_percentile is not None:
@@ -1492,23 +1456,18 @@ class Reconstructor:
         if self._resolve_result() is None:
             raise ValueError("No PointcloudResult available. Run build_pointcloud() first.")
 
-        # Load the result and run the dense multiview pass once
-        # - abs_thresh 0.0 keeps the pass scale-invariant across backbones
-        ff = FeedforwardResult.load_zarr(self.pointcloud_zarr)
-        collected: dict = {}
-        compute_multiview_depth_confidence(
-            ff.depth, ff.intrinsics, ff.extrinsics, abs_thresh=0.0, rel_thresh=_REPORT_REL_THRESH, collect=collected
-        )
+        # Load the result; the report runs its own cross-view pass
+        ff = PointcloudResult.load_zarr(self.pointcloud_zarr)
 
-        # Optional keyframes for photometric
-        # - read_frames is in filename order, the reconstruction's order; capped at N
+        # Optional keyframes for photometric, picked by the zarr's own rows
+        # - images/ may hold frames an incremental sfm model dropped; filename order would mispair
         images = None
         if frames.frame_paths(self.images_dir):
-            images = frames.read_frames(self.images_dir)[: len(ff.depth)].astype(np.float32)
+            images = _scene_frames(self.images_dir)[_store_rows(self.images_dir, ff.image_paths)].astype(np.float32)
 
         tables = compute_reconstruction_quality(
-            collected,
             ff.depth,
+            ff.model_intrinsics,
             ff.intrinsics,
             ff.extrinsics,
             ff.original_coords,
@@ -1524,7 +1483,6 @@ class Reconstructor:
                 "image_width": int(ff.original_coords[0][4]),
                 "zarr": str(self.pointcloud_zarr),
             },
-            "params": {"rel_thresh": _REPORT_REL_THRESH},
             **tables,
         }
 
@@ -1539,9 +1497,7 @@ class Reconstructor:
         if stage == "preproc":
             return self.images_dir.exists()
         if stage == "pointcloud":
-            colmap_done = (self.backend_dir / "colmap" / "sparse" / "0" / "cameras.bin").exists()
-            zarr_done = self.pointcloud_zarr.exists()
-            return colmap_done and zarr_done
+            return self.pointcloud_zarr.exists() and self.colmap_model_dir.exists()
         if stage == "refine":
             return (self.backend_dir / "colmap" / "refine.json").exists()
         # Leaf-stage markers. Only preproc/pointcloud are ever depended on, but run_pipeline also
@@ -1564,7 +1520,7 @@ class Reconstructor:
         return False
 
     def _resolve_result(self) -> PointcloudResult | None:
-        """PointcloudResult for a stage-2+ run, loading from COLMAP on disk if not in memory."""
+        """PointcloudResult for a stage-2+ run, loading pointcloud.zarr if not in memory."""
         # A stage run on its own never calls build_pointcloud(), so self.pointcloud is None even
         # when a complete reconstruction is already sitting in backend_dir.
         if self.pointcloud is None and self._stage_output_exists("pointcloud"):

@@ -2,7 +2,7 @@
 
 Runs cross_frame_attention_ratio on frame pairs using each available FF model
 (VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator) and reports scores under
-both aggregation methods — old np.percentile(90) vs new mean_top_quarter.
+both aggregation methods — old np.percentile(90) vs new top-quarter mean.
 
 Two pair-selection modes:
   random    — temporal pairs with gap in [min_gap, max_gap] (diagnostic floor)
@@ -46,6 +46,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 # Repo root on path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from collab_splats.pointcloud.utils import cross_frame_attention_ratio
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
 from collab_splats.utils.io import read_image, write_json
 
@@ -57,13 +58,6 @@ from collab_splats.utils.io import read_image, write_json
 def percentile_90(ratio_np: np.ndarray) -> float:
     """Old aggregation: 90th percentile (pre-fix)."""
     return float(np.percentile(ratio_np, 90))
-
-
-def mean_top_quarter(ratio_np: np.ndarray) -> float:
-    """New aggregation: mean of the top quarter (matches VGGT-SPARK get_similarity, see docs/parity.md)."""
-    thresh = float(np.percentile(ratio_np, 75))
-    top_vals = ratio_np[ratio_np >= thresh]
-    return float(top_vals.mean()) if top_vals.size > 0 else 0.0
 
 
 ########################################
@@ -173,29 +167,6 @@ def retrieve_pairs(
 
 
 ########################################
-####### Raw ratio computation ##########
-########################################
-
-
-def _compute_ratio_np(k: torch.Tensor, q: torch.Tensor, token_offset: int = 5) -> np.ndarray:
-    """Mirrors cross_frame_attention_ratio internals up to final aggregation."""
-    tokens_per_img = q.shape[2] // 2
-    k_first = k[:, :, token_offset:tokens_per_img, :]
-    if k_first.shape[2] == 0:
-        return np.array([0.0])
-    attn = q @ k_first.transpose(-2, -1)
-    attn = attn.transpose(-2, -1)
-    attn = attn.softmax(dim=-1)
-    attn = attn.mean(dim=1)
-    attn_to_first = attn[..., :tokens_per_img]
-    attn_to_second = attn[..., tokens_per_img:]
-    max_self = attn_to_first.max(dim=-1)[0]
-    normalized = attn_to_second / (max_self.unsqueeze(-1) + 1e-8)
-    ratio = normalized.max(dim=1)[0]
-    return ratio.cpu().float().numpy().ravel()
-
-
-########################################
 ####### Per-model eval #################
 ########################################
 
@@ -216,7 +187,7 @@ def eval_model(
 
     # Apply layer index override if supplied (for sweep experiments).
     if layer_index_override is not None:
-        log.info("  Overriding _lc_layer_index: %d → %d", getattr(creator, "_lc_layer_index", -1), layer_index_override)
+        log.info("  Overriding _lc_layer_index: %s → %d", creator._lc_layer_index, layer_index_override)
         creator._lc_layer_index = layer_index_override
 
     # Log actual block count for the model so callers know valid layer range.
@@ -246,15 +217,16 @@ def eval_model(
                         # MapAnything: each v["img"] is (1, C, H, W)
                         images = torch.cat([v["img"] for v in views], dim=0).to(device)
 
-                    layer_idx = getattr(creator, "_lc_layer_index", -1)
-                    tok_off = getattr(creator, "_lc_token_offset", 5)
+                    layer_idx = creator._lc_layer_index
+                    tok_off = creator._lc_token_offset
                     features = creator.extract_intermediate_features(images, layer_index=layer_idx)
 
             k, q = features["k"], features["q"]
-            ratio_np = _compute_ratio_np(k, q, token_offset=tok_off)
+            ratio_np = cross_frame_attention_ratio(k, q, token_offset=tok_off)
 
             scores_old.append(percentile_90(ratio_np))
-            scores_new.append(mean_top_quarter(ratio_np))
+            thresh = np.percentile(ratio_np, 75)
+            scores_new.append(float(ratio_np[ratio_np >= thresh].mean()))
 
         except Exception as exc:
             log.warning("  pair %d failed: %s", i + 1, exc)
@@ -266,7 +238,7 @@ def eval_model(
 
     return {
         "model": label,
-        "layer_index": getattr(creator, "_lc_layer_index", -1),
+        "layer_index": creator._lc_layer_index,
         "n_pairs": len(pairs),
         "n_valid": len(valid_old),
         "percentile90": {
@@ -275,7 +247,7 @@ def eval_model(
             "max": float(np.max(valid_old)) if valid_old else float("nan"),
             "scores": scores_old,
         },
-        "mean_top_quarter": {
+        "top_quarter_mean": {
             "mean": float(np.mean(valid_new)) if valid_new else float("nan"),
             "min": float(np.min(valid_new)) if valid_new else float("nan"),
             "max": float(np.max(valid_new)) if valid_new else float("nan"),
@@ -343,7 +315,9 @@ def main() -> None:
 
     if "mapanything" in args.models:
         try:
-            from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
+            from collab_splats.pointcloud.feedforward.mapanything import (
+                MapAnythingCreator,
+            )
 
             results.append(
                 eval_model(MapAnythingCreator, {}, pairs, device, "mapanything", layer_index_override=args.layer_index)
@@ -370,7 +344,7 @@ def main() -> None:
     print(f"{'Model':<22} {'layer':>6} {'pct90 mean':>11} {'mtq mean':>10} {'mtq min':>9} {'mtq max':>9}")
     print("-" * 72)
     for r in results:
-        mtq = r.get("mean_top_quarter", {})
+        mtq = r.get("top_quarter_mean", {})
         p90 = r.get("percentile90", {})
         layer = r.get("layer_index", "—")
         print(

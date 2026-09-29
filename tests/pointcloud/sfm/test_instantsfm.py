@@ -1,6 +1,8 @@
+import cv2
 import numpy as np
 import pycolmap
 import pytest
+from scipy.spatial.transform import Rotation
 
 from collab_splats.pointcloud.sfm import instantsfm
 
@@ -86,6 +88,7 @@ def test_bae_pcg_patch_keeps_column_shape():
     pytest.importorskip("instantsfm")
     # Optional heavy dep, may be absent — imported inside the importorskip'd test body
     import torch
+
     from bae.utils.pysolvers import PCG
 
     instantsfm._patch_bae_pcg_column_shape()
@@ -110,65 +113,6 @@ def test_bae_pcg_patch_keeps_column_shape():
     torch.testing.assert_close(column[:, 0], b, rtol=1e-4, atol=1e-6)
 
 
-def test_colmap_write_patch_produces_pycolmap_readable_model(tmp_path):
-    pytest.importorskip("instantsfm")
-    # Optional heavy dep, may be absent — imported inside the importorskip'd test body
-    from instantsfm.scene.reconstruction import Reconstruction as InsfmReconstruction
-
-    instantsfm._patch_instantsfm_colmap_write()
-
-    # Idempotent — a second call must not wrap the wrapper
-    patched = InsfmReconstruction._write_images_binary
-    instantsfm._patch_instantsfm_colmap_write()
-    assert InsfmReconstruction._write_images_binary is patched
-
-    # Minimal scene reproducing the smoke-run crash: upstream compressed each
-    # image's points2D to the valid-track subset while points3D observations kept
-    # ORIGINAL feature indices (vector::_M_range_check on read-back). Image 0 is
-    # unregistered; track 1 is below min_track_length — both contribute
-    # observations that must be dropped, not written.
-    class _ModelId:
-        value = 1  # PINHOLE
-
-    class _Cam:
-        model_id = _ModelId()
-        width, height = 64, 48
-        params = [50.0, 50.0, 32.0, 24.0]
-
-    class _Images:
-        world2cams = [np.eye(4)] * 3
-        cam_ids = [0, 0, 0]
-        filenames = ["frame_000000.jpg", "frame_000001.jpg", "frame_000002.jpg"]
-        features = [np.array([[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]])] * 3
-
-        def __len__(self):
-            return 3
-
-    class _Tracks:
-        xyzs = np.zeros((2, 3))
-        colors = np.zeros((2, 3), dtype=np.uint8)
-        observations = [
-            np.array([[1, 2], [2, 1], [0, 1]]),  # feat 2 of image 1 crashed the old writer
-            np.array([[1, 0]]),  # sub-min-length: exported point, no valid obs
-        ]
-
-        def __len__(self):
-            return 2
-
-    recon = InsfmReconstruction([_Cam()], _Images(), _Tracks())
-    recon._selected_indices = np.array([1, 2])
-    recon.build_correspondences(min_track_length=2)
-    recon.write_binary(str(tmp_path))
-
-    # pycolmap must accept the model; full keypoint lists, filtered observations
-    read_back = pycolmap.Reconstruction(str(tmp_path))
-    assert set(read_back.images) == {1, 2}
-    assert all(len(img.points2D) == 3 for img in read_back.images.values())
-    assert len(read_back.points3D[0].track.elements) == 2
-    assert len(read_back.points3D[1].track.elements) == 0
-    assert read_back.images[1].points2D[2].point3D_id == 0
-
-
 def test_nudge_edge_keypoints_pulls_exact_edge_inward_only():
     feats = np.array([[10.0, 20.0], [1918.0, 5.0], [7.0, 1078.0], [1930.0, 3.0]], dtype=np.float32)
     out = instantsfm._nudge_edge_keypoints(feats, 1918, 1078)
@@ -184,10 +128,6 @@ def test_nudge_edge_keypoints_pulls_exact_edge_inward_only():
 ########################################################
 ########## Creator config surface #####################
 ########################################################
-
-
-def test_instantsfm_random_seed_defaults_to_none():
-    assert instantsfm.InstantSfMCreator().random_seed is None
 
 
 def test_instantsfm_random_seed_reaches_runtime_options():
@@ -208,10 +148,6 @@ def test_instantsfm_random_seed_reaches_runtime_options():
     assert "random_seed" not in RUNTIME_OPTIONS
 
 
-def test_instantsfm_min_num_view_per_track_defaults_to_none():
-    assert instantsfm.InstantSfMCreator().min_num_view_per_track is None
-
-
 def test_instantsfm_min_num_view_per_track_reaches_track_establishment_options():
     pytest.importorskip("instantsfm")
     # Optional heavy dep, may be absent — imported inside the importorskip'd test body
@@ -230,233 +166,95 @@ def test_instantsfm_min_num_view_per_track_reaches_track_establishment_options()
     assert later.TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] == 3
 
 
-########################################################
-########## SIFT database validity ######################
-########################################################
-
-
-# The image set a cached DB is checked against; reuse is gated on it matching exactly
-_DB_NAMES = ["000001.png", "000002.png"]
-
-
-def test_sift_database_valid_is_false_for_a_missing_file(tmp_path):
+def _insfm_scene(image_dir):
     """
-    No DB at all is the first-run case, not a corruption.
+    Two-cluster InstantSfM solve over five flat-color PNGs; image 1 unregistered, image 4 in cluster 1.
+
+    - track 1 below min length 3; tracks 2, 3 share image 0 feature 2 (3 wins); track 4 outside cluster 0
     """
-    assert instantsfm._sift_database_valid(tmp_path / "nope.db", _DB_NAMES) is False
+    # Optional heavy dep, may be absent — imported inside the importorskip'd helper
+    from instantsfm.scene.defs import CameraModelId, Cameras, Images, Tracks
+
+    # Two cameras of different models
+    cameras = Cameras(2)
+    cameras.widths[:], cameras.heights[:] = 64, 48
+    cameras.set_params(0, [50.0, 32.0, 24.0, 0.01], CameraModelId.SIMPLE_RADIAL)
+    cameras.set_params(1, [60.0, 55.0, 31.5, 24.5], CameraModelId.PINHOLE)
+
+    # Five images; each file one flat color so bilinear samples are exact
+    rng = np.random.default_rng(0)
+    images = Images(5)
+    images.cam_ids[:] = [0, 0, 1, 0, 0]
+    images.is_registered[:] = [True, False, True, True, True]
+    images.cluster_ids[:] = [0, 0, 0, 0, 1]
+    for i in range(5):
+        images.filenames[i] = f"frame_{i:06d}.png"
+        images.world2cams[i, :3, :3] = Rotation.random(random_state=i).as_matrix()
+        images.world2cams[i, :3, 3] = rng.normal(size=3)
+        images.features[i] = rng.uniform(1, 40, size=(5, 2)).astype(np.float32)
+        cv2.imwrite(str(image_dir / images.filenames[i]), np.full((48, 64, 3), (30, 20 + i, 10 * i), np.uint8))
+
+    # Five tracks exercising the filters
+    tracks = Tracks(5)
+    tracks.xyzs[:] = rng.normal(size=(5, 3))
+    tracks.colors[:] = 7
+    tracks.observations = [
+        np.array(obs)
+        for obs in (
+            [[0, 1], [2, 0], [3, 2], [1, 4]],
+            [[2, 1], [3, 1]],
+            [[0, 2], [3, 3], [4, 0]],
+            [[0, 2], [2, 3], [3, 4]],
+            [[4, 1], [4, 2], [1, 0]],
+        )
+    ]
+    return cameras, images, tracks
 
 
-def test_sift_database_valid_is_false_for_a_non_database_file(tmp_path):
-    """
-    A crashed colmap can leave a truncated/garbage file; pycolmap raises rather than returning.
-    """
-    db = tmp_path / "garbage.db"
-    db.write_bytes(b"not a sqlite file")
+def test_to_pycolmap_matches_upstream_writer_selection(tmp_path):
+    pytest.importorskip("instantsfm")
+    cameras, images, tracks = _insfm_scene(tmp_path)
+    recon = instantsfm._to_pycolmap(cameras, images, tracks, tmp_path)
 
-    assert instantsfm._sift_database_valid(db, _DB_NAMES) is False
+    # Cameras verbatim, one trivial rig each
+    assert {i: (c.model.name, c.params.tolist()) for i, c in recon.cameras.items()} == {
+        0: ("SIMPLE_RADIAL", [50.0, 32.0, 24.0, 0.01]),
+        1: ("PINHOLE", [60.0, 55.0, 31.5, 24.5]),
+    }
+    assert sorted(recon.rigs) == [0, 1]
 
+    # Registered cluster-0 images keep full keypoint lists; ids only where a track round-trips
+    none = pycolmap.INVALID_POINT3D_ID
+    point3d_ids = {0: [none, 0, 3, none, none], 2: [0, none, none, 3, none], 3: [none, none, 0, 2, 3]}
+    assert sorted(recon.reg_image_ids()) == [0, 2, 3]
+    for i, image in recon.images.items():
+        assert (image.name, image.camera_id) == (images.filenames[i], images.cam_ids[i])
+        assert [p.point3D_id for p in image.points2D] == point3d_ids[i]
+        np.testing.assert_array_equal([p.xy for p in image.points2D], images.features[i])
+        np.testing.assert_allclose(image.cam_from_world().matrix(), images.world2cams[i, :3], atol=1e-12)
 
-def test_sift_database_valid_is_false_for_an_empty_database(tmp_path):
-    """
-    An OOM-killed extractor leaves a well-formed but empty DB — an existence check would
-    cache-hit on it and feed ReadColmapDatabase zero tracks.
-    """
-    db = tmp_path / "empty.db"
-    pycolmap.Database.open(str(db)).close()
+    # Every track is a point; colors are truncated means of the flat RGB (10i, 20+i, 30) frames
+    points = {
+        i: (p.color.tolist(), [(e.image_id, e.point2D_idx) for e in p.track.elements])
+        for i, p in recon.points3D.items()
+    }
+    assert points == {
+        0: ([16, 21, 30], [(0, 1), (2, 0), (3, 2)]),
+        1: ([7, 7, 7], []),
+        2: ([30, 23, 30], [(3, 3)]),
+        3: ([16, 21, 30], [(0, 2), (2, 3), (3, 4)]),
+        4: ([7, 7, 7], []),
+    }
+    np.testing.assert_array_equal([recon.points3D[i].xyz for i in range(5)], tracks.xyzs)
+    assert all(p.error == 0.0 for p in recon.points3D.values())
 
-    assert instantsfm._sift_database_valid(db, _DB_NAMES) is False
-
-
-def _sift_db(path, names=_DB_NAMES, *, verified_pair):
-    """
-    Minimal colmap SIFT database: one camera, one image per name with keypoints, optional verified pair.
-    """
-    db = pycolmap.Database.open(str(path))
-    cam = pycolmap.Camera(model="PINHOLE", width=64, height=48, params=[50.0, 50.0, 32.0, 24.0], camera_id=1)
-    db.write_camera(cam, True)
-    keypoints = np.array([[10.0, 10.0], [20.0, 20.0]], dtype=np.float32)
-    for image_id, name in enumerate(names, start=1):
-        db.write_image(pycolmap.Image(name=name, camera_id=1, image_id=image_id), True)
-        db.write_keypoints(image_id, keypoints)
-
-    # Verified pairs land in two_view_geometries — what exhaustive_matcher writes, and the
-    # only evidence that matching ran to completion rather than crashing after extraction
-    if verified_pair:
-        tvg = pycolmap.TwoViewGeometry()
-        tvg.config = 2
-        tvg.inlier_matches = np.array([[0, 0], [1, 1]], dtype=np.uint32)
-        db.write_two_view_geometry(1, 2, tvg)
-    db.close()
-
-
-def test_sift_database_valid_is_true_for_a_complete_database(tmp_path):
-    """
-    Keypoints plus a verified pair is the cache-hit case — a full re-extraction is skipped.
-    """
-    db = tmp_path / "complete.db"
-    _sift_db(db, verified_pair=True)
-
-    assert instantsfm._sift_database_valid(db, _DB_NAMES) is True
-
-
-def test_sift_database_valid_is_false_when_matching_never_finished(tmp_path):
-    """
-    Extraction finished, matching crashed: keypoints but zero verified pairs, which
-    ReadColmapDatabase turns into an empty-tracks failure much later.
-    """
-    db = tmp_path / "unmatched.db"
-    _sift_db(db, verified_pair=False)
-
-    assert instantsfm._sift_database_valid(db, _DB_NAMES) is False
-
-
-def test_sift_database_is_reused_for_the_same_image_set(tmp_path):
-    """
-    Same images in a different order is the same set — reordering must not force a re-extract.
-    """
-    db = tmp_path / "reused.db"
-    _sift_db(db, verified_pair=True)
-
-    assert instantsfm._sift_database_valid(db, list(reversed(_DB_NAMES))) is True
-
-
-def test_sift_database_is_rebuilt_when_the_image_set_changed(tmp_path):
-    """
-    Nothing stages a per-run image copy any more, so the DB's own images table is the only
-    record of which selection its features came from.
-    """
-    db = tmp_path / "stale.db"
-    _sift_db(db, verified_pair=True)
-
-    assert instantsfm._sift_database_valid(db, _DB_NAMES + ["000003.png"]) is False
-
-
-########################################################
-########## Stem rename #################################
-########################################################
-
-
-def _recon(names):
-    """
-    One PINHOLE camera, one image per name, one point3D observed in every image.
-    """
-    recon = pycolmap.Reconstruction()
-    cam = pycolmap.Camera(model="PINHOLE", width=64, height=48, params=[50.0, 50.0, 32.0, 24.0], camera_id=1)
-    recon.add_camera_with_trivial_rig(cam)
-    track = pycolmap.Track()
-    for i, name in enumerate(names):
-        im = pycolmap.Image(name=name, camera_id=1, image_id=i + 1)
-        im.points2D = [pycolmap.Point2D(np.array([40.0, 20.0]))]
-        pose = pycolmap.Rigid3d(pycolmap.Rotation3d(np.eye(3)), np.array([0.0, 0.0, float(i)]))
-        recon.add_image_with_trivial_frame(im, pose)
-        track.add_element(i + 1, 0)
-    recon.add_point3D(np.array([0.0, 0.0, 5.0]), track, np.array([10, 20, 30], dtype=np.uint8))
-    return recon
-
-
-def test_rename_images_to_stems_round_trips_through_write_binary(tmp_path):
-    # InstantSfM names (frame_000000.jpg) -> contract stems, persisted in the rewritten model
-    recon = _recon(["frame_000000.jpg", "frame_000003.jpg"])
-    sparse_dir = tmp_path / "sparse" / "0"
-    sparse_dir.mkdir(parents=True)
-    instantsfm._rename_images_to_stems(recon, sparse_dir)
-    assert sorted(im.name for im in recon.images.values()) == ["frame_000000", "frame_000003"]
-    reread = pycolmap.Reconstruction(str(sparse_dir))
-    assert sorted(im.name for im in reread.images.values()) == ["frame_000000", "frame_000003"]
-    assert reread.num_points3D() == 1
-
-
-########################################################
-########## Image directory #############################
-########################################################
-
-
-def test_sfm_points_at_the_scene_images_dir_and_stages_nothing(tmp_path):
-    """
-    InstantSfM reads <scene>/images directly; no instantsfm/images/ copy is written.
-    """
-    scene = tmp_path / "scene"
-    (scene / "images").mkdir(parents=True)
-
-    assert instantsfm._sfm_image_dir(scene / "images") == scene / "images"
-    assert not (scene / "instantsfm" / "images").exists()
-
-
-def test_sfm_image_dir_refuses_a_missing_directory(tmp_path):
-    """
-    A scene that was never preprocessed fails at the image dir, not deep inside InstantSfM.
-    """
-    with pytest.raises(FileNotFoundError, match="image directory"):
-        instantsfm._sfm_image_dir(tmp_path / "scene" / "images")
-
-
-def _record_sift_calls(monkeypatch, *, cuda: bool) -> list[tuple[str, tuple, dict]]:
-    """
-    Stub pycolmap SIFT entry points and torch's CUDA probe; return the call log.
-
-    Args:
-        monkeypatch: pytest monkeypatch fixture.
-        cuda: value torch.cuda.is_available() reports.
-
-    Returns:
-        (function name, positional args, kwargs) per pycolmap call, in call order.
-    """
-    calls = []
-    monkeypatch.setattr(instantsfm.torch.cuda, "is_available", lambda: cuda)
-    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **kw: calls.append(("extract", a, kw)))
-    monkeypatch.setattr(pycolmap, "match_exhaustive", lambda *a, **kw: calls.append(("match", a, kw)))
-    return calls
-
-
-def test_generate_sift_database_gpu_uses_cuda_device(monkeypatch, tmp_path):
-    calls = _record_sift_calls(monkeypatch, cuda=True)
-
-    images, db = tmp_path / "images", tmp_path / "db.db"
-    instantsfm._generate_sift_database(images, db)
-
-    # Extraction then matching on the right paths, both pinned to CUDA
-    assert [(name, a) for name, a, _ in calls] == [("extract", (db, images)), ("match", (db,))]
-    assert all(kw["device"] == pycolmap.Device.cuda for _, _, kw in calls)
-
-    # One shared SIMPLE_RADIAL camera
-    extract = calls[0][2]
-    assert extract["camera_mode"] == pycolmap.CameraMode.SINGLE
-    assert extract["reader_options"].camera_model == "SIMPLE_RADIAL"
-
-
-def test_generate_sift_database_cpu_caps_threads(monkeypatch, tmp_path):
-    calls = _record_sift_calls(monkeypatch, cuda=False)
-
-    instantsfm._generate_sift_database(tmp_path / "images", tmp_path / "db.db", num_threads=5)
-    instantsfm._generate_sift_database(tmp_path / "images", tmp_path / "db.db")
-
-    # CPU device on both steps; the thread cap reaches both option structs
-    extract, match = calls[0][2], calls[1][2]
-    assert extract["device"] == match["device"] == pycolmap.Device.cpu
-    assert extract["extraction_options"].num_threads == 5
-    assert match["matching_options"].num_threads == 5
-
-    # Default cap is 8, never colmap's one-thread-per-host-core -1
-    assert calls[2][2]["extraction_options"].num_threads == 8
-    assert calls[3][2]["matching_options"].num_threads == 8
-
-
-@pytest.mark.parametrize("step", ["extract_features", "match_exhaustive"])
-@pytest.mark.parametrize("error", [RuntimeError, ValueError])
-def test_generate_sift_database_failure_unlinks_partial_db(monkeypatch, tmp_path, step, error):
-    db = tmp_path / "db.db"
-    db.write_bytes(b"partial")
-
-    def crash(*_args, **_kwargs):
-        raise error("sift died")
-
-    # pycolmap raises ValueError for most failed checks, RuntimeError for the rest
-    monkeypatch.setattr(instantsfm.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **kw: None)
-    monkeypatch.setattr(pycolmap, "match_exhaustive", lambda *a, **kw: None)
-    monkeypatch.setattr(pycolmap, step, crash)
-
-    # Either step's crash surfaces as RuntimeError and leaves no DB behind
-    with pytest.raises(RuntimeError, match="SIFT database build failed"):
-        instantsfm._generate_sift_database(tmp_path / "images", db)
-    assert not db.exists()
+    # One cluster is kept whole, whatever its id; several need a cluster 0; none registered raises
+    images.cluster_ids[:] = 5
+    recon = instantsfm._to_pycolmap(cameras, images, tracks, tmp_path)
+    assert sorted(recon.reg_image_ids()) == [0, 2, 3, 4]
+    images.cluster_ids[:] = [1, 1, 1, 1, 2]
+    with pytest.raises(RuntimeError, match="no cluster 0"):
+        instantsfm._to_pycolmap(cameras, images, tracks, tmp_path)
+    images.is_registered[:] = False
+    with pytest.raises(RuntimeError, match="registered no images"):
+        instantsfm._to_pycolmap(cameras, images, tracks, tmp_path)

@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from metrics import compute_ate, compute_rpe, compute_auc
+from metrics import compute_ate, compute_auc, compute_rpe
 
 from collab_splats.utils.io import write_json
 

@@ -171,7 +171,7 @@ def test_compare_missing_gt_raises(tmp_path):
 
 def test_public_scan_and_format_names(tmp_path):
     """scan_results_dir / format_markdown are the public (un-prefixed) names."""
-    from eval_compare import scan_results_dir, format_markdown
+    from eval_compare import format_markdown, scan_results_dir
 
     gt = _random_w2c(5, seed=8)
     results_dir = _seed_dir(tmp_path, gt, {"ours_baseline": gt.copy()})

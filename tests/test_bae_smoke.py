@@ -1,6 +1,6 @@
 def test_bae_imports():
-    import pypose
     import bae
+    import pypose
 
 
 def test_bae_cuda_version():

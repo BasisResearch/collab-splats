@@ -232,7 +232,7 @@ def visualize_splat(
     Args:
         mesh: Path to a PLY file or a PyVista PolyData to visualize.
         aligned_cameras: List of (4,4) world-to-camera matrices (OpenCV convention,
-            e.g. FeedforwardResult.extrinsics). Passed directly to
+            e.g. PointcloudResult.extrinsics). Passed directly to
             create_camera_frustum_pyvista, which inverts internally.
     """
     plotter = pv.Plotter()
@@ -300,7 +300,7 @@ def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
 
     Args:
         pose: (4, 4) float32 world-to-camera matrix (OpenCV convention).
-            Matches FeedforwardResult.extrinsics[i] directly — no inversion needed.
+            Matches PointcloudResult.extrinsics[i] directly — no inversion needed.
         scale: Controls overall frustum size (near = scale*0.1, far = scale*5).
         aspect_ratio: Width / height of the image plane.
         fov: Vertical field of view in degrees.

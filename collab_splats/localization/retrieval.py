@@ -4,10 +4,11 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
-import open_clip
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
+
+import open_clip
 from salad.models_salad.aggregators.salad import SALAD
 from salad.models_salad.backbones.dinov2 import DINOv2
 

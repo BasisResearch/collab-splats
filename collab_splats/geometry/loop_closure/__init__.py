@@ -7,8 +7,8 @@ Submap pose-graph loop closure around a feedforward creator's forward pass.
 - exports only what non-test callers import; import the rest from submodules
 """
 
-from .graph import PoseGraph
-from .submap import Submap
+from collab_splats.geometry.loop_closure.graph import PoseGraph
+from collab_splats.geometry.loop_closure.submap import Submap
 
 
 def __getattr__(name: str) -> type:
@@ -27,11 +27,11 @@ def __getattr__(name: str) -> type:
         AttributeError: for any other name.
     """
     if name == "LoopClosure":
-        from .wrapper import LoopClosure
+        from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
         return LoopClosure
     if name == "LoopClosureConfig":
-        from .wrapper import LoopClosureConfig
+        from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
 
         return LoopClosureConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

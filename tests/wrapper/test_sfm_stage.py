@@ -1,23 +1,30 @@
 """
-Reconstructor wiring for the sfm stage: the VDA depth cache and the late-consumed knobs.
+Reconstructor wiring for the sfm stage and the frame subset it leaves.
 
-- `_run_sfm` drops `depth_vda/` on a gate miss so a stem from a previous keyframe set
-  cannot hold `vda_depth_complete`'s set equality false forever; a complete set is loaded
-  by `generate_vda_depth` itself rather than re-inferred.
-- It forwards `random_seed` from the config to the leg that consumes it long after the run
-  has started, and validates it at config load so a typo fails before the SIFT pass.
+- creator: built from the config block plus pointcloud.clean.enabled and max_points, seed forwarded
+- create_pointcloud: handed the scene's images/, backend dir and colmap/sparse/0
+- attrs: the backend plus the creator's own, stamped on pointcloud.zarr
+- downstream: reload, semantics lift, localization DB and mesh see only the zarr's frames
 """
 
-from contextlib import ExitStack
+import weakref
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import torch
+import zarr
 
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
-from collab_splats.wrapper.reconstructor import Reconstructor
+from collab_splats.wrapper.reconstructor import (
+    Reconstructor,
+    _build_localization_db,
+    _lift_and_save,
+    _run_tsdf_mesh,
+)
+from tests.wrapper._stubs import minimal_feedforward_result, minimal_pose_result
 
 RECONSTRUCTOR = "collab_splats.wrapper.reconstructor"
 
@@ -35,7 +42,7 @@ FRAME_IDX = (0, 9, 30, 57)
 ########################################################################
 
 
-def _sfm_reconstructor(tmp_path, *, random_seed=None):
+def _sfm_reconstructor(tmp_path, *, random_seed=None, backend="instantsfm", clean=True):
     """
     A method:sfm Reconstructor backed by a real images/ store holding FRAME_IDX keyframes.
     """
@@ -44,13 +51,14 @@ def _sfm_reconstructor(tmp_path, *, random_seed=None):
         "output_path": str(tmp_path / "out"),
         "pointcloud": {
             "method": "sfm",
-            "backend": "instantsfm",
+            "backend": backend,
             "instantsfm": {"random_seed": random_seed},
+            "clean": {"enabled": clean},
         },
     }
     recon = Reconstructor(config)
 
-    # Real store: _run_sfm reads the frame paths, the manifest provenance and the PNGs off it
+    # Real store: the downstream-stage tests read the PNGs off it
     frames = [np.full((8, 8, 3), i, np.uint8) for i in FRAME_IDX]
     records = [{"frame_idx": int(i), "blur_score": 1.0} for i in FRAME_IDX]
     fr.write_frames(
@@ -62,107 +70,48 @@ def _sfm_reconstructor(tmp_path, *, random_seed=None):
     return recon
 
 
-def _patched_sfm(recon, *, depth_complete=True):
+def _run_sfm_with_mocks(recon, create=None, attrs=None):
     """
-    Patch every heavy leg of _run_sfm; returns the name -> patcher dict, unstarted.
+    Execute _run_sfm with a mock creator class for the recon's backend; returns that class.
+
+    - create: side effect for creator.create_pointcloud; default returns a light MagicMock result
+    - attrs: the creator's attrs after create_pointcloud
     """
+    backend = recon.config["pointcloud"]["backend"]
     outputs = MagicMock()
     outputs.points = np.zeros((3, 3), np.float32)
-    outputs.image_paths = [Path("frame_000000.jpg")]
+    creator_cls = MagicMock()
+    creator_cls.return_value.create_pointcloud.side_effect = create or (lambda *a: outputs)
+    creator_cls.return_value.attrs = attrs or {"method": "sfm"}
 
-    patches = {
-        "vda_depth_complete": patch(f"{RECONSTRUCTOR}.vda_depth_complete", return_value=depth_complete),
-        "generate_vda_depth": patch(f"{RECONSTRUCTOR}.generate_vda_depth"),
-        "InstantSfMCreator": patch(f"{RECONSTRUCTOR}.InstantSfMCreator"),
-        "torch": patch(f"{RECONSTRUCTOR}.torch", SimpleNamespace(cuda=MagicMock(is_available=lambda: False))),
-        # The zarr provenance stamp reads instantsfm's installed version. It is a hard dependency
-        # of the real path but absent from some dev venvs, and none of these tests assert on it —
-        # stub it so a missing package cannot take the wiring coverage down with it.
-        "importlib": patch(
-            f"{RECONSTRUCTOR}.importlib",
-            SimpleNamespace(metadata=SimpleNamespace(version=lambda _package: "0.0.0")),
-        ),
-        "result_from_reconstruction": patch(f"{RECONSTRUCTOR}.result_from_reconstruction", return_value=(outputs, {})),
-    }
-    return patches
-
-
-def _run_sfm_with_mocks(recon, *, depth_complete=True):
-    """
-    Execute _run_sfm against the patched heavy legs; returns the mock dict for assertions.
-    """
-    patches = _patched_sfm(recon, depth_complete=depth_complete)
-
-    # ExitStack, not start()-in-a-comprehension: a patch that fails to apply must not leak
-    # the ones already started into the rest of the session
-    with ExitStack() as stack:
-        started = {name: stack.enter_context(patcher) for name, patcher in patches.items()}
+    # patch.dict restores SFM_CREATORS in place on exit; the mock class is kept by name
+    with patch.dict(f"{RECONSTRUCTOR}.SFM_CREATORS", {backend: creator_cls}):
         recon._run_sfm()
+    return creator_cls
 
-    return started
 
-
-def _npy_dir(recon):
+def test_run_sfm_frees_the_dense_arrays_after_save(tmp_path):
     """
-    The VDA map directory the completeness gate reads.
+    The sfm result is light once pointcloud.zarr is written: no dense array stays alive.
     """
-    return recon.backend_dir / "depth_vda" / "images" / "npy"
-
-
-def _expected_frames():
-    """
-    The keyframe stack the store holds, in store order.
-    """
-    return np.stack([np.full((8, 8, 3), i, np.uint8) for i in FRAME_IDX])
-
-
-########################################################################
-# _run_sfm: the VDA depth cache gate
-########################################################################
-
-
-def test_run_sfm_keeps_a_complete_vda_map_set(tmp_path):
     recon = _sfm_reconstructor(tmp_path)
+    refs = {}
+    out = {}
 
-    # A cached map on the hit path must survive untouched — the prune belongs to the miss branch
-    npy_dir = _npy_dir(recon)
-    npy_dir.mkdir(parents=True)
-    (npy_dir / "frame_000000.npy").write_bytes(b"cached")
+    # A real dense result per call, reached only through weakrefs from here
+    def _dense_result(*args):
+        result = minimal_feedforward_result()
+        refs["depth"] = weakref.ref(result.depth)
+        refs["images"] = weakref.ref(result.images)
+        out["result"] = result
+        return result
 
-    mocks = _run_sfm_with_mocks(recon, depth_complete=True)
+    _run_sfm_with_mocks(recon, create=_dense_result)
 
-    # generate_vda_depth is still called — it loads a complete set rather than re-inferring —
-    # and the depth stack it returns is what the result builder is handed, alongside the frames
-    # (re-read after the solve, so still the store stack) and the staged names
-    assert mocks["generate_vda_depth"].call_count == 1
-    args = mocks["result_from_reconstruction"].call_args.args
-    assert args[1] is mocks["generate_vda_depth"].return_value
-    np.testing.assert_array_equal(args[2], _expected_frames())
-    assert args[3] == [f"frame_{i:06d}.png" for i in FRAME_IDX]
-    assert (npy_dir / "frame_000000.npy").read_bytes() == b"cached"
-
-
-def test_run_sfm_regenerates_vda_depth_and_drops_stale_maps_on_a_gate_miss(tmp_path):
-    recon = _sfm_reconstructor(tmp_path)
-
-    # A stem from a previous keyframe set. generate_vda_depth has no delete path, so leaving
-    # this behind would keep vda_depth_complete's set equality false on every subsequent run
-    # and re-run the full GPU inference forever.
-    npy_dir = _npy_dir(recon)
-    npy_dir.mkdir(parents=True)
-    stale = npy_dir / "stale.npy"
-    stale.write_bytes(b"stale")
-
-    mocks = _run_sfm_with_mocks(recon, depth_complete=False)
-
-    assert mocks["generate_vda_depth"].call_count == 1
-    keyframes, out_dir, names = mocks["generate_vda_depth"].call_args.args
-    assert out_dir == recon.backend_dir
-    assert names == [f"frame_{i:06d}.png" for i in FRAME_IDX]
-
-    # The frame stack is the store read back in place, in store order — not a re-decode of the video
-    np.testing.assert_array_equal(keyframes, _expected_frames())
-    assert not stale.exists()
+    # Freed by refcount alone; the zarr keeps the depth for the downstream stages
+    assert refs["depth"]() is None and refs["images"]() is None
+    assert out["result"].depth is None and out["result"].points.shape == (5, 3)
+    assert zarr.open(str(recon.pointcloud_zarr), mode="r")["depth"].shape == (2, 8, 8)
 
 
 ########################################################################
@@ -172,58 +121,165 @@ def test_run_sfm_regenerates_vda_depth_and_drops_stale_maps_on_a_gate_miss(tmp_p
 
 def test_run_sfm_forwards_random_seed_from_the_config(tmp_path):
     recon = _sfm_reconstructor(tmp_path, random_seed=7)
-    mocks = _run_sfm_with_mocks(recon)
-    assert mocks["InstantSfMCreator"].call_args.kwargs["random_seed"] == 7
+    creator_cls = _run_sfm_with_mocks(recon)
+    assert creator_cls.call_args.kwargs["random_seed"] == 7
 
 
-def test_run_sfm_random_seed_defaults_to_none(tmp_path):
+@pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
+@pytest.mark.parametrize("clean", [True, False])
+def test_run_sfm_builds_the_creator_from_the_block_and_the_clean_switch(tmp_path, backend, clean):
+    recon = _sfm_reconstructor(tmp_path, backend=backend, clean=clean)
+    creator_cls = _run_sfm_with_mocks(recon)
+    pc_cfg = recon.config["pointcloud"]
+    assert creator_cls.call_args.kwargs == {"clean": clean, "max_points": pc_cfg["max_points"], **pc_cfg[backend]}
+    assert creator_cls.call_args.kwargs["min_registered_frac"] == 0.5
+
+
+def test_run_sfm_hands_create_the_scene_dirs(tmp_path):
     recon = _sfm_reconstructor(tmp_path)
-    mocks = _run_sfm_with_mocks(recon)
-    assert mocks["InstantSfMCreator"].call_args.kwargs["random_seed"] is None
+    creator_cls = _run_sfm_with_mocks(recon)
+    creator_cls.return_value.create_pointcloud.assert_called_once_with(
+        recon.images_dir, recon.backend_dir, recon.colmap_model_dir
+    )
+
+
+def test_run_sfm_stamps_the_backend_and_the_creator_attrs(tmp_path):
+    recon = _sfm_reconstructor(tmp_path, backend="colmap")
+    attrs = {"method": "sfm", "registered_frames": 3, "total_frames": 4}
+    saved = {}
+
+    # Capture the attrs save_zarr receives
+    def _result(*args):
+        result = MagicMock()
+        result.points = np.zeros((3, 3), np.float32)
+        result.save_zarr.side_effect = lambda path, extra_attrs: saved.update(extra_attrs)
+        return result
+
+    _run_sfm_with_mocks(recon, create=_result, attrs=attrs)
+    assert saved == {"backend": "colmap", **attrs}
 
 
 ########################################################################
-# Config-load validation for the late-consumed instantsfm knobs
+# Downstream stages on a registered subset: images/ holds 4, the model 3
 ########################################################################
 
+# The frames a colmap / hloc model kept; images/ still holds all of FRAME_IDX
+KEPT_IDX = (0, 30, 57)
 
-def _validated_sfm_config(**instantsfm):
+
+def _seed_subset_scene(tmp_path):
     """
-    base.yaml merged into a method:sfm config with the given instantsfm overrides, validated.
+    A finished colmap run on disk that registered KEPT_IDX out of the FRAME_IDX store.
+
+    - pointcloud.zarr holds only the KEPT_IDX rows, stems as names — what _run_sfm saves
+    - colmap/sparse/0 exists, as the stage-exists check requires; nothing reads it back
     """
-    config = {
-        "input_path": "dummy.mp4",
-        "output_path": "dummy_out",
-        "pointcloud": {"method": "sfm", "backend": "instantsfm", "instantsfm": dict(instantsfm)},
-    }
-    return Reconstructor(config).config
+    recon = _sfm_reconstructor(tmp_path, backend="colmap")
+    _subset_result().save_zarr(recon.pointcloud_zarr)
+    recon.colmap_model_dir.mkdir(parents=True, exist_ok=True)
+    return recon
 
 
-def test_random_seed_out_of_range_is_rejected_at_config_load():
-    # np.random.seed rejects this, but InstantSfM only reads the value after the SIFT +
-    # exhaustive-matching pass — the whole run would burn first
-    with pytest.raises(ValueError, match=r"random_seed must be null or an int"):
-        _validated_sfm_config(random_seed=-1)
-
-    with pytest.raises(ValueError, match=r"random_seed must be null or an int"):
-        _validated_sfm_config(random_seed=2**32)
-
-
-def test_random_seed_accepts_null_and_an_in_range_int():
-    assert _validated_sfm_config(random_seed=None)["pointcloud"]["instantsfm"]["random_seed"] is None
-    assert _validated_sfm_config(random_seed=2**32 - 1)["pointcloud"]["instantsfm"]["random_seed"] == 2**32 - 1
+def _subset_result():
+    """
+    A PointcloudResult double over the KEPT_IDX rows, as load_zarr would return it.
+    """
+    result = minimal_feedforward_result(n=len(KEPT_IDX))
+    result.image_paths = [Path(f"frame_{i:06d}") for i in KEPT_IDX]
+    return result
 
 
-def test_min_num_view_per_track_below_two_is_rejected_at_config_load():
-    # A track needs two views to triangulate; 1 and 0 produce no geometry, and the value is
-    # read only after the SIFT + exhaustive-matching pass
-    for bad in (1, 0, -1, 2.5):
-        with pytest.raises(ValueError, match=r"min_num_view_per_track must be null or an int >= 2"):
-            _validated_sfm_config(min_num_view_per_track=bad)
+def test_load_pointcloud_from_disk_reads_the_subset_the_zarr_holds(tmp_path):
+    recon = _seed_subset_scene(tmp_path)
+
+    # A re-run without overwrite takes the load-from-disk branch: the zarr's rows, not images/'s
+    result = recon.build_pointcloud()
+    assert [p.name for p in result.image_paths] == [f"frame_{i:06d}" for i in KEPT_IDX]
+    assert result.extrinsics.shape == (3, 4, 4)
 
 
-def test_min_num_view_per_track_accepts_null_and_an_int_at_or_above_two():
-    cfg = _validated_sfm_config(min_num_view_per_track=None)
-    assert cfg["pointcloud"]["instantsfm"]["min_num_view_per_track"] is None
-    assert _validated_sfm_config(min_num_view_per_track=2)["pointcloud"]["instantsfm"]["min_num_view_per_track"] == 2
-    assert _validated_sfm_config(min_num_view_per_track=6)["pointcloud"]["instantsfm"]["min_num_view_per_track"] == 6
+def test_resolve_result_reads_the_subset_the_zarr_holds(tmp_path):
+    # A leaf stage run on its own resolves the result through the same loader
+    result = _seed_subset_scene(tmp_path)._resolve_result()
+    assert [p.name for p in result.image_paths] == [f"frame_{i:06d}" for i in KEPT_IDX]
+
+
+def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
+    recon = _seed_subset_scene(tmp_path)
+
+    # Scene-level 2D cache over all four images/ frames; row r is constant FRAME_IDX[r]
+    cache = tmp_path / "dinov2.zarr"
+    zarr.open(str(cache), mode="w")["features"] = np.stack([np.full((4, 2, 2), i, np.float32) for i in FRAME_IDX])
+
+    lifted = {}
+
+    def spy_lift(feature_maps, result):
+        lifted["rows"] = [float(fm[0, 0, 0]) for fm in feature_maps]
+        return torch.zeros(5, 4)
+
+    with (
+        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
+        patch(f"{RECONSTRUCTOR}.lift_features", side_effect=spy_lift),
+    ):
+        _lift_and_save(
+            "dinov2",
+            cache,
+            recon.pointcloud_zarr,
+            tmp_path / "semantics",
+            None,
+            target_cosine=None,
+            max_epochs=1,
+            images_dir=recon.images_dir,
+        )
+
+    # The real lift_features pairs map i with zarr row i: three maps, in the zarr's order
+    assert lifted["rows"] == [float(i) for i in KEPT_IDX]
+
+
+def test_localization_db_pairs_zarr_rows_with_their_own_frames(tmp_path):
+    recon = _seed_subset_scene(tmp_path)
+    seen = {}
+
+    def spy_from_feedforward(result, *, images, ids, **kwargs):
+        seen["ids"] = ids
+        seen["pixels"] = [int(image[0, 0, 0]) for image in images]
+
+    with (
+        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
+        patch("collab_splats.localization.extractors.LocalMatcher"),
+        patch(
+            "collab_splats.localization.localizer.CameraLocalizer.from_feedforward", side_effect=spy_from_feedforward
+        ),
+    ):
+        _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir)
+
+    # from_feedforward pairs image i with geometry row i: M ids, M frames, zarr order
+    assert seen["ids"] == [f"frame_{i:06d}.png" for i in KEPT_IDX]
+    assert seen["pixels"] == list(KEPT_IDX)
+
+
+def test_mesh_fuses_the_frames_the_zarr_rows_came_from(tmp_path):
+    recon = _seed_subset_scene(tmp_path)
+    fused = {}
+
+    def spy_fuse(depths, rgbs, c2w, K, out_dir, **kwargs):
+        fused["rgbs"] = rgbs
+        return tmp_path / "mesh.ply"
+
+    with (
+        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
+        patch(f"{RECONSTRUCTOR}.upsample_depths", side_effect=lambda d, r, b: d),
+        patch(f"{RECONSTRUCTOR}.create_tsdf_mesh", side_effect=spy_fuse),
+        patch(f"{RECONSTRUCTOR}.clean_repair_mesh"),
+    ):
+        _run_tsdf_mesh(
+            result=minimal_pose_result(n=len(KEPT_IDX)),
+            pointcloud_zarr=recon.pointcloud_zarr,
+            output_dir=tmp_path,
+            images_dir=recon.images_dir,
+            voxel_size=0.01,
+            depth_trunc=2.0,
+        )
+
+    # Depth row i fuses with the RGB of the frame it was predicted on, not images/ row i
+    assert fused["rgbs"][:, 0, 0, 0].tolist() == list(KEPT_IDX)

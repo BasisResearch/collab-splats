@@ -6,9 +6,9 @@ import ast
 import json
 from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
+
 from gsplat.strategy import MCMCStrategy
 
 import collab_splats.splats.gaussian as gaussian_module

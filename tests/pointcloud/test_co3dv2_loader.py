@@ -36,7 +36,7 @@ def _make_fake_seq(tmp_path: Path, n_frames: int = 4) -> Path:
 
 
 def test_co3dv2_loader_returns_eval_dataset(tmp_path):
-    from evals.datasets import get_dataset, EvalDataset
+    from evals.datasets import EvalDataset, get_dataset
 
     seq_dir = _make_fake_seq(tmp_path, n_frames=4)
     loader = get_dataset("co3dv2")

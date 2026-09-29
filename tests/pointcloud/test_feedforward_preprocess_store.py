@@ -1,43 +1,34 @@
-"""BaseFeedforwardCreator decodes inference frames from a scene's images/ directory in memory."""
+"""BaseFeedforwardCreator reads inference frames straight from a scene's images/ files."""
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from PIL import Image
 
-from collab_splats.pointcloud.feedforward import (
-    BaseFeedforwardCreator,
-    FeedforwardResult,
-    build_pycolmap_reconstruction,
-)
-from collab_splats.pointcloud.feedforward.base import _decode_dir_to_frames
+from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
 from collab_splats.preproc import frames as fr
 
 
 @dataclass
 class _EchoCreator(BaseFeedforwardCreator):
-    """Minimal creator whose _preprocess echoes frame_idx labels + frame dims."""
+    """Minimal creator whose _preprocess decodes the files and echoes their dims."""
 
     def _load_model(self, device: str) -> Any:
         return object()
 
-    def _preprocess(self, frames, frame_idxs):
-        image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
+    def _preprocess(self, paths: list[Path]) -> Any:
+        frames = [np.asarray(Image.open(p).convert("RGB")) for p in paths]
         coords = np.array([[0, 0, f.shape[1], f.shape[0], f.shape[1], f.shape[0]] for f in frames], dtype=np.float32)
-        return frames, image_paths, coords
+        return frames, coords
 
     def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
         return {}
 
-    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
+    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> PointcloudResult:
         raise NotImplementedError
-
-    def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
-        return {}
-
-    def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
-        return np.zeros((0, 3), dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
 
 
 # Gappy source indices: a quality filter drops frames, so row position and frame_idx
@@ -54,84 +45,43 @@ def _make_images_dir(tmp_path) -> Path:
     return images_dir
 
 
-def test_setup_inference_accepts_images_dir(tmp_path):
-    images_dir = _make_images_dir(tmp_path)
+def test_setup_inference_labels_are_file_stems(tmp_path):
     creator = _EchoCreator()
 
-    creator.setup_inference(images_dir)
+    creator.setup_inference(fr.frame_paths(_make_images_dir(tmp_path)))
 
-    # Labels are the source frame indices carried by the filenames, formatted stably
-    # for COLMAP — never the row position, which would misjoin poses to frames.json
+    # Labels are the filename stems — never the row position, which would misjoin poses to frames.json
     assert [p.name for p in creator.image_paths] == [f"frame_{i:06d}" for i in _FRAME_IDXS]
-    # Frames are decoded straight from images/ (no staged copy) at their native dims
-    assert len(creator.views) == 4
     assert [f.shape for f in creator.views] == [(32, 48, 3)] * 4
     assert creator.original_coords.shape == (4, 6)
 
 
 def test_setup_inference_reads_pixels_in_filename_order(tmp_path):
     """Frame N's pixels land at row N — a reorder would shift every pose against its frame."""
-    images_dir = _make_images_dir(tmp_path)
     creator = _EchoCreator()
 
-    creator.setup_inference(images_dir)
+    creator.setup_inference(fr.frame_paths(_make_images_dir(tmp_path)))
 
     # _make_images_dir paints each frame with its own source index
     assert [int(f[0, 0, 0]) for f in creator.views] == _FRAME_IDXS
 
 
-def test_setup_inference_accepts_image_dir(tmp_path):
-    """Legacy eval path: an image dir is PIL-decoded with integer sort-order labels."""
-    from PIL import Image
-
-    img_dir = tmp_path / "imgs"
-    img_dir.mkdir()
-    for i in range(3):
-        Image.fromarray(np.full((16, 24, 3), i, dtype=np.uint8)).save(img_dir / f"{i:04d}.png")
-    creator = _EchoCreator()
-
-    creator.setup_inference(img_dir)
-
-    assert [p.name for p in creator.image_paths] == [f"frame_{i:06d}" for i in range(3)]
-    assert creator.views[0].shape == (16, 24, 3)
-
-
-def test_decode_dir_to_frames_matches_legacy_sorted_glob(tmp_path):
-    """Frame order + content must match the legacy sorted-iterdir the old _preprocess used.
-
-    A reorder here would silently shift eval frames (poses index-aligned to GT) → ATE drift.
-    """
-    from PIL import Image
-
-    # Write out-of-order names with distinct pixel content, plus a non-image to be rejected
-    names = ["frame-000002.png", "frame-000000.png", "frame-000001.png"]
-    for i, name in enumerate(names):
-        Image.fromarray(np.full((8, 8, 3), (i + 1) * 40, dtype=np.uint8)).save(tmp_path / name)
-    (tmp_path / "notes.txt").write_text("ignore me")
-
-    # Legacy order: sorted Path objects filtered by lowercase suffix (vggtx/omega _preprocess)
-    legacy_paths = sorted(p for p in tmp_path.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"})
-    legacy_frames = [np.asarray(Image.open(p).convert("RGB"), dtype=np.uint8) for p in legacy_paths]
-
-    frames, labels = _decode_dir_to_frames(tmp_path)
-
-    assert labels == list(range(len(legacy_paths)))
-    assert len(frames) == len(legacy_frames)
-    for got, want in zip(frames, legacy_frames):
-        assert np.array_equal(got, want)  # same order → same pixel content
-
-
 def test_colmap_image_names_stable_extensionless(tmp_path):
     """Extension-less frame_{idx:06d} labels are valid, stable COLMAP image names."""
     names = [f"frame_{i:06d}" for i in (0, 1)]
-    pts = np.zeros((1, 3), dtype=np.float32)
-    colors = np.zeros((1, 3), dtype=np.uint8)
-    extrinsics = np.stack([np.eye(4, dtype=np.float32)] * 2)
-    intrinsics = np.stack([np.eye(3, dtype=np.float32)] * 2)
-
-    recon = build_pycolmap_reconstruction(
-        pts, colors, extrinsics, intrinsics, image_width=64, image_height=64, image_names=names
+    result = PointcloudResult(
+        points=np.zeros((1, 3), dtype=np.float32),
+        colors=np.zeros((1, 3), dtype=np.uint8),
+        extrinsics=np.stack([np.eye(4, dtype=np.float32)] * 2),
+        intrinsics=np.stack([np.eye(3, dtype=np.float32)] * 2),
+        model_intrinsics=np.stack([np.eye(3, dtype=np.float32)] * 2),
+        image_paths=[tmp_path / name for name in names],
+        original_coords=np.array([[0, 0, 64, 64, 64, 64]] * 2, dtype=np.float32),
+        model_width=64,
+        model_height=64,
     )
+
+    recon = result.to_colmap()
 
     got = sorted(recon.images[i].name for i in recon.images)
     assert got == names

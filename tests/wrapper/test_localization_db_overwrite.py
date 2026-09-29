@@ -45,7 +45,7 @@ def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
     )
     stack.enter_context(
         patch(
-            "collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr",
+            "collab_splats.pointcloud.base.PointcloudResult.load_zarr",
             return_value=MagicMock(),
         )
     )

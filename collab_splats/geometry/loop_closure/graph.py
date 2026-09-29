@@ -13,17 +13,17 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import gtsam
 import numpy as np
+
+import gtsam
 from gtsam.symbol_shorthand import X as _X
 
+from collab_splats.geometry.loop_closure.submap import Submap
 from collab_splats.geometry.transforms import (
     decompose_camera,
     intrinsics_4x4,
     transform_points,
 )
-
-from .submap import Submap
 
 if TYPE_CHECKING:
     from pathlib import Path

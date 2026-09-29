@@ -11,9 +11,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
-from gsplat.strategy import DefaultStrategy, MCMCStrategy
 from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR
+
+from gsplat.strategy import DefaultStrategy, MCMCStrategy
 
 from collab_splats.splats.rendering import render_gaussians
 from collab_splats.splats.utils import knn_spacing

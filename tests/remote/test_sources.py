@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from collab_data.data_dashboard.rclone_client import RcloneClient
 
 import collab_splats.remote.sources as sources
@@ -538,6 +539,25 @@ def test_push_no_longer_excludes_the_keyframe_images(name):
     assert "/images/**" not in PUSH_EXCLUDES
     # Unanchored it would also swallow pointcloud.zarr/images and every <backend>/images.
     assert "images/**" not in PUSH_EXCLUDES
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "colmap/colmap/colmap.db",
+        "instantsfm/colmap/instantsfm.db",
+        "hloc/colmap/hloc/feats-superpoint-n4096-rmax1600.h5",
+        "hloc/colmap/hloc/sfm/database.db",
+    ),
+)
+def test_push_excludes_cover_the_colmap_and_hloc_build_artifacts(name):
+    """Rebuildable SIFT DBs and hloc caches; anchors stripped as test_push_excludes_raw_feature_maps does."""
+    assert any(fnmatch.fnmatchcase(name, p.lstrip("/")) for p in PUSH_EXCLUDES), name
+
+
+def test_push_excludes_keep_the_colmap_model():
+    """The model the dense result was built on must reach processed."""
+    assert not any(fnmatch.fnmatchcase("hloc/colmap/sparse/0/images.bin", p.lstrip("/")) for p in PUSH_EXCLUDES)
 
 
 @pytest.mark.parametrize("name", _VIDEO_NAME_CASES)

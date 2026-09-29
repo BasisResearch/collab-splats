@@ -20,10 +20,9 @@ import torch
 from PIL import Image
 
 from collab_splats.preproc import frames
+from collab_splats.semantics.segmentation.base import BaseSegmentation
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD, open_image
 from collab_splats.utils.torch_utils import load_hf_weights
-
-from .base import BaseSegmentation
 
 logger = logging.getLogger(__name__)
 

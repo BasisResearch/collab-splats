@@ -57,7 +57,7 @@ def test_mapanything_extract_features_derives_w2c_poses():
             return_value=processed,
         ) as mock_post,
     ):
-        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w))
+        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w), layer_index=-1)
 
     # apply_mask=False — LC needs unmasked dense geometry
     assert mock_post.call_args.kwargs.get("apply_mask") is False
@@ -113,7 +113,7 @@ def test_omega_extract_features_emits_world_points_and_conf():
         "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
         return_value=(ext.unsqueeze(0), intr.unsqueeze(0)),
     ):
-        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w))
+        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w), layer_index=-1)
 
     # Poses: (2, 4, 4) float32 w2c, frame 0 identity, frame 1 carries the translation
     assert features["poses"].shape == (2, 4, 4)
@@ -174,7 +174,7 @@ def test_vggtx_extract_features_emits_world_points_and_conf():
         "collab_splats.pointcloud.feedforward.vggtx.pose_encoding_to_extri_intri",
         return_value=(ext.unsqueeze(0), intr.unsqueeze(0)),
     ):
-        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w))
+        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w), layer_index=-1)
 
     # Poses: (2, 4, 4) float32 w2c, frame 0 identity, frame 1 carries the translation
     assert features["poses"].shape == (2, 4, 4)
@@ -205,13 +205,15 @@ def test_vggtx_extract_features_emits_world_points_and_conf():
 class _StubCreator(BaseFeedforwardCreator):
     """Minimal creator for driving the LoopClosure LC loop in-process."""
 
+    default_verify_match_ratio = 0.85
+
     def _load_model(self, device):
         m = MagicMock()
         m.parameters.return_value = iter([torch.zeros(1)])
         return m
 
-    def _preprocess(self, image_dir):
-        return torch.zeros(40, 3, 16, 16), [None] * 40, np.zeros((40, 6))
+    def _preprocess(self, frames, frame_idxs):
+        return torch.zeros(40, 3, 16, 16), np.zeros((40, 6))
 
     def _forward(self, model, views, **kwargs):
         k = views.shape[0]
@@ -228,25 +230,19 @@ class _StubCreator(BaseFeedforwardCreator):
             "depth_conf": depth_conf,
         }
 
-    def _verify_loop_candidate(self, frame1, frame2, verify_match_ratio=0.85):
+    def _verify_loop_candidate(self, frame1, frame2, verify_match_ratio):
         return self._verify_return
 
-    def _postprocess(self, raw_outputs, **kwargs):
+    def _postprocess(self, raw_outputs):
         pass
 
-    def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
+    def extract_intermediate_features(self, frames, layer_index):
         return {}
-
-    def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
-        return np.zeros((0, 3)), np.zeros((0, 3))
-
-    def build_colmap(self, output_dir):
-        pass
 
 
 def _run_lc_with_verify_return(verify_return):
     """Drive LoopClosure.run_inference with one loop candidate; return the base creator."""
-    base = _StubCreator(camera_model="PINHOLE")
+    base = _StubCreator()
     base._verify_return = verify_return
     # submap_size=10 → 4 submaps over 40 frames, so min_submap_gap=1 leaves a
     # non-empty past for later submaps and the fake loop candidate fires.
@@ -254,6 +250,9 @@ def _run_lc_with_verify_return(verify_return):
     creator.load_model()
     base.views = torch.zeros(40, 3, 16, 16)
     base.image_paths = [None] * 40
+    base.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1)
+    )  # full-frame box
 
     def _fake_find_loops(submap, past, *args, **kwargs):
         # Exactly one candidate across the whole run (first submap with a past)
@@ -291,22 +290,3 @@ def test_accepted_loop_with_geometry_is_applied():
     base = _run_lc_with_verify_return((True, lc_data))
 
     assert base.n_loops_applied == 1
-
-
-def test_accepted_loop_without_geometry_is_applied():
-    """Accepted lc_data without geometry still applies the loop (None-geometry branch)."""
-    lc_data = {
-        "poses": np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
-        "world_points": None,
-        "conf": None,
-    }
-    base = _run_lc_with_verify_return((True, lc_data))
-
-    assert base.n_loops_applied == 1
-
-
-def test_accept_without_lc_data_hits_defensive_guard():
-    """(True, None) from verify is a contract violation → candidate rejected, no loop applied."""
-    base = _run_lc_with_verify_return((True, None))
-
-    assert base.n_loops_applied == 0

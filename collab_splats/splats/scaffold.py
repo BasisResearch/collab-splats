@@ -17,10 +17,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 import torch.nn.functional as F
-from gsplat import fully_fused_projection
-from gsplat.strategy.ops import _update_param_with_optimizer
 from torch import Tensor
 from torch.optim.lr_scheduler import ExponentialLR, LambdaLR
+
+from gsplat import fully_fused_projection
+from gsplat.strategy.ops import _update_param_with_optimizer
 
 from collab_splats.splats.gaussian import SH_C0
 from collab_splats.splats.rendering import render_gaussians

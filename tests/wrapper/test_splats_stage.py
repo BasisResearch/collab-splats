@@ -3,8 +3,6 @@ Splats-stage wiring: leaf registration, base.yaml default, and the arrays handed
 
 - Depth targets come from pointcloud.zarr depth for every method — sfm scenes use the
   dense COLMAP-scale-aligned zarr depth through the same path as feedforward backends.
-- A legacy sfm zarr without the depth_scale attr is VDA-metric and raises (re-run the
-  pointcloud stage to align).
 """
 
 from pathlib import Path
@@ -59,7 +57,7 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
     ):
         out = recon.splats()
 
@@ -86,7 +84,7 @@ def test_splats_stage_rejects_frames_missing_from_feedforward(tmp_path):
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
         pytest.raises(ValueError, match="no depth"),
     ):
         recon.splats()
@@ -160,7 +158,7 @@ def test_splats_conf_percentile_log_reports_the_zero_target_fraction(tmp_path, c
 
     with (
         patch("collab_splats.splats.trainer.train"),
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
         caplog.at_level("INFO"),
     ):
         recon.splats()
@@ -218,8 +216,8 @@ def test_mesh_source_unknown_raises(tmp_path):
         recon.mesh()
 
 
-def test_splats_sfm_aligned_zarr_uses_zarr_depth(tmp_path):
-    # sfm scene whose zarr carries depth_scale: falls through to the zarr-depth path
+def test_splats_sfm_uses_zarr_depth(tmp_path):
+    # sfm scene reads depth targets from the zarr like feedforward
     recon = _stub_reconstructor(tmp_path)
     recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
     depth = np.stack([np.full((4, 4), view + 1, np.float32) for view in range(3)])
@@ -233,7 +231,7 @@ def test_splats_sfm_aligned_zarr_uses_zarr_depth(tmp_path):
     group.attrs["depth_scale"] = "colmap"
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
     ):
         recon.splats()
 
@@ -243,29 +241,8 @@ def test_splats_sfm_aligned_zarr_uses_zarr_depth(tmp_path):
     assert depth_targets[0, 0, 0] == pytest.approx(3) and depth_targets[2, 0, 0] == pytest.approx(1)
 
 
-def test_splats_sfm_legacy_zarr_refused(tmp_path):
-    # sfm zarr without depth_scale is VDA-metric — feeding it as targets collapsed
-    # training once (PSNR 6.15); must refuse with a re-run pointer
-    recon = _stub_reconstructor(tmp_path)
-    recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
-    zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
-    with patch("collab_splats.splats.trainer.train") as train, pytest.raises(ValueError, match="depth_scale"):
-        recon.splats()
-    train.assert_not_called()
-
-
-def test_mesh_sfm_legacy_zarr_refused(tmp_path):
-    # Legacy VDA-metric zarr against COLMAP poses fused geometry at the wrong scale —
-    # keep refusing scenes without the depth_scale attr
-    recon = _stub_reconstructor(tmp_path)
-    recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
-    zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
-    with pytest.raises(ValueError, match="depth_scale"):
-        recon.mesh()
-
-
-def test_mesh_sfm_aligned_zarr_fuses(tmp_path):
-    # Aligned sfm zarr (depth_scale attr) passes the guard and reaches TSDF fusion
+def test_mesh_sfm_zarr_fuses(tmp_path):
+    # sfm zarr reaches TSDF fusion
     recon = _stub_reconstructor(tmp_path)
     recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
     group = zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
@@ -300,7 +277,7 @@ def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
     ):
         recon.splats()
 

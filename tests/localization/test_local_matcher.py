@@ -1,11 +1,11 @@
 """Unit tests for LocalMatcher — vismatch mocked throughout; no model downloads."""
 
 import sys
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import torch
-from unittest.mock import MagicMock, patch
 
 from collab_splats.localization.extractors import (
     FEATURE_MATCH_MODELS,

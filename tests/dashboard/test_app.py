@@ -276,12 +276,12 @@ def _write_features_zarr(sem_dir, extractor="talk2dino"):
 
 
 def _run_load_job(app, scene):
-    """Run the queued load job with FeedforwardResult.load_zarr stubbed out."""
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    """Run the queued load job with PointcloudResult.load_zarr stubbed out."""
+    from collab_splats.pointcloud.base import PointcloudResult
 
     app._load_outputs(scene)
     job_fn, _on_done, _doc = app._gpu.submitted[-1]
-    with patch.object(FeedforwardResult, "load_zarr", return_value="result"):
+    with patch.object(PointcloudResult, "load_zarr", return_value="result"):
         return job_fn()
 
 
@@ -353,7 +353,7 @@ def test_density_change_busts_reselect_shortcircuit(tmp_path):
 
 def test_load_outputs_logs_steps(tmp_path, monkeypatch):
     """A cold load logs pull/read steps with elapsed times in the op log."""
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    from collab_splats.pointcloud.base import PointcloudResult
 
     app, worker = _recording_app(tmp_path)
 
@@ -362,7 +362,7 @@ def test_load_outputs_logs_steps(tmp_path, monkeypatch):
         (out / "pointcloud.zarr").mkdir(parents=True, exist_ok=True)
 
     app._source.pull_processed = fake_pull
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p, **kwargs: object())
+    monkeypatch.setattr(PointcloudResult, "load_zarr", lambda p, **kwargs: object())
     app._load_outputs(SCENE)
     job_fn, _on_done, _doc = worker.submitted[-1]
     job_fn()
@@ -394,7 +394,7 @@ def test_load_does_not_eager_load_features(tmp_path, monkeypatch):
     """The display load must not read the cached point features before any query is issued."""
     import zarr
 
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    from collab_splats.pointcloud.base import PointcloudResult
 
     app, worker = _recording_app(tmp_path)
     # Fake local scene: pointcloud.zarr present (skips the pull) + cached lifted features.
@@ -403,7 +403,7 @@ def test_load_does_not_eager_load_features(tmp_path, monkeypatch):
     sem_dir = out / "semantics"
     sem_dir.mkdir()
     (sem_dir / "talk2dino_lifted.zarr").mkdir()  # contents irrelevant — nothing may open it yet
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", lambda p, **kwargs: object())
+    monkeypatch.setattr(PointcloudResult, "load_zarr", lambda p, **kwargs: object())
 
     # Any eager read of the cached features (decode or on-demand lift) opens a store under
     # semantics/ — count those between enqueue and job completion; must stay zero.

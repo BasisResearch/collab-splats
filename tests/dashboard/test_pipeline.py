@@ -62,9 +62,8 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     fake_result.extrinsics = np.tile(np.eye(4), (3, 1, 1))
     fake_result.intrinsics = np.tile(np.eye(3), (3, 1, 1))
     creator = MagicMock()
-    # Pipeline decomposes run() into load_model→setup_inference→run_inference→postprocess;
-    # result comes from creator.outputs after postprocess.
-    creator.outputs = fake_result
+    # Pipeline loads the model, then takes the result create_pointcloud returns
+    creator.create_pointcloud.return_value = fake_result
 
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
@@ -89,9 +88,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     assert out == tmp_path / "outputs" / "2026_05_07-birds-clip_03"
     wz.assert_called_once()
     creator.load_model.assert_called_once()
-    creator.setup_inference.assert_called_once()
-    creator.run_inference.assert_called_once()
-    creator.postprocess.assert_called_once()
+    creator.create_pointcloud.assert_called_once()
     fake_result.save_zarr.assert_called_once()
     mesh.assert_called_once()
     liftc.assert_called_once()
@@ -120,7 +117,7 @@ def test_mesh_rgb_rounds_not_truncates(tmp_path):
     fake_result.extrinsics = np.tile(np.eye(4), (3, 1, 1))
     fake_result.intrinsics = np.tile(np.eye(3), (3, 1, 1))
     creator = MagicMock()
-    creator.outputs = fake_result
+    creator.create_pointcloud.return_value = fake_result
 
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),

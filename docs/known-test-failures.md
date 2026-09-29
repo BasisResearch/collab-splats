@@ -238,7 +238,7 @@ ATE + viewer unaffected). Until then: keep long scenes ≤ ~1000 keyframes on th
 
 The VGGT-SLAM loop-closure refactor assembles its output in `LoopClosure._assemble_result`
 (GraphMap dense cloud, correction-at-read) instead of `base._postprocess`. `_assemble_result`
-populates `points/colors/extrinsics/intrinsics` but **not** the optional `FeedforwardResult.images`
+populates `points/colors/extrinsics/intrinsics` but **not** the optional `images`
 tensor. The old `_postprocess` set `images=images`; BA's track extractor (`extract_tracks_vggsfm`)
 does `images.to(device)`, so running the eval `ba` condition on the windowed path now raises
 `AttributeError: 'NoneType' object has no attribute 'to'`.

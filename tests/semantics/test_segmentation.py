@@ -17,7 +17,6 @@ from collab_splats.semantics.segmentation import (
 from collab_splats.semantics.segmentation.base import convert_matched_mask
 
 
-
 def _make_results(n: int, iou: float = 0.9):
     mask = np.ones((8, 8), dtype=np.uint8)
     return [{"segmentation": mask, "predicted_iou": iou} for _ in range(n)]

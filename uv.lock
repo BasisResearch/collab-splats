@@ -988,7 +988,6 @@ dependencies = [
     { name = "open-clip-torch" },
     { name = "opencv-python" },
     { name = "pillow" },
-    { name = "plyfile" },
     { name = "pycolmap-cuda12" },
     { name = "pydantic" },
     { name = "pypose" },
@@ -1081,6 +1080,9 @@ feedforward = [
 gpu = [
     { name = "cuda-toolkit", extra = ["all"] },
 ]
+hloc = [
+    { name = "hloc" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1100,6 +1102,7 @@ requires-dist = [
     { name = "gradio" },
     { name = "gsplat", git = "https://github.com/nerfstudio-project/gsplat.git?rev=d2f5c0f" },
     { name = "gtsam", marker = "extra == 'feedforward'", specifier = ">=4.3.0" },
+    { name = "hloc", marker = "extra == 'hloc'", editable = "third_party/hloc" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "isort", marker = "extra == 'dev'" },
@@ -1137,7 +1140,6 @@ requires-dist = [
     { name = "param", marker = "extra == 'dashboard'", specifier = ">=2.0.0" },
     { name = "pillow" },
     { name = "pillow-heif", marker = "extra == 'feedforward'" },
-    { name = "plyfile" },
     { name = "pycolmap-cuda12", specifier = "==4.1.1" },
     { name = "pydantic", specifier = "==2.10.6" },
     { name = "pydata-sphinx-theme", marker = "extra == 'dev'" },
@@ -1193,7 +1195,7 @@ requires-dist = [
     { name = "wheel" },
     { name = "zarr", specifier = ">=2.16" },
 ]
-provides-extras = ["feedforward", "gpu", "dashboard", "docs", "dev"]
+provides-extras = ["feedforward", "hloc", "gpu", "dashboard", "docs", "dev"]
 
 [[package]]
 name = "colorama"
@@ -2444,6 +2446,43 @@ wheels = [
 ]
 
 [[package]]
+name = "hloc"
+version = "1.5"
+source = { editable = "third_party/hloc" }
+dependencies = [
+    { name = "gdown" },
+    { name = "h5py" },
+    { name = "kornia" },
+    { name = "lightglue" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "plotly" },
+    { name = "pycolmap" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "gdown" },
+    { name = "h5py" },
+    { name = "kornia", specifier = ">=0.6.11" },
+    { name = "lightglue", git = "https://github.com/cvg/LightGlue" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "plotly" },
+    { name = "pycolmap", specifier = ">=3.13.0" },
+    { name = "scipy" },
+    { name = "torch", specifier = ">=1.1" },
+    { name = "torchvision", specifier = ">=0.3" },
+    { name = "tqdm", specifier = ">=4.36.0" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -3159,7 +3198,7 @@ wheels = [
 [[package]]
 name = "lightglue"
 version = "0.0"
-source = { git = "https://github.com/cvg/LightGlue.git#eb42fee2d71449efb0aa5c10549752b5d75384d8" }
+source = { git = "https://github.com/cvg/LightGlue#eb42fee2d71449efb0aa5c10549752b5d75384d8" }
 dependencies = [
     { name = "kornia" },
     { name = "matplotlib" },
@@ -5488,6 +5527,28 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/11/e0/abfd2a0d2efe47670df87f3e3a0e2edda42f055053c85361f19c0e2c1ca8/pycodestyle-2.14.0.tar.gz", hash = "sha256:c4b5b517d278089ff9d0abdec919cd97262a3367449ea1c8b49b91529167b783", size = 39472, upload-time = "2025-06-20T18:49:48.75Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d7/27/a58ddaf8c588a3ef080db9d0b7e0b97215cee3a45df74f3a94dbbf5c893a/pycodestyle-2.14.0-py2.py3-none-any.whl", hash = "sha256:dd6bf7cb4ee77f8e016f9c8e74a35ddd9f67e1d5fd4184d86c3b98e07099f42d", size = 31594, upload-time = "2025-06-20T18:49:47.491Z" },
+]
+
+[[package]]
+name = "pycolmap"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/c0/9c3072223d9ced2aabd75fd1ff769e74626f6d9f525e86142140d23a9dbc/pycolmap-4.2.0-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:cb87c222fe89acaafa84b77a850e0909dd10046b8e1bd66a0c1690ec9a56b56c", size = 20951569, upload-time = "2026-09-01T09:31:13.204Z" },
+    { url = "https://files.pythonhosted.org/packages/38/c5/0b1c70570e95554fbdfc1ce1e7eb791648dabfa051135c371f0c64654084/pycolmap-4.2.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:17b721ee6905f25935289550e64cb6fb4e7446373f0d17f63128e5656606b5e6", size = 38229664, upload-time = "2026-09-01T09:31:17.076Z" },
+    { url = "https://files.pythonhosted.org/packages/26/bb/b79e5a647d9eb087a2a3ddb48639dcd102d8ce3d0394f22d096f68ca69ee/pycolmap-4.2.0-cp311-cp311-win_amd64.whl", hash = "sha256:04027c81b8204da57d382be792e1f99851617c69f357c8c689b1a1417e0af140", size = 24134143, upload-time = "2026-09-01T09:31:20.072Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/47/2272c464b974e457e61b0818ba471def232117aa0562c02fc5e805accad3/pycolmap-4.2.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:905b8c3a0ff2419059d8935b77e9a535b35cb3c4c8ebad5f3f05950f2f97e5d7", size = 21014273, upload-time = "2026-09-01T09:31:22.981Z" },
+    { url = "https://files.pythonhosted.org/packages/66/8e/9109b18315646900e45a67600d8e9e77d4e07a438a7cb114b4962118cf27/pycolmap-4.2.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:c3bded2ded4f1831015c76ceca061dbbeebed1c7eb2b9d6335f680d89a5c5d16", size = 38246595, upload-time = "2026-09-01T09:31:26.759Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/ab/18a16d92fcdc649898a29f8ff4ac66bd0ba7a4e3733766a24f3285251932/pycolmap-4.2.0-cp312-cp312-win_amd64.whl", hash = "sha256:6fac64ee716335d437637d798eaafb89c76cfa06dfd53ef8384e38d09008879d", size = 24147180, upload-time = "2026-09-01T09:31:29.938Z" },
+    { url = "https://files.pythonhosted.org/packages/01/ea/a80cd4eb8d91d07dabd6f86b309e7a7c8fdf9d32fb3e447d0b8d413265b5/pycolmap-4.2.0-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:46c04cf4ed48ef831d303d7d2f6a4a5196a0034c818fe8ef2770920045bf0f40", size = 21014511, upload-time = "2026-09-01T09:31:33.563Z" },
+    { url = "https://files.pythonhosted.org/packages/46/53/40d429bbb07c25637ca8d96950c4aee42142f147ebe4d41e42da3eb27f84/pycolmap-4.2.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:e4b360e4cbab23171ffb883a29317621d294e0450c005339aff6c3a685dbc03d", size = 38247660, upload-time = "2026-09-01T09:31:37.506Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/b7/e70d713da859f8a28023c67b839755fcaa6d8fa2d9b369405040dc873760/pycolmap-4.2.0-cp313-cp313-win_amd64.whl", hash = "sha256:4bfdf9522ceeaea278c409beab624d7072a28f457c0ef1fc695079ce637f1050", size = 24146104, upload-time = "2026-09-01T09:31:40.947Z" },
+    { url = "https://files.pythonhosted.org/packages/75/f1/6a1dbe7a76ed84a80a0ac85a1b8a0900e7046be20cc1a28e5644bda38a0a/pycolmap-4.2.0-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:47f11de4506485a38b5686c45b1aa402500d3531a5e1769f659c5ba8c691279f", size = 21030620, upload-time = "2026-09-01T09:31:43.926Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/60/80fd7e7c3196159b4b19082417f9a95932af73163ff8b57d199c1a063340/pycolmap-4.2.0-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:7137ef6a0aadbb407d41ca72726e7188e85a005b583669191731090505746d6f", size = 38255561, upload-time = "2026-09-01T09:31:47.64Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/f9/c1b197603d117af01f4a92f24ab2157ff878aceffbd72ae0e6a17f884440/pycolmap-4.2.0-cp314-cp314-win_amd64.whl", hash = "sha256:3fddd6eecfc5d1bdc5f8d17fd46ac835a13402409d26287a48463a32e0eaf300", size = 24865139, upload-time = "2026-09-01T09:31:50.874Z" },
 ]
 
 [[package]]

@@ -198,7 +198,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats", "mesh"})
 
 # Module-level numbers that are facts, not tunables
-FIXED_FACTS = frozenset({"SCHEMA_VERSION"})
+FIXED_FACTS = frozenset({"SCHEMA_VERSION", "_LOGER_PATCH"})
 
 UPPER_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
 BANNED_RE = re.compile(r"\bmeasured\b|\bhypothesis\b|\d+(\.\d+)?x faster|ffmpeg pipe|replaces the old", re.I)

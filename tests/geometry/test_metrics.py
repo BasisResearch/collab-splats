@@ -1,6 +1,5 @@
 """Unit tests for reference-free scene error metrics."""
 
-import json
 import warnings
 from pathlib import Path
 
@@ -16,9 +15,10 @@ from collab_splats.geometry.metrics import (
     compute_photometric_ncc,
     residual_bin_edges,
 )
+from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
 from collab_splats.pointcloud.feedforward import base as ff_base
 from collab_splats.preproc import frames as fr
-from collab_splats.wrapper.reconstructor import LEAF_STAGES, _STAGE_DEPS, _STAGE_ORDER
+from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES
 
 
 def test_pair_stats_is_keyed_on_frame_index():
@@ -113,7 +113,7 @@ def _pair(i, j, rel, par, n=100, iqr=0.01, depth=4.0):
 
 
 def _collected(pairs):
-    """The collect-dict shape compute_multiview_depth_confidence fills.
+    """The collect-dict shape metrics._collect_pairs fills.
 
     Edges are sized for a real 60-frame scene, not for these few hundred fixture pixels:
     quantile recovery is a property of the bin count, so a fixture that derived its own
@@ -370,8 +370,8 @@ def test_photometric_is_empty_for_a_single_frame():
     assert m == {"idx1": [], "idx2": [], "photometric_ncc": [], "n_pixels": []}
 
 
-def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
-    """One function, both grids — and the K must ride the SAME transform as the depth.
+def test_photometric_upsamples_model_res_depth_onto_the_images_grid_K():
+    """Model-grid depth is upsampled; K arrives on the images' grid, lifted as PointcloudResult does.
 
     The crop is a strict sub-region (32x32 taken from a 64x64 canvas at (16, 8)), so the model
     -> original scale is crop_w / model_w = 2 and NOT canvas_w / model_w = 4. Using the canvas
@@ -383,7 +383,9 @@ def test_photometric_upsamples_model_res_depth_and_lifts_its_K_with_it():
     model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
     model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
-    m = compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords,
+    K = rescale_intrinsics(model_K, (16, 16), (32, 32))
+    K = shift_intrinsics(K, coords[:, :2])
+    m = compute_photometric_ncc(img, model_d, K, e, original_coords=coords,
                                 max_separation=1)
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
 
@@ -427,12 +429,14 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
     model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
     model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 40.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
     coords = np.tile(np.array([16, 8, 48, 24, 64, 64], dtype=np.float32), (2, 1))
+    K = rescale_intrinsics(model_K, (16, 16), (16, 32))
+    K = shift_intrinsics(K, coords[:, :2])
     # z makes cy (hence tl_y) observable at all; y makes fy (hence sy) observable.
     e1 = np.eye(4, dtype=np.float32)
     e1[1, 3], e1[2, 3] = 0.2, -2.0
     e = np.stack([np.eye(4, dtype=np.float32), e1])
 
-    m = compute_photometric_ncc(np.stack([img0, img1]), model_d, model_K, e,
+    m = compute_photometric_ncc(np.stack([img0, img1]), model_d, K, e,
                                 original_coords=coords, max_separation=1)
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
     # Anchor: the whole crop warped in bounds, so that 1.0 is the full overlap rather than a
@@ -443,7 +447,7 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
 def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(monkeypatch):
     """upsample_depths documents a uint8 guide and divides it by 255 internally.
 
-    FeedforwardResult.images is [0, 255] on VGGT-X and [0, 1] on MapAnything, so an uncoerced
+    PointcloudResult.images is [0, 255] on VGGT-X and [0, 1] on MapAnything, so an uncoerced
     guide is ~255x too flat on one backbone — measured by the reviewer at 0.398 max / 0.013
     mean depth shift on depths of 1-5 — and a float64 guide raises in OpenCV outright. The two
     scales must therefore lift the SAME depth.
@@ -466,9 +470,11 @@ def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(mon
         [np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)], axis=1)] * 2)
     model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
+    K = rescale_intrinsics(model_K, (16, 16), (32, 32))
+    K = shift_intrinsics(K, coords[:, :2])
 
-    compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords, max_separation=1)
-    compute_photometric_ncc(img / 255.0, model_d, model_K, e, original_coords=coords,
+    compute_photometric_ncc(img, model_d, K, e, original_coords=coords, max_separation=1)
+    compute_photometric_ncc(img / 255.0, model_d, K, e, original_coords=coords,
                             max_separation=1)
     # One call per compute, each lifting the whole stack
     assert len(lifted) == 2
@@ -504,7 +510,9 @@ def _scene_with_a_dark_frame(dark_factor=0.0035, near=2.0, far=8.0):
         e[0, 3] = -k * 4 * 4.0 / 40.0
         ext.append(e)
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (3, 1))
-    return images, model_d, model_K, np.stack(ext), coords
+    K = rescale_intrinsics(model_K, (16, 16), (32, 32))
+    K = shift_intrinsics(K, coords[:, :2])
+    return images, model_d, K, np.stack(ext), coords
 
 
 def test_ncc_is_invariant_to_image_scale_convention_even_with_a_DARK_frame():
@@ -536,7 +544,7 @@ def test_ncc_is_invariant_to_image_scale_convention_even_with_a_DARK_frame():
 
 
 def test_upsampling_without_crop_rows_is_a_refusal_not_a_guess():
-    """Depth and K move together or neither does; guessing the crop is how they desync."""
+    """Model-grid depth needs crop rows to upsample; guessing the crop misplaces it."""
     img, d, K, e = _plane(hw=64)
     with pytest.raises(ValueError, match="original_coords"):
         compute_photometric_ncc(img, d[:, ::2, ::2], K, e, max_separation=1)
@@ -574,6 +582,143 @@ def test_photometric_output_is_four_columns_over_unordered_pairs():
 
 
 ########################################
+# _collect_pairs: the report's cross-view depth pass
+########################################
+
+
+def _two_view(scale_j=1.0):
+    """Two cameras with a 0.2-unit sideways baseline viewing a constant-depth plane.
+
+    scale_j multiplies frame 1's depth, injecting a known relative residual.
+    """
+    H = W = 16
+    K = np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], dtype=np.float32)
+    depth = np.stack([np.full((H, W), 4.0, np.float32), np.full((H, W), 4.0 * scale_j, np.float32)])
+    extr = np.stack([np.eye(4, dtype=np.float32), np.eye(4, dtype=np.float32)])
+    extr[1, 0, 3] = -0.2  # world-to-cam translation => camera 1 sits at x=+0.2
+    return depth, np.stack([K, K]), extr
+
+
+def _collect(depth, K, extr, rel_thresh=0.05):
+    return metrics._collect_pairs(depth, K, extr, rel_thresh)[0]
+
+
+def _row_01(out):
+    """The ordered (0, 1) row — the pair whose residual population is hand-derivable below."""
+    return next(r for r in out["pairs"] if (r.idx1, r.idx2) == (0, 1))
+
+
+def _bin_of(out, rel_value):
+    """Index of the histogram bin that a residual of rel_value would land in."""
+    return int(np.searchsorted(out["rel_depth_error_edges"], bounded_residual(rel_value), side="right") - 1)
+
+
+def test_collect_fills_index_keyed_rows_and_the_one_histogram():
+    depth, K, extr = _two_view()
+    out = _collect(depth, K, extr)
+    assert out["rel_depth_error_counts"].sum() > 0
+    assert (out["pairs"][0].idx1, out["pairs"][0].idx2) == (0, 1)
+    # ORDERED pair count: (i, j) and (j, i) both feed the one histogram
+    n, h, w = depth.shape
+    assert np.array_equal(out["rel_depth_error_edges"], residual_bin_edges(n * (n - 1) * h * w))
+
+
+def test_signed_residual_recovers_an_injected_depth_scale():
+    """Frame 1 depth x1.1 => median relative residual ~ +0.1 on the 0->1 pair."""
+    depth, K, extr = _two_view(scale_j=1.1)
+    assert _row_01(_collect(depth, K, extr, rel_thresh=0.5)).median_rel_depth_error == pytest.approx(0.1, abs=0.02)
+
+
+def test_parallax_angle_and_median_depth_match_geometry():
+    """0.2 baseline at depth 4 => atan(0.2/4) ~ 2.86 deg at the principal ray."""
+    depth, K, extr = _two_view()
+    row = _row_01(_collect(depth, K, extr))
+    assert row.median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
+    assert row.median_parallax_deg == pytest.approx(np.degrees(np.arctan(0.2 / 4.0)), abs=0.5)
+    assert row.median_depth == pytest.approx(4.0, abs=0.2)
+
+
+def test_occluded_pixels_are_excluded_from_the_residual():
+    """Occlusion is absent evidence, not disagreement — it must not pollute the scale bias."""
+    depth, K, extr = _two_view()
+    depth[1, :, :8] = 0.5  # a near occluder covering half of frame 1
+    assert _row_01(_collect(depth, K, extr)).median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
+
+
+def test_residual_is_scale_invariant():
+    """Multiplying depth and translation by s must leave the relative residual unchanged."""
+    depth, K, extr = _two_view(scale_j=1.1)
+    a = _row_01(_collect(depth, K, extr, rel_thresh=0.5))
+    s = 7.0
+    extr_s = extr.copy()
+    extr_s[:, :3, 3] *= s
+    b = _row_01(_collect(depth * s, K, extr_s, rel_thresh=0.5))
+    assert a.median_rel_depth_error == pytest.approx(b.median_rel_depth_error, abs=1e-4)
+    assert a.median_parallax_deg == pytest.approx(b.median_parallax_deg, abs=1e-3)
+
+
+def test_iqr_reports_the_spread_not_the_lower_half():
+    """Frame 1 half at residual 0.0, half at +0.2: q25 0.0, median 0.1, q75 0.2, IQR 0.2.
+
+    The 1-pixel shift drops column 0 off frame 1's left edge: 15 x 16 = 240 residuals.
+    """
+    depth, K, extr = _two_view()
+    depth[1, 8:, :] = 4.8
+    row = _row_01(_collect(depth, K, extr))
+    assert row.n_pixels == 240
+    assert row.median_rel_depth_error == pytest.approx(0.1, abs=1e-3)
+    assert row.iqr_rel_depth_error == pytest.approx(0.2, abs=1e-3)
+
+
+def test_invalid_sampled_depth_is_excluded_not_counted_as_minus_one():
+    """A zero sampled depth means "no measurement", not "100% too shallow"."""
+    depth, K, extr = _two_view()
+    control = _row_01(_collect(depth, K, extr))
+    assert control.n_pixels == 240
+
+    # Frame-1 columns 0..4 are what source columns 1..5 sample: 5 x 16 = 80 pixels
+    depth[1, :, :5] = 0.0
+    out = _collect(depth, K, extr)
+    assert _row_01(out).n_pixels == control.n_pixels - 80
+    assert out["rel_depth_error_counts"][_bin_of(out, -1.0)] == 0
+
+
+def test_near_zero_expected_depth_is_excluded_not_divided_through():
+    """Co-located cameras: a near-zero-depth pixel projects in bounds, but its quotient is noise."""
+    depth, K, extr = _two_view()
+    extr[1] = np.eye(4, dtype=np.float32)
+    control = _row_01(_collect(depth, K, extr))
+    assert control.n_pixels == 16 * 16
+
+    depth[0, 0, 0] = 1e-7
+    out = _collect(depth, K, extr)
+    assert _row_01(out).n_pixels == control.n_pixels - 1
+    assert out["rel_depth_error_counts"][_bin_of(out, 4.0 / 1e-6)] == 0
+
+
+def test_report_multiview_agreement_is_one_on_consistent_scene():
+    """Every seen pixel agrees on a consistent plane; the report carries it per frame."""
+    depth, K, extr = _two_view()
+    tables = metrics.compute_reconstruction_quality(
+        depth,
+        K,
+        K,
+        extr,
+        np.tile([0, 0, 16, 16, 16, 16], (2, 1)),
+        ["frame_000000.png", "frame_000001.png"],
+        None,
+        None,
+    )
+    assert tables["frames"]["multiview_agreement"] == pytest.approx([1.0, 1.0])
+
+
+def test_multiview_agreement_is_null_when_no_other_view_sees_the_frame():
+    depth, K, extr = _two_view()
+    extr[1, 0, 3] = -100.0  # camera 1 far off to the side: nothing projects in bounds
+    assert metrics._collect_pairs(depth, K, extr, 0.05)[1] == [None, None]
+
+
+########################################
 # The stage wiring
 ########################################
 
@@ -598,10 +743,7 @@ def test_report_does_not_demote_any_existing_leaf():
 def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
     """A minimal pointcloud.zarr that compute_reconstruction_quality can run on. Returns its path.
 
-    Depth is a SLANTED plane, never a constant one: a constant-depth scene has a degenerate
-    frustum AABB, compute_multiview_depth_confidence's pair gate then skips every pair, and
-    the depth tables would come back empty — a fixture that can observe nothing.
-    Each frame carries a slightly different depth scale so the pairwise residuals are
+    Depth is a SLANTED plane and each frame carries a slightly different depth scale so the pairwise residuals are
     non-zero and the per-frame medians actually differ.
 
     The crop rows are OFF-CENTRE on a NON-SQUARE canvas so crop coverage is observable: an
@@ -618,11 +760,12 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
         extrinsics[k][0, 3] = -0.15 * k  # camera centre slides along +x, so pairs have parallax
     rng = np.random.default_rng(4)
     coords = np.tile(np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1))
-    result = ff_base.FeedforwardResult(
+    result = ff_base.PointcloudResult(
         points=np.zeros((1, 3), np.float32),
         colors=np.zeros((1, 3), np.uint8),
         extrinsics=extrinsics,
-        intrinsics=np.stack([K] * n),
+        intrinsics=None,
+        model_intrinsics=np.stack([K] * n),
         image_paths=[Path(p) for p in image_names],
         original_coords=coords,
         model_width=hw,
@@ -636,16 +779,19 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
 
 
 def _quality(tmp_path, image_names, with_confidence=True, images=None):
-    """The stage's data path over _write_tiny_scene: load, collect, compute. Returns (tables, collected)."""
-    ff = ff_base.FeedforwardResult.load_zarr(_write_tiny_scene(tmp_path, image_names, with_confidence))
-    collected = {}
-    ff_base.compute_multiview_depth_confidence(
-        ff.depth, ff.intrinsics, ff.extrinsics, abs_thresh=0.0, rel_thresh=0.05, collect=collected
-    )
+    """The stage's data path over _write_tiny_scene: load, compute. Returns (tables, collected)."""
+    ff = ff_base.PointcloudResult.load_zarr(_write_tiny_scene(tmp_path, image_names, with_confidence))
     tables = metrics.compute_reconstruction_quality(
-        collected, ff.depth, ff.intrinsics, ff.extrinsics, ff.original_coords,
-        [Path(str(p)).name for p in ff.image_paths], ff.confidence, images,
+        ff.depth,
+        ff.model_intrinsics,
+        ff.intrinsics,
+        ff.extrinsics,
+        ff.original_coords,
+        [Path(str(p)).name for p in ff.image_paths],
+        ff.confidence,
+        images,
     )
+    collected, _ = metrics._collect_pairs(ff.depth, ff.model_intrinsics, ff.extrinsics, rel_thresh=0.05)
     return tables, collected
 
 
@@ -725,19 +871,29 @@ def test_frame_columns_keep_their_order(tmp_path):
     """Index, then crop coverage, then the depth and confidence summaries."""
     tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg"])
     assert list(tables["frames"]) == [
-        "frame_idx", "covered_fraction", "median_abs_rel_depth_error", "confidence_median",
+        "frame_idx",
+        "covered_fraction",
+        "median_abs_rel_depth_error",
+        "multiview_agreement",
+        "confidence_median",
     ]
 
 
-def test_median_abs_rel_depth_error_is_the_median_magnitude_over_pairs_touching_the_frame():
+def test_median_abs_rel_depth_error_is_the_median_magnitude_over_pairs_touching_the_frame(monkeypatch):
     """Both directions count for a frame, by magnitude: frame 1 sees |-0.02|, |0.04| and |0.10|."""
     collected = _collected([_pair(0, 1, -0.02, 2.0), _pair(1, 0, 0.04, 2.0), _pair(1, 2, 0.10, 2.0)])
     n, hw = 3, 8
+    monkeypatch.setattr(metrics, "_collect_pairs", lambda *a, **k: (collected, [None] * n))
     K = np.array([[50.0, 0, hw / 2], [0, 50.0, hw / 2], [0, 0, 1.0]])
     tables = metrics.compute_reconstruction_quality(
-        collected, np.ones((n, hw, hw)), np.stack([K] * n), np.stack([np.eye(4)] * n),
-        np.tile([0, 0, hw, hw, hw, hw], (n, 1)), [f"frame_{k:06d}.png" for k in range(n)],
-        None, None,
+        np.ones((n, hw, hw)),
+        np.stack([K] * n),
+        np.stack([K] * n),
+        np.stack([np.eye(4)] * n),
+        np.tile([0, 0, hw, hw, hw, hw], (n, 1)),
+        [f"frame_{k:06d}.png" for k in range(n)],
+        None,
+        None,
     )
     assert tables["frames"]["median_abs_rel_depth_error"] == pytest.approx([0.03, 0.04, 0.10])
 
@@ -759,3 +915,9 @@ def test_crop_coverage_is_measured_against_the_ORIGINAL_canvas_not_the_model_gri
     """
     tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"])
     assert tables["frames"]["covered_fraction"] == pytest.approx([1.0 / 3.0, 1.0 / 3.0])
+
+
+def test_negative_sampled_depth_is_no_measurement():
+    depth, K, extr = _two_view()
+    depth[1] *= -1
+    assert all((r.idx1, r.idx2) != (0, 1) for r in _collect(depth, K, extr)["pairs"])

@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "evals" / "data"))
 
 from download_datasets import SCENES, _scene_already_downloaded, main
 
-
 # ---------------------------------------------------------------------------
 # _scene_already_downloaded
 # ---------------------------------------------------------------------------

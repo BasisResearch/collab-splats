@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import torch
 
-from .submap import Submap
+from collab_splats.geometry.loop_closure.submap import Submap
 
 ########################################################################
 # Retrieval matching

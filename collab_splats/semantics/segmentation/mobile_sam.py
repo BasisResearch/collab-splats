@@ -11,11 +11,11 @@ from typing import Any
 
 import numpy as np
 import torch
+
 from mobile_sam import SamAutomaticMaskGenerator
 
+from collab_splats.semantics.segmentation.base import BaseSegmentation
 from collab_splats.utils.torch_utils import batch_iterator, load_torchhub_model
-
-from .base import BaseSegmentation
 
 logger = logging.getLogger(__name__)
 

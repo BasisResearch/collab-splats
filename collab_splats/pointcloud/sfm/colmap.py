@@ -1,83 +1,90 @@
 """
-Classical COLMAP SfM backend: SIFT, exhaustive matching, incremental mapping.
+COLMAP incremental SfM: pycolmap SIFT, then pycolmap incremental mapping.
 
-- pycolmap end to end; no learned components
-- unwired — nothing dispatches to ColmapCreator, see sfm/__init__.py
+- config: `pointcloud: {method: sfm, backend: colmap}`
+- SIFT DB at <out_dir>/colmap/colmap.db, reused while its images and matching params match
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 import pycolmap
 
-from ..base import BasePointcloudCreator, PointcloudResult
+from collab_splats.pointcloud.sfm.base import BaseSfmCreator
+from collab_splats.pointcloud.sfm.sift_db import ensure_sift_database, fetch_vocab_tree
 
 logger = logging.getLogger(__name__)
 
 
+########################################################################
+# Creator
+########################################################################
+
+
 @dataclass
-class ColmapCreator(BasePointcloudCreator):
+class ColmapCreator(BaseSfmCreator):
     """
-    Pointcloud via pycolmap: SIFT extraction -> exhaustive matching -> incremental mapping.
+    Classical incremental SfM on a scene directory.
 
-    - camera_model: COLMAP camera model string (SIMPLE_PINHOLE, SIMPLE_RADIAL, OPENCV, ...).
-    - single_camera: one shared camera for every image (video from one device) vs one per image.
-    - Writes the binary model to output_dir/colmap/sparse/0; the SIFT DB to colmap/database.db.
+    - features, matches and mapping all run in pycolmap
+    - one shared SIMPLE_RADIAL camera, refined by the mapper
+
+    Attributes:
+        pairing: sequential | retrieval | sequential+retrieval | exhaustive.
+        overlap: sequential neighbors per frame.
+        num_retrieved: vocab-tree neighbors per frame when pairing retrieves.
     """
 
-    camera_model: str = "SIMPLE_RADIAL"
-    single_camera: bool = False
+    pairing: str = "sequential+retrieval"
+    overlap: int = 10
+    num_retrieved: int = 20
 
-    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
+    def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
         """
-        SIFT extraction, exhaustive matching and incremental mapping over image_dir.
-
-        Args:
-            image_dir:  Directory of input images; must exist.
-            output_dir: Run directory. The binary model lands in colmap/sparse/0, the SIFT
-                database in colmap/database.db.
-
-        Returns:
-            PointcloudResult wrapping the largest reconstructed model.
+        SIFT and incremental mapping over the keyframes; returns the largest model, in memory.
         """
-        image_dir, output_dir = Path(image_dir), Path(output_dir)
-        if not image_dir.exists():
-            raise FileNotFoundError(f"image_dir not found: {image_dir}")
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Create a working folder for COLMAP files
+        colmap_dir = out_dir / "colmap"
+        colmap_dir.mkdir(parents=True, exist_ok=True)
 
-        sparse_dir = output_dir / "colmap" / "sparse" / "0"
-        sparse_dir.mkdir(parents=True, exist_ok=True)
-        db_path = output_dir / "colmap" / "database.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Build the SIFT feature database, or reuse it if it already matches
+        db_path = colmap_dir / "colmap.db"
+        ensure_sift_database(
+            images_dir,
+            db_path,
+            names,
+            pairing=self.pairing,
+            overlap=self.overlap,
+            num_retrieved=self.num_retrieved,
+            vocab_tree=fetch_vocab_tree if "retrieval" in self.pairing else None,  # downloaded only on a rebuild
+            num_threads=self.num_threads,
+        )
 
-        # pycolmap >=4.0: camera_model lives in ImageReaderOptions, not as a
-        # top-level kwarg of extract_features.
-        camera_mode = pycolmap.CameraMode.SINGLE if self.single_camera else pycolmap.CameraMode.AUTO
-        reader_opts = pycolmap.ImageReaderOptions(camera_model=self.camera_model)
-        pycolmap.extract_features(
-            database_path=str(db_path),
-            image_path=str(image_dir),
-            camera_mode=camera_mode,
-            reader_options=reader_opts,
+        # Run incremental mapping in a fresh folder
+        mapper_dir = colmap_dir / "mapper"
+        shutil.rmtree(mapper_dir, ignore_errors=True)
+        mapper_dir.mkdir()
+        recons = pycolmap.incremental_mapping(
+            str(db_path), str(images_dir), str(mapper_dir), options={"num_threads": self.num_threads}
         )
-        pycolmap.match_exhaustive(str(db_path))
-        reconstructions = pycolmap.incremental_mapping(
-            database_path=str(db_path),
-            image_path=str(image_dir),
-            output_path=str(sparse_dir.parent),  # colmap/sparse/ -> creates 0/ inside
-        )
-        if not reconstructions:
-            raise RuntimeError("reconstruction failed — pycolmap incremental_mapping returned no results")
 
-        # Cluster 0 is the model; image_paths follow filename order, the pipeline's row order
-        recon = reconstructions[0]
-        recon.write_binary(str(sparse_dir))
-        logger.info("COLMAP: %d registered images, %d points3D", len(recon.images), len(recon.points3D))
-        image_paths = sorted(
-            [image_dir / img.name for img in recon.images.values()],
-            key=lambda p: p.name,
-        )
-        return PointcloudResult(reconstruction=recon, image_paths=image_paths)
+        # Keep the model with the most registered images
+        if not recons:
+            raise RuntimeError("incremental mapping produced no model — too little overlap between frames")
+
+        recon = max(recons.values(), key=lambda r: r.num_reg_images())
+
+        if len(recons) > 1:
+            sizes = sorted((r.num_reg_images() for r in recons.values()), reverse=True)
+            logger.warning(
+                "incremental mapping split the scene into %d models %s — keeping the largest", len(recons), sizes
+            )
+
+        # Delete the working folder, since the model is already in memory
+        shutil.rmtree(mapper_dir)
+
+        return recon

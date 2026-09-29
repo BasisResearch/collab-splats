@@ -23,10 +23,7 @@ import numpy as np
 import zarr
 from PIL import Image
 
-from collab_splats.pointcloud.feedforward.base import (
-    compute_multiview_depth_confidence,
-    multiview_mask,
-)
+from collab_splats.geometry.projection import multiview_depth_confidence
 from collab_splats.utils.io import write_json
 
 logger = logging.getLogger(__name__)
@@ -90,7 +87,7 @@ def main() -> None:
 
     # Load prediction and GT, then put GT on the prediction's pixel grid
     z = zarr.open(str(args.zarr), mode="r")
-    depth, K, E = z["depth"][:], z["intrinsics"][:], z["extrinsics"][:]
+    depth, K, E = z["depth"][:], z["model_intrinsics"][:], z["extrinsics"][:]
     color_paths = sorted(args.seq.glob("*.color.png"))[: args.max_frames][: depth.shape[0]]
     gt = load_7scenes_depth(color_paths)
     if gt.shape[1:] != depth.shape[1:]:
@@ -134,9 +131,9 @@ def main() -> None:
 
     # Sweep the shipping function
     for rel in REL_THRESHOLDS:
-        mv = compute_multiview_depth_confidence(depth, K, E, abs_thresh=0.0, rel_thresh=rel)
+        agree, seen = multiview_depth_confidence(depth, K, E, rel_thresh=rel)
         for k in MIN_VIEWS:
-            keep = multiview_mask(mv, depth > 0, min_views=k)
+            keep = agree >= np.minimum(k, seen)
             stats = retained_error(depth_s, gt, keep)
             rows.append({"variant": "mv", "rel_thresh": rel, "min_views": k, **stats})
             logger.info(

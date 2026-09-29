@@ -46,7 +46,6 @@ dependencies = [
     "trame",
     "trame-vuetify",
     "trame-vtk",
-    "plyfile",
     # Texture bake: nvdiffrast rasterizes the UV atlas, Warp ray-casts occlusion and runs the
     # per-texel projection kernel, meshoptimizer decimates, meshlib patches holes.
     # meshoptimizer's only published wheel is a pre-release; the explicit ==a0 pin is what
@@ -141,6 +140,10 @@ feedforward = [
     "co3d",
 ]
 
+# hloc @ c13273b for the `hloc` sfm backend: editable path source on the setup/hloc.sh clone
+# - editable, not a git install: hloc's superpoint/superglue sys.path-append ../../third_party
+hloc = ["hloc"]
+
 gpu = [
   # NOT a working compiler. Measured 2026-09-06: every nvidia-cuda-nvcc-cu12 wheel (12.1 … 12.8)
   # ships only ptxas, and the cccl wheel this pin resolves to predates <cuda/std/optional>, which
@@ -231,6 +234,33 @@ markers = [
 [tool.isort]
 profile = "black"
 skip_gitignore = true
+# Import groups: stdlib, general third-party, model/method upstreams, then our own code
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "MODELS", "FIRSTPARTY", "LOCALFOLDER"]
+known_first_party = ["collab_splats", "evals", "tests"]
+known_models = [
+    "bae",
+    "collab_data",
+    "gsplat",
+    "gtsam",
+    "hloc",
+    "instantsfm",
+    "loger",
+    "mapanything",
+    "maskclip_onnx",
+    "meshoptimizer",
+    "mobile_sam",
+    "nvdiffrast",
+    "open_clip",
+    "pypose",
+    "salad",
+    "sam3",
+    "video_depth_anything",
+    "vggt",
+    "vggt_omega",
+    "vismatch",
+    "warp",
+    "xatlas",
+]
 
 ##############################
 # uv configuration
@@ -311,3 +341,5 @@ mapanything = { git = "https://github.com/facebookresearch/map-anything.git" }
 lightglue = { git = "https://github.com/cvg/LightGlue.git" }
 salad = { git = "https://github.com/Dominic101/salad.git" }
 co3d = { git = "https://github.com/facebookresearch/co3d.git" }
+# setup/hloc.sh clone, pinned c13273b; must exist before any resolve (setup.sh clones it first)
+hloc = { path = "third_party/hloc", editable = true }

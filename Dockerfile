@@ -69,8 +69,10 @@ COPY --from=collab-data collab_data /workspace/collab-data/collab_data
 # and clones the pinned third_party sources (VDA, LoGeR)
 # - pass 1 sees only the lock: the slow CUDA compiles stay cached across source edits
 # - pass 2 installs the project itself and the non-lock extras
+# - pass 1 also needs setup/hloc.sh: the hloc extra's path source is cloned before any resolve
 WORKDIR /workspace/collab-splats
 COPY pyproject.toml uv.lock LICENSE setup.sh /workspace/collab-splats/
+COPY setup/hloc.sh /workspace/collab-splats/setup/hloc.sh
 RUN SETUP_DEPS_ONLY=1 bash setup.sh
 COPY . /workspace/collab-splats
 RUN bash setup.sh
@@ -103,6 +105,7 @@ COPY --from=builder /opt/venv/reconstruction/ /opt/venv/reconstruction/
 COPY --from=builder /root/.local/share/uv/ /root/.local/share/uv/
 
 # collab-splats is an editable install: its path must match the builder's
+# - includes third_party/hloc, the hloc extra's editable source
 COPY --from=builder /workspace/collab-splats /workspace/collab-splats
 
 ENV CUDA_HOME=/usr/local/cuda \

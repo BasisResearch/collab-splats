@@ -23,10 +23,12 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+import torch
 
+from collab_splats.geometry.projection import unproject
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.mesh import clean_repair_mesh, create_tsdf_mesh
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.splats import load_checkpoint, render_views
 from collab_splats.splats.checkpoint import render_tsdf_inputs
@@ -57,13 +59,13 @@ def depth_to_normal(depth: np.ndarray, intrinsics: np.ndarray) -> np.ndarray:
     - Border pixels and pixels with a zero-length cross product are zero.
     """
     height, width = depth.shape
-    fx, fy = intrinsics[0, 0], intrinsics[1, 1]
-    cx, cy = intrinsics[0, 2], intrinsics[1, 2]
 
-    # Back-project every pixel to a camera-frame point (z-depth convention)
-    cols, rows = np.meshgrid(np.arange(width, dtype=np.float64), np.arange(height, dtype=np.float64))
-    z = depth.astype(np.float64)
-    points = np.stack([(cols - cx) / fx * z, (rows - cy) / fy * z, z], axis=-1)
+    # Back-project every pixel to a camera-frame point (z-depth convention): identity pose
+    depth_t = torch.as_tensor(depth, dtype=torch.float64)
+    identity = torch.eye(4, dtype=torch.float64)
+    intrinsics_t = torch.as_tensor(intrinsics, dtype=torch.float64)
+    points = unproject(depth_t, identity, intrinsics_t)
+    points = points.numpy()
 
     # Central differences on the interior, cross product, unit-normalise
     dx = points[2:, 1:-1] - points[:-2, 1:-1]
@@ -284,7 +286,7 @@ def main() -> None:
     # Table 2: feedforward first, then each primitive's renders.
     # Model-resolution fusion — depth, images and K all come off the same forward pass, so
     # nothing is lifted here and no COLMAP camera is involved.
-    ff = FeedforwardResult.load_zarr(args.zarr, load_images=True)
+    ff = PointcloudResult.load_zarr(args.zarr, load_images=True)
     depths = np.ascontiguousarray(ff.depth, dtype=np.float32)
 
     # Confidence gate before fusion; a reconstruction without confidence (sfm) fuses unmasked
@@ -295,7 +297,9 @@ def main() -> None:
     # images is (N, 3, H, W) float in [0, 1]; create_tsdf_mesh takes (N, H, W, 3) uint8
     rgbs = to_uint8_hwc(np.asarray(ff.images), channels_first=True)
 
-    mesh_rows = [build_mesh("feedforward", (depths, rgbs, invert_poses(ff.extrinsics), ff.intrinsics), args.results)]
+    mesh_rows = [
+        build_mesh("feedforward", (depths, rgbs, invert_poses(ff.extrinsics), ff.model_intrinsics), args.results)
+    ]
 
     # Splat renders leave the checkpoint at frame resolution carrying their own poses
     for primitive, ckpt_path in available:

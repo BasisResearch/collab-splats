@@ -1,6 +1,6 @@
 import numpy as np
-import torch
 import pyvista as pv
+import torch
 
 from collab_splats.utils.visualization import create_camera_frustum_pyvista
 
@@ -116,7 +116,7 @@ def make_bare_cloud(N=100):
 
 
 def test_resolve_mesh_kwargs_rgb_returns_pcd_kwargs():
-    from collab_splats.utils.visualization import _resolve_mesh_kwargs, PCD_KWARGS
+    from collab_splats.utils.visualization import PCD_KWARGS, _resolve_mesh_kwargs
     cloud = make_rgb_cloud()
     result = _resolve_mesh_kwargs(cloud, {})
     assert result == PCD_KWARGS
@@ -139,6 +139,7 @@ def test_resolve_mesh_kwargs_bare_cloud_returns_empty():
 
 def test_resolve_mesh_kwargs_no_rgb_key_returns_empty():
     from collab_splats.utils.visualization import _resolve_mesh_kwargs
+
     # pv.Sphere() is a PolyData with faces but no "RGB" array — same "no RGB key" path as bare_cloud
     mesh = pv.Sphere()
     result = _resolve_mesh_kwargs(mesh, {})

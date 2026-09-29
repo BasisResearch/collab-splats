@@ -1,49 +1,54 @@
-"""Every creator must forward its own mv fields, not a surviving hardcoded literal."""
+"""
+Multiview filter wiring in the feedforward _postprocess.
+"""
 
-import importlib
+from unittest.mock import patch
 
-import pytest
+import numpy as np
 
-CREATORS = [
-    ("collab_splats.pointcloud.feedforward.vggtx", "VGGTXCreator"),
-    ("collab_splats.pointcloud.feedforward.vggt_omega", "VGGTOmegaCreator"),
-    ("collab_splats.pointcloud.feedforward.mapanything", "MapAnythingCreator"),
-    ("collab_splats.pointcloud.feedforward.loger", "LoGeRCreator"),
-]
+from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
+from tests.pointcloud._stubs import vggt_raw_outputs
 
 
-def _creator(module_path: str, cls_name: str):
-    """Instantiate a creator by dotted module path, skipping optional absent backends."""
-    try:
-        module = importlib.import_module(module_path)
-    except ImportError as exc:  # optional backend not installed in this environment
-        pytest.skip(f"{cls_name} unavailable: {exc}")
-    return getattr(module, cls_name)()
+def _run(creator: VGGTXCreator, raw: dict | None = None) -> int:
+    """
+    Point count after _postprocess over the stub raw dict.
+    """
+    raw = vggt_raw_outputs(n=3, h=8, w=10) if raw is None else raw
+    creator.image_paths = [f"frame_{i:06d}" for i in range(3)]
+    creator.original_coords = np.tile(np.array([0, 0, 10, 8, 10, 8], np.float32), (3, 1))
+    return len(creator._postprocess(raw).points)
 
 
-@pytest.mark.parametrize("module_path,cls_name", CREATORS)
-def test_creator_exposes_min_views_and_rel_thresh(module_path, cls_name):
-    """mv_conf_threshold is gone; min_views and mv_conf_rel_thresh are real fields."""
-    creator = _creator(module_path, cls_name)
-    assert isinstance(creator.min_views, int)
-    assert isinstance(creator.mv_conf_rel_thresh, float)
-    assert not hasattr(creator, "mv_conf_threshold"), "mv_conf_threshold must be removed"
+def test_min_views_zero_is_off():
+    with patch("collab_splats.pointcloud.feedforward.base.multiview_depth_confidence") as mock_mv:
+        _run(VGGTXCreator(min_views=0))
+    mock_mv.assert_not_called()
 
 
-def test_mapanything_ships_min_views_one():
-    """K=1 is exactly the old threshold=0.0, so MapAnything's behavior is preserved."""
-    creator = _creator("collab_splats.pointcloud.feedforward.mapanything", "MapAnythingCreator")
-    assert creator.min_views == 1
-    assert creator.use_multiview_confidence is True
-    assert creator.mv_conf_abs_thresh == 0.02
-    assert creator.mv_conf_rel_thresh == 0.02
+def test_min_views_filters_on_disagreement():
+    assert _run(VGGTXCreator(min_views=1, mv_rel_thresh=1e-9)) < _run(VGGTXCreator(min_views=0))
 
 
-@pytest.mark.parametrize(
-    "module_path,cls_name",
-    [c for c in CREATORS if c[1] != "MapAnythingCreator"],
-)
-def test_non_metric_backends_keep_abs_thresh_zero(module_path, cls_name):
-    """abs_thresh must stay 0.0 for non-metric depth or scale invariance breaks."""
-    creator = _creator(module_path, cls_name)
-    assert creator.mv_conf_abs_thresh == 0.0
+def _disjoint_views() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Two frames whose cameras sit 1000 units apart, so neither sees the other's pixels.
+    """
+    depth = np.ones((2, 8, 10), np.float32)
+    intrinsics = np.tile(np.array([[10, 0, 5], [0, 10, 4], [0, 0, 1]], np.float32), (2, 1, 1))
+    extrinsics = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+    extrinsics[1, 0, 3] = 1000.0
+    return depth, intrinsics, extrinsics
+
+
+def test_unseen_pixels_are_kept():
+    depth, intrinsics, extrinsics = _disjoint_views()
+    on = VGGTXCreator(min_views=2)._multiview_mask(depth, intrinsics, extrinsics)
+    off = VGGTXCreator(min_views=0)._multiview_mask(depth, intrinsics, extrinsics)
+    assert on.sum() == off.sum() == depth.size
+
+
+def test_zero_depth_is_dropped_with_the_filter_off():
+    raw = vggt_raw_outputs(n=3, h=8, w=10)
+    raw["depth"][0, 0, 0] = 0.0
+    assert _run(VGGTXCreator(min_views=0), raw) == 3 * 8 * 10 - 1

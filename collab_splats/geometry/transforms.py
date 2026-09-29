@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import open3d as o3d
 from scipy.linalg import rq
+from torch import Tensor
 
 ########################################################################
 # Constants
@@ -70,16 +71,17 @@ def invert_poses(poses: np.ndarray) -> np.ndarray:
     return out
 
 
-def transform_points(points: np.ndarray, T: np.ndarray) -> np.ndarray:
+def transform_points(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.ndarray | Tensor:
     """
-    Points moved by a 4x4 rigid transform: R @ p + t.
+    Points moved by a rigid transform: R @ p + t.
 
-    - reads only the 3x4 block, so the bottom row must be [0, 0, 0, 1]
-    - no homogeneous padding; dtype follows numpy promotion of the inputs
+    - reads only the 3x4 block, so a (4, 4) bottom row must be [0, 0, 0, 1]
+    - numpy or torch, not mixed; dtype follows the library's promotion of the inputs
+    - torch: differentiable in both arguments
 
     Args:
         points: (..., 3) points.
-        T: (4, 4) rigid transform, e.g. world-to-cam or cam-to-world.
+        T: (4, 4) or (3, 4) rigid transform, e.g. world-to-cam or cam-to-world.
 
     Returns:
         (..., 3) transformed points.

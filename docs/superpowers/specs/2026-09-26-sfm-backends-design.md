@@ -1,7 +1,7 @@
 # SfM backends — wire ColmapCreator + HlocCreator into `pointcloud.method: sfm`
 
 **Date:** 2026-09-26
-**Status:** approved design, revised 2026-09-26 after a consistency pass (pre-plan)
+**Status:** approved design, revised 2026-09-26; implementation on feat/sfm-backends (plan 2026-09-26-sfm-backends.md)
 **Branch:** `feat/sfm-backends` in `.worktrees/sfm-backends`, off `clean/final` @ `ac93e96b`
 **Sequencing:** lands BEFORE the pointcloud release cleanup; that cleanup runs on the result
 

@@ -8,7 +8,7 @@ import zarr
 
 from collab_splats.dashboard import viewer as viewer_mod
 from collab_splats.dashboard.viewer import lift_point_features
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 
 EXTRACTOR = "talk2dino"
 
@@ -33,7 +33,7 @@ def test_lift_point_features_normalises():
         return fake_lifted
 
     with (
-        patch("collab_splats.pointcloud.utils.lift_features", fake_lift),
+        patch("collab_splats.semantics.lifting.lift_features", fake_lift),
         patch("collab_splats.semantics.utils.load_feature_maps", return_value=["sentinel-map"]),
         patch("collab_splats.semantics.utils.cache_store_path", return_value=object()),
     ):
@@ -53,13 +53,14 @@ def test_lift_point_features_reloads_dense_on_demand(tmp_path):
     """A lean display result must be re-hydrated from its zarr before lifting."""
     # Dense-bearing store: depth + confidence + pixel_indices persisted on disk.
     n, p, h, w = 2, 5, 4, 4
-    full = FeedforwardResult(
+    full = PointcloudResult(
         points=np.zeros((p, 3), dtype=np.float32),
         colors=np.zeros((p, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
-        intrinsics=np.tile(np.eye(3, dtype=np.float32), (n, 1, 1)),
+        intrinsics=None,
+        model_intrinsics=np.tile(np.eye(3, dtype=np.float32), (n, 1, 1)),
         image_paths=[tmp_path / f"{i:05d}.jpg" for i in range(n)],
-        original_coords=np.zeros((n, 6), dtype=np.float32),
+        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)),  # full-frame box
         model_width=w,
         model_height=h,
         depth=np.ones((n, h, w), dtype=np.float32),
@@ -68,12 +69,11 @@ def test_lift_point_features_reloads_dense_on_demand(tmp_path):
     )
     store = tmp_path / "pointcloud.zarr"
     full.save_zarr(store)
-    lean = FeedforwardResult.load_zarr(
+    lean = PointcloudResult.load_zarr(
         store,
         load_depth=False,
         load_world_points=False,
         load_confidence=False,
-        load_features=False,
         load_pixel_indices=False,
     )
 
@@ -85,7 +85,7 @@ def test_lift_point_features_reloads_dense_on_demand(tmp_path):
         return torch.zeros((p, 2))
 
     with (
-        patch("collab_splats.pointcloud.utils.lift_features", fake_lift),
+        patch("collab_splats.semantics.lifting.lift_features", fake_lift),
         patch("collab_splats.semantics.utils.load_feature_maps", return_value=[]),
         patch("collab_splats.semantics.utils.cache_store_path", return_value=tmp_path),
     ):
@@ -227,7 +227,7 @@ def test_viewer_lift_routes_through_the_shared_loader(tmp_path):
     """viewer.lift_point_features must use the ONE loader, not a private re-implementation."""
     with (
         patch("collab_splats.semantics.utils.load_feature_maps", return_value=[]) as loader,
-        patch("collab_splats.pointcloud.utils.lift_features", return_value=torch.zeros(3, 4)),
+        patch("collab_splats.semantics.lifting.lift_features", return_value=torch.zeros(3, 4)),
         patch("collab_splats.semantics.utils.cache_store_path", return_value=tmp_path / "x.zarr"),
     ):
         viewer_mod.lift_point_features(object(), tmp_path)

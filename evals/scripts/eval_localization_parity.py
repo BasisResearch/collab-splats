@@ -32,7 +32,7 @@ import torch
 
 from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.localizer import CameraLocalizer
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.utils.io import to_uint8_hwc, write_json
 from collab_splats.utils.torch_utils import pytorch_gc
 
@@ -140,7 +140,7 @@ def _run_matcher(spec, ff, images, ids, query_idx, top_k) -> dict:
         # index-aligned world_points/_frame_features arrays.
         localizer._frame_sources[q] = "held-out"
         t0 = time.perf_counter()
-        res = localizer.localize(images[q], query_intrinsics=ff.intrinsics[q] if ff.intrinsics is not None else None)
+        res = localizer.localize(images[q], query_intrinsics=ff.model_intrinsics[q])
         dt = time.perf_counter() - t0
         localizer._frame_sources[q] = "reconstruction"
 
@@ -232,7 +232,7 @@ def main() -> None:
     # Load reconstruction: model-res images double as reference AND query pixels —
     # matched ref pixels then live on the world_points grid with no rescale, and
     # every matcher sees identical inputs (the parity condition).
-    ff = FeedforwardResult.load_zarr(args.scene / "pointcloud.zarr", load_images=True)
+    ff = PointcloudResult.load_zarr(args.scene / "pointcloud.zarr", load_images=True)
     if ff.images is None:
         raise ValueError(f"{args.scene / 'pointcloud.zarr'} has no images array — required for queries/pairwise refs")
     images = _model_res_images(ff.images)

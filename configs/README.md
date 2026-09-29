@@ -193,12 +193,12 @@ the artifacts it produced and leaves everything else in place.
 
 - `<backend>/reconstruction_quality_report.json` — reference-free scene error
   report. Columnar tables, `{column: [values]}`, beside a `scene` block (backend,
-  n_frames, model_resolution, image_width, zarr) and a `params` block (rel_thresh). Column meanings:
+  n_frames, model_resolution, image_width, zarr). Column meanings:
   `docs/source/api/geometry.rst`.
 
   | table | grid | row | columns |
   |---|---|---|---|
-  | `frames` | mixed | one per frame | frame_idx (null off the `frame_{idx:06d}` contract), covered_fraction (0..1, original), median_abs_rel_depth_error (model), confidence_median (model; backbone-native, not comparable across backbones) |
+  | `frames` | mixed | one per frame | frame_idx (null off the `frame_{idx:06d}` contract), covered_fraction (0..1, original), median_abs_rel_depth_error (model), multiview_agreement (model; share of seen pixels where ≥1 other view agrees at rel 0.05; null when unseen), confidence_median (model; backbone-native, not comparable across backbones) |
   | `depth_pairs` | model | one per ordered direction | idx1, idx2, n_pixels, median_depth, median_rel_depth_error (signed s − 1), iqr_rel_depth_error, median_parallax_deg |
   | `depth_residual_histogram` | model | — | counts, bin_edges over r/(1+\|r\|) |
   | `photometric_pairs` | original | i < j | idx1, idx2, photometric_ncc (zero-mean NCC), n_pixels |
@@ -232,10 +232,14 @@ the artifacts it produced and leaves everything else in place.
   `rv_histogram((counts, bin_edges)).cdf(x/(1+abs(x)))`.
 
 `refine` (LM bundle adjustment) rewrites the reconstruction's poses in place —
-COLMAP, `sparse_pc.ply`, and the pose-derived arrays in
-`pointcloud.zarr`. It does NOT invalidate `mesh/`, lifted semantics, or the
-localization DB built under the old poses: after `--stages refine`, re-run those
-stages with `overwrite` if pose-sensitive outputs matter. Provenance for the last
+COLMAP, `sparse_pc.ply`, and the pose-derived arrays in `pointcloud.zarr`. After
+the reproject it re-cleans the cloud (`pointcloud.clean.enabled`) and re-caps it to
+`max_points`, so the point count can change: `points`, `colors` and `pixel_indices`
+are rewritten. It does NOT invalidate `mesh/`, lifted semantics, or the
+localization DB built under the old poses. After `--stages refine`, lifted
+semantics MUST be re-run with `overwrite`: their rows index the pre-refine points
+and are now misaligned. Re-run `mesh` and `localize` with `overwrite` if
+pose-sensitive outputs matter. Provenance for the last
 refine run (BA config + LM loss history) is in `<backend>/colmap/refine.json`.
 
 ---
@@ -355,12 +359,29 @@ parameter and raises.
 | `preproc.quality.sharpness_k` | float | `2.0` | Eligibility gate for every sampler: MAD z-score cut on `log(laplacian)`; larger keeps more |
 | `preproc.quality.max_clipped_frac` | float | `0.25` | Eligibility gate for every sampler: ceiling on `clipped_low_frac + clipped_high_frac`; larger keeps more |
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
-| `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm` only — `colmap`/`hloc` are rejected at config validation. `ColmapCreator`/`HlocCreator` exist in `pointcloud/sfm/` but nothing dispatches to them. |
-| `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points` is rejected here. |
-| `pointcloud.instantsfm.random_seed` | int\|null | `null` | Seed InstantSfM's `RUNTIME_OPTIONS` (numpy/random/torch/cuda). Upstream `InitializeRandomPositions` draws unseeded, so two runs of one scene differ. `null` = upstream behaviour |
+| `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm`, `colmap` or `hloc` (dispatched through `SFM_CREATORS` in `collab_splats.pointcloud.sfm`) |
+| `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points`, `min_views`, `mv_rel_thresh` and `clean` are rejected here. |
+| `pointcloud.instantsfm.random_seed` | int\|null | `null` | Seed InstantSfM's `RUNTIME_OPTIONS` (numpy/random/torch/cuda). Upstream `InitializeRandomPositions` draws unseeded, so two runs of one scene differ. `null` = upstream behavior |
+| `pointcloud.instantsfm.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
+| `pointcloud.instantsfm.num_threads` | int | `8` | CPU SIFT thread cap; the GPU path ignores it |
+| `pointcloud.colmap.pairing` | str | `sequential+retrieval` | Image pairs matched: `sequential`, `retrieval`, `sequential+retrieval` or `exhaustive` (see "The colmap backend") |
+| `pointcloud.colmap.overlap` | int | `10` | `sequential*`: pair each frame with the next N |
+| `pointcloud.colmap.num_retrieved` | int | `20` | `*retrieval`: vocab-tree neighbors per image (9.5 MB tree, fetched once) |
+| `pointcloud.colmap.num_threads` | int | `8` | CPU SIFT + mapper thread cap; colmap's default spawns one per host core and OOMs |
+| `pointcloud.colmap.min_registered_frac` | float | `0.5` | In (0, 1]. Below this share of frames registered: `RuntimeError`; above it: subset to the registered frames, with a warning |
+| `pointcloud.hloc.pairing` | str | `sequential+retrieval` | Same four values as `colmap.pairing` (see "The hloc backend") |
+| `pointcloud.hloc.overlap` | int | `10` | `sequential*`: pair each frame with the next N |
+| `pointcloud.hloc.num_retrieved` | int | `20` | `*retrieval`: top-k global-descriptor neighbors per image (clamped to N-1) |
+| `pointcloud.hloc.retrieval_conf` | str | `netvlad` | `hloc.extract_features.confs` key for global descriptors |
+| `pointcloud.hloc.feature_conf` | str | `superpoint_max` | `hloc.extract_features.confs` key for local features |
+| `pointcloud.hloc.matcher_conf` | str | `superpoint+lightglue` | `hloc.match_features.confs` key. Conf keys are checked as non-empty strings only, not against hloc |
+| `pointcloud.hloc.num_threads` | int | `8` | Mapper thread cap |
+| `pointcloud.hloc.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
 | `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`) |
 | `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`) |
-| `pointcloud.clean.enabled` | bool | `true` | Remove outlier points |
+| `pointcloud.min_views` | int | `0` | Feedforward cross-view depth filter: keep a pixel when min(min_views, seen) other views agree. `0` = off; upstream MapAnything uses `1` |
+| `pointcloud.mv_rel_thresh` | float | `0.01` | Multiview agreement tolerance, as a fraction of depth |
+| `pointcloud.clean.enabled` | bool | `true` | Remove outlier points, every method. sfm deletes the same points3D from the mapper's COLMAP export, which keeps its tracks and camera model |
 | `semantics.enabled` | bool | `true` | Extract and lift semantic features |
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
@@ -372,7 +393,7 @@ parameter and raises.
 | `mesh.conf_percentile` | float\|null | `20` | Drop depth below this global confidence percentile before fusing (`null` = off). `source: feedforward` only; a reconstruction that carries no confidence (sfm) fuses unmasked and logs that it did |
 | `mesh.texture` | bool | `false` | Also decimate, UV-unwrap and project the fused views into `<backend>/texture/` (`mesh.obj` + `mesh.mtl` + `albedo.png`). Needs a GPU |
 | `mesh.use_convex_hull` | bool | `false` | Trim the ragged outer edge and patch the ground out to a rounded convex hull before hole filling (`make_convex_hull`). Ground-dominated outdoor scenes only; a mesh without a dominant ground raises. See `docs/mesh.md` |
-| `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `images/` (opt-in) |
+| `splats.enabled` | bool | `false` | Train Gaussian splats on the `pointcloud.zarr` poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
 | `splats.pose_opt` | bool | `true` | Refine camera poses jointly (`CameraOpt`) |
@@ -407,7 +428,7 @@ re-runs with the values silently ignored. Retired: `preproc.vda_context_fps`,
 `pointcloud.instantsfm.features` and `pointcloud.instantsfm.single_camera`.
 
 `pointcloud.clean.outlier_removal` is the only one that can change output. It used to gate the
-point3D deletions; the clean step now runs whenever `pointcloud.clean.enabled` is true. The old
+point3D deletions; the clean step now runs whenever `pointcloud.clean.enabled` is true, sfm included. The old
 default was `true`, so the **default path is unchanged** — but a saved config carrying
 `outlier_removal: false` now deletes points and writes a **different `sparse_pc.ply`** on re-run.
 Set `pointcloud.clean.enabled: false` to get the old `outlier_removal: false` behaviour.
@@ -430,6 +451,10 @@ a `run_config.yaml` still setting the old key raises a `TypeError` from `filter_
 every published `run_config.yaml` carries, is still accepted and ignored, so leaf re-runs of
 those scenes keep working. `colmap/verification.json`, `colmap/verified/` and
 `colmap/database.db` are no longer written; old files on disk are ignored.
+
+**Migration (2026-09-26):** `pointcloud.instantsfm` now refuses unknown keys at config load. A
+`run_config.yaml` carrying the retired `depth_align` / `features` / `single_camera` raises
+`ValueError` naming them; delete them.
 
 ### Localization matchers
 
@@ -477,7 +502,7 @@ plausibly-but-globally-wrong. There is no fallback focal; a degenerate fit raise
 
 **`max_frames` is not tuned for LoGeR.** The default 300 is VGGT-Omega's GPU limit and
 lives in the preproc stage, which runs first. Raise it to use LoGeR's windowing. The real
-ceiling is `FeedforwardResult`, which holds dense per-frame images, world points, depth,
+ceiling is `PointcloudResult`, which holds dense per-frame images, world points, depth,
 and confidence — 8.13 MB/frame at LoGeR's default `pixel_limit` of 255,000 — against a
 46.6 GB container cap. The cap binds every backend; the per-frame figure is LoGeR's own,
 since each backend resolves frames differently. LoGeR is merely the first backend able to
@@ -485,13 +510,13 @@ feed the buffer enough frames for the cap to matter.
 
 ### The `instantsfm` backend (`pointcloud.method: sfm`)
 
-Classical global SfM instead of a feedforward model: system COLMAP SIFT + exhaustive
-matching (CPU — upstream forces `CUDA_VISIBLE_DEVICES=""` on the colmap subprocess,
-`instantsfm/controllers/feature_handler.py:23`, even though VDA runs on the GPU), then
-InstantSfM's global mapper (rotation averaging, global positioning,
-global bundle adjustment), with Video-Depth-Anything (VDA) metric depth supplying the
-dense per-frame depth every downstream stage expects. Experimental — it warns at run time
-and its numbers are not yet measured.
+Classical global SfM instead of a feedforward model: pycolmap SIFT + exhaustive matching
+(upstream's own step, which forces the colmap CLI onto the CPU at
+`instantsfm/controllers/feature_handler.py:23`, is bypassed), then InstantSfM's global
+mapper (rotation averaging, global positioning, global bundle adjustment), with
+Video-Depth-Anything (VDA) metric depth supplying the dense per-frame depth every
+downstream stage expects. Experimental — it warns at run time and its numbers are not
+yet measured.
 
 ```yaml
 pointcloud:
@@ -499,7 +524,8 @@ pointcloud:
   backend: instantsfm
   instantsfm:
     retriangulation: false   # GLOMAP-style post-BA refinement: denser tracks, extra runtime
-    random_seed: null        # seed RUNTIME_OPTIONS; null = upstream (unseeded) behaviour
+    random_seed: null        # seed RUNTIME_OPTIONS; null = upstream (unseeded) behavior
+    min_registered_frac: 0.5 # fail below this share registered; above it, subset
 ```
 
 **Install.** `setup.sh` installs `instantsfm` from a pinned git commit with `--no-deps`
@@ -510,15 +536,16 @@ only — no weights). The metric checkpoint is pulled from the Hugging Face hub 
 (`depth-anything/Metric-Video-Depth-Anything-Large`, ~1.5 GB) and cached under `HF_HOME`
 (`/workspace/models` in the image), so a build needs no network for it and a machine that
 has none at run time fails on the first sfm run with a `RuntimeError` naming the repo. SIFT
-runs through the `pycolmap-cuda12` wheel (GPU when torch sees one). Plain `uv sync` prunes
-the `--no-deps` packages; re-run the setup.sh block afterwards.
+runs through pycolmap: GPU when the wheel is the CUDA build (`pycolmap-cuda12`) and torch sees a
+GPU, otherwise CPU capped at 8 threads. Plain `uv sync` prunes the `--no-deps` packages;
+re-run the setup.sh block afterwards.
 
-**Licences.** InstantSfM is CC-BY-NC-4.0 (research use only). VDA code is Apache-2.0; the
+**Licenses.** InstantSfM is CC-BY-NC-4.0 (research use only). VDA code is Apache-2.0; the
 VDA metric weights are CC-BY-NC-4.0.
 
-**Unsupported with sfm (all `ValueError` at config validation):** `bundle_adjustment: true`
-(InstantSfM runs its own global BA; `refine_poses` / `--stages refine` also refuse) and
-`loop_closure` (global mapper, not a sequential submap pipeline).
+**Unsupported with any sfm backend (all `ValueError` at config validation):**
+`bundle_adjustment: true` (the sfm mapper runs its own BA; `refine_poses` / `--stages refine`
+also refuse) and `loop_closure` (not a sequential submap pipeline).
 
 **Output layout** (`<backend>` is `instantsfm/`):
 
@@ -528,12 +555,12 @@ VDA metric weights are CC-BY-NC-4.0.
   colmap/instantsfm.db         ← SIFT database (local build artifact, NOT pushed)
   colmap/sparse/0/*.bin        ← InstantSfM global-mapper model, image names = frame stems
   pointcloud.zarr              ← depth/images/poses/K at model res; world_points unprojected from VDA depth;
-                               ←   no `confidence`, no `mv_*` (absent, never zeros); attrs: method, backend, instantsfm_version
+                               ←   no `confidence` (absent, never zeros); attrs: method, backend, registered_frames, total_frames, depth alignment
   sparse_pc.ply
 ```
 
 InstantSfM reads the scene-root `images/` store directly — nothing stages a per-run image
-copy any more (`pointcloud/sfm.py`), so the COLMAP image names are the keyframe filenames.
+copy any more (`pointcloud/sfm/instantsfm.py`), so the COLMAP image names are the keyframe filenames.
 `colmap/instantsfm.db` has its own name so it never collides with a `colmap/database.db`
 left by the removed geometric verification; both are anchored in `PUSH_EXCLUDES` and stay local. Downstream
 stages — `mesh`, `splats` (depth loss), `semantics`, `localize`, `reconstruction_quality_report` — consume
@@ -547,6 +574,131 @@ members before a feature lift, so an instantsfm scene always takes that (harmles
 slow) path; once the lift is cached, `_cleanup_lift_inputs` rmtree's the pulled
 `depth`/`pixel_indices` from the local copy again — pull-then-delete, once per extractor.
 Not changed yet.
+
+### The `colmap` backend (`pointcloud.method: sfm`)
+
+Classical incremental SfM (decision
+[018](../docs/superpowers/decisions/018-sfm-backends.md)):
+
+- features + matches: pycolmap, on the same GPU/CPU rule as instantsfm (`num_threads` caps the CPU path)
+- mapping: `pycolmap.incremental_mapping` (the 4.x wheel); the largest model is kept, with a
+  warning when the scene splits
+- one shared SIMPLE_RADIAL camera, refined by the mapper — same freedom as instantsfm
+- VDA metric depth supplies dense depth, as for instantsfm
+
+```yaml
+pointcloud:
+  method: sfm
+  backend: colmap
+  colmap:
+    pairing: sequential+retrieval  # sequential | retrieval | sequential+retrieval | exhaustive
+    overlap: 10
+    num_retrieved: 20
+    num_threads: 8
+    min_registered_frac: 0.5
+```
+
+**Install.** Nothing beyond the instantsfm prerequisites: the VDA clone. Any `*retrieval`
+pairing (the default included) fetches COLMAP's FAISS-format
+`vocab_tree_faiss_flickr100K_words32K.bin` (9.5 MB, sha256-pinned) once into
+`~/.cache/collab_splats/`; no network at that point is a `RuntimeError` naming URL and path.
+
+**Pairing.**
+
+| `pairing` | pycolmap matcher |
+|---|---|
+| `sequential` | `match_sequential`, `overlap` N, `quadratic_overlap=False` (i with i+1..i+N) |
+| `retrieval` | `match_vocabtree`, `num_images` = `num_retrieved` |
+| `sequential+retrieval` | `match_sequential` as above + `loop_detection=True` (`loop_detection_num_images` = `num_retrieved`) |
+| `exhaustive` | `match_exhaustive` |
+
+- colmap's loop detection fires every `loop_detection_period` (10) frames, not per frame, so
+  its `sequential+retrieval` is not the same pair set as hloc's
+
+**Caching.** `colmap/colmap.db` is reused only while its image set AND its matching params
+(`pairing`, plus `overlap` for sequential modes and `num_retrieved` for retrieval modes) match;
+the params live in a `collab_params` table inside the DB, written after a successful build.
+A knob the pairing ignores is not recorded, so changing it keeps the DB.
+
+**Output layout** (`<backend>` is `colmap/`):
+
+```
+<scene>/colmap/
+  depth_vda/images/npy/<stem>.npy ← VDA metric depth (as instantsfm)
+  colmap/colmap.db             ← SIFT database (local build artifact, NOT pushed)
+  colmap/sparse/0/*.bin        ← largest incremental model, image names = frame stems
+  pointcloud.zarr              ← attrs: method, backend, registered_frames, total_frames, depth alignment
+  sparse_pc.ply
+```
+
+**Registered subset.** Every sfm backend (instantsfm, colmap, hloc) may leave frames unregistered:
+
+- below `min_registered_frac` of the keyframes registered: `RuntimeError` with N/M
+- above it: depth, names and keyframes are filtered to the registered stems, with a warning
+- `registered_frames` / `total_frames` in the zarr attrs record the split
+- `images/` still holds every keyframe; downstream stages (semantics, mesh, localize, verify,
+  splats, reconstruction_quality_report) read only the frames `pointcloud.zarr` names in its
+  `image_paths` attr, joined on frame index; the unregistered ones are never read
+- the 2D semantics cache `semantics/<extractor>.zarr` stays scene-level (every `images/`
+  frame); the lift picks the pointcloud's rows out of it
+
+### The `hloc` backend (`pointcloud.method: sfm`)
+
+Learned-feature incremental SfM through hloc (`cvg/Hierarchical-Localization` @ `c13273b`):
+local features + matches from hloc, mapping via `hloc.reconstruction.main` (pycolmap), same
+single SIMPLE_RADIAL camera and VDA depth.
+
+```yaml
+pointcloud:
+  method: sfm
+  backend: hloc
+  hloc:
+    pairing: sequential+retrieval
+    overlap: 10
+    num_retrieved: 20
+    retrieval_conf: netvlad
+    feature_conf: superpoint_max
+    matcher_conf: superpoint+lightglue
+    num_threads: 8
+    min_registered_frac: 0.5
+```
+
+**Install.** hloc is the optional `hloc` extra, an editable uv path source on
+`third_party/hloc`:
+
+- `bash setup/hloc.sh` clones it (`--recursive`) and re-pins to `c13273b`; `setup.sh` calls it
+  before the sync, and `setup/hloc.sh --prefetch` caches the netvlad / SuperPoint / LightGlue
+  weights
+- the clone must exist before `uv lock` / `uv sync` resolve
+- without it, `HlocCreator.reconstruct` raises `ImportError` naming `setup/hloc.sh`
+
+**Licenses.** SuperPoint/SuperGlue weights are Magic Leap **non-commercial**; LightGlue is
+Apache-2.0; netvlad weights come from the original authors (research use).
+
+**Pairing.**
+
+| `pairing` | hloc |
+|---|---|
+| `sequential` | in-repo pairs: frame i with i+1..i+N (`overlap`) |
+| `retrieval` | `pairs_from_retrieval` on `retrieval_conf` descriptors, top `num_retrieved` (clamped to N-1) |
+| `sequential+retrieval` | union of both pair sets, deduplicated |
+| `exhaustive` | `pairs_from_exhaustive` |
+
+**Caching.** hloc's h5 features and matches are reused by its own `overwrite=False` skip;
+the mapper database is rebuilt every run.
+
+**Output layout** (`<backend>` is `hloc/`):
+
+```
+<scene>/hloc/
+  depth_vda/images/npy/<stem>.npy ← VDA metric depth (as instantsfm)
+  colmap/hloc/                 ← h5 features/matches, pairs-*.txt, sfm/ mapper dir (NOT pushed)
+  colmap/sparse/0/*.bin        ← hloc's largest model, image names = frame stems
+  pointcloud.zarr              ← attrs: method, backend, registered_frames, total_frames, depth alignment
+  sparse_pc.ply
+```
+
+- registered-subset behavior and `min_registered_frac`: as the colmap backend
 
 ---
 
@@ -614,10 +766,11 @@ this repo reads it; drop it when convenient with
 `rclone delete <remote>:environments-processed --include "**/transforms.json"`.
 
 - `<backend>/pointcloud.zarr` — the unified reconstruction artifact for every
-  `pointcloud.method` (feedforward and sfm). Store attrs carry provenance:
-  `method`, `backend`, and for instantsfm the installed upstream version
-  (`instantsfm_version`). `confidence` and `mv_*` arrays are present only when the
-  method produces them (absent, never zeros).
+  `pointcloud.method` (feedforward and sfm). Store attrs: `method`, `backend`, and for sfm
+  the depth-alignment stats plus `registered_frames` / `total_frames`.
+  No package versions are recorded (removed 2026-09-27: written, never read).
+
+  `confidence` is present only when the method produces it (absent, never zeros).
 
   **Migration (breaking, 2026-08-23):** `feedforward.zarr` was renamed with no
   fallback. Scenes written before the rename need a one-time rename or a re-run:
@@ -641,9 +794,12 @@ Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote/sources.py`): `/semantics/*
 scene root (raw 2D patch maps, regenerable from frames + extractor — note the leading slash,
 which is what keeps `<backend>/semantics/**` in the push), the source video, which the remote
 driver fetches into the very scene dir it later pushes and which already lives in
-`environments-curated`, and the two COLMAP match databases — `<backend>/colmap/database.db`
-(removed geometric verification, still on older scenes) and `<backend>/colmap/instantsfm.db` (instantsfm SIFT), both rebuildable local
-artifacts. The scene-root `images/` store **is** pushed — it is the sole persistent keyframe
+`environments-curated`, and the COLMAP match databases — `<backend>/colmap/database.db`
+(removed geometric verification, still on older scenes), `<backend>/colmap/instantsfm.db` (instantsfm SIFT),
+`<backend>/colmap/colmap.db` (colmap SIFT) and
+`<backend>/colmap/hloc/` (hloc features, matches, pairs and mapper DB), all rebuildable local
+artifacts; the
+`colmap/sparse/0` model each sfm backend writes is pushed. The scene-root `images/` store **is** pushed — it is the sole persistent keyframe
 store, so localization or a correspondence plot against a published scene works directly,
 with no re-decode of the curated video.
 
@@ -662,10 +818,10 @@ nothing writes one any more, so a stock file_path-keyed dataparser still needs i
 first. Downstream consumers get `sparse_pc.ply` + the mesh + the features + the raw COLMAP
 binaries, and read poses via `pycolmap`.
 
-#### Splats train from the published COLMAP + images/
+#### Splats train from the published pointcloud.zarr + images/
 
-`--stages splats` pulls a processed scene and trains directly on `colmap/` poses + points and
-the scene-root `images/` store — no transforms.json round-trip. Every `splats/` artifact is in
+`--stages splats` pulls a processed scene and trains directly on `pointcloud.zarr` poses + points
+(full-res `intrinsics`) and the scene-root `images/` store — no transforms.json round-trip. Every `splats/` artifact is in
 the COLMAP world frame; nothing is normalised. `mesh` fuses `pointcloud.zarr` by default;
 `mesh.source: splats` fuses the renders instead (alpha as confidence, poses as rendered).
 

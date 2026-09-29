@@ -10,9 +10,8 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from transformers import AutoModel
 
+from collab_splats.semantics.features.base import BaseQueryableExtractor
 from collab_splats.utils.torch_utils import get_device
-
-from .base import BaseQueryableExtractor
 
 
 @BaseQueryableExtractor.register("talk2dino")

@@ -1,11 +1,13 @@
+from pathlib import Path
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 import torch
 import torch.nn as nn
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-from collab_splats.pointcloud.feedforward import VGGTXCreator, BaseFeedforwardCreator, FeedforwardResult
+
 from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator, VGGTXCreator
 
 
 def test_vggtx_defaults():
@@ -20,7 +22,7 @@ def test_vggtx_is_feedforward_creator():
 def test_vggtx_missing_image_dir_raises(tmp_path):
     c = VGGTXCreator()
     with pytest.raises(FileNotFoundError):
-        c.reconstruct(tmp_path / "nonexistent", tmp_path / "out")
+        c.create_pointcloud(tmp_path / "nonexistent", tmp_path / "out", tmp_path / "model")
 
 
 @pytest.mark.gpu
@@ -34,10 +36,9 @@ def test_vggtx_reconstruct_smoke(tmp_path):
         PILImage.fromarray(arr).save(image_dir / f"frame_{i:04d}.jpg")
 
     c = VGGTXCreator()
-    result = c.reconstruct(image_dir, tmp_path / "out")
+    result = c.create_pointcloud(image_dir, tmp_path / "out", tmp_path / "model")
     assert isinstance(result, PointcloudResult)
-    assert (tmp_path / "out" / "sparse_pc.ply").exists()
-    assert (tmp_path / "out" / "colmap" / "sparse" / "0" / "cameras.bin").exists()
+    assert (tmp_path / "model" / "cameras.bin").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ def test_vggtx_extract_intermediate_features_hook_removed_on_error():
     creator.model = mock_model
 
     with pytest.raises(RuntimeError, match="simulated forward failure"):
-        creator.extract_intermediate_features(torch.zeros(2, 3, 16, 16))
+        creator.extract_intermediate_features(torch.zeros(2, 3, 16, 16), layer_index=-1)
     assert len(qkv._forward_hooks) == 0
 
 
@@ -171,79 +172,36 @@ def test_patch_vggtx_compute_similarity_deleted():
     ), "_patch_vggtx_compute_similarity still exists — delete it and its _load_model call"
 
 
-def test_unproject_and_filter_points_extra_mask():
-    """extra_mask=False pixels are excluded from the output."""
-    import numpy as np
-    from collab_splats.pointcloud.feedforward.vggtx import unproject_and_filter_points
+def _postprocessed_outputs():
+    """
+    VGGTXCreator._postprocess on a seeded scene with a rotated, translated camera.
 
-    N, H, W = 2, 4, 4
-    depth = np.ones((N, H, W, 1), dtype=np.float32)
-    depth_conf = np.ones((N, H, W), dtype=np.float32)
-    images = np.zeros((N, 3, H, W), dtype=np.float32)
-    extrinsic = np.stack([np.eye(4)[:3, :]] * N).astype(np.float32)
-    intrinsic = np.stack([np.eye(3)] * N).astype(np.float32)
-
-    # Without extra_mask: all pixels survive (conf_threshold=0.0)
-    pts_all, _, _ = unproject_and_filter_points(depth, depth_conf, images, extrinsic, intrinsic, conf_threshold=0.0)
-
-    # extra_mask zeros out frame 0 completely
-    extra_mask = np.ones((N, H, W), dtype=bool)
-    extra_mask[0] = False
-    pts_masked, _, _ = unproject_and_filter_points(
-        depth,
-        depth_conf,
-        images,
-        extrinsic,
-        intrinsic,
-        conf_threshold=0.0,
-        extra_mask=extra_mask,
+    - identity poses would make both unprojection paths bit-identical and hide an ulp mismatch
+    """
+    N, H, W = 2, 6, 8
+    rng = np.random.default_rng(0)
+    angle = 0.3
+    rotation = np.array(
+        [[np.cos(angle), -np.sin(angle), 0.0], [np.sin(angle), np.cos(angle), 0.0], [0.0, 0.0, 1.0]]
     )
-
-    assert len(pts_masked) < len(
-        pts_all
-    ), f"Expected fewer points with extra_mask; got {len(pts_masked)} vs {len(pts_all)}"
-    # Frame 0 masked → only frame 1's H*W points survive
-    assert len(pts_masked) == H * W, f"Expected {H*W}, got {len(pts_masked)}"
-
-
-def test_vggtx_use_multiview_confidence_calls_compute_fn(tmp_path):
-    """VGGTXCreator with use_multiview_confidence=True calls compute_multiview_depth_confidence."""
-    import numpy as np
-    from unittest.mock import patch
-    from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
-
-    N, H, W = 2, 4, 4
+    extrinsic = np.stack([np.hstack([rotation, [[0.1], [-0.2], [0.3]]])] * N).astype(np.float32)
+    intrinsic = np.stack([[[7.3, 0.0, 3.9], [0.0, 6.1, 2.7], [0.0, 0.0, 1.0]]] * N).astype(np.float32)
     raw_outputs = {
-        "depth": np.ones((N, H, W, 1), dtype=np.float32),
+        "depth": rng.uniform(0.5, 3.0, (N, H, W, 1)).astype(np.float32),
         "depth_conf": np.ones((N, H, W), dtype=np.float32),
         "images": np.zeros((N, 3, H, W), dtype=np.float32),
-        "extrinsic": np.stack([np.eye(4)[:3, :]] * N).astype(np.float32),
-        "intrinsics": np.eye(3, dtype=np.float32)[np.newaxis].repeat(N, axis=0),
-        "intrinsics_downsampled": np.eye(3, dtype=np.float32)[np.newaxis].repeat(N, axis=0),
+        "extrinsic": extrinsic,
+        "intrinsics": intrinsic,
     }
 
-    creator = VGGTXCreator(use_multiview_confidence=True, min_views=1)
-    creator.image_paths = [tmp_path / f"{i:06d}.jpg" for i in range(N)]
-    creator.original_coords = np.zeros((N, 6), dtype=np.float32)
-    creator.views = None
+    creator = VGGTXCreator(conf_threshold=0.0)
+    creator.image_paths = [Path(f"{i:06d}.jpg") for i in range(N)]
+    creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (N, 1))  # full-frame box
+    return creator._postprocess(raw_outputs)
 
-    from collab_splats.pointcloud.feedforward.base import MultiviewConfidence
 
-    mv_conf_ones = MultiviewConfidence(
-        ratio=np.ones((N, H, W), dtype=np.float32),
-        inlier_count=np.ones((N, H, W), dtype=np.int32),
-        valid_count=np.ones((N, H, W), dtype=np.int32),
-        judged=np.ones(N, dtype=bool),
-    )
-
-    with patch(
-        "collab_splats.pointcloud.feedforward.vggtx.compute_multiview_depth_confidence",
-        return_value=mv_conf_ones,
-    ) as mock_mv:
-        result = creator._postprocess(raw_outputs)
-
-    mock_mv.assert_called_once()
-    called_depth = mock_mv.call_args[0][0]
-    assert called_depth.shape == (N, H, W), f"Expected ({N},{H},{W}), got {called_depth.shape}"
-    assert result is not None
-    assert len(result.points) > 0
+def test_points_are_rows_of_the_world_grid():
+    out = _postprocessed_outputs()
+    grid = out.world_points.reshape(-1, 3)
+    assert len(out.points) > 0
+    assert {tuple(p) for p in out.points} <= {tuple(p) for p in grid}

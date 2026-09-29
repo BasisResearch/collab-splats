@@ -1,7 +1,9 @@
-"""MapAnything feedforward backend: inference utilities and creator.
+"""
+MapAnything feedforward backend: metric depth and camera poses in one forward pass.
 
-Provides:
-  MapAnythingCreator — feedforward creator using MapAnything depth + pose estimation
+- crop box and mask follow https://github.com/facebookresearch/map-anything @ c845b8f
+- crop box: mapanything/utils/cropping.py:193, 231-240, 441-447
+- upstream mask: mapanything/utils/inference.py:401-402
 """
 
 from __future__ import annotations
@@ -12,17 +14,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-
-# timm 0.6.x compat: uniception (mapanything dep) imports `from timm.layers import DropPath`
-# which does not exist in timm<0.9. Re-export it from timm.models.layers before the import.
-import timm.layers as _tl
-import timm.models.layers as _tml
 import torch
-from vggt.utils.helper import randomly_limit_trues
-
-if not hasattr(_tl, "DropPath"):
-    _tl.DropPath = _tml.DropPath
-del _tl, _tml
+from PIL import Image
 
 from mapanything.models import MapAnything
 from mapanything.utils.image import load_images
@@ -32,71 +25,21 @@ from mapanything.utils.inference import (
     validate_input_views_for_inference,
 )
 
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
-
-from .base import (
+from collab_splats.geometry.transforms import invert_poses
+from collab_splats.pointcloud.feedforward.base import (
     BaseFeedforwardCreator,
-    FeedforwardResult,
-    _mv_result_fields,
-    compute_multiview_depth_confidence,
-    console,
-    frames_as_pil_source,
-    multiview_mask,
+    capture_qk,
+    center_crop_coords,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# ── Inference utilities ────────────────────────────────────────────────────────
+########################################################################
+# Constants
+########################################################################
 
-
-def _reproject_mapanything(
-    raw_outputs: list[dict],
-    extrinsics_3x4: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Re-project MapAnything camera-frame points to world frame using given extrinsics.
-
-    Args:
-        raw_outputs:    list[dict] from _forward(); each dict contains pts3d_cam,
-                        mask, depth_z, img_no_norm (float32, unmasked).
-        extrinsics_3x4: (N, 3, 4) world-to-camera matrices.
-
-    Returns:
-        (pts3d, colors) — (P, 3) float32 world-space points and (P, 3) uint8 RGB.
-    """
-    all_pts: list[np.ndarray] = []
-    all_colors: list[np.ndarray] = []
-
-    for i, pred in enumerate(raw_outputs):
-        # Extract camera-frame points and validity components
-        pts3d_cam = pred["pts3d_cam"][0].cpu().numpy()  # (H, W, 3)
-        mask = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)  # (H, W)
-        depth_z = pred["depth_z"][0].squeeze(-1).cpu().numpy()  # (H, W)
-
-        # Combine validity mask with positive-depth check
-        combined_mask = mask & (depth_z > 0)
-
-        # Refined world2cam → cam2world for re-projection into world frame
-        ext_4x4 = extrinsics_to_homogeneous(extrinsics_3x4[i])  # (4, 4)
-        cam2world = invert_poses(ext_4x4)  # (4, 4)
-
-        # Apply mask and transform camera-frame points to world frame
-        pts_flat = pts3d_cam[combined_mask]  # (K, 3)
-        pts_world = (cam2world[:3, :3] @ pts_flat.T + cam2world[:3, 3:]).T  # (K, 3)
-
-        # Extract colors for surviving pixels
-        img_no_norm = pred["img_no_norm"][0].cpu().numpy()  # (H, W, 3)
-        colors = (img_no_norm[combined_mask] * 255).astype(np.uint8)  # (K, 3)
-
-        all_pts.append(pts_world.astype(np.float32))
-        all_colors.append(colors)
-
-    return np.concatenate(all_pts, axis=0), np.concatenate(all_colors, axis=0)
-
-
-# ── Creator ───────────────────────────────────────────────────────────────────
-
-# Maps our public resize_mode values to mapanything's load_images resize_mode strings
+# Map our resize_mode names to the names MapAnything's image loader uses
 _MA_RESIZE_MODE_MAP: dict[str, str] = {
     "fixed": "fixed_mapping",
     "longest_side": "longest_side",
@@ -104,541 +47,226 @@ _MA_RESIZE_MODE_MAP: dict[str, str] = {
 }
 
 
-def _mapanything_crop_coords(frame_hw: list[tuple[int, int]], model_w: int, model_h: int) -> np.ndarray:
-    """
-    Crop box of MapAnything's loader per frame, in original pixels.
-
-    - upstream: facebookresearch/map-anything @ c845b8f, mapanything/utils/cropping.py:231-240
-      (scale = max(target / size) + 1e-8, floored resize) and :441-447 (centered crop)
-    - force=True upstream (cropping.py:193): smaller frames are upscaled, never left as-is
-    - box arithmetic follows upstream's intrinsics-derived scale (max(target / size) + 1e-8,
-      the same scale `camera_matrix_of_crop` uses), not PIL's per-axis pixel ratio rw / w —
-      the two differ by at most a few px at 4K
-
-    Args:
-        frame_hw: (height, width) of each original frame.
-        model_w: model grid width.
-        model_h: model grid height.
-
-    Returns:
-        (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h].
-    """
-    rows = []
-    for h, w in frame_hw:
-        # Resize so the image covers the target, as upstream does
-        scale = max(model_w / w, model_h / h) + 1e-8
-        rw, rh = int(np.floor(w * scale)), int(np.floor(h * scale))
-
-        # Centered crop on the resized grid, mapped back to original pixels
-        left, top = (rw - model_w) // 2, (rh - model_h) // 2
-        rows.append([left / scale, top / scale, (left + model_w) / scale, (top + model_h) / scale, w, h])
-    return np.array(rows, dtype=np.float32)
+########################################################################
+# Creator
+########################################################################
 
 
+@BaseFeedforwardCreator.register("mapanything")
 @dataclass
 class MapAnythingCreator(BaseFeedforwardCreator):
     """
-    Pointcloud via MapAnything feedforward depth + pose estimation.
+    Pointcloud from MapAnything's per-image metric depth and camera poses.
 
-    - Facebook's MapAnything predicts per-image depth maps and camera poses jointly
-    - one forward pass, no SfM
+    - one forward pass predicts depth and poses for all frames jointly
+    - the multiview mask is ANDed with upstream's confidence mask, never swapped for it
 
     Attributes:
-        model_name:               HuggingFace model ID to load via
-                                  ``MapAnything.from_pretrained``.
-        confidence_percentile:    Percentile threshold (0–100) applied to the learned
-                                  model confidence. Always applied, including when
-                                  ``use_multiview_confidence=True``.
-        use_multiview_confidence: When True, ANDs a geometric cross-view depth
-                                  consistency mask onto the learned-confidence mask.
-        mv_conf_abs_thresh:       Absolute depth tolerance (meters) passed to
-                                  ``compute_multiview_depth_confidence`` when
-                                  ``use_multiview_confidence=True``. Calibrated
-                                  for MapAnything metric depth scale.
-        mv_conf_rel_thresh:       Relative depth tolerance (fraction of expected
-                                  depth) passed to the same function.
-        min_views:                Minimum number of other views that must agree to
-                                  keep a pixel (default 1 = keep any pixel with ≥1
-                                  agreeing view, matching upstream).
-        minibatch_size:           Number of images processed per inference step.
-                                  Reduce if running out of GPU memory.
-        resize_mode:              Image resize strategy for ``load_images``.
-                                  ``"fixed"`` (default): auto-selects the best HxW from a
-                                  lookup table of patch-size-compatible resolutions based on
-                                  the batch's average aspect ratio. ``resolution`` selects
-                                  the lookup table (518 = DINOv2-aligned, 512 = ViT).
-                                  ``"longest_side"``: resize so the longest side equals
-                                  ``resolution`` px, preserving aspect ratio. Use when GPU
-                                  memory is constrained.
-                                  ``"square"``: resize all images to ``resolution × resolution``.
-        resolution:               Lookup-table selector for ``"fixed"`` (518 or 512); target
-                                  size in pixels for ``"longest_side"`` and ``"square"``.
-
-    - mv confidence and the learned percentile are INTERSECTED, not substituted: upstream
-      swaps learned confidence for the mv ratio (mapanything/utils/inference.py:401-402),
-      we AND both filters, which is strictly more conservative
-    - never reintroduce a percentile threshold on the mv output: mv confidence is a
-      quantized inlier ratio k/N, so most pixels sit exactly at 1.0 when views agree,
-      ``torch.quantile`` collapses to 1.0 for any percentile above that atom, and a strict
-      ``conf > threshold`` then drops every pixel including those at 1.0
-    - ``min_views`` thresholds the integer count instead, which is where the discreteness
-      actually lives; ``min_views=1`` == the old ``mv_conf_threshold=0.0``
+        model_name: HuggingFace id for MapAnything.from_pretrained.
+        confidence_percentile: learned-confidence percentile cutoff (0-100), always applied.
+        min_views: other views that must agree to keep a pixel; 0 is off.
+        mv_rel_thresh: depth tolerance as a fraction of the expected depth.
+        minibatch_size: views per inference step; lower it on OOM.
+        resize_mode: "fixed" (aspect-ratio lookup table), "longest_side" or "square".
+        resolution: lookup-table size for "fixed" (518 or 512); target px otherwise.
     """
 
-    # MapAnything info_sharing blocks have no special tokens (no camera/register
-    # tokens prepended). token_offset must be 0 — not 5 as the VGGT default.
+    # MapAnything adds no extra tokens before the image tokens in its attention blocks
     _lc_token_offset: ClassVar[int] = 0
-    # LC verify calibration — chess d5 clean-negative sweep, 2026-07-10
-    # - 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers > half scene
-    #   diameter apart AND viewing dirs > 90°, seed 42), all 16 self_attention_blocks
-    #   hooked in one forward per pair
-    # - layer 4 CONFIRMED best: AUC 1.000, positives min 1.4741, negatives max 1.4405
-    # - threshold = midpoint 1.46 (margins +0.014 pos / -0.020 neg, narrow but zero overlap)
-    # - the old 1.65 (positives-only formula) rejected 9/21 true loops
-    # - MapAnything cross-frame attention peaks early (~25% depth), unlike VGGT models
+
+    # Loop-closure settings tuned for this model (see docs/parity.md)
     default_verify_match_ratio: ClassVar[float] = 1.46
     _lc_layer_index: ClassVar[int] = 4
 
     model_name: str = "facebook/map-anything"
     confidence_percentile: float = 35.0
-    use_multiview_confidence: bool = True
-    # MapAnything depth is metric, so a 2 cm absolute floor is meaningful here and only here.
-    mv_conf_abs_thresh: float = 0.02
-    mv_conf_rel_thresh: float = 0.02
-    # K=1 is exactly the old mv_conf_threshold=0.0, preserving shipping behavior
-    # - the Step D sweep leaves it alone deliberately
-    # - MapAnything gains least from mv of the three swept backbones (out10 −4% even at K=16)
-    # - tightening here would cost parity for nothing
-    # - the VGGT-family creators carry the calibrated rel=0.01, K=2 instead
-    min_views: int = 1
     minibatch_size: int = 1
     resize_mode: str = "fixed"  # "fixed" (aspect-ratio lookup table), "longest_side", "square"
-    resolution: int = 518  # resolution_set= for "fixed"; size= for "longest_side"/"square"
+    resolution: int = 518  # lookup-table size for "fixed", target size in pixels otherwise
+
+    # The full sequence of views, prepared for the model by _preprocess
     _processed_views: Any = field(default=None, init=False, repr=False)
-    _lc_window_views: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """
+        Reject an unknown resize_mode.
+        """
         if self.resize_mode not in _MA_RESIZE_MODE_MAP:
             raise ValueError(f"resize_mode must be one of {sorted(_MA_RESIZE_MODE_MAP)}, got {self.resize_mode!r}")
 
     def _load_model(self, device: str) -> Any:
-        # Load pretrained model, move to device, set eval mode
+        """
+        Load the pretrained HuggingFace model in eval mode.
+        """
         model = MapAnything.from_pretrained(self.model_name)
         model = model.to(device)
         model.eval()
+
         return model
 
-    def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
-        # Stable synthetic labels — no files on disk; the store/decoder is the sole IO path
-        image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
+    def _preprocess(self, paths: list[Path]) -> tuple[Any, np.ndarray]:
+        """
+        Load frames as MapAnything view dicts and keep a model-ready copy on CPU.
 
-        # Run MapAnything's loader in-memory, bit-identical to a path load
-        # - .png names satisfy load_images' extension check while PIL.Image.open is intercepted
-        # - our public resize_mode maps to load_images' upstream name, resolution to its own kwarg
-        loader_names = [f"{p.name}.png" for p in image_paths]
+        - returns (views, original_coords): view dicts and (N, 6) float32 crop boxes
+        - crop boxes ignore EXIF orientation; frame-store PNGs carry none
+        """
+        # Load and resize the frames with MapAnything's own loader
+        loader_paths = [str(p) for p in paths]
         upstream_mode = _MA_RESIZE_MODE_MAP[self.resize_mode]
-        with frames_as_pil_source(frames):
-            if self.resize_mode == "fixed":
-                views = load_images(
-                    loader_names,
-                    resize_mode=upstream_mode,
-                    resolution_set=self.resolution,
-                )
-            else:
-                views = load_images(
-                    loader_names,
-                    resize_mode=upstream_mode,
-                    size=self.resolution,
-                )
+
+        if self.resize_mode == "fixed":
+            views = load_images(loader_paths, resize_mode=upstream_mode, resolution_set=self.resolution)
+        else:
+            views = load_images(loader_paths, resize_mode=upstream_mode, size=self.resolution)
+
         model_h: int = views[0]["img"].shape[-2]
         model_w: int = views[0]["img"].shape[-1]
 
-        # Crop box in original pixels, reproducing load_images' resize-then-center-crop
-        original_coords = _mapanything_crop_coords([f.shape[:2] for f in frames], model_w, model_h)
+        # Compute each frame's crop box the same way MapAnything's loader resizes and crops it
+        rows = []
 
-        # Validate views against MapAnything's input requirements, then convert
-        # - target is the internal format model.forward() expects (ray directions,
-        #   metric scale, etc.)
-        # - kept on CPU here; transferred to the model device in _forward
+        for p in paths:
+            w, h = Image.open(p).size
+            s = max(model_w / w, model_h / h) + 1e-8  # same scale formula as MapAnything's loader
+            resized_wh = (int(w * s), int(h * s))
+            box = center_crop_coords((w, h), resized_wh, (model_w, model_h), (s, s))
+            rows.append(box)
+
+        original_coords = np.array(rows, dtype=np.float32)
+
+        # Check the views and convert them to the model's input format, leaving them on the CPU
         validated = validate_input_views_for_inference(views)
         self._processed_views = preprocess_input_views_for_inference(validated)
 
-        return views, image_paths, original_coords
+        return views, original_coords
 
-    def _forward(self, model: Any, views: Any, **kwargs: Any) -> list[dict]:
+    def _forward(self, model: Any, views: Any) -> dict[str, np.ndarray]:
+        """
+        One MapAnything forward pass, stacked into the base raw dict.
+
+        - full sequence: reuses the preprocessed views, upstream mask applied
+        - loop-closure window: preprocessed here, unmasked
+        """
         device = next(model.parameters()).device
         device_type = device.type
 
-        # Decide whether this call is a full-sequence pass or an LC window slice
-        # - full-sequence: views is self.views (same object, or same length and id as
-        #   _processed_views)
-        # - LC window: a shorter list slice, or a Tensor batch
-        _is_full_sequence = (
-            not isinstance(views, torch.Tensor) and self._processed_views is not None and views is self.views
-        )
+        # Use the cached full-sequence views, or prepare a loop-closure window of views here
+        masked = views is self.views and self._processed_views is not None
 
-        if isinstance(views, torch.Tensor):
-            # LC window path (Tensor): views is a (K, C, H, W) tensor of K frames. Build
-            # fresh MapAnything view dicts and preprocess them for this window only.
-            raw_views = [{"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]} for f in views.cpu()]
-            window_views = preprocess_input_views_for_inference(validate_input_views_for_inference(raw_views))
-            # Transfer window views to model device
-            for view in window_views:
-                for k, v in view.items():
-                    if isinstance(v, torch.Tensor):
-                        view[k] = v.to(device)
-            forward_views = window_views
-            self._lc_window_views = window_views  # consumed by _lc_collate_outputs
-            console.log(f"  → {len(window_views)} images (LC window), minibatch_size={self.minibatch_size}")
-        elif not _is_full_sequence:
-            # LC window path (list): views is a raw-dict slice from self.views
-            # - preprocess the window slice on the fly
-            # - same logic as the Tensor branch, but starting from already-loaded
-            #   load_images dicts instead of raw tensor frames
-            window_views = preprocess_input_views_for_inference(validate_input_views_for_inference(views))
-            # Transfer window views to model device
-            for view in window_views:
-                for k, v in view.items():
-                    if isinstance(v, torch.Tensor):
-                        view[k] = v.to(device)
-            forward_views = window_views
-            self._lc_window_views = window_views  # consumed by _lc_collate_outputs
-            console.log(f"  → {len(window_views)} images (LC window, list), minibatch_size={self.minibatch_size}")
-        else:
-            # Full-sequence path: reuse the already-preprocessed views
-            # - views is the list returned by _preprocess, held in self._processed_views
-            # - they stay on CPU in _preprocess so image loading and validation hold no GPU
-            #   memory; the transfer to the model device happens here
-            for view in self._processed_views:
-                for k, v in view.items():
-                    if isinstance(v, torch.Tensor):
-                        view[k] = v.to(device)
+        if masked:
+            self._processed_views = _views_to(self._processed_views, device)
             forward_views = self._processed_views
-            console.log(f"  → {len(self._processed_views)} images, minibatch_size={self.minibatch_size}")
+            logger.debug("  → %d images, minibatch_size=%d", len(forward_views), self.minibatch_size)
+        else:
+            window = preprocess_input_views_for_inference(validate_input_views_for_inference(views))
+            forward_views = _views_to(window, device)
+            logger.debug("  → %d images (LC window), minibatch_size=%d", len(forward_views), self.minibatch_size)
 
-        # bf16 autocast scoped to model forward only; postprocessing requires float32
-        # to avoid F.grid_sample dtype mismatch (torch 2.4 enforces strict matching).
+        # Run the model in bfloat16 on the GPU, while postprocessing later stays in float32
         with torch.no_grad():
             with torch.autocast(device_type, dtype=torch.bfloat16, enabled=(device_type == "cuda")):
-                return model.forward(
+                preds = model.forward(
                     forward_views,
                     memory_efficient_inference=True,
                     minibatch_size=self.minibatch_size,
                 )
 
-    def _lc_collate_outputs(self, raw_list: list[dict]) -> dict:
-        """Aggregate per-frame list[dict] from _forward into flat dict for _run_lc_loop.
+        return self._stack_predictions(preds, forward_views, masked=masked)
 
-        camera_poses and intrinsics only exist after postprocess_model_outputs_for_inference,
-        so we run a minimal postprocess here (apply_mask=False) before reading those keys.
-        bf16 tensors are cast to float32 first, matching _postprocess. Extrinsics are
-        inverted to world-to-cam (3,4) as expected by the LC loop. When present, depth_z/conf
-        are emitted under the shared 'depth'/'depth_conf' keys (with 'intrinsics_downsampled'
-        aliasing the model-resolution intrinsics) so _raw_to_world_points can build submap
-        world points for LC anchor-scale estimation, same grid path as the VGGT backends;
-        when missing, a warning is logged and the geometry keys are omitted.
+    def _stack_predictions(self, preds: list[dict], views: list[dict], *, masked: bool) -> dict[str, np.ndarray]:
         """
-        # Cast bf16 tensors to float32 — postprocess_model_outputs_for_inference calls
-        # F.grid_sample which requires matching dtypes (torch 2.4 strict enforcement).
-        for pred in raw_list:
+        Postprocess predictions upstream's way, then stack them into the base raw dict.
+
+        - masked: upstream's edge and confidence mask is stored under "mask"
+        - extrinsic is (N, 3, 4) w2c; images are (N, 3, H, W) RGB in [0, 1]
+        """
+        # Convert the bfloat16 pointmaps to float32 so MapAnything's postprocessing can use them
+        for pred in preds:
             pred["pts3d_cam"] = pred["pts3d_cam"].float()
             pred["pts3d"] = pred["pts3d"].float()
 
-        # Minimal postprocess to populate the camera_poses and intrinsics keys
-        # - apply_mask=False: LC needs poses only, not masked point clouds
-        # - uses the window-specific views stored by _forward (Tensor branch), so the view
-        #   context matches the actual window frames, not the first-K of the full sequence
-        if self._lc_window_views is None:
-            raise RuntimeError(
-                "_lc_window_views is None in _lc_collate_outputs — "
-                "_forward Tensor branch must be called before collation"
+        # Let MapAnything's postprocessing compute camera poses and intrinsics
+        if masked:
+            processed = postprocess_model_outputs_for_inference(
+                preds,
+                views,
+                apply_mask=True,
+                mask_edges=True,
+                apply_confidence_mask=True,
+                confidence_percentile=self.confidence_percentile,
             )
-        views_ctx = self._lc_window_views
-        self._lc_window_views = None  # clear after use
-        processed = postprocess_model_outputs_for_inference(
-            raw_list,
-            views_ctx,
-            apply_mask=False,
-        )
-
-        # Invert cam2world → world2cam (3,4) as expected by the LC loop
-        exts = np.stack([invert_poses(p["camera_poses"][0].cpu().float().numpy())[:3, :4] for p in processed])
-        intrs = np.stack([p["intrinsics"][0].cpu().float().numpy() for p in processed])
-
-        # Emit depth + confidence under the shared keys _raw_to_world_points consumes
-        # - depth is at model resolution (= frame resolution), so one K describes both
-        # - matches the VGGT-family convention where 'intrinsics_downsampled' is the
-        #   depth grid's K
-        out = {
-            "extrinsic": exts,
-            "intrinsics": intrs,
-            "intrinsics_downsampled": intrs,
-        }
-        # Per-pixel RGB from the postprocessed denormalized image
-        # - the window's 'img' is dinov2/ImageNet-normalized (~[-2.1, 2.6]), unusable as color
-        # - img_no_norm is [0, 1] at model (= depth) resolution, added by
-        #   postprocess_model_outputs_for_inference, which respects each view's data_norm_type
-        # - same source _postprocess/_reproject use
-        # - the wrapper prefers these over its frame-tensor color heuristic when present
-        out["colors"] = np.stack(
-            [(p["img_no_norm"][0].cpu().float().numpy() * 255.0).astype(np.uint8) for p in processed]
-        )
-        # Postprocess variants may omit depth_z/conf
-        # - warn and omit the geometry keys, same posture as the LC-side pts3d handling
-        # - LC still runs; anchor/sequential scale then falls back without submap points
-        if all("depth_z" in p and "conf" in p for p in processed):
-            out["depth"] = np.stack([p["depth_z"][0].cpu().float().numpy() for p in processed])
-            out["depth_conf"] = np.stack([p["conf"][0].cpu().float().numpy() for p in processed])
         else:
-            logger.warning(
-                "depth_z/conf missing from postprocessed LC window outputs — submap "
-                "world_points unavailable; LC anchor/sequential scale falls back"
-            )
-        return out
+            processed = postprocess_model_outputs_for_inference(preds, views, apply_mask=False)
 
-    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
-        model_h: int = self._processed_views[0]["img"].shape[-2]
-        model_w: int = self._processed_views[0]["img"].shape[-1]
+        # Stack each view's outputs into arrays, turning camera-to-world poses into world-to-camera
+        raw = {
+            "extrinsic": np.stack([invert_poses(p["camera_poses"][0].cpu().float().numpy())[:3] for p in processed]),
+            "intrinsics": np.stack([p["intrinsics"][0].cpu().float().numpy() for p in processed]),
+            "depth": np.stack([p["depth_z"][0].cpu().float().numpy() for p in processed]),
+            "depth_conf": np.stack([p["conf"][0].cpu().float().numpy() for p in processed]),
+            "images": np.stack([p["img_no_norm"][0].cpu().float().numpy().transpose(2, 0, 1) for p in processed]),
+        }
 
-        # After LC, the per-frame outputs arrive wrapped in a dict with a "_raw_list" key
-        # and an "extrinsic_global_4x4" entry (LC-corrected poses). Unwrap here.
-        lc_corrected_extrinsics: np.ndarray | None = None
-        if isinstance(raw_outputs, dict) and "_raw_list" in raw_outputs:
-            lc_corrected_extrinsics = raw_outputs.get("extrinsic_global_4x4")
-            raw_outputs = raw_outputs["_raw_list"]
+        # Keep MapAnything's valid-pixel mask, but only for the full sequence
+        if masked:
+            raw["mask"] = np.stack([p["mask"][0, ..., 0].cpu().numpy().astype(bool) for p in processed])
 
-        # Cast bf16 tensors to float32 before postprocessing
-        # - model.forward() runs under bf16 autocast
-        # - postprocess_model_outputs_for_inference calls F.grid_sample, which requires
-        #   matching dtypes (torch 2.4 strict enforcement)
-        for pred in raw_outputs:
-            if "pts3d_cam" in pred:
-                pred["pts3d_cam"] = pred["pts3d_cam"].float()
-            if "pts3d" in pred:
-                pred["pts3d"] = pred["pts3d"].float()
+        return raw
 
-        # Always apply the learned confidence mask via percentile; mv_conf applied separately below.
-        processed = postprocess_model_outputs_for_inference(
-            raw_outputs,
-            self._processed_views,
-            apply_mask=True,
-            mask_edges=True,
-            apply_confidence_mask=True,
-            confidence_percentile=self.confidence_percentile,
-        )
-
-        # Build per-frame masks + point/color grids in one pass
-        # - mirrors the VGGTX conf_mask pattern
-        # - pred["mask"] has non_ambiguous + edge masking baked in
-        # - use_multiview_confidence=True additionally applies mv_conf > 0, keeping pixels
-        #   verified by >= 1 other view
-        masks, pts3d_grid, colors_grid = [], [], []
-        images_list, conf_list, depth_list = [], [], []
-        extrinsics_list, intrinsics_list = [], []
-
-        for pred in processed:
-            m = pred["mask"][0].squeeze(-1).cpu().numpy().astype(bool)  # (H, W)
-            if m.ndim == 3:
-                m = m.squeeze(0)  # drop batch dim
-            dz = pred["depth_z"][0].squeeze(-1).cpu().numpy()  # (H, W)
-            if dz.ndim == 3:
-                dz = dz.squeeze(0)
-            valid = m & (dz > 0)
-            masks.append(valid)
-            depth_list.append(dz)
-            pts3d_v = pred["pts3d"][0].cpu().numpy()  # (H, W, 3)
-            if pts3d_v.ndim == 4:
-                pts3d_v = pts3d_v.squeeze(0)
-            pts3d_grid.append(pts3d_v)
-            img_hw3 = pred["img_no_norm"][0].cpu()  # (H, W, 3)
-            if img_hw3.ndim == 4:
-                img_hw3 = img_hw3.squeeze(0)  # drop batch dim if present
-            colors_grid.append((img_hw3.numpy() * 255).astype(np.uint8))  # (H, W, 3)
-            images_list.append(img_hw3.permute(2, 0, 1))  # (C, H, W)
-            if pred.get("conf") is not None:
-                c = pred["conf"][0]
-                conf_list.append(c[0] if c.ndim == 3 else c)
-            cam2world = pred["camera_poses"][0].cpu().numpy()
-            if cam2world.ndim == 3:
-                cam2world = cam2world.squeeze(0)  # (4, 4)
-            extrinsics_list.append(invert_poses(cam2world)[:3, :4])
-            intr = pred["intrinsics"][0].cpu().numpy()
-            if intr.ndim == 3:
-                intr = intr.squeeze(0)  # (3, 3)
-            intrinsics_list.append(intr)
-
-        combined_mask = np.stack(masks)  # (N, H, W) bool
-        stacked_pts3d = np.stack(pts3d_grid)  # (N, H, W, 3)
-        stacked_colors = np.stack(colors_grid)  # (N, H, W, 3)
-
-        # Apply shared geometric mv_conf filter (replaces upstream use_multiview_confidence path)
-        mv_conf = None
-        if self.use_multiview_confidence:
-            stacked_depth = np.stack(depth_list)  # (N, H, W)
-            stacked_intr = np.stack(intrinsics_list)  # (N, 3, 3)
-            stacked_extr = extrinsics_to_homogeneous(np.stack(extrinsics_list))  # (N, 4, 4) w2c
-            mv_conf = compute_multiview_depth_confidence(
-                stacked_depth,
-                stacked_intr,
-                stacked_extr,
-                depth_masks=combined_mask,
-                abs_thresh=self.mv_conf_abs_thresh,
-                rel_thresh=self.mv_conf_rel_thresh,
-            )
-            combined_mask = multiview_mask(mv_conf, combined_mask, min_views=self.min_views)
-
-        # Apply cross-frame random subsampling — same as VGGTX randomly_limit_trues on conf_mask
-        if int(combined_mask.sum()) > self.max_points:
-            combined_mask = randomly_limit_trues(combined_mask, self.max_points)
-
-        pts3d = stacked_pts3d[combined_mask].astype(np.float32)
-        colors = stacked_colors[combined_mask]
-        pixel_indices = np.stack(np.where(combined_mask), axis=1).astype(np.int32)  # (P, 3)
-
-        _world_points = stacked_pts3d  # full (N, H, W, 3) grid for BA
-        _images = torch.stack(images_list)  # (N, C, H, W)
-        _conf = torch.stack(conf_list) if conf_list else None
-        _depth = np.stack(depth_list).astype(np.float32)  # (N, H, W) depth_z values
-        extrinsics = np.stack(extrinsics_list)  # (N, 3, 4)
-        intrinsics = np.stack(intrinsics_list)  # (N, 3, 3)
-
-        # Convert extrinsics to 4×4 homogeneous form
-        extrinsics_4x4 = extrinsics_to_homogeneous(extrinsics)
-
-        # LC path: override model-predicted extrinsics with pose-graph-corrected poses.
-        # lc_corrected_extrinsics is (N, 4, 4) world-to-cam; use only if shape matches.
-        if lc_corrected_extrinsics is not None:
-            if lc_corrected_extrinsics.shape[0] == extrinsics_4x4.shape[0]:
-                extrinsics_4x4 = lc_corrected_extrinsics
-
-        return FeedforwardResult(
-            points=pts3d,
-            colors=colors,
-            pixel_indices=pixel_indices,
-            extrinsics=extrinsics_4x4,
-            intrinsics=intrinsics,
-            image_paths=self.image_paths,
-            original_coords=self.original_coords,
-            model_width=model_w,
-            model_height=model_h,
-            images=_images,
-            confidence=_conf,
-            world_points=_world_points,
-            depth=_depth,
-            **_mv_result_fields(mv_conf),
-        )
-
-    def extract_intermediate_features(
-        self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
-    ) -> dict[str, Any]:
+    def extract_intermediate_features(self, frames: torch.Tensor, layer_index: int) -> dict[str, Any]:
         """
-        Hook info_sharing.self_attention_blocks[layer_index].attn.qkv on a 2-frame forward.
+        Attention q/k from one cross-frame block, plus poses and pointmaps, for a frame pair.
 
-        - wraps the 2 input frames into MapAnything's view format and runs one forward with a
-          per-call hook on the cross-frame self-attention block
-        - the forward's predictions are kept and postprocessed via the _lc_collate_outputs recipe
-          (postprocess -> camera_poses -> invert), so _verify_loop_candidate gets fresh w2c poses
-          without a second forward
-        - the hook is removed in a finally block, so a raising forward still cleans up; no
-          persistent state is left on the model or its layers
+        - one forward pass gives both the attention and the predictions
+        - poses are w2c; frame 0 sits at identity
 
         Args:
-            frames:      (2, C, H, W) preprocessed frames on CPU or GPU.
-            layer_index: Which self_attention_block to tap. -1 = last.
-            **kwargs:    minibatch_size (int, default 1), memory_efficient_inference (bool,
-                         default False).
+            frames: (2, C, H, W) preprocessed frames on CPU or GPU.
+            layer_index: info_sharing self-attention block to tap; -1 = last.
 
         Returns:
-            dict with "q" and "k" (B, heads, N_tokens, head_dim) projections and "poses"
-            (2, 4, 4) float32 w2c extrinsics. "world_points" (2, H, W, 3) and "conf" (2, H, W)
-            are present when the postprocessed output exposes pts3d / conf.
+            {"q", "k": (B, heads, N_tokens, head_dim), "poses": (2, 4, 4) float32 w2c,
+            "world_points": (2, H, W, 3), "conf": (2, H, W)}.
         """
-        minibatch_size = kwargs.get("minibatch_size", 1)
-        memory_efficient = kwargs.get("memory_efficient_inference", False)
+        # Record the attention queries and keys of the chosen block during one forward pass
+        attn = self.model.info_sharing.self_attention_blocks[layer_index].attn
 
-        # Register a per-call hook on the QKV projection of the chosen block
-        block = self.model.info_sharing.self_attention_blocks[layer_index]
-        C_nh = block.attn.num_heads
-        captured: dict[str, torch.Tensor] = {}
+        with capture_qk(attn.qkv, attn.num_heads) as captured, torch.no_grad():
+            # Wrap each frame as a MapAnything view dict using the loader's dinov2 normalization
+            raw_views = [{"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]} for f in frames.cpu()]
 
-        def _hook(module, _inp, out):
-            # out: (B, N, 3*C) — split into q/k/v, reshape to (B, heads, N, head_dim)
-            B, N, C3 = out.shape
-            hd = (C3 // 3) // C_nh
-            qkv = out.detach().reshape(B, N, 3, C_nh, hd).permute(2, 0, 3, 1, 4)
-            captured["q"], captured["k"] = qkv[0], qkv[1]
+            # Views are built from CPU frames, so move them to the model device
+            views = _views_to(preprocess_input_views_for_inference(raw_views), next(self.model.parameters()).device)
+            preds = self.model.forward(views, memory_efficient_inference=False, minibatch_size=1)
 
-        hook = block.attn.qkv.register_forward_hook(_hook)
-        try:
-            with torch.no_grad():
-                # Wrap frames into MapAnything's {"img": (1,C,H,W)} view dicts
-                # - preprocess them, then run a standard forward pass
-                # - "data_norm_type" is required by preprocess_input_views_for_inference
-                # - load_images() defaults to "dinov2" and sets data_norm_type=[norm_type]
-                raw_views = [{"img": f.unsqueeze(0), "data_norm_type": ["dinov2"]} for f in frames.cpu()]
-                views = preprocess_input_views_for_inference(raw_views)
-                # Move all tensor values to model device — _forward() does this too;
-                # extract_intermediate_features builds views from CPU frames so must move explicitly.
-                model_device = next(self.model.parameters()).device
-                for view in views:
-                    for vk, vv in view.items():
-                        if isinstance(vv, torch.Tensor):
-                            view[vk] = vv.to(model_device)
-                preds = self.model.forward(
-                    views,
-                    memory_efficient_inference=memory_efficient,
-                    minibatch_size=minibatch_size,
-                )
-        finally:
-            # Always remove the hook — no persistent state left on the model
-            hook.remove()
-
-        # Derive fresh w2c poses from the SAME forward, via the _lc_collate_outputs recipe
-        # - float-cast pointmaps, postprocess (apply_mask=False), then invert camera_poses
-        #   (c2w) to w2c
-        # - frame 0 is at identity (first-frame canonical)
+        # Convert pointmaps to float32 and postprocess them, the same as _stack_predictions
         with torch.no_grad():
             for pred in preds:
                 pred["pts3d_cam"] = pred["pts3d_cam"].float()
                 pred["pts3d"] = pred["pts3d"].float()
+
             processed = postprocess_model_outputs_for_inference(preds, views, apply_mask=False)
-        captured["poses"] = np.stack(
-            [invert_poses(p["camera_poses"][0].cpu().float().numpy()) for p in processed]
-        ).astype(
-            np.float32
-        )  # (2, 4, 4) w2c
-        # Pointmaps + confidence are already in the postprocessed output
-        # - include them for LC anchor-scale estimation
-        # - warn loudly if a key is missing: the verify contract tolerates
-        #   world_points=None, but scale then degrades to 1.0
-        if all("pts3d" in p for p in processed):
-            captured["world_points"] = np.stack(
-                [p["pts3d"][0].cpu().float().numpy() for p in processed]
-            )  # (2, H, W, 3)
-        else:
-            logger.warning("LC verify geometry missing pts3d — anchor scale will fall back to 1.0")
-        if all("conf" in p for p in processed):
-            captured["conf"] = np.stack([p["conf"][0].cpu().float().numpy() for p in processed])  # (2, H, W)
+
+        # Turn camera-to-world poses into world-to-camera
+        captured["poses"] = np.stack([invert_poses(p["camera_poses"][0].cpu().float().numpy()) for p in processed])
+
+        # Pointmaps and confidence for loop-closure scale estimation
+        captured["world_points"] = np.stack([p["pts3d"][0].cpu().float().numpy() for p in processed])  # (2, H, W, 3)
+        captured["conf"] = np.stack([p["conf"][0].cpu().float().numpy() for p in processed])  # (2, H, W)
+
         return captured
 
-    def _reproject(
-        self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Re-derive world-space points using bundle-adjusted camera poses.
 
-        MapAnything predicts pts3d_cam (camera-frame XYZ) directly — not a scalar
-        depth map. After BA refines world2cam extrinsics, pts3d (world-frame) is
-        stale because it has the original predicted poses baked in. pts3d_cam is
-        pose-independent, so we transform it with the refined cam2world instead.
+########################################################################
+# Helpers
+########################################################################
 
-        Args:
-            raw_outputs:    list[dict] from _forward(); each dict contains pts3d_cam,
-                            mask, depth_z, img_no_norm (float32, unmasked).
-            extrinsics_3x4: (N, 3, 4) refined world-to-camera matrices from BA.
-            intrinsics:     (N, 3, 3) refined camera intrinsics (unused for point
-                            reprojection; stored in FeedforwardResult by wrapper).
 
-        Returns:
-            (pts3d, colors) — (P, 3) float32 world-space points and (P, 3) uint8 RGB.
-        """
-        return _reproject_mapanything(raw_outputs, extrinsics_3x4)
+def _views_to(views: list[dict[str, Any]], device: torch.device | str) -> list[dict[str, Any]]:
+    """
+    Move every tensor in a list of MapAnything view dicts to `device`.
+
+    - returns new view dicts; non-tensor values pass through
+    """
+    return [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in view.items()} for view in views]

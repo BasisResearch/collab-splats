@@ -1,100 +1,164 @@
 """
-hloc SfM backend: retrieval-gated learned features and matching into COLMAP's mapper.
+hloc incremental SfM: learned features and matches, then pycolmap incremental mapping.
 
-- hloc is a third_party clone, not a locked dependency — imported inside reconstruct
-- unwired — nothing dispatches to HlocCreator, see sfm/__init__.py
+- config: `pointcloud: {method: sfm, backend: hloc}`
+- needs the optional `hloc` extra; install with setup/hloc.sh
+- intermediates under <out_dir>/colmap/hloc/
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..base import BasePointcloudCreator, PointcloudResult
+import pycolmap
+
+from collab_splats.pointcloud.sfm.base import BaseSfmCreator
+from collab_splats.pointcloud.sfm.sift_db import PAIRINGS
 
 logger = logging.getLogger(__name__)
 
+########################################################################
+# Creator
+########################################################################
+
 
 @dataclass
-class HlocCreator(BasePointcloudCreator):
+class HlocCreator(BaseSfmCreator):
     """
-    Pointcloud via hloc: retrieval -> learned features -> learned matching -> COLMAP mapper.
+    Learned-feature incremental SfM via hloc on a scene directory.
 
-    - retrieval_conf: hloc retrieval config key; see `hloc.extract_features.confs`.
-    - feature_conf: hloc local-feature config key; see `hloc.extract_features.confs`.
-    - matcher_conf: hloc matcher config key; see `hloc.match_features.confs`.
-    - Writes the binary model to output_dir/colmap/sparse/0, hloc intermediates to colmap/hloc/.
+    - one shared SIMPLE_RADIAL camera, refined by the mapper
+    - h5 features and matches are reused across runs by hloc itself
+
+    Attributes:
+        pairing: sequential | retrieval | sequential+retrieval | exhaustive.
+        overlap: sequential neighbors per frame.
+        num_retrieved: global-descriptor neighbors per frame when pairing retrieves.
+        retrieval_conf: hloc.extract_features.confs key for global descriptors.
+        feature_conf: hloc.extract_features.confs key for local features.
+        matcher_conf: hloc.match_features.confs key.
     """
 
+    pairing: str = "sequential+retrieval"
+    overlap: int = 10
+    num_retrieved: int = 20
     retrieval_conf: str = "netvlad"
-    feature_conf: str = "superpoint_aachen"
-    matcher_conf: str = "superglue"
+    feature_conf: str = "superpoint_max"
+    matcher_conf: str = "superpoint+lightglue"
 
-    def reconstruct(self, image_dir: Path, output_dir: Path) -> PointcloudResult:
+    def __post_init__(self) -> None:
         """
-        Retrieval-gated learned matching and COLMAP incremental mapping over image_dir.
-
-        Args:
-            image_dir:  Directory of input images; must exist.
-            output_dir: Run directory. The binary model lands in colmap/sparse/0, hloc
-                intermediates in colmap/hloc/.
-
-        Returns:
-            PointcloudResult wrapping the reconstructed model.
-
-        Raises:
-            ImportError: hloc is not installed (a third_party clone, not a locked dependency).
+        Refuse an unknown pairing before any feature extraction.
         """
-        # hloc is a third_party clone, not a locked dependency — import inside the one method
-        # that needs it so the module (and the registry) import without it installed
+        super().__post_init__()
+
+        if self.pairing not in PAIRINGS:
+            raise ValueError(f"pairing must be one of {PAIRINGS}, got {self.pairing!r}")
+
+    def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
+        """
+        Extract, pair, match and map the keyframes with hloc; returns the largest model, in memory.
+        """
+        # Import hloc here so the other backends work without it installed
         try:
             from hloc import (
                 extract_features,
                 match_features,
+                pairs_from_exhaustive,
                 pairs_from_retrieval,
                 reconstruction,
             )
         except ImportError as err:
             raise ImportError(
-                "hloc is not installed — run `bash setup/hloc.sh` to clone and install it"
+                "hloc is not installed — run `bash setup/hloc.sh`, then `uv lock` and `bash setup.sh` "
+                "(the `hloc` extra is an editable path source on third_party/hloc)"
             ) from err
 
-        image_dir, output_dir = Path(image_dir), Path(output_dir)
-        if not image_dir.exists():
-            raise FileNotFoundError(f"image_dir not found: {image_dir}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        sparse_dir = output_dir / "colmap" / "sparse" / "0"
-        hloc_dir = output_dir / "colmap" / "hloc"
+        # Working dir for features, pairs, matches and the mapper
+        hloc_dir = out_dir / "colmap" / "hloc"
         hloc_dir.mkdir(parents=True, exist_ok=True)
 
-        # Retrieval first: O(N) candidate pairs instead of the O(N^2) exhaustive set
-        retrieval_path = extract_features.main(extract_features.confs[self.retrieval_conf], image_dir, hloc_dir)
-        pairs_path = hloc_dir / "pairs.txt"
-        pairs_from_retrieval.main(retrieval_path, pairs_path)
+        # Extract local features for every keyframe
+        feature_conf = extract_features.confs[self.feature_conf]
+        features = extract_features.main(feature_conf, images_dir, hloc_dir, image_list=names)
 
-        # Learned features + matcher over those pairs, then the COLMAP incremental mapper
-        feature_path = extract_features.main(extract_features.confs[self.feature_conf], image_dir, hloc_dir)
-        match_path = match_features.main(
-            match_features.confs[self.matcher_conf],
-            pairs_path,
-            features=feature_path,
-            matches=hloc_dir / "matches.h5",
+        # Build the list of image pairs to match
+        pairs_path = hloc_dir / f"pairs-{self.pairing}.txt"
+
+        if self.pairing == "exhaustive":
+            pairs_from_exhaustive.main(pairs_path, image_list=names)
+        else:
+            # Start with sequential pairs, then add retrieval pairs (hloc removes duplicates)
+            lines = (
+                [f"{a} {b}\n" for a, b in sequential_pairs(names, self.overlap)] if "sequential" in self.pairing else []
+            )
+
+            if "retrieval" in self.pairing:
+                retrieval_conf = extract_features.confs[self.retrieval_conf]
+                descriptors = extract_features.main(retrieval_conf, images_dir, hloc_dir, image_list=names)
+                retrieval_path = hloc_dir / "pairs-retrieval.txt"
+                pairs_from_retrieval.main(
+                    descriptors,
+                    retrieval_path,
+                    num_matched=min(self.num_retrieved, len(names) - 1),  # topk fails if k exceeds the image count
+                    query_list=names,
+                    db_list=names,
+                )
+                lines.append(retrieval_path.read_text())
+
+            pairs_path.write_text("".join(lines))
+
+        # Match features across each image pair
+        matches = match_features.main(
+            match_features.confs[self.matcher_conf], pairs_path, feature_conf["output"], hloc_dir
         )
+
+        # Run incremental mapping in a fresh folder
+        sfm_dir = hloc_dir / "sfm"
+        shutil.rmtree(sfm_dir, ignore_errors=True)  # old model folders would skew the split count below
         recon = reconstruction.main(
-            sfm_dir=sparse_dir,
-            image_dir=image_dir,
-            pairs=pairs_path,
-            features=feature_path,
-            matches=match_path,
+            sfm_dir,
+            images_dir,
+            pairs_path,
+            features,
+            matches,
+            camera_mode=pycolmap.CameraMode.SINGLE,
+            image_list=names,
+            image_options={"camera_model": "SIMPLE_RADIAL"},
+            mapper_options={"num_threads": self.num_threads},
         )
-        if recon is None:
-            raise RuntimeError("reconstruction failed — hloc returned None")
 
-        logger.info("hloc: %d registered images, %d points3D", len(recon.images), len(recon.points3D))
-        image_paths = sorted(
-            [image_dir / img.name for img in recon.images.values()],
-            key=lambda p: p.name,
-        )
-        return PointcloudResult(reconstruction=recon, image_paths=image_paths)
+        if recon is None:
+            raise RuntimeError("hloc produced no model — too little overlap between frames")
+
+        # Warn if the scene split into several separate models
+        models = [p for p in (sfm_dir / "models").iterdir() if p.is_dir()]
+
+        if len(models) > 1:
+            logger.warning("hloc split the scene into %d models — keeping the largest", len(models))
+
+        return recon
+
+
+########################################################################
+# Pair lists
+########################################################################
+
+
+def sequential_pairs(names: list[str], overlap: int) -> list[tuple[str, str]]:
+    """
+    Pair each frame with the next `overlap` frames.
+
+    - same pairs as COLMAP's sequential matcher without quadratic overlap
+
+    Args:
+        names: image names in capture order.
+        overlap: forward neighbors per frame.
+
+    Returns:
+        (earlier, later) pairs, ordered by the earlier frame.
+    """
+    return [(a, b) for i, a in enumerate(names) for b in names[i + 1 : i + 1 + overlap]]

@@ -70,8 +70,8 @@ def main() -> None:
     paths = stage_color_frames(args.seq, staged, args.max_frames)
     logger.info("staged %d frames from %s", len(paths), args.seq)
 
-    creator = CREATORS[args.backend](use_multiview_confidence=False)
-    result = creator.run(staged)
+    creator = CREATORS[args.backend](min_views=0)
+    result = creator.create_pointcloud(staged, args.out)
 
     zarr_path = args.out / "pointcloud.zarr"
     result.save_zarr(zarr_path)

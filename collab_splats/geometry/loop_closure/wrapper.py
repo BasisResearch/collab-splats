@@ -19,18 +19,17 @@ import numpy as np
 import torch
 from rich.console import Console
 from tqdm.auto import tqdm
+
 from vggt.utils.geometry import unproject_depth_map_to_point_map
 
+from collab_splats.geometry.loop_closure.graph import PoseGraph
+from collab_splats.geometry.loop_closure.map import GraphMap
+from collab_splats.geometry.loop_closure.matching import find_loop_closures
+from collab_splats.geometry.loop_closure.submap import Submap
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
 from collab_splats.localization import BaseRetrievalExtractor
-from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.pointcloud.feedforward import FeedforwardResult
+from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.utils import subsample_points
-
-from .graph import PoseGraph
-from .map import GraphMap
-from .matching import find_loop_closures
-from .submap import Submap
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +90,7 @@ class LoopClosure:
     """
     Proxy around a feedforward creator that replaces its inference with the submap LC loop.
 
-    - `run_inference()` is the LC entry point; `reconstruct()` and `run()` call it
+    - `run_inference()` is the LC entry point; `create_pointcloud()` reaches it via _reconstruct
     - every other attribute is forwarded to `base`
     - fewer than submap_size frames, or DINO-SALAD failing to load, falls back to the
       creator's own forward pass
@@ -101,11 +100,7 @@ class LoopClosure:
         from collab_splats.geometry import LoopClosure, LoopClosureConfig
         from collab_splats.pointcloud import get_creator
         lc = LoopClosure(get_creator("vggtx")(), config=LoopClosureConfig())
-        lc.load_model()
-        lc.setup_inference(Path("scene/images"))
-        lc.run_inference()
-        lc.postprocess()
-        result = lc.outputs  # FeedforwardResult
+        result = lc.create_pointcloud(Path("scene/images"), Path("scene/out"))
     """
 
     def __init__(self, base: Any, config: LoopClosureConfig | None = None) -> None:
@@ -121,10 +116,9 @@ class LoopClosure:
 
         # None resolves to the creator's per-model calibration
         if self.config.verify_match_ratio is None:
-            self.config = dataclasses.replace(
-                self.config,
-                verify_match_ratio=base.default_verify_match_ratio,
-            )
+            if base.default_verify_match_ratio is None:
+                raise NotImplementedError(f"{type(base).__name__} sets no default_verify_match_ratio; LC unsupported")
+            self.config = dataclasses.replace(self.config, verify_match_ratio=base.default_verify_match_ratio)
 
         # Scene state (VGGT-SLAM Solver structure): the submap collection + the pose graph
         self.map = GraphMap()
@@ -135,7 +129,7 @@ class LoopClosure:
         self.viz = None
 
         # True once _run_lc_loop has assembled base.outputs from the GraphMap dense cloud
-        # - makes postprocess() a no-op, so base._postprocess does not overwrite it
+        # - _reconstruct then returns it as is, so base._postprocess does not overwrite it
         # - cleared at the start of each _run_lc_loop
         self._lc_assembled: bool = False
 
@@ -187,79 +181,36 @@ class LoopClosure:
         """
         return self.base.raw_outputs
 
-    def reconstruct(self, source: Path, output_dir: Path) -> PointcloudResult:
-        """
-        Full pipeline with loop closure, ending in a COLMAP model.
+    # The base creator's template: postprocess and export around _reconstruct
+    create_pointcloud = BasePointcloudCreator.create_pointcloud
 
-        Args:
-            source: the scene's images/ directory.
-            output_dir: where build_colmap writes its model.
-
-        Returns:
-            The creator's PointcloudResult.
+    def _reconstruct(self, paths: list[Path], out_dir: Path) -> PointcloudResult:
         """
-        # source is the scene's images/ directory — the one keyframe store
-        output_dir = Path(output_dir)
-        self.load_model()
-        self.setup_inference(source)
+        The base creator's steps with the windowed LC forward; the assembled result when LC ran.
+        """
+        self.base.load_model()
+        self.base.setup_inference(paths)
         self.run_inference()
-        self.postprocess()
-        return self.build_colmap(output_dir)
-
-    def run(self, source: Path) -> FeedforwardResult:
-        """
-        Pipeline with loop closure, without COLMAP.
-
-        - the LC output is already one row per frame, so no overlap dedup is needed
-
-        Args:
-            source: the scene's images/ directory.
-
-        Returns:
-            The assembled FeedforwardResult.
-        """
-        self.load_model()
-        self.setup_inference(source)
-        self.run_inference()
-        self.postprocess()
-        return self.base.outputs
-
-    def postprocess(self, *args: Any, **kwargs: Any) -> Any:
-        """
-        Creator postprocess, skipped once the LC loop has assembled outputs.
-
-        - skip flag: see _lc_assembled in __init__
-
-        Args:
-            args: forwarded to base.postprocess.
-            kwargs: forwarded to base.postprocess.
-
-        Returns:
-            None after LC assembly; otherwise base.postprocess's return value.
-        """
         if self._lc_assembled:
-            return None
-        return self.base.postprocess(*args, **kwargs)
+            return self.base.outputs
+        return self.base._postprocess(self.base.raw_outputs)
 
     ####################################################################
     # Inference: LC loop override
     ####################################################################
 
-    def run_inference(self, **kwargs: Any) -> None:
+    def run_inference(self) -> None:
         """
         Run the LC loop, or fall back to the creator's own forward pass.
 
-        - LC loop: sets base.outputs to the assembled FeedforwardResult
+        - LC loop: sets base.outputs to the assembled PointcloudResult
         - fewer than submap_size frames: the creator's run_inference
         - DINO-SALAD fails to load: sets base.raw_outputs only; outputs is not assembled
-
-        Args:
-            kwargs: forwarded to the creator's forward pass.
         """
         if self._enough_frames():
-            self._run_lc_loop(**kwargs)
+            self._run_lc_loop()
         else:
-            self.base.run_inference(**kwargs)
+            self.base.run_inference()
 
     def _n_views(self) -> int:
         """
@@ -285,7 +236,6 @@ class LoopClosure:
         lc_submaps: list[Submap],
         retrieval_extractor: Any,
         console: Console,
-        **kwargs: Any,
     ) -> "tuple[Submap, list[Submap], list]":
         """
         Forward one window, build its Submap, then find and verify loop candidates.
@@ -298,7 +248,6 @@ class LoopClosure:
             lc_submaps: loop submaps accepted so far.
             retrieval_extractor: DINO-SALAD extractor for the window's descriptors.
             console: console for loop accept/reject lines.
-            kwargs: forwarded to the creator's forward pass.
 
         Returns:
             (submap, window_lc_submaps, loop_matches): the window's Submap, its verified
@@ -310,21 +259,17 @@ class LoopClosure:
         end = start + k  # window == views[start:start+k]; matches the driver's slice bound
 
         with torch.no_grad():
-            raw = self.base._forward(self.base.model, window, **kwargs)
+            raw = self.base._forward(self.base.model, window)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # Collate list[dict] outputs (e.g. MapAnything) into one flat dict
-        # - raw_lc feeds the LC loop; raw keeps the per-frame structure
-        raw_lc = self.base._lc_collate_outputs(raw) if isinstance(raw, list) else raw
-
         # Window poses; the graph reads each submap's local frame as frame 0's camera
-        ext_3x4 = raw_lc["extrinsic"]  # (k, 3, 4)
+        ext_3x4 = raw["extrinsic"]  # (k, 3, 4)
         poses_4x4 = extrinsics_to_homogeneous(ext_3x4)  # (k, 4, 4)
         if not np.allclose(poses_4x4[0], np.eye(4), atol=0.1):
             raise ValueError(f"Window poses not normalized to frame 0: expected poses[0] ≈ eye(4), got\n{poses_4x4[0]}")
 
-        intrinsics = raw_lc["intrinsics"]
+        intrinsics = raw["intrinsics"]
 
         # Stack the window's frames to (K, C, H, W)
         # - tensor window: VGGT-X, VGGT-Omega, LoGeR
@@ -354,22 +299,22 @@ class LoopClosure:
         # Dense per-pixel data (fat Submap, VGGT-SLAM data path)
         # - points: full-res depth unprojection
         # - colors and conf: per pixel
-        if "depth" in raw_lc and "depth_conf" in raw_lc:
-            dense_points = unproject_depth_map_to_point_map(raw_lc["depth"], ext_3x4, intrinsics).astype(np.float32)
-            if "colors" in raw_lc:
-                # Backend-supplied (k, H, W, 3) uint8 RGB
-                # - MapAnything: frame tensors are dinov2-normalized, unusable as color
-                dense_colors = raw_lc["colors"].astype(np.uint8)
-            else:
-                # Frames (k, C, H, W) -> (k, H, W, 3) uint8 RGB
-                # - VGGT-SLAM scales [0, 1] frames by 255
-                # - guard: some backends already give [0, 255]
+        if "depth" in raw and "depth_conf" in raw:
+            dense_points = unproject_depth_map_to_point_map(raw["depth"], ext_3x4, intrinsics).astype(np.float32)
+
+            # Frames (k, C, H, W) -> (k, H, W, 3) uint8 RGB
+            # - VGGT-SLAM scales [0, 1] frames by 255
+            # - MapAnything view dicts are dinov2-normalized: its raw [0, 1] images instead
+            # - guard: some backends already give [0, 255]
+            if hasattr(window, "cpu"):
                 frames_hw3 = frames_cpu.float().numpy().transpose(0, 2, 3, 1)
-                if frames_hw3.size and frames_hw3.max() > 1.0:
-                    dense_colors = frames_hw3.astype(np.uint8)
-                else:
-                    dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
-            submap.set_dense_points(dense_points, dense_colors, raw_lc["depth_conf"].astype(np.float32))
+            else:
+                frames_hw3 = raw["images"].transpose(0, 2, 3, 1)
+            if frames_hw3.size and frames_hw3.max() > 1.0:
+                dense_colors = frames_hw3.astype(np.uint8)
+            else:
+                dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
+            submap.set_dense_points(dense_points, dense_colors, raw["depth_conf"].astype(np.float32))
 
         # Query retrieval index for loop candidates against prior submaps
         past_for_lc = submaps[: max(0, len(submaps) - cfg.min_submap_gap)]
@@ -397,19 +342,6 @@ class LoopClosure:
                     f"  dist={match.similarity_score:.3f}"
                 )
                 match.reject_reason = "verify_ratio"
-
-            if verify_ok and lc_data is None:
-                # Accept without lc_data breaks the verify contract
-                # - a backend bug, not an expected reject path
-                logger.error(
-                    "LC verify accepted but returned no lc_data (backend contract " "violation): submap %s → %s",
-                    match.query_submap_id,
-                    match.detected_submap_id,
-                )
-                verify_ok = False
-                match.reject_reason = "no_joint_poses"
-
-            # Relative pose of the verified pair
             if verify_ok:
                 lc_poses = lc_data["poses"]
                 lc_rel = (invert_poses(lc_poses[1].astype(np.float64)) @ lc_poses[0].astype(np.float64)).astype(
@@ -433,10 +365,8 @@ class LoopClosure:
 
                     # Pair's dense points (2, H, W, 3) in its frame-0 camera, and conf (2, H, W)
                     # - VGGT-SLAM unprojects depth_lc the same way (solver.py:268)
-                    lc_pts = lc_data.get("world_points")
-                    lc_pts = np.asarray(lc_pts, dtype=np.float32) if lc_pts is not None else None
-                    lc_conf = lc_data.get("conf")
-                    lc_conf = np.asarray(lc_conf, dtype=np.float32) if lc_conf is not None else None
+                    lc_pts = np.asarray(lc_data["world_points"], dtype=np.float32)
+                    lc_conf = np.asarray(lc_data["conf"], dtype=np.float32)
 
                     # Build the loop carrier; see _run_lc_loop
                     # - next free submap_id after windows and loop submaps
@@ -530,12 +460,10 @@ class LoopClosure:
                 return
 
             # Subsampled point cloud
-            pts, cols = subsample_points(
-                world_pts,
-                submap.get_points_colors(skip_first=skip),
-                max_points=self.config.viz_max_points,
-            )
-            self.viz.add_points(f"submap_{submap.submap_id}", pts, cols)
+            all_points = np.ones(len(world_pts), dtype=bool)
+            keep = subsample_points(all_points, self.config.viz_max_points)
+            cols = submap.get_points_colors(skip_first=skip)
+            self.viz.add_points(f"submap_{submap.submap_id}", world_pts[keep], cols[keep])
 
             # Per-frame frusta at the corrected world-to-cam poses (overlap frames skipped)
             poses = submap.get_all_poses_world(self.graph)
@@ -579,7 +507,7 @@ class LoopClosure:
         except (ValueError, ZeroDivisionError, RuntimeError, OSError) as e:
             logger.warning("viewer loop-line failed: %s", e)
 
-    def _run_lc_loop(self, **kwargs: Any) -> None:
+    def _run_lc_loop(self) -> None:
         """
         Slide windows over the frames, close loops, then assemble base.outputs.
 
@@ -589,7 +517,6 @@ class LoopClosure:
         - a carrier only adds a loop edge to the pose graph; not added to GraphMap, no cloud
         - carrier ids follow the window submaps; loop_edge_timing sets when edges land
         - DINO-SALAD failing to load sets base.raw_outputs from one full forward pass
-        - kwargs forwarded to the creator's forward pass
         """
         console = Console()
 
@@ -614,7 +541,7 @@ class LoopClosure:
             retrieval_extractor = retrieval_cls(device=device)
         except (ImportError, OSError, RuntimeError) as e:
             logger.warning("DINO-SALAD failed to load (%s) — skipping loop closure", e)
-            self.base.raw_outputs = self.base._forward(self.base.model, views, **kwargs)
+            self.base.raw_outputs = self.base._forward(self.base.model, views)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             return
@@ -636,7 +563,7 @@ class LoopClosure:
 
                 # Forward + detect (vggt_slam/solver.py:Solver.run_predictions), then record the submaps
                 submap, window_lc_submaps, loop_matches = self.run_predictions(
-                    window, wi, start, submaps, lc_submaps, retrieval_extractor, console, **kwargs
+                    window, wi, start, submaps, lc_submaps, retrieval_extractor, console
                 )
                 self._add_window_submap(submap, window_lc_submaps, submaps, lc_submaps)
 
@@ -677,9 +604,9 @@ class LoopClosure:
         self.base.outputs = self._assemble_result(N)
         self._lc_assembled = True
 
-    def _assemble_result(self, n_frames: int) -> FeedforwardResult:
+    def _assemble_result(self, n_frames: int) -> PointcloudResult:
         """
-        Build a FeedforwardResult from the GraphMap dense cloud.
+        Build a PointcloudResult from the GraphMap dense cloud.
 
         - VGGT-SLAM correction-at-read: poses and points from the optimized graph
         - one pose and intrinsics row per frame of the full n_frames sequence
@@ -690,9 +617,13 @@ class LoopClosure:
         extrinsics = self.graph.extract_extrinsics(n_frames)
 
         # Cap the dense cloud to the creator's max_points
-        # - build_colmap turns every point into a pycolmap Point3D and runs out of memory
-        # - postprocess is a no-op here, so this is the only cap
-        points, colors = subsample_points(points, colors, max_points=self.base.max_points)
+        # - to_colmap turns every point into a pycolmap Point3D and runs out of memory
+        # - the create_pointcloud cap then binds on nothing
+        # - cap before the clean, unlike creator postprocess: SOR over ~1e8 dense points would OOM
+        all_points = np.ones(len(points), dtype=bool)
+        keep = subsample_points(all_points, self.base.max_points)
+        points = points[keep]
+        colors = colors[keep]
 
         # One intrinsics row per global frame; model dims from a dense grid
         # - first submap to cover a frame wins, as for poses
@@ -714,18 +645,19 @@ class LoopClosure:
 
         # Fail fast on an empty cloud or zero model dims
         # - every submap lacked dense points or was fully confidence-masked
-        # - otherwise build_colmap's intrinsic rescale fails later, less clearly
+        # - otherwise PointcloudResult's full-res K rescale fails later, less clearly
         if model_height is None or points.shape[0] == 0 or model_width == 0 or model_height == 0:
             raise ValueError(
                 "LC produced an empty point cloud — all submaps lacked dense points "
                 "or were confidence-masked out (no geometry to assemble a result from)."
             )
 
-        return FeedforwardResult(
+        return PointcloudResult(
             points=points,
             colors=colors,
             extrinsics=extrinsics,
-            intrinsics=intrinsics,
+            intrinsics=None,
+            model_intrinsics=intrinsics,
             image_paths=list(self.base.image_paths),
             original_coords=self.base.original_coords,
             model_width=model_width,

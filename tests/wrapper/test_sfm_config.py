@@ -1,4 +1,4 @@
-"""Tests for InstantSfM config surface: backend allowlist, BA/refine rejection."""
+"""Tests for the sfm config surface: backend allowlist, sub-blocks, BA/LC/refine rejection."""
 
 from pathlib import Path
 
@@ -25,45 +25,37 @@ def _base_config():
     return cfg
 
 
-def test_instantsfm_is_the_only_sfm_backend():
+def _sfm_cfg(backend, **block):
     """
-    instantsfm is the sole sfm backend on the allowlist — colmap/hloc are not wired into _run_sfm.
-    """
-    assert _SFM_BACKENDS == {"instantsfm"}
-
-
-def test_sfm_instantsfm_config_validates():
-    """
-    method: sfm, backend: instantsfm is a valid, constructible config.
+    base.yaml with method: sfm, the given backend, and `block` merged into its sub-block.
     """
     cfg = _base_config()
     cfg["pointcloud"]["method"] = "sfm"
-    cfg["pointcloud"]["backend"] = "instantsfm"
-    Reconstructor.validate_config(cfg)  # must not raise
+    cfg["pointcloud"]["backend"] = backend
+    cfg["pointcloud"][backend].update(block)
+    return cfg
 
 
-def test_sfm_rejects_bundle_adjustment():
+def test_sfm_backends_are_the_sfm_creators():
     """
-    bundle_adjustment is InstantSfM's own job — refused at validation.
+    The allowlist is every creator _run_sfm dispatches through SFM_CREATORS.
     """
-    cfg = _base_config()
-    cfg["pointcloud"]["method"] = "sfm"
-    cfg["pointcloud"]["backend"] = "instantsfm"
-    cfg["pointcloud"]["bundle_adjustment"] = True
-    with pytest.raises(ValueError, match="bundle_adjustment"):
-        Reconstructor.validate_config(cfg)
+    assert _SFM_BACKENDS == {"instantsfm", "colmap", "hloc"}
 
 
-def test_base_yaml_has_instantsfm_block():
-    """
-    base.yaml carries the instantsfm sub-block with its documented defaults.
-    """
-    cfg = _base_config()
-    assert cfg["pointcloud"]["instantsfm"] == {
-        "retriangulation": False,
-        "random_seed": None,
-        "min_num_view_per_track": None,
-    }
+@pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
+def test_sfm_backend_validates_at_config_load(backend):
+    cfg = Reconstructor.validate_config(_sfm_cfg(backend))
+    assert cfg["pointcloud"]["backend"] == backend
+
+
+@pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
+def test_sfm_refuses_bundle_adjustment_and_loop_closure(backend):
+    for key in ("bundle_adjustment", "loop_closure"):
+        cfg = _sfm_cfg(backend)
+        cfg["pointcloud"][key] = True
+        with pytest.raises(ValueError, match=key):
+            Reconstructor.validate_config(cfg)
 
 
 def test_base_yaml_mesh_sdf_trunc_mult_default_is_four():
@@ -107,43 +99,125 @@ def test_refine_poses_refuses_sfm_method(tmp_path):
         r.refine_poses()
 
 
-def test_sfm_rejects_loop_closure():
+def test_bad_colmap_block_fails_config_load():
     """
-    loop_closure is a sequential-submap mechanism; InstantSfM is a global mapper — refused.
+    The sub-block bounds check is reachable through validate_config, not only directly.
     """
     cfg = _base_config()
     cfg["pointcloud"]["method"] = "sfm"
-    cfg["pointcloud"]["backend"] = "instantsfm"
-    cfg["pointcloud"]["loop_closure"] = True
-    with pytest.raises(ValueError, match="loop_closure"):
+    cfg["pointcloud"]["backend"] = "colmap"
+    cfg["pointcloud"]["colmap"]["overlap"] = 0
+    with pytest.raises(ValueError, match="pointcloud.colmap.overlap"):
         Reconstructor.validate_config(cfg)
 
 
 @pytest.mark.parametrize("backend", ["colmap", "hloc"])
-def test_sfm_rejects_unwired_backends_at_config_load(backend):
-    """
-    colmap/hloc are refused at validation, before any stage runs — not mid-run after preproc.
-    """
-    cfg = _base_config()
-    cfg["pointcloud"]["method"] = "sfm"
-    cfg["pointcloud"]["backend"] = backend
-    with pytest.raises(ValueError, match="pointcloud.backend"):
-        Reconstructor.validate_config(cfg)
+@pytest.mark.parametrize("pairing", ["sequential", "retrieval", "sequential+retrieval", "exhaustive"])
+def test_every_pairing_validates(backend, pairing):
+    Reconstructor._validate_sfm_block(_sfm_cfg(backend, pairing=pairing)["pointcloud"], backend)
 
 
-def test_run_sfm_still_guards_non_instantsfm_backends(tmp_path):
-    """
-    _run_sfm keeps its own NotImplementedError as defence in depth behind validate_config.
+@pytest.mark.parametrize("backend", ["colmap", "hloc"])
+@pytest.mark.parametrize(
+    "key,bad",
+    [
+        ("pairing", "spatial"),
+        ("pairing", None),
+        ("overlap", 0),
+        ("overlap", True),
+        ("overlap", 2.0),
+        ("num_retrieved", 0),
+        ("num_retrieved", False),
+        ("num_threads", -1),
+        ("num_threads", "8"),
+        ("min_registered_frac", 0),
+        ("min_registered_frac", 1.5),
+        ("min_registered_frac", True),
+        ("min_registered_frac", "0.5"),
+        ("typo_key", 1),
+    ],
+)
+def test_bad_sfm_block_values_are_rejected(backend, key, bad):
+    with pytest.raises(ValueError, match=f"pointcloud.{backend}"):
+        Reconstructor._validate_sfm_block(_sfm_cfg(backend, **{key: bad})["pointcloud"], backend)
 
-    Constructed with instantsfm (the allowlist rejects anything else) then mutated, since the
-    guard now only fires for a direct _run_sfm call, never through a validated config.
+
+@pytest.mark.parametrize("key", ["retrieval_conf", "feature_conf", "matcher_conf"])
+@pytest.mark.parametrize("bad", ["", None, 3])
+def test_hloc_conf_keys_must_be_non_empty_strings(key, bad):
+    with pytest.raises(ValueError, match=f"pointcloud.hloc.{key}"):
+        Reconstructor._validate_sfm_block(_sfm_cfg("hloc", **{key: bad})["pointcloud"], "hloc")
+
+
+@pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
+def test_min_registered_frac_is_one_floor_for_every_backend(backend):
+    for good in (1.0, 1, 0.01):
+        Reconstructor._validate_sfm_block(_sfm_cfg(backend, min_registered_frac=good)["pointcloud"], backend)
+    with pytest.raises(ValueError, match=f"pointcloud.{backend}.min_registered_frac"):
+        Reconstructor._validate_sfm_block(_sfm_cfg(backend, min_registered_frac=1.5)["pointcloud"], backend)
+
+
+@pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
+@pytest.mark.parametrize("bad", [0, -1, True, "8", 2.0])
+def test_num_threads_is_checked_for_every_backend(backend, bad):
+    Reconstructor._validate_sfm_block(_sfm_cfg(backend, num_threads=3)["pointcloud"], backend)
+    with pytest.raises(ValueError, match=f"pointcloud.{backend}.num_threads"):
+        Reconstructor._validate_sfm_block(_sfm_cfg(backend, num_threads=bad)["pointcloud"], backend)
+
+
+def test_colmap_rejects_hloc_only_keys():
+    with pytest.raises(ValueError, match="pointcloud.colmap"):
+        Reconstructor._validate_sfm_block(_sfm_cfg("colmap", feature_conf="sift")["pointcloud"], "colmap")
+
+
+########################################################################
+# instantsfm knob bounds at config load
+########################################################################
+
+
+def _validated_sfm_config(**instantsfm):
     """
-    cfg = _base_config()
-    cfg["input_path"] = str(tmp_path / "video.mp4")
-    cfg["output_path"] = str(tmp_path / "out")
-    cfg["pointcloud"]["method"] = "sfm"
-    cfg["pointcloud"]["backend"] = "instantsfm"
-    r = Reconstructor(cfg)
-    r.config["pointcloud"]["backend"] = "colmap"
-    with pytest.raises(NotImplementedError, match="instantsfm"):
-        r._run_sfm()
+    base.yaml merged into a method:sfm config with the given instantsfm overrides, validated.
+    """
+    config = {
+        "input_path": "dummy.mp4",
+        "output_path": "dummy_out",
+        "pointcloud": {"method": "sfm", "backend": "instantsfm", "instantsfm": dict(instantsfm)},
+    }
+    return Reconstructor(config).config
+
+
+def test_random_seed_out_of_range_is_rejected_at_config_load():
+    # np.random.seed rejects this, but InstantSfM only reads the value after the SIFT +
+    # exhaustive-matching pass — the whole run would burn first
+    with pytest.raises(ValueError, match=r"random_seed must be null or an int"):
+        _validated_sfm_config(random_seed=-1)
+
+    with pytest.raises(ValueError, match=r"random_seed must be null or an int"):
+        _validated_sfm_config(random_seed=2**32)
+
+
+def test_random_seed_accepts_null_and_an_in_range_int():
+    assert _validated_sfm_config(random_seed=None)["pointcloud"]["instantsfm"]["random_seed"] is None
+    assert _validated_sfm_config(random_seed=2**32 - 1)["pointcloud"]["instantsfm"]["random_seed"] == 2**32 - 1
+
+
+def test_min_num_view_per_track_below_two_is_rejected_at_config_load():
+    # A track needs two views to triangulate; 1 and 0 produce no geometry, and the value is
+    # read only after the SIFT + exhaustive-matching pass
+    for bad in (1, 0, -1, 2.5):
+        with pytest.raises(ValueError, match=r"min_num_view_per_track must be null or an int >= 2"):
+            _validated_sfm_config(min_num_view_per_track=bad)
+
+
+def test_min_num_view_per_track_accepts_null_and_an_int_at_or_above_two():
+    cfg = _validated_sfm_config(min_num_view_per_track=None)
+    assert cfg["pointcloud"]["instantsfm"]["min_num_view_per_track"] is None
+    assert _validated_sfm_config(min_num_view_per_track=2)["pointcloud"]["instantsfm"]["min_num_view_per_track"] == 2
+    assert _validated_sfm_config(min_num_view_per_track=6)["pointcloud"]["instantsfm"]["min_num_view_per_track"] == 6
+
+
+@pytest.mark.parametrize("key", ["retriangulate", "use_depths"])
+def test_instantsfm_block_rejects_unknown_keys(key):
+    with pytest.raises(ValueError, match=rf"pointcloud.instantsfm has unknown keys \['{key}'\]"):
+        Reconstructor.validate_config(_sfm_cfg("instantsfm", **{key: True}))

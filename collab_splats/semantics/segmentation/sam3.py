@@ -9,7 +9,7 @@ from typing import Any
 import torch
 from PIL import Image
 
-from .base import BaseSegmentation
+from collab_splats.semantics.segmentation.base import BaseSegmentation
 
 logger = logging.getLogger(__name__)
 

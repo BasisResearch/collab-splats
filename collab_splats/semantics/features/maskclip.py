@@ -7,10 +7,9 @@ from typing import List, Optional
 import torch
 import torchvision.transforms as T
 
+from collab_splats.semantics.features.base import BaseQueryableExtractor
 from collab_splats.utils.image import CLIP_MEAN, CLIP_STD
 from collab_splats.utils.torch_utils import get_device
-
-from .base import BaseQueryableExtractor
 
 
 @BaseQueryableExtractor.register("maskclip")

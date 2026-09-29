@@ -4,8 +4,7 @@ Absent-confidence seams.
 A pointcloud.zarr may carry no confidence array (absent, never zeros — e.g. one
 written by an SfM backend). Three seams must tolerate that: mesh fusion
 (_run_tsdf_mesh), feature lifting (lift_features), and the splats
-depth-targets block in Reconstructor.splats() (sfm scenes use the same zarr
-path once depth is aligned (depth_scale attr)).
+depth-targets block in Reconstructor.splats() (sfm scenes use the same zarr path).
 """
 
 from pathlib import Path
@@ -15,9 +14,9 @@ from unittest.mock import patch
 import numpy as np
 import torch
 
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-from collab_splats.pointcloud.utils import lift_features
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
+from collab_splats.semantics.lifting import lift_features
 from collab_splats.wrapper.reconstructor import Reconstructor, _run_tsdf_mesh
 from tests.wrapper._stubs import minimal_feedforward_result
 
@@ -34,7 +33,7 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
         return tmp_path / "mesh.ply"
 
     with (
-        patch.object(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: result)),
+        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
         patch(
             "collab_splats.wrapper.reconstructor.frames.read_frames",
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
@@ -91,7 +90,7 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
     """Minimal Reconstructor stub for exercising the splats() depth-targets block.
 
     Same lightweight pattern as tests/wrapper/test_splats_stage.py's
-    _stub_reconstructor: patch train() + FeedforwardResult.load_zarr, no real
+    _stub_reconstructor: patch train() + PointcloudResult.load_zarr, no real
     training or zarr reconstruction needed.
     """
     recon = Reconstructor.__new__(Reconstructor)
@@ -131,7 +130,7 @@ def test_splats_depth_targets_skip_masking_when_confidence_absent(tmp_path, capl
 
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.feedforward.base.FeedforwardResult.load_zarr", return_value=feedforward),
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
         caplog.at_level("INFO"),
     ):
         recon.splats()

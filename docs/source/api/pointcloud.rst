@@ -7,6 +7,20 @@ Structure-from-motion and feedforward reconstruction.
    :members:
    :show-inheritance:
 
+SfM backends
+------------
+
+``pointcloud.method: sfm`` dispatches ``pointcloud.backend`` through ``SFM_CREATORS``:
+``instantsfm`` (global), ``colmap`` and ``hloc`` (incremental). See
+``configs/README.md`` for the config blocks.
+
+.. automodule:: collab_splats.pointcloud.sfm
+
+.. autodata:: collab_splats.pointcloud.sfm.SFM_CREATORS
+   :no-value:
+
+   Backend name to creator class; ``Reconstructor._run_sfm`` dispatches on it.
+
 .. automodule:: collab_splats.pointcloud.sfm.colmap
    :members:
    :show-inheritance:
@@ -19,11 +33,14 @@ Structure-from-motion and feedforward reconstruction.
    :members:
    :show-inheritance:
 
-.. automodule:: collab_splats.pointcloud.vda
+.. automodule:: collab_splats.pointcloud.sfm.sift_db
    :members:
    :show-inheritance:
 
-.. automodule:: collab_splats.pointcloud.depth_align
+Depth and feedforward
+---------------------
+
+.. automodule:: collab_splats.pointcloud.depth
    :members:
    :show-inheritance:
 

@@ -49,8 +49,6 @@ import yaml
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-from PIL import Image
 from scipy.spatial.transform import Rotation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -65,7 +63,7 @@ from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 from collab_splats.pointcloud import get_creator
 from collab_splats.pointcloud.sfm import InstantSfMCreator
-from collab_splats.pointcloud.vda import generate_vda_depth, vda_depth_complete
+from collab_splats.utils.colmap import write_colmap_reconstruction
 from collab_splats.utils.io import write_json
 
 # InstantSfM conditions: condition name -> use_depths. Classical global SfM (pycolmap
@@ -283,18 +281,18 @@ def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.nda
     """
     Run an InstantSfM condition over image_dir, return w2c extrinsics (N,4,4) in sorted-name order.
 
-    Mirrors Reconstructor._run_sfm on the eval's image dir instead of the scene's images/ dir:
-    - Stages image_dir/* as symlinks into output_dir/images/ (InstantSfM's data_dir contract;
-      colmap SIFT reads png/jpg alike). Staged (name, link-target) pairs key the caches: eval
-      names are positional, so a same-count rerun from a different source keeps the name set —
-      any change drops both colmap/instantsfm.db and depth_vda/ so stale features are never reused.
-    - instantsfm: Video-Depth-Anything metric depth at depth_vda/images/npy/<stem>.npy (skipped
-      when the per-stem set is complete), GPU released before InstantSfM's CUDA step.
-    - Raises RuntimeError on partial registration, naming the unregistered images.
+    Same BaseSfmCreator.create as Reconstructor._run_sfm, on the eval's image dir:
+    - Stages image_dir/* as symlinks into output_dir/images/ (colmap SIFT reads png/jpg alike).
+      Staged (name, link-target) pairs key the caches: eval names are positional, so a same-count
+      rerun from a different source keeps the name set — any change drops both
+      colmap/instantsfm.db and depth_vda/ so stale features are never reused.
+    - create always runs Video-Depth-Anything (depth_vda/, cached per stem); use_depths only
+      decides whether InstantSfM consumes it as priors.
+    - Raises RuntimeError on partial registration, naming the unregistered images: poses pair
+      with GT by position, so min_registered_frac is 1.0.
     """
     use_depths = _INSTANTSFM_CONDITIONS[condition]
     image_paths = sorted(p for p in Path(image_dir).iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
-    names = [p.name for p in image_paths]
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -314,35 +312,12 @@ def _run_instantsfm(condition: str, image_dir: Path, output_dir: Path) -> np.nda
     for link_name, target in new_links:
         (staged_dir / link_name).symlink_to(target)
 
-    # Depth priors: VDA over the staged frames. Gate before the decode — generate_vda_depth is
-    # idempotent, but building `frames` reads every staged image into RAM to reach that check.
-    if use_depths and not vda_depth_complete(output_dir, names):
-        frames = np.stack([np.asarray(Image.open(p).convert("RGB")) for p in image_paths])
-        generate_vda_depth(frames, output_dir, names)
-        del frames
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-
-    # Global SfM: colmap/instantsfm.db + colmap/sparse/0 under output_dir
-    recon = InstantSfMCreator(use_depths=use_depths).reconstruct(output_dir)
-
-    # Every staged image must be registered — partial models leave frames without poses.
-    # The creator renames registered images to their filename stems (its output contract),
-    # so the staged names are matched stem-wise here.
-    by_name = {im.name: im for im in recon.images.values()}
-    stems = [p.stem for p in image_paths]
-    missing = [n for n in stems if n not in by_name]
-    if missing:
-        raise RuntimeError(
-            f"InstantSfM registered {len(by_name)}/{len(stems)} images — partial registration is not "
-            f"supported (unregistered: {missing[:10]}{' ...' if len(missing) > 10 else ''})"
-        )
-
-    # w2c 4x4 per image, in the sorted-name order the GT poses follow
-    return np.stack([np.vstack([by_name[n].cam_from_world().matrix(), [0.0, 0.0, 0.0, 1.0]]) for n in stems]).astype(
-        np.float32
-    )
+    # Global SfM + depth alignment: colmap/instantsfm.db + colmap/sparse/0 under output_dir
+    # - floor 1.0: a partial registration raises, naming the unregistered stems
+    # - w2c per image, in the sorted-name order the GT poses follow
+    creator = InstantSfMCreator(use_depths=use_depths, min_registered_frac=1.0)
+    result = creator.create_pointcloud(staged_dir, output_dir, output_dir / "colmap" / "sparse" / "0")
+    return result.extrinsics
 
 
 def _run_condition(
@@ -374,30 +349,27 @@ def _run_condition(
         loop_edge_timing=loop_edge_timing,
         tracks_cache_dir=tracks_cache_dir,
     )
+    # The condition's COLMAP model; LC borrows create_pointcloud, so both paths share it
+    model_dir = output_dir / "colmap" / "sparse" / "0"
     if ba_cfg is None:
-        creator.reconstruct(image_dir, output_dir)
+        result = creator.create_pointcloud(image_dir, output_dir, model_dir)
     else:
-        # Run inference, refine poses with BA, reproject pts3d, then write COLMAP output
+        # Refine poses with BA, reproject pts3d, then write COLMAP output
+        # - BA works on the model grid; intrinsics=None re-derives the full-res K from it
         ba = BundleAdjustment(ba_cfg)
-        creator.load_model()
-        creator.setup_inference(image_dir)
-        creator.run_inference()
-        creator.postprocess()
-        out = creator.outputs
-        check_model_resolution(out.intrinsics, out.images, out.original_coords)
+        out = creator.create_pointcloud(image_dir, output_dir)
+        check_model_resolution(out.model_intrinsics, out.images, out.original_coords)
         ext, K = ba.refine(
-            out.images, out.confidence, out.world_points, out.extrinsics, out.intrinsics, out.image_paths
+            out.images, out.confidence, out.world_points, out.extrinsics, out.model_intrinsics, out.image_paths
         )
-        creator.outputs = replace(out, extrinsics=ext, intrinsics=K).reproject()
-        creator.build_colmap(output_dir)
-    if creator.outputs is None:
-        raise RuntimeError(f"Condition '{name}' produced no outputs")
+        result = replace(out, extrinsics=ext, model_intrinsics=K, intrinsics=None).reproject()
+        write_colmap_reconstruction(result.to_colmap(), model_dir)
 
     # Loop-closure summary (only field LC now exposes)
     n_loops_applied: int | None = None
     if hasattr(creator, "base") and hasattr(creator.base, "n_loops_applied"):
         n_loops_applied = int(creator.base.n_loops_applied)
-    return creator.outputs.extrinsics, n_loops_applied
+    return result.extrinsics, n_loops_applied
 
 
 def _save_outputs(

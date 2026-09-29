@@ -7,6 +7,7 @@ import math
 import numpy as np
 import pytest
 import torch
+
 from gsplat.strategy import DefaultStrategy, MCMCStrategy
 
 from collab_splats.splats.gaussian import SH_C0, Gaussians, make_strategy

@@ -60,7 +60,7 @@ _SAMPLERS = ["fps", "uniform", "optical_flow"]
 _MODEL_CONF_DEFAULTS = {"vggt_omega": 50.0, "vggtx": 35.0, "mapanything": 35.0}
 
 # Keep at most this many scenes' "loaded" tuples resident. Each holds a full
-# FeedforwardResult (can be GBs) and the container cgroup caps memory at ~46.6 GB.
+# PointcloudResult (can be GBs) and the container cgroup caps memory at ~46.6 GB.
 _LOADED_CACHE_KEEP = 3
 
 
@@ -559,7 +559,7 @@ class SplatsApp(param.Parameterized):
             self._cache.drop(self._loaded_order.popleft(), "loaded")
 
     def _load_outputs(self, scene: str) -> None:
-        """Enqueue loading FeedforwardResult + semantics; render on the IOLoop when done."""
+        """Enqueue loading PointcloudResult + semantics; render on the IOLoop when done."""
         # Already displayed and idle -> nothing to do (reselect of the same scene). The
         # is_running guard keeps a mid-run reselect loading: _current_scene may point at
         # soon-to-be-stale output while a run/load is in flight, so don't trust it then.
@@ -575,10 +575,10 @@ class SplatsApp(param.Parameterized):
         max_points = self.max_display_points.value
 
         def job():
-            # Lazy imports: FeedforwardResult lives in the heavy feedforward package, and
+            # Lazy imports: PointcloudResult's package pulls the heavy feedforward stack, and
             # dashboard.pipeline pulls that same stack at module import.
             from collab_splats.dashboard.pipeline import resolve_semantics_dir
-            from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+            from collab_splats.pointcloud.base import PointcloudResult
 
             # Session cache: skip the pull + zarr/npy reads when this scene was already loaded.
             cached = self._cache.get(scene, "loaded")
@@ -596,12 +596,11 @@ class SplatsApp(param.Parameterized):
             # Display needs only points/colors/extrinsics; skip decoding dense arrays
             # (GBs when present locally). The lift path reloads them on demand.
             with self._op_log.step(f"{scene}: reading pointcloud.zarr"):
-                result = FeedforwardResult.load_zarr(
+                result = PointcloudResult.load_zarr(
                     out / "pointcloud.zarr",
                     load_depth=False,
                     load_world_points=False,
                     load_confidence=False,
-                    load_features=False,
                     load_pixel_indices=False,
                 )
             # Flat `{scene}/semantics/`, matching the flat pointcloud.zarr gated on above — the

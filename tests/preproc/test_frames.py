@@ -135,3 +135,8 @@ def test_read_frames_names_an_undecodable_frame(tmp_path):
 
     with pytest.raises(FileNotFoundError, match="frame_000000.png"):
         fr.read_frames(images)
+
+
+def test_frame_name_round_trips_through_frame_idx_from_path():
+    assert fr.frame_name(7) == "frame_000007"
+    assert fr.frame_idx_from_path(fr.frame_name(42) + ".png") == 42

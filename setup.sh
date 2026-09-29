@@ -91,6 +91,10 @@ if [ ! -f "$COLLAB_DATA/setup.py" ]; then
     }
 fi
 
+# hloc: editable path source (pyproject [tool.uv.sources])
+# - the clone must exist before any resolve, including the deps-only Docker pass below
+bash "$SCRIPT_DIR/setup/hloc.sh"
+
 # --locked: fail if uv.lock is stale against pyproject.toml instead of silently re-resolving
 echo "=== uv sync: full env (all extras incl. gpu toolkit + feedforward) ==="
 cd "$SCRIPT_DIR"
@@ -117,6 +121,11 @@ for name in ("disk-lightglue",):  # extend when configs reference more models
     print(f"vismatch weights cached: {name}")
 EOF
 
+# Pre-fetch hloc weights; needs the synced venv, so it runs after the full sync
+# - best-effort like vismatch: the builder stage lacks libGL, so a cv2 import there fails
+bash "$SCRIPT_DIR/setup/hloc.sh" --prefetch \
+    || echo "WARN: hloc weights pre-fetch failed — weights will download on first use."
+
 # --- InstantSfM backend (optional, CC-BY-NC-4.0 — research use) ------------------
 # Their pyproject pins numpy==1.26.4; --no-deps is load-bearing (we run numpy 2.x).
 # NOTE: plain `uv sync` prunes these (outside the lock) — rerun this block after any sync.
@@ -132,7 +141,7 @@ echo "=== install InstantSfM backend (instantsfm --no-deps, pyceres, scikit-spar
 } || echo "WARN: InstantSfM backend not installed (optional; needs libsuitesparse-dev) — re-run setup.sh to retry."
 
 # --- Video Depth Anything (metric) — source clone only, not pip-installable ------
-# Imported from the clone root via sys.path (collab_splats/pointcloud/vda.py::generate_vda_depth).
+# Imported from the clone root via sys.path (collab_splats/pointcloud/depth.py::estimate_depth).
 # Weights are pulled from the HF hub on first use, so this only needs the source clone.
 # The pin is re-applied on every run (idempotent), so an existing clone cannot drift. NOTE: a
 # dangling third_party/Video-Depth-Anything symlink (worktree layouts pointing at an absent

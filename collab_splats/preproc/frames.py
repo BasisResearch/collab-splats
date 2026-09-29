@@ -48,6 +48,19 @@ def _manifest_path(dir: Path | str) -> Path:
 ########################
 
 
+def frame_name(idx: int) -> str:
+    """
+    Stem of a keyframe file in the images/ store.
+
+    Args:
+        idx: source-video frame index.
+
+    Returns:
+        frame_ plus the index zero-padded to six digits.
+    """
+    return f"frame_{int(idx):06d}"
+
+
 def frame_idx_from_path(path: Path | str) -> int:
     """
     Source frame index encoded in a frame_{idx:06d}.<ext> filename.
@@ -117,7 +130,7 @@ def write_frames(
     # Store is RGB at the boundary; cv2 writes BGR
     paths: list[Path] = []
     for frame, record in zip(frames, records):
-        path = dir / f"frame_{int(record['frame_idx']):06d}.png"
+        path = dir / f"{frame_name(record['frame_idx'])}.png"
         cv2.imwrite(
             str(path),
             cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),

@@ -8,9 +8,8 @@ magnitude and known location, asserted to land in exactly one channel.
 Three things this file deliberately does NOT do:
 
   * It does not assert on an empty collection. Every test that loops asserts the pair count
-    first, because two separate mechanisms delete pairs silently — the frustum gate (see
-    ``test_a_constant_depth_fixture_is_silently_gated_out``) and the occlusion branch at the
-    production tolerance (see ``test_the_controls_must_run_above_the_production_rel_thresh``).
+    first, because the occlusion branch at the production tolerance deletes pairs silently
+    (see ``test_the_controls_must_run_above_the_production_rel_thresh``).
     A loop over {} passes.
   * It does not assume a fault's pixel size. The pose control perturbs real extrinsics and
     measures the pixel motion that perturbation actually produces.
@@ -25,8 +24,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from collab_splats.geometry.metrics import compute_photometric_ncc
-from collab_splats.pointcloud.feedforward.base import compute_multiview_depth_confidence
+from collab_splats.geometry.metrics import _collect_pairs, compute_photometric_ncc
 
 ########################################
 # Constants — every one of these is load-bearing, so none of them is a bare literal
@@ -40,8 +38,7 @@ FOCAL = 30.0
 HW = 24
 BASELINE = 0.25
 
-# The world surface is the plane Z = Z0 + TILT*X. TILT is the whole reason this fixture works;
-# see _scene and test_a_constant_depth_fixture_is_silently_gated_out for why it is not zero.
+# The world surface is the plane Z = Z0 + TILT*X; see _scene for why TILT is not zero.
 Z0 = 4.0
 TILT = 0.3
 
@@ -78,17 +75,9 @@ FLOOR_STEP = 0.1
 def _scene(n=4, centers=None, tilt=TILT):
     """N cameras viewing the world plane Z = Z0 + tilt*X, depth rendered exactly per camera.
 
-    A SLANTED plane, not a fronto-parallel one, and that is load-bearing rather than cosmetic.
-    A constant depth map makes near == far, so ``_frustum_world_aabbs`` produces a zero-thickness
-    slab and ``_aabbs_overlap`` — which needs overlap on every axis — rejects any pair whose
-    slabs sit at different depths. Scaling one frame's depth is exactly such a displacement, so
-    on a flat fixture the depth-scale control has no pairs to measure: measured, the flat version
-    yields 6 ordered pairs instead of 12, with every pair touching the scaled frame gone. The
-    pair-count guards in each test below turn that into a loud failure; without them the
-    assertions would run on an empty set, which is how the originally specified version of this
-    file passed. The tilt gives each frustum real depth extent, which is what a real scene has,
-    and as a side effect spreads parallax over 3.3-10.1 deg instead of pinning every pixel at one
-    angle.
+    A SLANTED plane, not a fronto-parallel one: the tilt gives each frustum real depth extent,
+    which is what a real scene has, and spreads parallax over 3.3-10.1 deg instead of pinning
+    every pixel at one angle.
 
     Rotations stay identity and the plane is independent of Y, which buys two exact properties
     the controls below rely on: depth is a function of the pixel's x ray-component alone, and
@@ -117,9 +106,8 @@ def _scene(n=4, centers=None, tilt=TILT):
 
 
 def _pairs(depth, K, extr, **kw):
-    """{(i, j): PairStats} from one collected multiview pass. CPU so the controls need no GPU."""
-    out = {}
-    compute_multiview_depth_confidence(depth, K, extr, device="cpu", collect=out, **kw)
+    """{(i, j): PairStats} from the report's cross-view pass; rel_thresh defaults to the report's 0.05."""
+    out, _ = _collect_pairs(depth, K, extr, kw.get("rel_thresh", 0.05))
     return {(p.idx1, p.idx2): p for p in out["pairs"]}
 
 
@@ -189,7 +177,7 @@ def _reprojection_shift_px(depth, K, extr_true, extr_faulty, i, j):
 
 
 def test_the_fixture_produces_every_pair_and_a_real_parallax_spread():
-    """Nothing below means anything if a gate has quietly emptied the collection."""
+    """Nothing below means anything if a filter has quietly emptied the collection."""
     depth, K, extr = _scene(n=4)
     # No fault injected here, so this one runs at the PRODUCTION default: the clean fixture must
     # survive the shipping tolerance, and only a faulted one needs CONTROL_REL_THRESH.
@@ -197,7 +185,7 @@ def test_the_fixture_produces_every_pair_and_a_real_parallax_spread():
     # ORDERED directions: the mv loop runs (i, j) and (j, i) separately, so 4 frames give 12.
     assert len(p) == 12
     assert min(v.n_pixels for v in p.values()) > 100
-    # Real depth extent, which is what keeps the frusta from degenerating to slabs.
+    # Real depth extent, as a real scene has.
     assert depth[0].max() / depth[0].min() > 1.2
     # And real parallax spread, so no control is secretly evaluated at a single angle.
     par = [v.median_parallax_deg for v in p.values()]
@@ -224,27 +212,10 @@ def test_the_fixture_parallax_matches_closed_form_geometry():
     assert p[(0, 1)].median_parallax_deg == pytest.approx(3.41, abs=0.05)
 
 
-def test_a_constant_depth_fixture_is_silently_gated_out():
-    """Pins WHY _scene tilts the plane. A flat fixture loses pairs without raising anything.
-
-    This is not a control; it is the recorded reason the fixture looks the way it does. If it
-    ever fails the tilt may be dropped — until then, reverting _scene to a constant depth map
-    would delete the depth-scale control's evidence while leaving it green.
-    """
-    flat, K, extr = _scene(n=4, tilt=0.0)
-    assert len(_pairs(flat, K, extr, rel_thresh=CONTROL_REL_THRESH)) == 12  # flat alone is fine
-
-    # ...until one frame's depth moves, which slides its zero-thickness frustum off the others.
-    flat[2] *= DEPTH_FAULT
-    gated = _pairs(flat, K, extr, rel_thresh=CONTROL_REL_THRESH)
-    assert len(gated) == 6
-    assert not [k for k in gated if 2 in k]  # every pair touching frame 2 is gone
-
-
 def test_the_controls_must_run_above_the_production_rel_thresh():
     """Pins CONTROL_REL_THRESH the way the tilt is pinned: the default deletes the evidence.
 
-    Same silent-deletion trap as the frustum gate, one layer down. A from-frame-2 pair carries
+    A silent-deletion trap. A from-frame-2 pair carries
     sampled < expected - tol at the production tolerance, which the measurement reads as
     OCCLUDED — absent evidence, dropped from the denominator and from the collection — so the
     fault erases its own pairs. Anyone "restoring the default" here gets a red test rather than
@@ -376,16 +347,13 @@ def test_control_depth_measurement_never_sees_appearance():
     """Appearance faults cannot reach a measurement that never reads appearance.
 
     Asserted structurally rather than by injecting an exposure shift, because there is nowhere
-    to inject one: compute_multiview_depth_confidence takes depth, intrinsics and extrinsics and
+    to inject one: _collect_pairs takes depth, intrinsics and extrinsics and
     no image argument at all. A runtime version would have to call it twice on identical inputs
     and would therefore measure determinism, not invariance. This assertion fails the moment
     someone gives the depth measurement an appearance channel, which is the event worth catching.
     """
-    params = set(inspect.signature(compute_multiview_depth_confidence).parameters)
-    assert params == {
-        "depth", "intrinsics", "extrinsics", "depth_masks",
-        "abs_thresh", "rel_thresh", "pair_gate", "collect", "device",
-    }
+    params = set(inspect.signature(_collect_pairs).parameters)
+    assert params == {"depth", "intrinsics", "extrinsics", "rel_thresh"}
     assert not [p for p in params if any(w in p for w in ("image", "rgb", "color", "colour"))]
 
 

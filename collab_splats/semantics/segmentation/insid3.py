@@ -12,9 +12,7 @@ from PIL import Image
 from sklearn.cluster import AgglomerativeClustering
 
 from collab_splats.semantics.features.dino import DINOFeatureExtractor
-
-from .base import BaseSegmentation
-
+from collab_splats.semantics.segmentation.base import BaseSegmentation
 
 ########################################################
 ########## Clustering utilities ########################

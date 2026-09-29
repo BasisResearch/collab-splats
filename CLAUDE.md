@@ -28,6 +28,7 @@ These tasks are started but not complete — do not assume their targets are don
 - **sky-mask** — ONNX sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
+- **pointcloud-unify** — one `PointcloudResult` (zarr, COLMAP export-only), `depth.py`, shared sfm `create()`, projection.py / lifting / subsample / SIFT DB / InstantSfM in-memory dedups on `clean/pointcloud-release`; supersedes pointcloud-reorg; spec approved, implementing ([spec](docs/superpowers/specs/2026-09-27-pointcloud-unify-design.md) · [plan](docs/superpowers/plans/2026-09-27-pointcloud-unify.md))
 - **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
 
 ## Recently Completed
@@ -62,13 +63,13 @@ Core pipeline: video/images → pointcloud (feedforward: VGGT-X / VGGT-Omega / M
 ```
 collab_splats/
   pointcloud/              # main reconstruction pipeline
-    base.py                # BasePointcloudCreator, PointcloudResult
-    feedforward/           # BaseFeedforwardCreator (5-step template method), VGGTXCreator, MapAnythingCreator, FeedforwardResult
-    sfm/                   # InstantSfMCreator (global SfM via upstream python API; the only wired backend)
-                           #   + ColmapCreator / HlocCreator (incremental; not wired into _run_sfm)
-    vda.py                 # generate_vda_depth: Video-Depth-Anything metric depth per keyframe
-    depth_align.py         # result_from_reconstruction: COLMAP model + VDA depth -> FeedforwardResult at COLMAP scale
-    utils.py               # lift_features, reproject_pixels, clean_pointcloud, confidence_mask, subsample_points
+    base.py                # BasePointcloudCreator, PointcloudResult (both Ks; COLMAP export-only via to_colmap)
+    feedforward/           # BaseFeedforwardCreator (template method in _reconstruct), VGGTXCreator, MapAnythingCreator
+    sfm/                   # InstantSfMCreator (global SfM via upstream python API)
+                           #   + ColmapCreator / HlocCreator (incremental; SFM_CREATORS dispatch; sift_db.py shared SIFT)
+    depth.py               # estimate_depth (VDA metric depth per keyframe) + align_depth (COLMAP model
+                           #   + VDA depth -> PointcloudResult at COLMAP scale)
+    utils.py               # clean_pointcloud (result -> result), outlier_mask, confidence_mask, subsample_points
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
     transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV, project_to_so3,
                            #   decompose_camera, intrinsics_4x4, rescale_intrinsics, shift_intrinsics
@@ -113,6 +114,7 @@ evals/
 ## Code Style
 
 - **Imports at top:** all imports at the top of the file — no inline imports inside functions or methods (scripts and notebooks). Exception: optional heavy deps that would break the module on missing install may be imported inside the function that needs them, with a clear `ImportError` message.
+- **Import style:** absolute `collab_splats.` imports only, never relative (`from .x`, `from ..x`). Four groups, blank line between: stdlib; general third-party (numpy, torch, cv2, ...); model/method upstreams (mapanything, vggt, instantsfm, gsplat, ... — `known_models` in pyproject `[tool.isort]`, add new ones there); our own code (`collab_splats`, `tests`, `evals`). `isort` applies it; `tests/test_import_style.py` enforces it.
 - **Inline block comments:** each logical block of code gets a short comment explaining what it does. Comment at block level, not every line. Examples: `# Sort images by filename; reject non-image extensions`, `# Populate BA fields: subsampled world-point grid for track extraction`. Existing comments that meet this standard are kept; missing block comments are added.
 - **Comment runs are a header then bullets:** any `#` run of three lines or more states the problem in 5-10 words on its own line, then gives the detail as `- ` bullets — never a wrapped paragraph. Bullets are fragments, not sentences.
 
@@ -149,7 +151,7 @@ evals/
 - `logging` not `print()` — use `logger.debug()` / `logger.info()` throughout module code
 - `RegistryMixin` for registry pattern (from `utils/torch_utils.py`)
 - Template-method pattern for abstract pipelines (see `BaseFeedforwardCreator`)
-- Typed `@dataclass` for pipeline outputs (`FeedforwardResult`, `PointcloudResult`)
+- Typed `@dataclass` for pipeline outputs (`PointcloudResult`: `intrinsics` full-res, `model_intrinsics` model grid)
 - Hard imports — no stub backends; let missing deps raise `ImportError` at import time
 
 ## Testing

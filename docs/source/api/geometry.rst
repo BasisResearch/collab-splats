@@ -18,10 +18,22 @@ Bundle adjustment
 -----------------
 
 ``BundleAdjustment.refine`` takes arrays (images, confidence, world points,
-extrinsics, intrinsics at model resolution) and returns ``(extrinsics, intrinsics)``.
+extrinsics, the result's ``model_intrinsics``) and returns ``(extrinsics, intrinsics)``, K
+on the model grid.
 Callers run ``check_model_resolution`` on K first.
 
 .. automodule:: collab_splats.geometry.bundle_adjustment
+   :members:
+   :show-inheritance:
+
+Projection
+----------
+
+Pinhole unprojection and projection, the cross-view depth residual, and
+``multiview_depth_confidence``, the per-pixel agree/seen counts the feedforward
+multiview filter thresholds.
+
+.. automodule:: collab_splats.geometry.projection
    :members:
    :show-inheritance:
 
@@ -42,8 +54,6 @@ Report-only, no verdicts; scale-free (1 recon unit is not 1 meter). The model gr
 is the backbone's depth grid; the original grid is the source image. ``null``
 marks a value that does not exist, never a failure.
 
-``params``: ``rel_thresh`` (depth-pair relative threshold).
-
 .. list-table:: ``frames`` — one row per reconstruction frame
    :header-rows: 1
    :widths: 30 70
@@ -56,6 +66,9 @@ marks a value that does not exist, never a failure.
      - crop area / original canvas area, 0..1, original grid
    * - ``median_abs_rel_depth_error``
      - median ``|s - 1|`` over the depth pairs touching the frame, model grid
+   * - ``multiview_agreement``
+     - share of the frame's seen pixels that at least one other view agrees
+       with at ``rel_thresh`` 0.05, model grid; null when no other view sees it
    * - ``confidence_median``
      - median per-pixel confidence, model grid; backbone-native, not comparable
        across backbones; null without a confidence array
@@ -122,7 +135,7 @@ Quickstart
 
    base = get_creator("vggtx")()
    lc = LoopClosure(base, config=LoopClosureConfig())
-   result = lc.reconstruct(Path("path/to/images"), Path("path/to/out"))
+   result = lc.create_pointcloud(Path("path/to/images"), Path("path/to/out"), Path("path/to/out/colmap/sparse/0"))
 
 See ``docs/source/tutorials/02_pointcloud/slam_loop_closure.ipynb`` for the full
 walkthrough (candidate matching, plots).

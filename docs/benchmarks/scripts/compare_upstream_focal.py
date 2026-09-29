@@ -27,7 +27,6 @@ import torch
 
 from tests.pointcloud.test_loger_creator import _tutorial_frames
 from collab_splats.pointcloud.feedforward.loger import (
-    LOGER_CONF_THRESHOLD,
     LoGeRCreator,
     _compute_target_size,
 )
@@ -43,7 +42,7 @@ with torch.no_grad():
     preds = model(views.to("cuda")[None], **creator._forward_kwargs())
 local = preds["local_points"].squeeze(0).cpu().float().numpy()
 conf = torch.sigmoid(preds["conf"]).squeeze(0).cpu().float().numpy().reshape(n, h, w)
-mask = conf > LOGER_CONF_THRESHOLD
+mask = conf > creator.k_fit_conf_threshold
 
 uu, vv = np.meshgrid(np.arange(w, dtype=np.float64), np.arange(h, dtype=np.float64))
 z = local[..., 2]

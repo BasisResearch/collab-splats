@@ -8,8 +8,9 @@ import pytest
 import torch
 
 from collab_splats.geometry.loop_closure.submap import Submap
-from collab_splats.pointcloud.feedforward import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 from tests.geometry.loop_closure._helpers import record_driven_submaps
+from tests.pointcloud.conftest import _frame_files, _frames
 
 
 def _make_ff_result(**overrides):
@@ -17,14 +18,15 @@ def _make_ff_result(**overrides):
         points=np.zeros((10, 3), dtype=np.float32),
         colors=np.zeros((10, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4), (2, 1, 1)).astype(np.float32),
-        intrinsics=np.tile(np.eye(3), (2, 1, 1)).astype(np.float32),
+        intrinsics=None,
+        model_intrinsics=np.tile(np.eye(3), (2, 1, 1)).astype(np.float32),
         image_paths=[Path("a.jpg"), Path("b.jpg")],
-        original_coords=np.zeros((2, 6), dtype=np.float32),
+        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1)),  # full-frame box
         model_width=224,
         model_height=224,
     )
     defaults.update(overrides)
-    return FeedforwardResult(**defaults)
+    return PointcloudResult(**defaults)
 
 
 def _make_mock_creator(ff_result):
@@ -32,12 +34,11 @@ def _make_mock_creator(ff_result):
     m = MagicMock()
     m.outputs = ff_result
     m.raw_outputs = {}
-    m._reproject.return_value = (ff_result.points, ff_result.colors)
     return m
 
 
 ########################################################
-########## FeedforwardResult field tests ##############
+########## PointcloudResult field tests ##############
 ########################################################
 
 
@@ -83,7 +84,7 @@ def test_vggtx_postprocess_populates_ba_fields():
     creator = VGGTXCreator.__new__(VGGTXCreator)
     creator.conf_threshold = 1.0
     creator.image_paths = [Path("a.jpg"), Path("b.jpg")]
-    creator.original_coords = np.zeros((2, 6), dtype=np.float32)
+    creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1))  # full-frame box
 
     N, H, W = 2, 8, 8
     raw_outputs = {
@@ -92,14 +93,9 @@ def test_vggtx_postprocess_populates_ba_fields():
         "images": torch.zeros(N, 3, H, W),
         "extrinsic": np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32),
         "intrinsics": np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
-        "intrinsics_downsampled": np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
     }
 
-    with patch(
-        "collab_splats.pointcloud.feedforward.unproject_and_filter_points",
-        return_value=(np.zeros((5, 3), dtype=np.float32), np.zeros((5, 3), dtype=np.uint8)),
-    ):
-        result = creator._postprocess(raw_outputs)
+    result = creator._postprocess(raw_outputs)
 
     assert result.images is not None
     assert result.confidence is not None
@@ -116,26 +112,12 @@ def test_vggtx_no_use_ba_field():
     assert "use_ba" not in field_names
 
 
-def test_vggtx_has_reproject():
-    """VGGTXCreator must implement _reproject."""
-    from collab_splats.pointcloud.feedforward import VGGTXCreator
-
-    assert hasattr(VGGTXCreator, "_reproject")
-
-
 def test_mapanything_no_use_ba_field():
     """MapAnythingCreator must not have use_ba after refactor."""
     from collab_splats.pointcloud.feedforward import MapAnythingCreator
 
     field_names = {f.name for f in dataclasses.fields(MapAnythingCreator)}
     assert "use_ba" not in field_names
-
-
-def test_mapanything_has_reproject():
-    """MapAnythingCreator must implement _reproject."""
-    from collab_splats.pointcloud.feedforward import MapAnythingCreator
-
-    assert hasattr(MapAnythingCreator, "_reproject")
 
 
 ########################################################
@@ -164,7 +146,7 @@ def test_make_creator_rejects_the_removed_lc_kwargs():
 def test_make_creator_unknown_name():
     from collab_splats.pointcloud import make_creator
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="Unknown 'unknown_backend'"):
         make_creator("unknown_backend")
 
 
@@ -224,17 +206,6 @@ def test_loop_closure_forwards_setup_inference():
     mock_base.setup_inference.assert_called_once_with(Path("/fake"))
 
 
-def test_loop_closure_forwards_postprocess_and_build_colmap():
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
-
-    mock_base = MagicMock()
-    lc = LoopClosure(mock_base)
-    lc.postprocess()
-    mock_base.postprocess.assert_called_once()
-    lc.build_colmap(Path("/out"))
-    mock_base.build_colmap.assert_called_once_with(Path("/out"))
-
-
 def test_loop_closure_run_inference_falls_back_to_base_when_too_few_frames():
     """When fewer frames than submap_size, falls back to base.run_inference()."""
     from collab_splats.geometry.loop_closure import LoopClosureConfig
@@ -250,46 +221,29 @@ def test_loop_closure_run_inference_falls_back_to_base_when_too_few_frames():
 
 
 ########################################################
-########## LoopClosure.run() tests ####################
+########## LoopClosure.create_pointcloud() tests #######
 ########################################################
 
 
-def test_loop_closure_run_returns_feedforward_result():
-    """lc.run(image_dir) returns FeedforwardResult from base.outputs."""
+def test_loop_closure_create_pointcloud_returns_the_base_postprocess(tmp_path):
+    """Too few frames for LC: create_pointcloud returns the base's own _postprocess result."""
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
     result = _make_ff_result()
     mock_base = _make_mock_creator(result)
     mock_base.views = torch.zeros(2, 3, 8, 8)
+    mock_base._postprocess.return_value = result
+    mock_base.clean = False
+    mock_base.max_points = len(result.points)
+    paths = _frame_files(_frames([(8, 8), (8, 8)]), tmp_path / "images")
 
     lc = LoopClosure(mock_base)
-    returned = lc.run(Path("/fake/dir"))
+    returned = lc.create_pointcloud(tmp_path / "images", tmp_path / "out")
 
-    assert returned is result
+    np.testing.assert_array_equal(returned.points, result.points)
     mock_base.load_model.assert_called_once()
-    mock_base.setup_inference.assert_called_once()
-    mock_base.postprocess.assert_called_once()
-
-
-########################################################
-########## LoopClosure.reproject() tests ##############
-########################################################
-
-
-def test_loop_closure_reproject_delegates_to_base():
-    """lc.reproject(result) delegates to base.reproject(result)."""
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure
-
-    result = _make_ff_result()
-    reprojected = _make_ff_result(points=np.ones((5, 3), dtype=np.float32))
-    mock_base = _make_mock_creator(result)
-    mock_base.reproject.return_value = reprojected
-
-    lc = LoopClosure(mock_base)
-    out = lc.reproject(result)
-
-    mock_base.reproject.assert_called_once_with(result)
-    assert out is reprojected
+    mock_base.setup_inference.assert_called_once_with(paths)
+    mock_base._postprocess.assert_called_once_with(mock_base.raw_outputs)
 
 
 ########################################################
@@ -343,8 +297,9 @@ def test_lc_loop_passes_k_plus_overlap_to_forward():
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.views = torch.zeros(n_frames, 3, 4, 4)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
+    # Full-frame box per frame
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._lc_retrieval = None
 
     wrapper = LoopClosure.__new__(LoopClosure)
@@ -381,8 +336,9 @@ def test_lc_loop_rejects_a_window_not_normalized_to_frame_0():
     base = MagicMock()
     base.views = torch.zeros(4, 3, 4, 4)
     base.image_paths = [f"img_{i:03d}.png" for i in range(4)]
+    # Full-frame box per frame
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
 
     wrapper = LoopClosure.__new__(LoopClosure)
     wrapper.base = base
@@ -426,8 +382,9 @@ def test_lc_loop_populates_dense_points_and_map():
     # Frames in [0, 1] (0.5) so the *255 color path yields 127.
     base.views = torch.full((n_frames, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
+    # Full-frame box per frame
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
 
     wrapper = LoopClosure.__new__(LoopClosure)
     wrapper.base = base
@@ -490,7 +447,6 @@ def _make_raw_nontrivial(k: int, H: int, W: int) -> dict:
     return {
         "extrinsic": extrinsic,
         "intrinsics": intr,
-        "intrinsics_downsampled": intr,
         "depth": depth,
         "depth_conf": depth_conf,
     }
@@ -555,8 +511,9 @@ def test_self_graph_matches_incremental_drive():
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.views = torch.full((n_frames, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
+    # Full-frame box per frame
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._verify_loop_candidate = fake_verify
 
     wrapper = LoopClosure.__new__(LoopClosure)
@@ -631,8 +588,9 @@ def test_conf_percentile_reaches_window_and_loop_submaps():
     base.max_points = 500_000
     base.views = torch.full((9, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(9)]
+    # Full-frame box per frame
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._verify_loop_candidate = fake_verify
 
     wrapper = LoopClosure.__new__(LoopClosure)
@@ -671,7 +629,7 @@ def test_lc_output_assembled_from_graphmap():
         LoopClosure,
         LoopClosureConfig,
     )
-    from collab_splats.pointcloud.feedforward import FeedforwardResult
+    from collab_splats.pointcloud.base import PointcloudResult
 
     submap_size = 3
     overlap = 1
@@ -715,9 +673,8 @@ def test_lc_output_assembled_from_graphmap():
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.views = torch.full((n_frames, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._verify_loop_candidate = fake_verify
 
     lc = LoopClosure(base, config=cfg)
@@ -734,7 +691,7 @@ def test_lc_output_assembled_from_graphmap():
     assert len(driven["lc_submaps"]) >= 1
 
     out = base.outputs
-    assert isinstance(out, FeedforwardResult)
+    assert isinstance(out, PointcloudResult)
 
     # points/colors are exactly the GraphMap dense cloud (float32/uint8, aligned, non-empty).
     # overlap-deduped, matching _assemble_result's call (leading overlap frames dropped).
@@ -753,10 +710,10 @@ def test_lc_output_assembled_from_graphmap():
     assert len(out.image_paths) == n_frames
     assert out.model_width == W and out.model_height == H
 
-    # postprocess() is now a no-op — must not overwrite the GraphMap-sourced outputs.
-    lc.postprocess()
-    assert base.outputs is out
-    base.postprocess.assert_not_called()
+    # _reconstruct returns the GraphMap-sourced outputs as is, never the base _postprocess
+    with patch.object(lc, "run_inference"):
+        assert lc._reconstruct([], Path("/unused")) is out
+    base._postprocess.assert_not_called()
 
 
 def _dense_submap_with_fx(sid, frame_start, fx_values, H=3, W=4):
@@ -808,7 +765,7 @@ def test_assemble_result_intrinsics_first_occurrence_dedup():
     base = MagicMock()
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.image_paths = [f"img_{i}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
 
     lc = LoopClosure(base)
     lc.map = GraphMap()
@@ -817,7 +774,7 @@ def test_assemble_result_intrinsics_first_occurrence_dedup():
     lc.graph = pg
 
     out = lc._assemble_result(n_frames)
-    fx = out.intrinsics[:, 0, 0]
+    fx = out.model_intrinsics[:, 0, 0]
 
     # Boundary + interior spot-checks per submap.
     assert fx[0] == 100.0  # s0 boundary (first frame)
@@ -831,12 +788,12 @@ def test_assemble_result_intrinsics_first_occurrence_dedup():
 
 
 def test_assemble_result_caps_cloud_to_max_points():
-    """_assemble_result caps the dense cloud to base.max_points before build_colmap.
+    """
+    _assemble_result caps the dense cloud to base.max_points before the COLMAP export.
 
-    Regression for the 50 GB cgroup OOM: the LC path makes postprocess() a no-op, so
-    without this cap the full dense per-pixel cloud (~50M pts for 500 frames) reaches
-    build_colmap and materializes as pycolmap Point3D objects → SIGKILL. Cap is
-    ATE-neutral (extrinsics untouched); here max_points=4 forces the cap on a tiny cloud.
+    - regression for the 50 GB cgroup OOM: an uncapped dense cloud (~50M pts for 500 frames)
+      becomes pycolmap Point3D objects in the export → SIGKILL
+    - ATE-neutral (extrinsics untouched); max_points=4 forces the cap on a tiny cloud
     """
     from collab_splats.geometry.loop_closure.graph import PoseGraph
     from collab_splats.geometry.loop_closure.map import GraphMap
@@ -854,7 +811,7 @@ def test_assemble_result_caps_cloud_to_max_points():
     base = MagicMock()
     base.max_points = 4  # low budget → cap fires on the tiny dense cloud
     base.image_paths = [f"img_{i}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
 
     lc = LoopClosure(base)
     lc.map = GraphMap()
@@ -921,9 +878,8 @@ def test_lc_submaps_keep_frames_after_unproject():
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.views = torch.full((n_frames, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._verify_loop_candidate = fake_verify
 
     lc = LoopClosure(base, config=cfg)
@@ -954,6 +910,8 @@ def _run_one_window(raw: dict, window):
     base = MagicMock()
     base._forward = lambda model, views, **kwargs: raw
     base.image_paths = [f"img_{i}.png" for i in range(3)]
+    # Full-frame box per frame
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     lc = LoopClosure(base)
     return lc.run_predictions(
         window, 0, 0, [], [], lambda frames: torch.zeros(frames.shape[0], 8), MagicMock()
@@ -1004,7 +962,7 @@ def test_assemble_result_raises_on_empty_cloud():
     base = MagicMock()
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.image_paths = [f"img_{i}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
 
     lc = LoopClosure(base)
     lc.map = GraphMap()
@@ -1089,9 +1047,8 @@ def test_lc_loop_pushes_to_viz_when_set():
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.views = torch.full((n_frames, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._verify_loop_candidate = fake_verify
 
     lc = LoopClosure(base, config=cfg)
@@ -1140,7 +1097,10 @@ def _make_real_submap_for_viz() -> Submap:
 
 def test_viz_max_points_caps_the_viewer_push():
     """LoopClosureConfig.viz_max_points is the per-submap viewer point cap."""
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+    from collab_splats.geometry.loop_closure.wrapper import (
+        LoopClosure,
+        LoopClosureConfig,
+    )
 
     sm = _make_real_submap_for_viz()
 
@@ -1228,7 +1188,10 @@ def test_viz_push_submap_propagates_programming_errors():
 
 
 def test_dino_salad_load_failure_falls_back_to_full_inference():
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+    from collab_splats.geometry.loop_closure.wrapper import (
+        LoopClosure,
+        LoopClosureConfig,
+    )
 
     base = MagicMock()
     base.views = torch.zeros(6, 3, 8, 8)
@@ -1240,7 +1203,10 @@ def test_dino_salad_load_failure_falls_back_to_full_inference():
 
 
 def test_dino_salad_unexpected_error_propagates():
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+    from collab_splats.geometry.loop_closure.wrapper import (
+        LoopClosure,
+        LoopClosureConfig,
+    )
 
     base = MagicMock()
     base.views = torch.zeros(6, 3, 8, 8)
@@ -1254,7 +1220,10 @@ def test_dino_salad_unexpected_error_propagates():
 def test_lc_rejects_non_finite_loop_pose():
     """A NaN loop relative is rejected before it reaches the graph."""
     from collab_splats.geometry.loop_closure.matching import LoopMatch
-    from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
+    from collab_splats.geometry.loop_closure.wrapper import (
+        LoopClosure,
+        LoopClosureConfig,
+    )
 
     H = W = 32
     n_frames = 9
@@ -1287,9 +1256,8 @@ def test_lc_rejects_non_finite_loop_pose():
     base.max_points = 500_000
     base.views = torch.full((n_frames, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._verify_loop_candidate = fake_verify
 
     lc = LoopClosure(base, config=cfg)
@@ -1356,9 +1324,8 @@ def _run_lc_harness_with_timing(loop_edge_timing):
     base.max_points = 500_000  # real int so _assemble_result's subsample cap runs (no-op on tiny test clouds)
     base.views = torch.full((n_frames, 3, H, W), 0.5)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
-    base.original_coords = np.zeros((n_frames, 6), dtype=np.float32)
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))  # full-frame box
     base._forward = fake_forward
-    base._lc_collate_outputs = lambda r: r
     base._verify_loop_candidate = fake_verify
 
     lc = LoopClosure(base, config=cfg)
@@ -1392,7 +1359,7 @@ def test_loop_edge_timing_deferred_vs_live_both_valid():
     result_live, n_loops_live, _ = _run_lc_harness_with_timing("live")
 
     for result, n_loops in ((result_def, n_loops_def), (result_live, n_loops_live)):
-        assert isinstance(result, FeedforwardResult)
+        assert isinstance(result, PointcloudResult)
         # >=1 loop edge actually drove the graph.
         assert n_loops >= 1
         # Non-empty dense cloud + finite geometry.

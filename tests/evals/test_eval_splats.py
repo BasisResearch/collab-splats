@@ -11,6 +11,7 @@ import pytest
 import torch
 import zarr
 
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.splats.utils import prepare_target
 from collab_splats.utils.image import upsample_depths
@@ -27,16 +28,22 @@ def _write_ff_zarr(path, n=2, h=4, w=6, scale=1.0, orig_hw=None):
     orig_h, orig_w = (h, w) if orig_hw is None else orig_hw
     store = zarr.open_group(path, mode="w")
     images = np.random.rand(n, 3, h, w).astype(np.float32) * scale
-    intrinsics = np.tile(np.array([[2.0, 0, 3.0], [0, 4.0, 5.0], [0, 0, 1]], np.float32), (n, 1, 1))
+    model_intrinsics = np.tile(np.array([[2.0, 0, 3.0], [0, 4.0, 5.0], [0, 0, 1]], np.float32), (n, 1, 1))
+
+    # Full-frame box: the full-res K is the model K scaled by orig / model per axis
+    intrinsics = model_intrinsics.copy()
+    intrinsics[:, 0] *= orig_w / w
+    intrinsics[:, 1] *= orig_h / h
     for name, array in (
         ("images", images),
         ("depth", np.ones((n, h, w), np.float32)),
         ("confidence", np.ones((n, h, w), np.float32)),
         ("extrinsics", np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))),
         ("intrinsics", intrinsics),
+        ("model_intrinsics", model_intrinsics),
         ("points", np.zeros((120, 3), np.float32)),
         ("colors", np.zeros((120, 3), np.uint8)),
-        # original_coords + model_* attrs are required by FeedforwardResult.load_zarr
+        # original_coords + model_* attrs are required by PointcloudResult.load_zarr
         ("original_coords", np.tile(np.array([0, 0, orig_w, orig_h, orig_w, orig_h], np.float32), (n, 1))),
     ):
         store.create_array(name, data=array)
@@ -106,12 +113,16 @@ def test_native_intrinsics_undo_the_crop(tmp_path):
     box = np.array([[0, 16, 32, 32, orig_w, orig_h]] * 2, dtype=np.float32)  # 32x16 crop, tl_y = 16
     K_model = np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1]], dtype=np.float32)
     _write_images_dir(tmp_path / "images", 2, orig_h, orig_w)
-    result = SimpleNamespace(
+    result = PointcloudResult(
+        points=np.zeros((1, 3), np.float32),
+        colors=np.zeros((1, 3), np.uint8),
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
+        intrinsics=None,
+        model_intrinsics=np.stack([K_model, K_model]),
         image_paths=[Path("frame_000000.png"), Path("frame_000001.png")],
         original_coords=box,
         model_width=model_w,
         model_height=model_h,
-        intrinsics=np.stack([K_model, K_model]),
     )
 
     _, K_native = _native_images_and_intrinsics(result, tmp_path / "images", tmp_path / "pointcloud.zarr")

@@ -98,8 +98,7 @@ MODULES = [
     "collab_splats.pointcloud.sfm.colmap",
     "collab_splats.pointcloud.sfm.hloc",
     "collab_splats.pointcloud.sfm.instantsfm",
-    "collab_splats.pointcloud.vda",
-    "collab_splats.pointcloud.depth_align",
+    "collab_splats.pointcloud.depth",
     "collab_splats.pointcloud.utils",
     "collab_splats.geometry.loop_closure.wrapper",
     "collab_splats.geometry.loop_closure",
@@ -284,8 +283,9 @@ def test_timm_version():
 
 def test_bae_cudss_importable():
     """bae built with USE_CUDSS=1: CuDirectSparseSolver must import and instantiate."""
-    import pypose  # noqa: F401 — must precede bae imports
     import torch
+
+    import pypose  # noqa: F401 — must precede bae imports
     from bae.sparse.solve import CuDirectSparseSolver
 
     assert torch.cuda.is_available(), "CUDA not available — CuDSS build meaningless"

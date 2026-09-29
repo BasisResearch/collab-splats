@@ -1,12 +1,12 @@
 """
-Reconstruction quality across frames: how well overlapping views agree, no ground truth needed.
+Report-only, scale-free cross-view quality, no ground truth; columns: docs/source/api/geometry.rst
 
 - depth_pairs: depth error where two views overlap, n_pixels shared; plus a pooled residual histogram
 - photometric_pairs: NCC of pixel colors after warping one view into another through its depth
 - frames.median_abs_rel_depth_error: per frame, median |depth error| over the pairs touching it
+- frames.multiview_agreement: per frame, share of seen pixels another view agrees with
 - frames.covered_fraction: share of each original frame that survived the model's crop
 - frames.confidence_median: median backbone confidence; not comparable across backbones
-- report-only, scale-free; column meanings: docs/source/api/geometry.rst
 """
 
 from __future__ import annotations
@@ -18,15 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import torch
 from tqdm.auto import tqdm
 
-from collab_splats.geometry.transforms import (
-    rescale_intrinsics,
-    shift_intrinsics,
-    transform_points,
-)
+from collab_splats.geometry.projection import depth_agreement, project, unproject
+from collab_splats.geometry.transforms import invert_poses, transform_points
 from collab_splats.preproc import frames
 from collab_splats.utils.image import upsample_depths
+from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ class PairStats:
     """
     Depth agreement of one ordered frame pair, one depth_pairs row.
 
-    - filled by the multiview depth pass (pointcloud/feedforward/base.py)
+    - filled by the report's cross-view depth pass, _collect_pairs
     - depth error quantity: (d_sampled - d_expected) / d_expected, frame j against frame i
     - frame separation is abs(idx1 - idx2), not a field
 
@@ -121,6 +120,86 @@ def bounded_residual(rel: np.ndarray | float) -> np.ndarray:
 ########################################################################
 
 
+def _collect_pairs(
+    depth: np.ndarray, intrinsics: np.ndarray, extrinsics: np.ndarray, rel_thresh: float
+) -> tuple[dict, list[float | None]]:
+    """
+    Per-pair depth stats, the residual histogram and per-frame agreement, in one O(N^2) pass.
+
+    - collected: "pairs" (list[PairStats]), "rel_depth_error_counts", "rel_depth_error_edges"
+    - agreement: share of seen pixels with at least one agreeing view; None when nothing is seen
+    - residuals only where seen: occlusion is absent evidence, not disagreement
+    """
+    n, h, w = depth.shape
+    device = torch.device(get_device())
+    depth_t = torch.as_tensor(depth, dtype=torch.float32, device=device)
+    intrinsics_t = torch.as_tensor(intrinsics, dtype=torch.float32, device=device)
+    extrinsics_t = torch.as_tensor(extrinsics, dtype=torch.float32, device=device)
+    cam_to_world = invert_poses(extrinsics)
+    centers = torch.as_tensor(cam_to_world[:, :3, 3], dtype=torch.float32, device=device)
+
+    # One histogram over every ordered pair's residuals: n*(n-1)*h*w at most
+    edges = residual_bin_edges(n * (n - 1) * h * w)
+    counts = np.zeros(len(edges) - 1, np.int64)
+    collected = {"pairs": [], "rel_depth_error_edges": edges, "rel_depth_error_counts": counts}
+    agreement = []
+
+    # Every source frame against every other frame, one bar step per source
+    desc = f"Cross-view depth check ({n * (n - 1)} pair directions)"
+    for i in tqdm(range(n), desc=desc, unit="frame", leave=False):
+        points = unproject(depth_t[i], extrinsics_t[i], intrinsics_t[i]).reshape(-1, 3)
+        has_source = depth_t[i].reshape(-1) > 0
+        any_agree = torch.zeros_like(has_source)
+        any_seen = torch.zeros_like(has_source)
+
+        for j in range(n):
+            if i == j:
+                continue
+
+            agree, seen, rel = depth_agreement(points, extrinsics_t[j], intrinsics_t[j], depth_t[j], rel_thresh)
+            seen &= has_source
+            any_agree |= agree & has_source
+            any_seen |= seen
+
+            # Residuals over seen pixels with a sampled depth, clear of camera j's center
+            # - rel > -1 keeps sampled > 0 only: sampled <= 0 is no measurement
+            # - near-zero z: the quotient and the parallax both degenerate
+            z = transform_points(points, extrinsics_t[j])[:, 2]
+            sel = seen & (rel > -1) & (z > 1e-6)
+            if not bool(sel.any()):
+                continue
+
+            rel_sel = rel[sel]
+
+            # Parallax from ray directions: scale-free, needs no focal length
+            ray_i = points[sel] - centers[i]
+            ray_j = points[sel] - centers[j]
+            cos_a = (ray_i * ray_j).sum(-1) / (ray_i.norm(dim=-1) * ray_j.norm(dim=-1)).clamp(min=1e-12)
+            parallax = torch.rad2deg(torch.arccos(cos_a.clamp(-1.0, 1.0)))
+
+            # Per-pixel residuals into the one histogram; one PairStats row per direction
+            residuals = bounded_residual(rel_sel.cpu().numpy())
+            counts += np.histogram(residuals, bins=edges)[0]
+            q = torch.quantile(rel_sel, torch.tensor([0.25, 0.5, 0.75], device=device))
+            collected["pairs"].append(
+                PairStats(
+                    idx1=i,
+                    idx2=j,
+                    n_pixels=int(sel.sum()),
+                    median_rel_depth_error=float(q[1]),
+                    iqr_rel_depth_error=float(q[2] - q[0]),
+                    median_parallax_deg=float(parallax.median()),
+                    median_depth=float(z[sel].median()),
+                )
+            )
+
+        # Share of this frame's seen pixels that any other view agrees with
+        n_seen = int(any_seen.sum())
+        agreement.append(int(any_agree.sum()) / n_seen if n_seen else None)
+
+    return collected, agreement
+
+
 def compute_depth_error(collected: dict) -> tuple[dict, dict]:
     """
     Per-direction depth disagreement and the pixel residual histogram, both columnar.
@@ -129,7 +208,7 @@ def compute_depth_error(collected: dict) -> tuple[dict, dict]:
     - rows are ordered pair directions: (i, j) and (j, i) differ, occlusion is asymmetric
 
     Args:
-        collected: the dict compute_multiview_depth_confidence(collect=...) filled.
+        collected: the dict _collect_pairs filled.
 
     Returns:
         (depth_pairs, depth_residual_histogram)
@@ -179,13 +258,13 @@ def compute_photometric_ncc(
     - zero-mean NCC via np.corrcoef: 1.0 is perfect agreement, 0.0 is none
     - normalizing cancels the [0, 255] vs [0, 1] image-scale split and exposure or gain change
     - the only appearance metric: disagreement seen only here points at image formation
-    - runs at original resolution; model-grid depth is upsampled here together with its K
+    - runs at original resolution; model-grid depth is upsampled here, K is already on that grid
     - rows are unordered pairs (i < j)
 
     Args:
         images: (N, H, W, 3) RGB, original resolution.
         depth: (N, h, w) Z-depth on the model grid, or on the image grid already.
-        intrinsics: (N, 3, 3) K matching `depth`'s grid; rescaled here if depth is.
+        intrinsics: (N, 3, 3) K on the images' pixel grid.
         extrinsics: (N, 4, 4) world-to-cam.
         original_coords: (N, 6) crop rows, required only when depth needs upsampling.
         max_separation: pairs per frame; distant frames differ mostly by lighting and
@@ -205,7 +284,7 @@ def compute_photometric_ncc(
     ih, iw = images.shape[1:3]
     logger.info("Photometric NCC: %d frames at %dx%d, max_separation=%d", N, iw, ih, max_separation)
 
-    # Lift model-grid depth and its K to the image grid together
+    # Lift model-grid depth to the image grid
     # - see bundle_adjustment.check_model_resolution
     if depth.shape[1:] != (ih, iw):
         if original_coords is None:
@@ -228,24 +307,13 @@ def compute_photometric_ncc(
         # - a per-frame decision would amplify a dark [0, 255] frame 255x
         rgb_scale = 255.0 if images.max() <= 1.0 else 1.0
         guides = np.clip(np.asarray(images) * rgb_scale, 0, 255).astype(np.uint8)
-        lifted_d = upsample_depths(depth, guides, original_coords[:, :4])
+        depth = upsample_depths(depth, guides, original_coords[:, :4])
 
-        # Crop box per frame and its (H, W) size, in original pixels
-        box = original_coords[:, :4]
-        crop_hw = np.stack([box[:, 3] - box[:, 1], box[:, 2] - box[:, 0]], axis=-1)
-
-        # Undo the resize: K from the model grid to the crop's size
-        lifted_K = rescale_intrinsics(intrinsics, (model_h, model_w), crop_hw)
-
-        # Undo the crop: move the principal point by the crop's top-left corner
-        lifted_K = shift_intrinsics(lifted_K, box[:, :2])
-        depth, intrinsics = lifted_d, lifted_K
-
-    # Pixel grid for unprojection
+    # Depth, poses and K in float64 torch for unproject / project
     H, W = depth.shape[1:]
-    cam2world = np.linalg.inv(extrinsics)
-    yy, xx = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
-    pix = np.stack([xx.ravel(), yy.ravel(), np.ones(H * W)], axis=-1)
+    depth_t = torch.as_tensor(depth, dtype=torch.float64)
+    world_to_cam = torch.as_tensor(extrinsics, dtype=torch.float64)
+    intrinsics_t = torch.as_tensor(intrinsics, dtype=torch.float64)
 
     # Closed-form pair count, so the bar states the real unit of work
     # - counting frames would leave the reader to multiply
@@ -253,23 +321,22 @@ def compute_photometric_ncc(
     cols: dict[str, list] = {"idx1": [], "idx2": [], "photometric_ncc": [], "n_pixels": []}
     for i in tqdm(range(N), desc=f"Photometric NCC ({n_pairs_expected} pairs)", unit="frame"):
         # Unproject frame i's pixels to world through its own K and pose
-        # - names follow the multiview loop in pointcloud/feedforward/base.py
-        pts_cam_i = (np.linalg.inv(intrinsics[i]) @ pix.T).T * depth[i].reshape(-1, 1)
-        pts_world = transform_points(pts_cam_i, cam2world[i])
+        # - names follow the cross-view depth loop, _collect_pairs
+        pts_world = unproject(depth_t[i], world_to_cam[i], intrinsics_t[i])
+        pts_world = pts_world.reshape(-1, 3)
 
         for j in range(i + 1, min(N, i + max_separation + 1)):
             # Project into frame j and look up the color that landed there
             # - no occlusion test: unlike the depth loop, there is no frame-j depth to test
             # - occluded pixels stay in and read as disagreement
-            pts_cam_j = transform_points(pts_world, extrinsics[j])
-            proj_j = (intrinsics[j] @ pts_cam_j.T).T
-            z = np.clip(proj_j[:, 2], 1e-6, None)
+            pixels, pts_cam_j = project(pts_world, world_to_cam[j], intrinsics_t[j])
+            pixels = pixels.numpy()
 
             # Nearest sampling, matching the depth pass
             # - bilinear across a depth discontinuity blends two surfaces into neither's color
-            ui = np.round(proj_j[:, 0] / z).astype(np.int64)
-            vi = np.round(proj_j[:, 1] / z).astype(np.int64)
-            in_front = pts_cam_j[:, 2] > 0
+            ui = np.round(pixels[:, 0]).astype(np.int64)
+            vi = np.round(pixels[:, 1]).astype(np.int64)
+            in_front = (pts_cam_j[:, 2] > 0).numpy()
 
             # Drop depth == 0: "no observation", not a surface at distance 0
             # - unprojected, it sits at frame i's camera center, possibly visible in frame j
@@ -306,14 +373,15 @@ def compute_photometric_ncc(
 
 
 def compute_reconstruction_quality(
-    collected: dict,
     depth: np.ndarray,
+    model_intrinsics: np.ndarray,
     intrinsics: np.ndarray,
     extrinsics: np.ndarray,
     original_coords: np.ndarray,
     image_names: list[str],
     confidence: np.ndarray | None,
     images: np.ndarray | None,
+    rel_thresh: float = 0.05,
 ) -> dict:
     """
     Every table the report holds, from arrays; the Reconstructor stage owns all IO.
@@ -322,22 +390,27 @@ def compute_reconstruction_quality(
     - column meanings: docs/source/api/geometry.rst
 
     Args:
-        collected: the dict compute_multiview_depth_confidence(collect=...) filled.
         depth: (N, h, w) Z-depth on the model grid.
-        intrinsics: (N, 3, 3) K on the model grid.
+        model_intrinsics: (N, 3, 3) K on the model grid.
+        intrinsics: (N, 3, 3) K on the original images' pixel grid.
         extrinsics: (N, 4, 4) world-to-cam.
         original_coords: (N, 6) crop rows: x0, y0, x1, y1, original width, original height.
         image_names: per-frame image file names, reconstruction order.
         confidence: (N, h, w) per-pixel confidence, or None.
         images: (M, H, W, 3) original-resolution RGB, M <= N, or None.
+        rel_thresh: cross-view occlusion and agreement band, as a fraction of depth; looser than
+            the creators' filter so disagreement stays in the stats.
 
     Returns:
         {"frames", "depth_pairs", "depth_residual_histogram", "photometric_pairs"}
+        - frames.multiview_agreement: per frame, None when no other view sees it
         - photometric_pairs None without images
     """
     n = len(depth)
     coords = np.asarray(original_coords, dtype=np.float64)
 
+    # One cross-view pass feeds the pair tables and the per-frame agreement
+    collected, agreement = _collect_pairs(depth, model_intrinsics, extrinsics, rel_thresh)
     depth_pairs, histogram = compute_depth_error(collected)
 
     # Photometric over the frames that have images; read_frames order is reconstruction order
@@ -369,6 +442,7 @@ def compute_reconstruction_quality(
         "frame_idx": frame_idx,
         "covered_fraction": covered,
         "median_abs_rel_depth_error": median_abs,
+        "multiview_agreement": agreement,
         "confidence_median": [None] * n if confidence is None else [float(np.median(c)) for c in confidence],
     }
     return {

@@ -1,16 +1,12 @@
 import pytest
+
 from collab_splats.pointcloud import get_creator
-from collab_splats.pointcloud.sfm import ColmapCreator, HlocCreator
-from collab_splats.pointcloud.feedforward import MapAnythingCreator, VGGTXCreator
 from collab_splats.pointcloud.base import BasePointcloudCreator
-
-
-def test_get_creator_colmap():
-    assert get_creator("colmap") is ColmapCreator
-
-
-def test_get_creator_hloc():
-    assert get_creator("hloc") is HlocCreator
+from collab_splats.pointcloud.feedforward import (
+    BaseFeedforwardCreator,
+    MapAnythingCreator,
+    VGGTXCreator,
+)
 
 
 def test_get_creator_mapanything():
@@ -31,19 +27,16 @@ def test_get_creator_loger():
 
 
 def test_get_creator_unknown_raises():
-    with pytest.raises(KeyError, match="unknown pointcloud backend"):
+    with pytest.raises(ValueError, match="Unknown 'nonexistent'"):
         get_creator("nonexistent")
 
 
 def test_all_creators_are_instantiable():
-    for name in ("colmap", "hloc", "mapanything", "vggtx"):
+    for name in ("mapanything", "vggtx"):
         cls = get_creator(name)
         instance = cls()
         assert isinstance(instance, BasePointcloudCreator)
 
 
-def test_old_keys_removed():
-    with pytest.raises(KeyError):
-        get_creator("sfm")
-    with pytest.raises(KeyError):
-        get_creator("feedforward")
+def test_registry_holds_exactly_the_feedforward_backends():
+    assert set(BaseFeedforwardCreator._registry) == {"loger", "mapanything", "vggt_omega", "vggtx"}

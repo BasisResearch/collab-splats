@@ -25,8 +25,8 @@ import pytest
 import torch
 
 from collab_splats.geometry.loop_closure.graph import (
-    calculate_pairwise_frame_scale,
     _loop_chain_relatives,
+    calculate_pairwise_frame_scale,
 )
 from collab_splats.geometry.loop_closure.submap import Submap
 from tests.geometry.loop_closure._helpers import drive_pose_graph

@@ -29,7 +29,10 @@ sys.path.insert(0, str(Path("evals/scripts").resolve()))
 from datasets import get_dataset  # noqa: E402
 from trajectory_metrics import ate_translation  # noqa: E402
 
-from collab_splats.geometry import BundleAdjustment, BundleAdjustmentConfig  # noqa: E402
+from collab_splats.geometry import (  # noqa: E402
+    BundleAdjustment,
+    BundleAdjustmentConfig,
+)
 from collab_splats.geometry.bundle_adjustment import (  # noqa: E402
     _compute_tracks_cache_key,
     check_model_resolution,
@@ -94,11 +97,7 @@ def main() -> None:
 
     # One inference pass; both BA runs share the reconstruction and the track cache
     creator = get_creator(BACKBONE)()
-    creator.load_model()
-    creator.setup_inference(IMG_DIR)
-    creator.run_inference()
-    creator.postprocess()
-    result = creator.outputs
+    result = creator.create_pointcloud(IMG_DIR, CACHE)
     logger.info("reconstruction ready: %d frames", len(result.images))
 
     gt = ds.gt_poses.astype(np.float64)
@@ -140,8 +139,8 @@ def main() -> None:
 
     # Dump BA's exact inputs so a points-only evaluation uses the real model-res K and poses
     # - the guard raises on a pre-contract original-res K, before extraction, as the refine callers do
-    check_model_resolution(result.intrinsics, result.images, result.original_coords)
-    intr_model = result.intrinsics
+    check_model_resolution(result.model_intrinsics, result.images, result.original_coords)
+    intr_model = result.model_intrinsics
     ba_probe = BundleAdjustment(cfg)
     tracks, vis_scores, pts3d_tracks = ba_probe.extract_tracks(
         result.images, result.confidence, result.world_points, result.image_paths
@@ -163,7 +162,12 @@ def main() -> None:
         logger.info("=== %s === starting ATE %.6f", name, ate_start["rmse"])
 
         ext, _ = ba.refine(
-            start.images, start.confidence, start.world_points, start.extrinsics, start.intrinsics, start.image_paths
+            start.images,
+            start.confidence,
+            start.world_points,
+            start.extrinsics,
+            start.model_intrinsics,
+            start.image_paths,
         )
         hist = ba.loss_history[-1] if ba.loss_history else []
         ate_end = ate_translation(ext.astype(np.float32), ds.gt_poses)

@@ -15,15 +15,27 @@ Three-stage pipeline:
              LO-RANSAC + Ceres refinement (pycolmap).
 """
 
-from .extractors import LocalFeatures, LocalMatcher, MatchResult
-from .localizer import (
+from collab_splats.localization.extractors import (
+    LocalFeatures,
+    LocalMatcher,
+    MatchResult,
+)
+from collab_splats.localization.localizer import (
     CameraLocalizer,
     LocalizationResult,
     load_localization_db,
     sample_world_points,
 )
-from .retrieval import BaseRetrievalExtractor, DinoSaladExtractor, PECLIPExtractor
-from .viz import correspondences_for_ref, plot_correspondences, plot_inlier_distribution
+from collab_splats.localization.retrieval import (
+    BaseRetrievalExtractor,
+    DinoSaladExtractor,
+    PECLIPExtractor,
+)
+from collab_splats.localization.viz import (
+    correspondences_for_ref,
+    plot_correspondences,
+    plot_inlier_distribution,
+)
 
 __all__ = [
     "BaseRetrievalExtractor",

@@ -8,11 +8,11 @@ Gaussian-splat training on gsplat, starting from a pointcloud.
 # gsplat commit pinned in pyproject.toml; a test checks they match
 GSPLAT_COMMIT = "d2f5c0f"
 
-from .checkpoint import load_checkpoint  # noqa: E402
-from .gaussian import Gaussians  # noqa: E402
-from .rendering import render_views  # noqa: E402
-from .scaffold import Scaffold  # noqa: E402
-from .trainer import SplatsConfig, train  # noqa: E402
+from collab_splats.splats.checkpoint import load_checkpoint  # noqa: E402
+from collab_splats.splats.gaussian import Gaussians  # noqa: E402
+from collab_splats.splats.rendering import render_views  # noqa: E402
+from collab_splats.splats.scaffold import Scaffold  # noqa: E402
+from collab_splats.splats.trainer import SplatsConfig, train  # noqa: E402
 
 __all__ = [
     "GSPLAT_COMMIT",

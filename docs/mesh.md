@@ -1,7 +1,7 @@
 # Mesh Module
 
 `collab_splats.mesh` turns posed depth + RGB into a triangle mesh. Every entry point takes
-**plain arrays**, never a `FeedforwardResult` or a `PointcloudResult` — the caller composes
+**plain arrays**, never a `PointcloudResult` — the caller composes
 them, because only the caller knows which resolution grid it is on.
 
 | File | Responsibility |
@@ -56,7 +56,8 @@ tuning knob; the pipeline never sets it.
 ## Composing the inputs
 
 **From a feedforward reconstruction, at frame resolution.** Model-resolution depth is
-guided-upsampled into the original frames so the COLMAP camera is the right `K` to fuse with:
+guided-upsampled into the original frames so the full-res `result.intrinsics` is the right `K`
+to fuse with:
 
 ```python
 import numpy as np
@@ -66,24 +67,25 @@ from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.preproc import read_frames
 from collab_splats.utils.image import upsample_depths
 
-depth = np.asarray(ff.depth)
-depth = np.where(confidence_mask(np.asarray(ff.confidence), 20), depth, 0.0)
+depth = np.asarray(result.depth)
+depth = np.where(confidence_mask(np.asarray(result.confidence), 20), depth, 0.0)
 rgbs = read_frames(images_dir)
-depths = upsample_depths(depth, rgbs, np.asarray(ff.original_coords)[:, :4])
-c2w = invert_poses(result.extrinsics)   # COLMAP poses, matched with result.intrinsics
+depths = upsample_depths(depth, rgbs, np.asarray(result.original_coords)[:, :4])
+c2w = invert_poses(result.extrinsics)   # fused with result.intrinsics (full-res)
 ```
 
-`result` is the `PointcloudResult`, `ff` the `FeedforwardResult` loaded from the same
-`pointcloud.zarr`. The poses and `K` both come from `result` because the depth was lifted onto
-the original frame grid — mixing one grid's depth with the other grid's `K` is the collapse bug
-above.
+`result` is the `PointcloudResult` loaded from `pointcloud.zarr`. It stores `K` twice:
+`intrinsics` on the original frame grid and `model_intrinsics` on the model grid. The depth was
+lifted onto the original frame grid, so it fuses with `intrinsics` — mixing one grid's depth
+with the other grid's `K` is the collapse bug above.
 
 `confidence_mask` is skipped when the reconstruction carries no confidence array — `sfm` does
 not produce one, and the arrays are absent rather than zero-filled.
 
-**At model resolution** (notebooks, evals): use `ff.depth`, `ff.images` transposed to
-`(n, h, w, 3)` and scaled to uint8, `invert_poses(ff.extrinsics)` and `ff.intrinsics`. No lift,
-no COLMAP camera. `02_pointcloud/feedforward_mesh.ipynb` is this path end to end.
+**At model resolution** (notebooks, evals): use `result.depth`, `result.images` transposed to
+`(n, h, w, 3)` and scaled to uint8, `invert_poses(result.extrinsics)` and
+`result.model_intrinsics`. No lift, no COLMAP camera. `02_pointcloud/feedforward_mesh.ipynb` is
+this path end to end.
 
 **From a trained splat.** `render_tsdf_inputs` (in `collab_splats.splats.checkpoint`) renders every training camera out of the splats
 stage's `ckpt.pt`. Renders come out at frame resolution carrying the poses they were rendered

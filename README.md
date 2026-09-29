@@ -160,7 +160,7 @@ from collab_splats.viewer import Viewer
 from collab_splats.pointcloud.utils import subsample_points
 
 viewer = Viewer(port=8080)  # open http://<host>:8080
-points, colors = subsample_points(points, colors, conf=conf, max_points=50_000)
+points, colors = subsample_points(points, colors, max_points=50_000)
 viewer.add_points("submap_0", points, colors)
 viewer.add_frustum("submap_0/cams/frame_0", pose_w2c, intrinsic)
 ```

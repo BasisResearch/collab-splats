@@ -17,7 +17,10 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from PIL import Image
 
-from collab_splats.semantics.utils import _tokens_to_feature_map, compute_semantic_contrast
+from collab_splats.semantics.utils import (
+    _tokens_to_feature_map,
+    compute_semantic_contrast,
+)
 from collab_splats.utils.image import open_image, resize_image
 from collab_splats.utils.torch_utils import RegistryMixin
 

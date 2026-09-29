@@ -11,7 +11,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
 from tests.wrapper._stubs import minimal_feedforward_result, minimal_pose_result
 
@@ -27,7 +27,7 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **kwargs):
         return tmp_path / "mesh.ply"
 
     with (
-        patch.object(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: result)),
+        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
         patch(
             "collab_splats.wrapper.reconstructor.frames.read_frames",
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
@@ -59,7 +59,8 @@ def test_mask_sky_zeroes_feedforward_depth_where_sky_and_nowhere_else(tmp_path):
 
     assert np.all(fused["depths"][:, :2] == 0.0)
     assert np.all(fused["depths"][:, 2:] == 1.0)
-    assert sky.call_args.kwargs["idxs"] is None
+    # Feedforward masks the zarr's own frames (minimal_feedforward_result: frames 0 and 1)
+    assert sky.call_args.kwargs["idxs"] == [0, 1]
 
 
 def test_mask_sky_off_never_loads_the_model(tmp_path):

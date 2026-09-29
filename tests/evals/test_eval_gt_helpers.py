@@ -1,8 +1,9 @@
 import json
-import numpy as np
 import shutil
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "scripts"))
@@ -102,9 +103,11 @@ def test_save_outputs_writes_files(tmp_path):
 
 def test_make_creator_ba_track_density_4096(monkeypatch):
     """ba_track-density-4096 → BA enabled with max_query_pts=4096, query_frame_num=8."""
-    import eval as eval_gt
-    from collab_splats.geometry import BundleAdjustmentConfig
     from unittest.mock import MagicMock
+
+    import eval as eval_gt
+
+    from collab_splats.geometry import BundleAdjustmentConfig
 
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
     creator, ba_cfg = eval_gt._make_creator("ba_track-density-4096")
@@ -115,9 +118,11 @@ def test_make_creator_ba_track_density_4096(monkeypatch):
 
 def test_make_creator_ba_track_density_2048(monkeypatch):
     """ba_track-density-2048 → query_frame_num=5 (max(5, 2048//512) = max(5,4) = 5)."""
-    import eval as eval_gt
-    from collab_splats.geometry import BundleAdjustmentConfig
     from unittest.mock import MagicMock
+
+    import eval as eval_gt
+
+    from collab_splats.geometry import BundleAdjustmentConfig
 
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
     creator, ba_cfg = eval_gt._make_creator("ba_track-density-2048")
@@ -128,9 +133,11 @@ def test_make_creator_ba_track_density_2048(monkeypatch):
 
 def test_make_creator_ba_percam(monkeypatch):
     """ba_percam → BA with shared_camera=False (per-frame focal ablation)."""
-    import eval as eval_gt
-    from collab_splats.geometry import BundleAdjustmentConfig
     from unittest.mock import MagicMock
+
+    import eval as eval_gt
+
+    from collab_splats.geometry import BundleAdjustmentConfig
 
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())
     creator, ba_cfg = eval_gt._make_creator("ba_percam")
@@ -165,6 +172,7 @@ def test_validate_condition_rejects_unknown():
 def test_default_output_dir_structure():
     """Auto path: evals/results/{dataset}/{seq_name}/run-{YYYYMMDD-HHMMSS}/"""
     import re
+
     from eval import _default_output_dir
 
     result = _default_output_dir("co3dv2", Path("/data/co3dv2/apple/seq1"))
@@ -276,6 +284,7 @@ def test_make_creator_ba_coarse(monkeypatch):
     from unittest.mock import MagicMock
 
     import eval as eval_gt
+
     from collab_splats.geometry import BundleAdjustmentConfig
 
     monkeypatch.setattr(eval_gt, "get_creator", lambda name: lambda: MagicMock())

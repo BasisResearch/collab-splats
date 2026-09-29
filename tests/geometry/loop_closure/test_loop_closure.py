@@ -1,8 +1,9 @@
+from pathlib import Path
+
 import numpy as np
 import torch
-from pathlib import Path
-from collab_splats.geometry.loop_closure import Submap
-from collab_splats.geometry.loop_closure import LoopClosureConfig
+
+from collab_splats.geometry.loop_closure import LoopClosureConfig, Submap
 from collab_splats.geometry.loop_closure.matching import LoopMatch, LoopMatchQueue
 
 
@@ -147,8 +148,7 @@ def test_find_loop_closures_no_match():
 
 
 def test_loop_match_queue_nms():
-    from collab_splats.geometry.loop_closure.matching import LoopMatch
-    from collab_splats.geometry.loop_closure.matching import LoopMatchQueue
+    from collab_splats.geometry.loop_closure.matching import LoopMatch, LoopMatchQueue
 
     # frames [10, 12, 50, 53, 100] — 10+12 cluster, 50+53 cluster, 100 alone
     # nms=25: keep best of each cluster by score (lower = better)

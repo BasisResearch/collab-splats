@@ -31,7 +31,7 @@ preproc:
 pointcloud:
   method: feedforward         # feedforward | sfm
   backend: vggt_omega         # feedforward: vggt_omega | vggtx | mapanything | loger
-                              # sfm: instantsfm (colmap | hloc not implemented)
+                              # sfm: instantsfm | colmap | hloc
   # Per-backend creator kwargs. Only the block matching `backend` is read, so all
   # four can be documented here at once. max_points is NOT settable here — it is a
   # pipeline-level guard below.
@@ -40,22 +40,16 @@ pointcloud:
     window_size: 32           # sliding-window length; upstream default, see README
     overlap_size: 3           # frames shared between adjacent windows
     reset_every: 0            # hard-reset TTT fast weights every N frames; 0 = never
-    conf_threshold: 50.0      # depth-confidence PERCENTILE when > 1.0; a value <= 1.0 is
-                              # read as a RAW confidence instead. LoGeR's post-sigmoid
-                              # confidences sit in ~[0.014, 0.117], so a raw 1.0 keeps
-                              # nothing — do not write 1.0 meaning "1st percentile".
+    conf_threshold: 50.0      # depth-confidence percentile
   loop_closure: false
-  # Inference-time memory guard: caps the confidence mask so a full-resolution cloud is
-  # never materialised (BaseFeedforwardCreator.max_points). Lower it on small-GPU/RAM machines.
+  # Final point count cap (BasePointcloudCreator.max_points), drawn after the SOR clean, every method.
+  # Lower it on small-GPU/RAM machines.
   max_points: 500000
-  # Geometric cross-view depth consistency filter. Drops points whose depth disagrees with
-  # the other views that see them. rel_thresh and min_views are calibrated per-backend
-  # creator defaults, deliberately not exposed here.
-  # Off: measured on 7-Scenes chess/seq-01 it cuts the >10%-error pixel fraction by ~5% for
-  # ~2% of pixels — real but small, and it costs O(N^2) pairwise warping. The learned
-  # confidence percentile is the stronger filter; mv is complementary and ANDed on top.
-  # See docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D.
-  use_multiview_confidence: false
+  # Cross-view depth consistency filter (feedforward only); 0 = off
+  # - keeps a pixel when min(min_views, seen) other views agree within mv_rel_thresh
+  # - off: on chess/seq-01 it cuts the >10%-error fraction ~5% for ~2% of pixels at O(N^2)
+  min_views: 0
+  mv_rel_thresh: 0.01
   viz:
     enabled: false          # instantiate the viser Viewer during loop closure
     port: 8080              # viser server port
@@ -67,20 +61,31 @@ pointcloud:
   bundle_adjustment: false
   clean:
     enabled: true              # statistical outlier removal on the final sparse point set
-  # InstantSfM (method: sfm, backend: instantsfm) config surface.
+  # InstantSfM global SfM (method: sfm, backend: instantsfm)
   instantsfm:
-    retriangulation: false    # GLOMAP-style post-BA refinement: retriangulate tracks from the
-                               # full pre-filter set + up to 5 further BA rounds (upstream
-                               # skip_retriangulation flag). Costs extra runtime.
-    random_seed: null         # seed InstantSfM's RUNTIME_OPTIONS (numpy/random/torch/cuda).
-                              # InitializeRandomPositions draws unseeded, so two runs of the
-                              # same scene differ. null = upstream behavior (unseeded).
-    min_num_view_per_track: null  # drop tracks seen by fewer views before BA. null = upstream
-                                  # default (3). The BA normal equations scale with the
-                                  # surviving track count: 875 images at 3 gave 486k tracks and
-                                  # exhausted 44 GiB in cuDSS; 6 is the measured setting that
-                                  # fits. Retriangulation rebuilds density from the pre-filter
-                                  # set, so it is unaffected.
+    retriangulation: false        # GLOMAP-style retriangulate + up to 5 further BA rounds; extra runtime
+    random_seed: null             # seeds InstantSfM's RUNTIME_OPTIONS; null = upstream's unseeded init
+    min_num_view_per_track: null  # drop thinner tracks before BA, the memory lever; null = upstream's 3
+    min_registered_frac: 0.5      # fail below this share of frames registered; above it, subset
+    num_threads: 8                # CPU SIFT thread cap; the GPU path ignores it
+  # COLMAP incremental SfM (method: sfm, backend: colmap): pycolmap SIFT + pycolmap mapper.
+  colmap:
+    pairing: sequential+retrieval  # sequential | retrieval | sequential+retrieval | exhaustive
+    overlap: 10              # sequential: pair each frame with the next N
+    num_retrieved: 20        # retrieval: vocab-tree neighbors per image (9.5 MB tree, fetched once)
+    num_threads: 8           # CPU SIFT/mapper thread cap; colmap's default is one thread per host core
+    min_registered_frac: 0.5 # fail below this share of frames registered; above it, subset
+  # hloc incremental SfM (method: sfm, backend: hloc): learned features + pycolmap mapper.
+  # Needs the optional `hloc` extra (setup/hloc.sh, then the user-run uv lock + sync).
+  hloc:
+    pairing: sequential+retrieval  # sequential | retrieval | sequential+retrieval | exhaustive
+    overlap: 10              # sequential: pair each frame with the next N
+    num_retrieved: 20        # retrieval: top-k global-descriptor neighbors per image
+    retrieval_conf: netvlad  # hloc.extract_features.confs key
+    feature_conf: superpoint_max          # hloc.extract_features.confs key
+    matcher_conf: superpoint+lightglue    # hloc.match_features.confs key
+    num_threads: 8           # pycolmap mapper thread cap
+    min_registered_frac: 0.5 # fail below this share of frames registered; above it, subset
 
 semantics:
   enabled: true

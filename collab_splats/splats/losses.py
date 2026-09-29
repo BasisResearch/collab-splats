@@ -9,8 +9,9 @@ Training losses and their per-step weight schedule.
 """
 
 import torch
-from gsplat import losses as gsplat_losses
 from torch import Tensor
+
+from gsplat import losses as gsplat_losses
 
 ########################################
 # Schedule

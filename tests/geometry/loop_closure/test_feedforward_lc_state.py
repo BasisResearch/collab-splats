@@ -7,22 +7,22 @@ import torch
 
 from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
-from collab_splats.pointcloud.feedforward import (
-    BaseFeedforwardCreator,
-    FeedforwardResult,
-)
+from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
 
 
 class _StubCreator(BaseFeedforwardCreator):
     """Minimal creator for unit-testing LoopClosure LC state exposure."""
+
+    default_verify_match_ratio = 0.85
 
     def _load_model(self, device):
         m = MagicMock()
         m.parameters.return_value = iter([torch.zeros(1)])
         return m
 
-    def _preprocess(self, image_dir):
-        return torch.zeros(40, 3, 224, 224), [None] * 40, np.zeros((40, 6))
+    def _preprocess(self, frames, frame_idxs):
+        return torch.zeros(40, 3, 224, 224), np.zeros((40, 6))
 
     def _forward(self, model, views, **kwargs):
         k = views.shape[0]
@@ -45,22 +45,16 @@ class _StubCreator(BaseFeedforwardCreator):
     def _postprocess(self, raw_outputs, **kwargs):
         pass
 
-    def extract_intermediate_features(self, frames, layer_index=-1, **kwargs):
-        return getattr(self, "_stubbed_features", {})
-
-    def _reproject(self, raw_outputs, extrinsics_3x4, intrinsics):
-        return np.zeros((0, 3)), np.zeros((0, 3))
-
-    def build_colmap(self, output_dir):
-        pass
-
 
 def test_n_loops_applied_set_after_run_inference():
-    base = _StubCreator(camera_model="PINHOLE")
+    base = _StubCreator()
     creator = LoopClosure(base, config=LoopClosureConfig(submap_size=20, submap_overlap=4))
     creator.load_model()
     base.views = torch.zeros(40, 3, 224, 224)
     base.image_paths = [None] * 40
+    base.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1)
+    )  # full-frame box
 
     # Patch the retrieval extractor and loop detection. The output is now assembled
     # from the GraphMap (no batch PGO / merge helpers to patch).

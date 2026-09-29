@@ -91,9 +91,9 @@ def test_verify_loop_candidate_returns_tuple():
     q[:, :, :10, 0] = 10.0
     k[:, :, 10:, 1] = 10.0  # frame2 tokens align to dim 1 (orthogonal → low ratio)
     q[:, :, 10:, 1] = 10.0
-    creator.extract_intermediate_features = lambda frames, layer_index=-1, **kw: {"q": q, "k": k}
+    creator.extract_intermediate_features = lambda frames, layer_index, **kw: {"q": q, "k": k}
 
-    result = creator._verify_loop_candidate(torch.zeros(3, 64, 64), torch.zeros(3, 64, 64))
+    result = creator._verify_loop_candidate(torch.zeros(3, 64, 64), torch.zeros(3, 64, 64), verify_match_ratio=1.46)
     assert isinstance(result, tuple) and len(result) == 2
     accepted, lc_poses = result
     assert accepted is False

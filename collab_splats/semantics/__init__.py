@@ -7,15 +7,15 @@ Semantic features for reconstructed scenes: extract, compress, store, query, seg
 - utils: on-disk layout of the 2D cache and the lifted per-point store
 """
 
-from .compression import FeatureAutoencoder
-from .features import (
+from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.features import (
     BaseFeatureExtractor,
     BaseQueryableExtractor,
     DINOFeatureExtractor,
     MaskCLIPExtractor,
     Talk2DinoExtractor,
 )
-from .segmentation import (
+from collab_splats.semantics.segmentation import (
     BaseSegmentation,
     INSID3Segmentation,
     MobileSAMSegmentation,
@@ -28,7 +28,7 @@ from .segmentation import (
     mask_id_to_binary_mask,
     sky_masks,
 )
-from .utils import (
+from collab_splats.semantics.utils import (
     ae_path,
     cache_store_path,
     compute_semantic_contrast,

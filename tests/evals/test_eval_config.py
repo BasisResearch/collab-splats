@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals" / "scripts"))
-from eval import load_eval_config, build_grid  # noqa: E402
+from eval import build_grid, load_eval_config  # noqa: E402
 
 
 def test_load_config_flat(tmp_path):

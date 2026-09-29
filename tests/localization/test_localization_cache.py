@@ -15,7 +15,7 @@ from collab_splats.localization import (
     LocalFeatures,
     LocalizationResult,
 )
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.utils.image import open_image
 
 # ── Shared fixtures ──────────────────────────────────────────────────────────
@@ -87,23 +87,24 @@ def _empty_zarr(tmp_path: Path) -> Path:
 
 
 def test_load_zarr_sets_zarr_path(tmp_path):
-    """FeedforwardResult.load_zarr should set _zarr_path on the result."""
+    """PointcloudResult.load_zarr should set _zarr_path on the result."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene()
     image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    result = FeedforwardResult(
+    result = PointcloudResult(
         points=pts3d,
         colors=np.zeros((len(pts3d), 3), dtype=np.uint8),
         extrinsics=extrinsics,
-        intrinsics=intrinsics,
+        intrinsics=None,
+        model_intrinsics=intrinsics,
         image_paths=image_paths,
-        original_coords=np.zeros((3, 6), dtype=np.float32),
+        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (3, 1)),  # full-frame box
         model_width=64,
         model_height=64,
     )
     zarr_path = tmp_path / "test.zarr"
     result.save_zarr(zarr_path)
 
-    loaded = FeedforwardResult.load_zarr(zarr_path)
+    loaded = PointcloudResult.load_zarr(zarr_path)
     assert hasattr(loaded, "_zarr_path")
     assert loaded._zarr_path == zarr_path
 
@@ -232,7 +233,7 @@ def test_load_index_missing_extractor_raises(tmp_path):
 
 
 def _make_ff_result(world_points, extrinsics, image_paths):
-    """Minimal FeedforwardResult mock for testing from_feedforward."""
+    """Minimal PointcloudResult mock for testing from_feedforward."""
     result = MagicMock()
     result.world_points = world_points
     result.extrinsics = extrinsics

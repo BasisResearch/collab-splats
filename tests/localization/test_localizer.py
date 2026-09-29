@@ -13,7 +13,11 @@ from collab_splats.localization import (
     LocalMatcher,
 )
 from collab_splats.localization.extractors import MatchResult
-from collab_splats.localization.localizer import CameraLocalizer, load_localization_db, sample_world_points
+from collab_splats.localization.localizer import (
+    CameraLocalizer,
+    load_localization_db,
+    sample_world_points,
+)
 
 
 def test_submodules_have_logger():

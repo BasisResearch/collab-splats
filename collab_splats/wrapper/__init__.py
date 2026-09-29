@@ -1,5 +1,5 @@
-from .config import ConfigLoader, parse_cli_overrides
-from .reconstructor import Reconstructor
+from collab_splats.wrapper.config import ConfigLoader, parse_cli_overrides
+from collab_splats.wrapper.reconstructor import Reconstructor
 
 __all__ = [
     "Reconstructor",

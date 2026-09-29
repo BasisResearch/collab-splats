@@ -11,10 +11,12 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
-from gsplat import rasterization, rasterization_2dgs
-from gsplat.utils import depth_to_normal, normalized_quat_to_rotmat
 from torch import Tensor
 
+from gsplat import rasterization, rasterization_2dgs
+from gsplat.utils import depth_to_normal, normalized_quat_to_rotmat
+
+from collab_splats.geometry.transforms import transform_points
 from collab_splats.splats.cameras import CameraOpt
 
 # Annotation-only: a runtime import would be circular
@@ -47,9 +49,8 @@ def gaussian_normals_in_camera_frame(quats: Tensor, scales: Tensor, means: Tenso
 
     # Rotate normals and positions into the camera frame
     rotation_w2c = world_to_cam[:3, :3]
-    translation_w2c = world_to_cam[:3, 3]
     normals_cam = normals_world @ rotation_w2c.T
-    means_cam = means @ rotation_w2c.T + translation_w2c
+    means_cam = transform_points(means, world_to_cam)
 
     # Flip normals that point away from the camera
     faces_away = (normals_cam * means_cam).sum(-1, keepdim=True) > 0

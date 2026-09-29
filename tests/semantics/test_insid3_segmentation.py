@@ -35,6 +35,7 @@ def test_cluster_prototypes_shape_and_normalized():
 
 def test_agglomerative_clustering_identical_vectors_merge():
     from collab_splats.semantics.segmentation.insid3 import _agglomerative_clustering
+
     # All identical vectors → cosine distance = 0 → any tau merges into 1 cluster
     X = F.normalize(torch.ones(8, 16), p=2, dim=1)
     labels = _agglomerative_clustering(X, tau=0.5)
@@ -53,6 +54,7 @@ def test_downsample_mask_reduces_to_patch_resolution():
 
 def test_downsample_mask_tiny_mask_fallback():
     from collab_splats.semantics.segmentation.insid3 import _downsample_mask
+
     # Single pixel mask — bilinear would vanish at patch resolution
     mask = torch.zeros(64, 64, dtype=torch.bool)
     mask[32, 32] = True
@@ -76,6 +78,7 @@ def test_locate_candidates_returns_bool_mask():
 
 def test_locate_candidates_perfect_match():
     from collab_splats.semantics.segmentation.insid3 import _locate_candidates
+
     # When target IS the reference, backward NN of each target patch is itself → inside mask if in masked region
     D, H, W = 16, 6, 6
     feat = F.normalize(torch.randn(D, H, W), p=2, dim=0)
@@ -145,6 +148,7 @@ def test_seed_and_aggregate_empty_candidate_returns_empty():
 
 
 from unittest.mock import MagicMock
+
 from PIL import Image
 
 
@@ -221,8 +225,8 @@ def test_set_context_empty_mask_raises_before_extraction():
 
 
 def test_registered_as_insid3():
-    from collab_splats.semantics.segmentation.insid3 import INSID3Segmentation
     from collab_splats.semantics.segmentation.base import BaseSegmentation
+    from collab_splats.semantics.segmentation.insid3 import INSID3Segmentation
     assert BaseSegmentation.get("insid3") is INSID3Segmentation
 
 

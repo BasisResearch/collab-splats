@@ -22,6 +22,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from collab_splats.geometry.projection import project
 from collab_splats.utils.torch_utils import get_device
 
 NPZ = "evals/results/ba_start_at_gt/ba_inputs.npz"
@@ -53,13 +54,21 @@ print(f"shared focal {FOCAL:.4f}, principal point spread "
       f"x {ctr[:, 0].min():.1f}-{ctr[:, 0].max():.1f} y {ctr[:, 1].min():.1f}-{ctr[:, 1].max():.1f}")
 
 
-def residuals(X, R, t, obs, m, f):
+def residuals(X, T, obs, m, f):
     """(N,B) squared residual sum per landmark, plus the projection intermediates."""
-    Xc = torch.einsum("nij,bj->nbi", R, X) + t[:, None]
+    # SIMPLE_PINHOLE K per camera: shared focal, own principal point
+    K = torch.zeros(N, 3, 3, dtype=torch.float64, device=dev)
+    K[:, 0, 0] = f
+    K[:, 1, 1] = f
+    K[:, :2, 2] = ctr
+    K[:, 2, 2] = 1.0
+
+    # Every block landmark into every camera; zs mirrors project's 1e-6 divide floor for the Jacobian
+    projected = [project(X, T[n], K[n]) for n in range(N)]
+    proj = torch.stack([pixels for pixels, _ in projected])
+    Xc = torch.stack([cam for _, cam in projected])
     z = Xc[..., 2]
     zs = z.clamp(min=1e-6)
-    proj = torch.stack([f * Xc[..., 0] / zs + ctr[:, None, 0],
-                        f * Xc[..., 1] / zs + ctr[:, None, 1]], -1)
     r = (proj - obs) * m[..., None]
     # A landmark behind the camera is infeasible, not cheap — never let it score well
     r = torch.where(((z <= 1e-6) & m)[..., None], torch.full_like(r, 1e4), r)
@@ -94,11 +103,11 @@ def refit(poses, f, iters=60):
         # Take whichever start is already cheaper — the seed keeps the refit monotone against
         # the seeded structure; the midpoint rescues landmarks the seed placed badly
         X_seed_blk = X_seed[s:e]
-        _, _, _, c_mid = residuals(X_mid, R, t, obs, m, f)
-        _, _, _, c_seed = residuals(X_seed_blk, R, t, obs, m, f)
+        _, _, _, c_mid = residuals(X_mid, T, obs, m, f)
+        _, _, _, c_seed = residuals(X_seed_blk, T, obs, m, f)
         X = torch.where((c_mid < c_seed)[:, None], X_mid, X_seed_blk)
 
-        r, Xc, zs, c = residuals(X, R, t, obs, m, f)
+        r, Xc, zs, c = residuals(X, T, obs, m, f)
         lam = torch.full((B,), 1e-4, dtype=torch.float64, device=dev)
         for _ in range(iters):
             # Gauss-Newton normal equations with LM damping, solved independently per landmark
@@ -113,7 +122,7 @@ def refit(poses, f, iters=60):
             diag = H.diagonal(dim1=-2, dim2=-1).abs().clamp(min=1e-12)
             step = torch.linalg.solve(H + lam[:, None, None] * torch.diag_embed(diag),
                                       g.unsqueeze(-1)).squeeze(-1)
-            rn, Xcn, zsn, cn = residuals(X - step, R, t, obs, m, f)
+            rn, Xcn, zsn, cn = residuals(X - step, T, obs, m, f)
             # Accept per landmark, only where the cost actually fell
             acc = cn < c
             X = torch.where(acc[:, None], X - step, X)
@@ -131,11 +140,10 @@ def refit(poses, f, iters=60):
 def loss_at(poses, X, f):
     """Total squared reprojection loss for fixed poses and fixed structure."""
     T = torch.from_numpy(poses).to(dev)
-    R, t = T[:, :3, :3], T[:, :3, 3]
     tot = 0.0
     for s in range(0, P, BLOCK):
         e = min(s + BLOCK, P)
-        _, _, _, c = residuals(X[s:e], R, t, obs_all[:, s:e], mask_all[:, s:e], f)
+        _, _, _, c = residuals(X[s:e], T, obs_all[:, s:e], mask_all[:, s:e], f)
         tot += float(c.sum())
     return tot
 

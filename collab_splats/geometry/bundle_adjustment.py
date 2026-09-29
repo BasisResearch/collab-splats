@@ -18,18 +18,19 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pypose as pp
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import zarr
+from zarr.codecs import BloscCodec
+
+import pypose as pp
 from bae.autograd.function import TrackingTensor, map_transform
 from bae.optim import LM
 from bae.utils.pysolvers import PCG
-from vggt.dependency.projection import project_3D_points_np
 from vggt.dependency.track_predict import predict_tracks
-from zarr.codecs import BloscCodec
 
+from collab_splats.geometry.projection import project
 from collab_splats.geometry.transforms import (
     extrinsics_to_homogeneous,
     invert_poses,
@@ -671,14 +672,19 @@ def _filter_observations(
 
     # Remove observations with high reprojection error under the current poses
     if max_reproj is not None:
-        proj2d, proj_cam = project_3D_points_np(pts3d, extrinsics, intrinsics)
+        points = torch.as_tensor(pts3d, dtype=torch.float64)
+        world_to_cam = torch.as_tensor(extrinsics, dtype=torch.float64)
+        K = torch.as_tensor(intrinsics, dtype=torch.float64)
+        projected = [project(points, world_to_cam[i], K[i]) for i in range(len(K))]
+        proj2d = torch.stack([pixels for pixels, _ in projected])  # (N, P, 2)
+        proj2d = proj2d.numpy()
+        depth = torch.stack([cam[:, 2] for _, cam in projected])  # (N, P)
+        depth = depth.numpy()
 
         # Behind-camera points get large sentinel projection so they fail the threshold
-        behind = proj_cam[:, 2, :] <= 0
-        proj2d = proj2d.copy()
-        proj2d[behind] = 1e6
+        proj2d[depth <= 0] = 1e6
         reproj_err = np.linalg.norm(proj2d - tracks, axis=-1)
-        vis[reproj_err > max_reproj] = False
+        vis[~(reproj_err <= max_reproj)] = False  # NaN-safe: a NaN point fails the gate
 
     # Drop frames with too few inliers, before the landmark check
     # - landmark counts then see surviving frames only, so 1-view points drop
@@ -772,7 +778,7 @@ def extract_tracks_vggsfm(
     )
     target_device = cfg.device or ("cuda" if torch.cuda.is_available() else "cpu")
 
-    # numpy images: sfm's result_from_reconstruction stores float32 arrays, not tensors
+    # numpy images: sfm's align_depth stores float32 arrays, not tensors
     if isinstance(images, np.ndarray):
         images = torch.from_numpy(images)
 

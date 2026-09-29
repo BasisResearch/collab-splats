@@ -18,7 +18,7 @@ import torch
 from collab_splats.geometry.transforms import decompose_camera, intrinsics_4x4
 
 if TYPE_CHECKING:
-    from .graph import PoseGraph
+    from collab_splats.geometry.loop_closure.graph import PoseGraph
 
 
 @dataclass

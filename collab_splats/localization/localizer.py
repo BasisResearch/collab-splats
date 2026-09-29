@@ -16,10 +16,9 @@ import torch.nn.functional as F
 import zarr
 from PIL import Image
 
+from collab_splats.localization.extractors import LocalFeatures, LocalMatcher
+from collab_splats.localization.retrieval import BaseRetrievalExtractor
 from collab_splats.utils.io import LZ4, to_uint8_hwc
-
-from .extractors import LocalFeatures, LocalMatcher
-from .retrieval import BaseRetrievalExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +184,7 @@ class CameraLocalizer:
     LO-RANSAC + Ceres refinement (pycolmap). Build once per scene; call
     localize() for each query image.
 
-    Output convention matches FeedforwardResult.extrinsics: (4, 4) float32
+    Output convention matches PointcloudResult.extrinsics: (4, 4) float32
     world-to-camera homogeneous transform.
     """
 
@@ -371,7 +370,7 @@ class CameraLocalizer:
 
         # keypoints_normalized: loma-split pre-transform coords the learned matcher consumes.
         # Written only when EVERY frame carries them — a zero-filled normalized table would be
-        # wrong data, unlike scores/scales (absent, never zeros — mv_* precedent).
+        # wrong data, unlike scores/scales (absent, never zeros).
         has_norm = bool(self._frame_features) and all(
             f.keypoints_normalized is not None for f in self._frame_features
         )
@@ -764,10 +763,10 @@ class CameraLocalizer:
         top_k: int = 8,
         **kwargs,
     ) -> "CameraLocalizer":
-        """Construct from a FeedforwardResult. Loads from zarr cache if available.
+        """Construct from a PointcloudResult. Loads from zarr cache if available.
 
         Args:
-            result:            FeedforwardResult (or duck-typed object with .world_points,
+            result:            PointcloudResult (or duck-typed object with .world_points,
                                .extrinsics, .image_paths, ._zarr_path).
             images:            Caller-built reference pixel source (iterable of HxWx3 RGB
                                arrays), aligned to result. Consumed ONLY on a cache miss;
@@ -787,7 +786,7 @@ class CameraLocalizer:
         """
         # Depth-lookup localization requires the dense per-frame world map
         if getattr(result, "world_points", None) is None:
-            raise ValueError("FeedforwardResult has no world_points — re-save zarr or load with load_world_points=True")
+            raise ValueError("PointcloudResult has no world_points — re-save zarr or load with load_world_points=True")
 
         extractor_inst = extractor if extractor is not None else LocalMatcher("loma")
 
@@ -813,7 +812,7 @@ class CameraLocalizer:
             if getattr(result, "images", None) is None:
                 raise ValueError(
                     "Pairwise matcher needs result.images (model-res reference frames) — "
-                    "reload the FeedforwardResult with load_images=True"
+                    "reload the PointcloudResult with load_images=True"
                 )
             pairwise_refs = cls._build_pairwise_refs(result.images)
 

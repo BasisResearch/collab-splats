@@ -31,15 +31,18 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.preproc import frames as fr
 from collab_splats.splats import load_checkpoint, render_views
 from collab_splats.splats.trainer import SplatsConfig, train
 from collab_splats.utils.image import upsample_depths
 from collab_splats.utils.io import to_uint8_hwc, write_json
-from evals.scripts.eval_multiview_conf import load_7scenes_depth, median_align, retained_error
+from evals.scripts.eval_multiview_conf import (
+    load_7scenes_depth,
+    median_align,
+    retained_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,7 @@ class SplatInputs:
     resolution: tuple[int, int]  # (H, W) of images
 
 
-def _model_res_images(result: FeedforwardResult) -> np.ndarray:
+def _model_res_images(result: PointcloudResult) -> np.ndarray:
     """
     The zarr's own model-res images as (N, H, W, 3) uint8.
 
@@ -82,13 +85,13 @@ def _model_res_images(result: FeedforwardResult) -> np.ndarray:
 
 
 def _native_images_and_intrinsics(
-    result: FeedforwardResult, images_dir: Path, zarr_path: Path
+    result: PointcloudResult, images_dir: Path, zarr_path: Path
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Native frames from images/ in ``result.image_paths`` order, with K rescaled model-res -> native.
+    Native frames from images/ in ``result.image_paths`` order, with the result's full-res K.
 
-    - Mirrors ``Reconstructor.splats()`` for the frames; K is resized model -> crop size, then
-      shifted by the crop origin from ``original_coords``, giving native pixels.
+    - Mirrors ``Reconstructor.splats()`` for the frames; K is ``result.intrinsics``, the
+      model-grid K resized to the crop and shifted by its origin, in native pixels.
     - Raises ValueError when the images/ resolution differs from the zarr's recorded original size.
     """
     # Frames looked up by the frame index encoded in each image name; read_frames returns them
@@ -108,17 +111,8 @@ def _native_images_and_intrinsics(
             f"records original sizes (H, W) {recorded}"
         )
 
-    # Crop box per frame and its (H, W) size, in native pixels
-    box = result.original_coords[:, :4]
-    crop_hw = np.stack([box[:, 3] - box[:, 1], box[:, 2] - box[:, 0]], axis=-1)
-    model_hw = (result.model_height, result.model_width)
-
-    # Undo the resize: K from the model grid to the crop's size
-    intrinsics = rescale_intrinsics(result.intrinsics, model_hw, crop_hw)
-
-    # Undo the crop: move the principal point by the crop's top-left corner
-    intrinsics = shift_intrinsics(intrinsics, box[:, :2]).astype(np.float32)
-    return images, intrinsics
+    # The result's full-res K already undoes the model resize and the crop
+    return images, result.intrinsics
 
 
 def inputs_from_pointcloud_zarr(
@@ -139,7 +133,7 @@ def inputs_from_pointcloud_zarr(
     """
     path = Path(path)
     load_images = images_dir is None or images_dir == AUTO_IMAGES_DIR
-    result = FeedforwardResult.load_zarr(path, load_images=load_images, load_world_points=False)
+    result = PointcloudResult.load_zarr(path, load_images=load_images, load_world_points=False)
 
     # Resolve the sentinel: native when a sibling images/ exists, else fall back to model res
     if images_dir == AUTO_IMAGES_DIR:
@@ -151,7 +145,7 @@ def inputs_from_pointcloud_zarr(
     # Images + matching K at the chosen resolution
     if images_dir is None:
         images = _model_res_images(result)
-        intrinsics = result.intrinsics.astype(np.float32)
+        intrinsics = result.model_intrinsics.astype(np.float32)
     else:
         images, intrinsics = _native_images_and_intrinsics(result, Path(images_dir), path)
     height, width = images.shape[1:3]

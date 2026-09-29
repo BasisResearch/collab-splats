@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .submap import Submap
+from collab_splats.geometry.loop_closure.submap import Submap
 
 if TYPE_CHECKING:
-    from .graph import PoseGraph
+    from collab_splats.geometry.loop_closure.graph import PoseGraph
 
 
 class GraphMap:

@@ -5,10 +5,13 @@ Patch-feature extractors, looked up by name via `BaseFeatureExtractor.get`.
 - maskclip, talk2dino: queryable; they also embed text for `score_queries`
 """
 
-from .base import BaseFeatureExtractor, BaseQueryableExtractor
-from .dino import DINOFeatureExtractor
-from .maskclip import MaskCLIPExtractor
-from .talk2dino import Talk2DinoExtractor
+from collab_splats.semantics.features.base import (
+    BaseFeatureExtractor,
+    BaseQueryableExtractor,
+)
+from collab_splats.semantics.features.dino import DINOFeatureExtractor
+from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
+from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
 
 __all__ = [
     "BaseFeatureExtractor",

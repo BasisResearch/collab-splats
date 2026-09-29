@@ -1,4 +1,4 @@
-"""Tests for FeedforwardResult zarr backend (save_zarr / load_zarr).
+"""Tests for PointcloudResult zarr backend (save_zarr / load_zarr).
 
 Covers:
 - Roundtrip of all core required fields
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+from collab_splats.pointcloud.base import PointcloudResult
 
 
 def _make_result(
@@ -23,22 +23,21 @@ def _make_result(
     *,
     with_world_points: bool = False,
     with_images: bool = False,
-    with_features: bool = False,
     with_pixel_indices: bool = False,
-) -> FeedforwardResult:
-    """Build a minimal FeedforwardResult for testing."""
+) -> PointcloudResult:
+    """Build a minimal PointcloudResult for testing."""
     rng = np.random.default_rng(42)
-    return FeedforwardResult(
+    return PointcloudResult(
         points=rng.random((n_pts, 3), dtype=np.float32),
         colors=rng.integers(0, 256, (n_pts, 3), dtype=np.uint8),
         extrinsics=np.eye(4, dtype=np.float32)[None].repeat(n_frames, axis=0),
-        intrinsics=np.eye(3, dtype=np.float32)[None].repeat(n_frames, axis=0),
+        intrinsics=None,
+        model_intrinsics=np.eye(3, dtype=np.float32)[None].repeat(n_frames, axis=0),
         image_paths=[Path(f"/tmp/frame_{i:04d}.png") for i in range(n_frames)],
-        original_coords=rng.random((n_frames, 6), dtype=np.float32),
+        original_coords=np.tile(np.array([0, 60, 640, 420, 640, 480], dtype=np.float32), (n_frames, 1)),
         model_width=w,
         model_height=h,
         world_points=rng.random((n_frames, h, w, 3), dtype=np.float32) if with_world_points else None,
-        features=rng.random((n_pts, 64), dtype=np.float32) if with_features else None,
         pixel_indices=rng.integers(0, n_frames, (n_pts, 3), dtype=np.int32) if with_pixel_indices else None,
     )
 
@@ -49,7 +48,7 @@ def test_zarr_roundtrip_core_fields(tmp_path):
     store_path = tmp_path / "result.zarr"
 
     result.save_zarr(store_path)
-    loaded = FeedforwardResult.load_zarr(store_path)
+    loaded = PointcloudResult.load_zarr(store_path)
 
     np.testing.assert_array_equal(loaded.points, result.points)
     np.testing.assert_array_equal(loaded.colors, result.colors)
@@ -68,7 +67,7 @@ def test_zarr_includes_world_points(tmp_path):
     store_path = tmp_path / "result_wp.zarr"
 
     result.save_zarr(store_path)
-    loaded = FeedforwardResult.load_zarr(store_path)
+    loaded = PointcloudResult.load_zarr(store_path)
 
     assert loaded.world_points is not None
     np.testing.assert_array_equal(loaded.world_points, result.world_points)
@@ -95,14 +94,13 @@ def test_zarr_world_points_chunked_by_frame(tmp_path):
 
 def test_zarr_missing_optional_fields_load_as_none(tmp_path):
     """Optional fields absent from the store load as None."""
-    result = _make_result(n_frames=2, with_world_points=False, with_features=False, with_pixel_indices=False)
+    result = _make_result(n_frames=2, with_world_points=False, with_pixel_indices=False)
     store_path = tmp_path / "result_minimal.zarr"
 
     result.save_zarr(store_path)
-    loaded = FeedforwardResult.load_zarr(store_path)
+    loaded = PointcloudResult.load_zarr(store_path)
 
     assert loaded.world_points is None
-    assert loaded.features is None
     assert loaded.pixel_indices is None
     # images always None on load
     assert loaded.images is None
@@ -110,14 +108,12 @@ def test_zarr_missing_optional_fields_load_as_none(tmp_path):
 
 
 def test_zarr_optional_fields_roundtrip(tmp_path):
-    """features and pixel_indices survive a roundtrip when present."""
-    result = _make_result(n_pts=80, with_features=True, with_pixel_indices=True)
-    store_path = tmp_path / "result_feats.zarr"
+    """pixel_indices survives a roundtrip when present."""
+    result = _make_result(n_pts=80, with_pixel_indices=True)
+    store_path = tmp_path / "result.zarr"
 
     result.save_zarr(store_path)
-    loaded = FeedforwardResult.load_zarr(store_path)
+    loaded = PointcloudResult.load_zarr(store_path)
 
-    assert loaded.features is not None
-    np.testing.assert_array_equal(loaded.features, result.features)
     assert loaded.pixel_indices is not None
     np.testing.assert_array_equal(loaded.pixel_indices, result.pixel_indices)

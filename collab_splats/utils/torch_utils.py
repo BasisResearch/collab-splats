@@ -1,11 +1,14 @@
 """General-purpose PyTorch and model-loading utilities."""
 
 import gc
-from typing import Any, Generator, List
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Generator, Iterator, List
 
+import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
-
 
 ########################################################
 ########## Device helpers ##############################
@@ -18,11 +21,62 @@ def get_device() -> str:
 
 
 def pytorch_gc():
-    """Clear CUDA cache and run Python garbage collection."""
+    """Run Python garbage collection, then release freed CUDA blocks to the driver."""
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
-    gc.collect()
+
+
+def to_numpy(x: torch.Tensor | np.ndarray) -> np.ndarray:
+    """
+    Host numpy view of a tensor or array.
+
+    - bf16 has no numpy dtype: cast to float32 first
+    - ndarrays pass through uncopied
+
+    Args:
+        x: tensor on any device, or an ndarray.
+
+    Returns:
+        The data as an ndarray.
+    """
+    if isinstance(x, torch.Tensor):
+        if x.dtype == torch.bfloat16:
+            x = x.float()
+        return x.detach().cpu().numpy()
+    return np.asarray(x)
+
+
+@contextmanager
+def vendored_path(root: Path, hint: str) -> Iterator[None]:
+    """
+    Vendored checkout on sys.path for the block, first unless already present.
+
+    - missing checkout: ImportError naming the fix, before any import runs
+    - exit removes the entry only if this call inserted it
+
+    Args:
+        root: checkout directory to import from.
+        hint: how to obtain the checkout, appended to the error.
+
+    Yields:
+        Nothing; imports inside the block resolve against root.
+    """
+    if not root.is_dir():
+        raise ImportError(f"{root} not found — {hint}")
+
+    # Insert once; leave a caller's pre-existing entry alone
+    entry = str(root)
+    inserted = entry not in sys.path
+    if inserted:
+        sys.path.insert(0, entry)
+
+    try:
+        yield
+    finally:
+        if inserted and entry in sys.path:
+            sys.path.remove(entry)
 
 
 ########################################################

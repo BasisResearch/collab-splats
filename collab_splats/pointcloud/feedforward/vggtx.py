@@ -1,9 +1,7 @@
-"""VGGT-X feedforward backend: inference utilities and creator.
+"""
+VGGT-X feedforward backend: crop-mode preprocessing and creator.
 
-Provides:
-  VGGTX_IMG_LOAD_RESOLUTION    — fixed inference resolution for VGGT-X
-  unproject_and_filter_points  — depth → world-space point cloud with confidence filtering
-  VGGTXCreator                 — feedforward creator using VGGT-X depth + pose estimation
+- crop box follows https://github.com/Linketic/VGGT-X @ 26d1b95, vggt/utils/load_fn.py:211-251
 """
 
 from __future__ import annotations
@@ -14,482 +12,149 @@ from typing import Any, ClassVar
 
 import numpy as np
 import torch
+from PIL import Image
+
 from vggt.models.vggt import VGGT
-from vggt.utils.geometry import unproject_depth_map_to_point_map
-from vggt.utils.helper import randomly_limit_trues
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
+from collab_splats.geometry.projection import unproject
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
-
-from .base import (
+from collab_splats.pointcloud.feedforward.base import (
     BaseFeedforwardCreator,
-    FeedforwardResult,
-    _decode_verify_geometry,
-    _mv_result_fields,
-    _raw_to_world_points,
-    compute_multiview_depth_confidence,
-    console,
-    frames_as_pil_source,
-    multiview_mask,
+    _decode_depth_head,
+    capture_qk,
+    center_crop_coords,
 )
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-
-# VGGT-X target inference resolution (width, px), matching upstream's training default
-# - load_and_preprocess_images(mode="crop") resizes width to this value
-# - it then center-crops height to the same value when height > target_size
-VGGTX_IMG_LOAD_RESOLUTION: int = 518
+########################################################################
+# Creator
+########################################################################
 
 
-# ── Preprocessing helpers ──────────────────────────────────────────────────────
-
-
-def _compute_vggtx_crop_coords(
-    sizes: list[tuple[int, int]], target_size: int = VGGTX_IMG_LOAD_RESOLUTION
-) -> np.ndarray:
-    """Compute original_coords for VGGTX upstream crop mode.
-
-    Upstream ``load_and_preprocess_images(mode="crop")`` resizes width→target_size then
-    center-crops height to target_size when height > target_size.  This function computes
-    the crop window in original-image pixel space so downstream consumers (TSDF RGB loader,
-    COLMAP rescale) can invert the transform.
-
-    Args:
-        sizes: per-image ``(orig_w, orig_h)`` original-image dimensions.
-
-    Returns:
-        (N, 6) float32 array ``[tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]`` per image.
-        cr_x always equals orig_w (full width used).
-        For landscape images (no height crop): tl_y=0, cr_y=orig_h.
-        For portrait images (height cropped): tl_y and cr_y mark the kept strip.
-    """
-    coords = []
-    for orig_w, orig_h in sizes:
-        # Upstream: resize width → target_size, maintain AR; round height to div-by-14
-        scale = target_size / orig_w
-        new_h_raw = orig_h * scale
-        new_h = round(new_h_raw / 14) * 14  # divisible-by-14 rounding used upstream
-
-        if new_h > target_size:
-            # Height crop applied; the resized height is new_h, so y scales by new_h / orig_h
-            sy = new_h / orig_h
-            start_y_resized = (new_h - target_size) // 2
-            tl_y = start_y_resized / sy
-            cr_y = (start_y_resized + target_size) / sy
-        else:
-            tl_y = 0.0
-            cr_y = float(orig_h)
-
-        coords.append([0.0, tl_y, float(orig_w), cr_y, float(orig_w), float(orig_h)])
-
-    return np.array(coords, dtype=np.float32)
-
-
-# ── Inference utilities ────────────────────────────────────────────────────────
-
-
-def unproject_and_filter_points(
-    depth: np.ndarray,
-    depth_conf: np.ndarray,
-    images: Any,
-    extrinsic: np.ndarray,
-    intrinsic: np.ndarray,
-    conf_threshold: float = 50.0,
-    max_points: int = 500_000,
-    extra_mask: "np.ndarray | None" = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Unproject depth to world-space points and filter by confidence.
-
-    Args:
-        depth:          (N, H, W, 1) float32 depth maps.
-        depth_conf:     (N, H, W) float32 confidence maps.
-        images:         (N, 3, H, W) tensor or array of preprocessed images.
-        extrinsic:      (N, 3, 4) or (N, 4, 4) camera extrinsics.
-        intrinsic:      (N, 3, 3) camera intrinsics.
-        conf_threshold: Percentile cutoff (>1.0) or raw threshold (≤1.0).
-                        Points below this confidence are discarded.
-        max_points:     Maximum number of output points; excess are randomly subsampled.
-        extra_mask:     Optional (N, H, W) boolean array; pixels where False are excluded
-                        before subsampling (e.g. from compute_multiview_depth_confidence).
-
-    Returns:
-        pts3d:          (P, 3) float32 world-space points.
-        colors:         (P, 3) uint8 RGB.
-        pixel_indices:  (P, 3) int32 — [frame_id, row, col] source pixel for each point.
-    """
-    # Upstream unproject_depth_map_to_point_map returns first-camera-anchored world points
-    # - adopting an SL(4) per-submap loop-closure layer (VGGT-SLAM-style) would require
-    #   switching to per-camera-local points
-    # - see ROADMAP "Future considerations"
-    points3d = unproject_depth_map_to_point_map(depth, extrinsic, intrinsic)
-
-    if hasattr(images, "cpu"):
-        images_np = images.cpu().float().numpy()
-    else:
-        images_np = np.asarray(images, dtype=np.float32)
-    colors_np = images_np.transpose(0, 2, 3, 1)
-
-    # conf_threshold > 1.0 is treated as a percentile; ≤ 1.0 as a raw value
-    if conf_threshold > 1.0:
-        threshold_val = float(np.percentile(depth_conf, conf_threshold))
-    else:
-        threshold_val = float(conf_threshold)
-
-    conf_mask = depth_conf >= threshold_val
-
-    if extra_mask is not None:
-        conf_mask = conf_mask & extra_mask
-
-    n_true = int(conf_mask.sum())
-    if n_true > max_points:
-        conf_mask = randomly_limit_trues(conf_mask, max_points)
-
-    pts_out = points3d[conf_mask].astype(np.float32)
-    colors_out = (colors_np[conf_mask] * 255).astype(np.uint8)
-    # np.where on the final conf_mask (after randomly_limit_trues applied) gives the
-    # exact (frame_id, row, col) that produced each surviving point.
-    pixel_indices = np.stack(np.where(conf_mask), axis=1).astype(np.int32)  # (P, 3)
-
-    return pts_out, colors_out, pixel_indices
-
-
-# ── Creator ───────────────────────────────────────────────────────────────────
-
-
+@BaseFeedforwardCreator.register("vggtx")
 @dataclass
 class VGGTXCreator(BaseFeedforwardCreator):
     """
     Pointcloud via VGGT-X feedforward pose + depth estimation.
 
-    - VGGT-X (Video Grounded Gaussian Transformer) predicts camera poses and per-frame
-      depth maps jointly; the depth maps are then unprojected to a cloud
+    - predicts camera poses and per-frame depth jointly, then unprojects to a cloud
 
     Attributes:
-        camera_model:         pycolmap camera model. Defaults to
-                              ``"SIMPLE_PINHOLE"`` because VGGT-X predicts a
-                              single focal length (not separate fx/fy).
-        model_name:           HuggingFace model ID loaded via
-                              ``VGGT.from_pretrained``.
-        chunk_size:           Attention chunk size for memory-efficient inference.
-                              Reduce if OOM on long sequences.
-        conf_threshold:       Depth confidence percentile cutoff (0–100).
-                              Points whose confidence is below this percentile
-                              are discarded.  35.0 = keep the top 65 %.
+        model_name: HuggingFace id for VGGT.from_pretrained.
+        chunk_size: attention chunk size; lower it on OOM for long sequences.
+        conf_threshold: depth-confidence percentile cutoff (0-100); 35.0 keeps the top 65%.
     """
 
-    # LC verify calibration — chess d5 full-layer sweep, 2026-07-09
-    # - 21 SLAM-confirmed positives vs 20 GT-clean negatives (camera centers > half scene
-    #   diameter apart AND viewing dirs > 90°, seed 42)
-    # - layer 10 separates perfectly: AUC 1.000, positives min 1.2746, negatives max 1.0658
-    # - threshold = midpoint 1.17 (±0.104 margin to both sides)
-    # - the base-class layer 20 does NOT discriminate for VGGT-X (AUC 0.42 vs clean negatives)
-    _lc_layer_index: ClassVar[int] = 10
+    # Loop-closure settings for VGGT-X, calibrated in docs/parity.md
+    _lc_layer_index: ClassVar[int] = 10  # layer 20, used for other VGGT models, does not detect loops here
     default_verify_match_ratio: ClassVar[float] = 1.17
+    _lc_token_offset: ClassVar[int] = 5
 
-    camera_model: str = "SIMPLE_PINHOLE"
     model_name: str = "facebook/VGGT-1B"
     chunk_size: int = 256
     conf_threshold: float = 35.0
-    # Off by default: mv never beat the learned confidence at comparable retention
-    # - measured on 7-Scenes chess/seq-01
-    # - it is a complementary tail filter, not a replacement
-    # - see docs/superpowers/specs/2026-08-13-multiview-confidence-measured-report.md, Step D
-    use_multiview_confidence: bool = False
-    # min_views: "at least K other views agree"
-    # - K=1 is the old mv_conf_threshold=0.0 and is inert (99.7% retention)
-    # - K=2 is the largest count safe on a short sequence: min_views is an absolute count,
-    #   so K > N-1 empties every judged view
-    min_views: int = 2
-    # abs_thresh stays 0.0 — VGGT depth is non-metric, so a fixed-unit tolerance is
-    # meaningless and would break the scale invariance the shared function relies on.
-    mv_conf_abs_thresh: float = 0.0
-    # 0.01, not 0.05: the sweep found 0.05 removes almost nothing, while 0.01 at K=2 cuts the
-    # >10%-error pixel fraction by 3.3% for 1.1% of pixels.
-    mv_conf_rel_thresh: float = 0.01
 
     def _load_model(self, device: str) -> Any:
-        """Load VGGT-X from HuggingFace and move to device.
-
-        Uses bfloat16 on Ampere+ GPUs (compute capability >= 8), float16 otherwise.
-
-        Args:
-            device: Target device string (e.g. ``"cuda"`` or ``"cpu"``).
-
-        Returns:
-            VGGT model in eval mode on the requested device.
         """
-        # Choose dtype based on GPU capability: bfloat16 for Ampere+, float16 for older
+        VGGT-X from HuggingFace in eval mode, bf16 on Ampere+ and fp16 otherwise.
+        """
+        # Use bfloat16 on Ampere or newer GPUs, float16 otherwise
         dtype = (
             torch.bfloat16
             if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
             else torch.float16
         )
-        # Load pretrained model and move to device in eval mode
+
+        # Load the pretrained weights and move the model to the device in eval mode
         model = VGGT.from_pretrained(self.model_name, chunk_size=self.chunk_size)
         model.eval()
         model = model.to(device, dtype=dtype)
+
         return model
 
-    def _preprocess(self, frames: Any, frame_idxs: list[int]) -> tuple[Any, list[Path], np.ndarray]:
-        """Preprocess in-memory frames using upstream VGGT crop mode.
-
-        Resizes width to 518px then center-crops height to 518px when height > 518px.
-        Matches the training preprocessing used by VGGT and VGGT-SLAM.
-        Stores the crop window in original-image pixel coordinates in ``original_coords``
-        so the TSDF RGB loader and COLMAP rescale can invert the transform.
-
-        Args:
-            frames:     (N, H, W, 3) uint8 RGB frames (or a list of per-image arrays).
-            frame_idxs: source frame indices, used for stable ``frame_{idx:06d}`` labels.
-
-        Returns:
-            (images, image_paths, original_coords) where original_coords is (N, 6)
-            float32 ``[0, tl_y, orig_w, br_y, orig_w, orig_h]`` in original-image pixels.
+    def _preprocess(self, paths: list[Path]) -> tuple[Any, np.ndarray]:
         """
-        # Stable synthetic labels — no files on disk; the store/decoder is the sole IO path
-        image_paths = [Path(f"frame_{idx:06d}") for idx in frame_idxs]
+        Frame files through upstream VGGT crop mode, the preprocessing it trained on.
 
-        # Compute crop window in original-image pixel space from each frame's own dims
-        original_coords = _compute_vggtx_crop_coords(
-            [(int(f.shape[1]), int(f.shape[0])) for f in frames], VGGTX_IMG_LOAD_RESOLUTION
-        )
-
-        # Run upstream crop transform in-memory (bit-identical to path load); .png names
-        # satisfy loaders' extension checks while PIL.Image.open is intercepted.
-        loader_names = [f"{p.name}.png" for p in image_paths]
-        with frames_as_pil_source(frames):
-            images = load_and_preprocess_images(loader_names, mode="crop")
-
-        return images, image_paths, original_coords
-
-    def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
-        """Run VGGT-X on the preprocessed image tensor; return raw predictions dict.
-
-        Args:
-            model: Loaded VGGT model (from _load_model).
-            views: (N, 3, H, W) float tensor from _preprocess.
-            **kwargs: Unused; present for interface compatibility.
-
-        Returns:
-            dict with keys: ``images``, ``extrinsic``, ``intrinsics``,
-            ``intrinsics_downsampled`` (alias of intrinsics), ``depth``, ``depth_conf``.
+        - returns (N, 3, H, 518) images, H <= 518, and (N, 6) original_coords
         """
-        images = views
+        # Compute each frame's crop box the same way upstream crop mode does
+        rows = []
+
+        for p in paths:
+            w, h = Image.open(p).size
+            new_h = round(h * (518 / w) / 14) * 14
+            crop_h = min(new_h, 518)
+            box = center_crop_coords((w, h), (518, new_h), (518, crop_h), (518 / w, new_h / h))
+            rows.append(box)
+
+        original_coords = np.array(rows, dtype=np.float32)
+
+        # Load and crop the images with upstream's own preprocessing
+        images = load_and_preprocess_images([str(p) for p in paths], mode="crop")
+
+        return images, original_coords
+
+    def _forward(self, model: Any, views: Any) -> dict:
+        """
+        One VGGT-X forward, decoded to CPU float32 arrays.
+
+        - views: (N, 3, H, W) images from _preprocess
+        - raw keys: 'images', 'extrinsic' (N, 3, 4) w2c, model-res 'intrinsics', 'depth', 'depth_conf'
+        """
         device = next(model.parameters()).device
-        device_type = device.type
-        # Match the aggregator's internal dtype selection: bf16 on Ampere+, fp16 otherwise
-        # - model params are fp32, but the aggregator overrides dtype unconditionally at line 221
-        # - fp32 images get camera/register tokens cast to fp32 before that override
-        # - assembled tokens are then fp32 while the aggregator asserts bf16, and it fails
-        dtype = (
-            torch.bfloat16
-            if device_type == "cuda" and torch.cuda.get_device_capability(device)[0] >= 8
-            else torch.float16
-        )
+        dtype = next(model.parameters()).dtype
 
-        # Cast images to model dtype before forward; aggregator asserts tokens.dtype == dtype
-        # at line 270 and token assembly happens before autocast can override it.
-        images = images.to(device, dtype=dtype)
+        # Move the images to the model's device and dtype
+        images = views.to(device, dtype=dtype)
 
-        # int() cast: guards pose_encoding_to_extri_intri against numpy-2 float32 scalars
-        # being assigned into CUDA tensors. Lets us use upstream VGGT-X with no local patch.
-        image_shape = tuple(int(x) for x in images.shape[-2:])
-
-        # bf16/f16 autocast scoped to model forward only; downstream numpy ops need float32.
+        # Run the model under autocast without tracking gradients
         with torch.no_grad():
-            with torch.autocast(device_type, dtype=dtype):
+            with torch.autocast(device.type, dtype=dtype):
                 predictions = model(images.unsqueeze(0))
 
-        # Decode pose encoding at model resolution only — matches VGGT-SLAM upstream.
-        # Original-res decode removed: it fed wrong K to the BA wrapper via raw["intrinsics"].
-        extrinsic_t, intrinsic_t = pose_encoding_to_extri_intri(predictions["pose_enc"], image_shape)
+        # Convert the predictions into poses, intrinsics and depth maps
+        return {"images": images, **_decode_depth_head(predictions, images.shape[-2:], pose_encoding_to_extri_intri)}
 
-        # Move predictions to CPU float32 for downstream processing
-        extrinsic = extrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 4)
-        intrinsic = intrinsic_t.cpu().float().numpy().squeeze(0)  # (N, 3, 3) model-res
-        depth_map = predictions["depth"].squeeze(0).cpu().float().numpy()
-        depth_conf = predictions["depth_conf"].squeeze(0).cpu().float().numpy()
-
-        return {
-            "images": images,
-            "extrinsic": extrinsic,
-            "intrinsics": intrinsic,  # model-res K
-            "intrinsics_downsampled": intrinsic,  # alias — _raw_to_world_points expects this key
-            "depth": depth_map,
-            "depth_conf": depth_conf,
-        }
-
-    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> FeedforwardResult:
-        """Unproject depth maps to world-space points and build FeedforwardResult.
-
-        Optionally runs global alignment to refine poses.  Lifts semantic features
-        if ``extractor_name`` is set.  Populates BA fields (world_points, conf, images)
-        so the BundleAdjustment wrapper can refine poses.
-
-        Args:
-            raw_outputs: Dict from _forward containing depth, extrinsics, images.
-            **kwargs:    Unused.
-
-        Returns:
-            FeedforwardResult with pts3d, colors, extrinsics, and BA fields populated.
-        """
-        extrinsic = raw_outputs["extrinsic"]
-        intrinsic = raw_outputs.get("intrinsics_downsampled", raw_outputs.get("intrinsics"))
-
-        # Optionally compute geometric cross-view depth consistency mask
-        mv_mask = None
-        mv_conf = None
-        if self.use_multiview_confidence:
-            depth_np = raw_outputs["depth"]
-            if depth_np.ndim == 4:
-                depth_np = depth_np.squeeze(-1)  # (N, H, W)
-            extr_4x4 = extrinsics_to_homogeneous(extrinsic)
-            mv_conf = compute_multiview_depth_confidence(
-                depth_np,
-                intrinsic,
-                extr_4x4,
-                abs_thresh=self.mv_conf_abs_thresh,
-                rel_thresh=self.mv_conf_rel_thresh,
-            )
-            mv_mask = multiview_mask(mv_conf, depth_np > 0, min_views=self.min_views)
-
-        # Unproject depth maps to filtered world-space points and per-point colors
-        pts3d, colors, pixel_indices = unproject_and_filter_points(
-            depth=raw_outputs["depth"],
-            depth_conf=raw_outputs["depth_conf"],
-            images=raw_outputs["images"],
-            extrinsic=extrinsic,
-            intrinsic=intrinsic,
-            conf_threshold=self.conf_threshold,
-            max_points=self.max_points,
-            extra_mask=mv_mask,
-        )
-
-        # Model spatial dimensions used to reshape world-point grid for BA
-        model_h = int(raw_outputs["depth"].shape[1])
-        model_w = int(raw_outputs["depth"].shape[2])
-
-        # Populate BA fields: subsampled world-point grid for track extraction.
-        world_pts_flat, _ = _raw_to_world_points(raw_outputs, subsample=1)
-        if world_pts_flat is not None:
-            world_points = world_pts_flat.reshape(world_pts_flat.shape[0], model_h, model_w, 3)
-        else:
-            world_points = None
-        # Populate BA fields: depth confidence and preprocessed images
-        conf = torch.from_numpy(raw_outputs["depth_conf"])
-        images = raw_outputs["images"]
-
-        extrinsic_4x4 = extrinsics_to_homogeneous(extrinsic)
-
-        # LC merged outputs carry the deduped global poses
-        # - FeedforwardResult.extrinsics then has exactly one entry per input frame
-        # - not one per submap window frame, which would include overlapping frames
-        extrinsic_4x4_out = raw_outputs.get("extrinsic_global_4x4", extrinsic_4x4)
-
-        return FeedforwardResult(
-            points=pts3d,
-            colors=colors,
-            pixel_indices=pixel_indices,
-            features=None,
-            extrinsics=extrinsic_4x4_out,
-            intrinsics=intrinsic,
-            image_paths=self.image_paths,
-            original_coords=self.original_coords,
-            model_width=model_w,
-            model_height=model_h,
-            images=images,
-            confidence=conf,
-            world_points=world_points,
-            depth=raw_outputs["depth"].squeeze(-1) if raw_outputs["depth"].ndim == 4 else raw_outputs["depth"],
-            **_mv_result_fields(mv_conf),
-        )
-
-    def _reproject(
-        self, raw_outputs: Any, extrinsics_3x4: np.ndarray, intrinsics: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Re-derive world-space points using bundle-adjusted camera poses.
-
-        Called by the BundleAdjustment wrapper after refining extrinsics.
-        Re-runs depth unprojection under the new poses so pts3d stay consistent
-        with the refined camera geometry.
-
-        Args:
-            raw_outputs:     Raw predictions dict from _forward.
-            extrinsics_3x4: (N, 3, 4) refined world-to-camera matrices.
-            intrinsics:      (N, 3, 3) refined camera intrinsics.
-
-        Returns:
-            (pts3d, colors) — (P, 3) float32 and (P, 3) uint8.
-        """
-        # Re-run depth unprojection with refined extrinsics and intrinsics
-        pts3d, colors, _pixel_indices = unproject_and_filter_points(
-            depth=raw_outputs["depth"],
-            depth_conf=raw_outputs["depth_conf"],
-            images=raw_outputs["images"],
-            extrinsic=extrinsics_3x4,
-            intrinsic=intrinsics,
-            conf_threshold=self.conf_threshold,
-            max_points=self.max_points,
-        )
-        return pts3d, colors  # pixel_indices unused; post-BA uses stored indices
-
-    def extract_intermediate_features(
-        self, frames: torch.Tensor, layer_index: int = -1, **kwargs: Any
-    ) -> dict[str, Any]:
+    def extract_intermediate_features(self, frames: torch.Tensor, layer_index: int) -> dict[str, Any]:
         """
         Hook aggregator.global_blocks[layer_index].attn.qkv on a 2-frame forward.
 
-        - captures q/k, then decodes the VGGT-X pose encoding to fresh (2, 4, 4) extrinsics, so
-          _verify_loop_candidate gets accurate relative poses without a second forward
-        - the hook is removed in a finally block, so a raising forward still cleans up; no
-          persistent state is left on the model or its layers
+        - the same forward gives poses and geometry, so _verify_loop_candidate needs no second one
 
         Args:
-            frames:      (2, C, H, W) preprocessed frames (float16/32 on CPU or GPU).
-            layer_index: Which global attention block to tap. -1 = last.
-                         Valid range [-len(blocks), len(blocks)-1].
-            **kwargs:    Unused; kept for interface compatibility with MapAnything.
+            frames: (2, C, H, W) preprocessed frames on CPU or GPU.
+            layer_index: global block to tap; -1 = last.
 
         Returns:
-            dict with "q" and "k" (B, heads, N_tokens, head_dim) projections, "poses"
-            (2, 4, 4) float32 decoded camera extrinsics, "world_points" (2, H, W, 3)
-            unprojected depth and "conf" (2, H, W) depth confidence.
+            "q", "k" (B, heads, tokens, head_dim), "poses" (2, 4, 4) w2c,
+            "world_points" (2, H, W, 3) and "conf" (2, H, W).
         """
         device = next(self.model.parameters()).device
         dtype = next(self.model.parameters()).dtype
-        # Add batch dimension; move to model device + dtype for the forward pass
+
+        # Add a batch dimension and move the frames to the model's device and dtype
         batch = frames.unsqueeze(0).to(device, dtype=dtype)
 
-        # Register a per-call hook on the QKV projection of the chosen block
-        block = self.model.aggregator.global_blocks[layer_index]
-        C_nh = block.attn.num_heads
-        captured: dict[str, torch.Tensor] = {}
+        # Capture attention queries and keys at the chosen layer during one forward pass
+        attn = self.model.aggregator.global_blocks[layer_index].attn
 
-        def _hook(module, _inp, out):
-            # out: (B, N, 3*C) — split into q/k/v, reshape to (B, heads, N, head_dim)
-            B, N, C3 = out.shape
-            hd = (C3 // 3) // C_nh
-            qkv = out.detach().reshape(B, N, 3, C_nh, hd).permute(2, 0, 3, 1, 4)
-            captured["q"], captured["k"] = qkv[0], qkv[1]
+        with capture_qk(attn.qkv, attn.num_heads) as captured, torch.no_grad():
+            predictions = self.model(batch)
 
-        hook = block.attn.qkv.register_forward_hook(_hook)
-        try:
-            with torch.no_grad():
-                predictions = self.model(batch)
-        finally:
-            # Always remove the hook — no persistent state left on the model
-            hook.remove()
+        # Decode poses and depth from that same forward pass
+        raw = _decode_depth_head(predictions, frames.shape[-2:], pose_encoding_to_extri_intri)
 
-        # Decode camera extrinsics + intrinsics from VGGT-X pose encoding
-        image_shape = (int(frames.shape[-2]), int(frames.shape[-1]))
-        ext_t, intr_t = pose_encoding_to_extri_intri(predictions["pose_enc"].detach(), image_shape)
-        ext_3x4 = ext_t.cpu().float().numpy().squeeze(0)  # (2, 3, 4) w2c
-        intrinsic = intr_t.cpu().float().numpy().squeeze(0)  # (2, 3, 3)
-        captured["poses"] = extrinsics_to_homogeneous(ext_3x4)  # (2, 4, 4)
+        # Unproject each frame's depth into world points
+        depth = torch.from_numpy(raw["depth"][..., 0])
+        world_to_cam = torch.from_numpy(raw["extrinsic"])
+        intrinsics = torch.from_numpy(raw["intrinsics"])
+        world_points = unproject(depth, world_to_cam, intrinsics)
 
-        # Decode geometry from the SAME forward — shared verify-geometry helper
-        captured["world_points"], captured["conf"] = _decode_verify_geometry(
-            predictions["depth"], predictions["depth_conf"], ext_3x4, intrinsic
-        )
+        # Return the poses and geometry alongside the captured queries and keys
+        captured["poses"] = extrinsics_to_homogeneous(raw["extrinsic"])
+        captured["world_points"] = world_points.numpy()
+        captured["conf"] = raw["depth_conf"]
+
         return captured

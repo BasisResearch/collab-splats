@@ -7,9 +7,12 @@ Pose and geometry backend: bundle adjustment, loop closure, scene metrics.
 - loop_closure: submap pose graph around a feedforward creator's forward pass
 """
 
-from .bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
-from .loop_closure import PoseGraph, Submap
-from .transforms import (
+from collab_splats.geometry.bundle_adjustment import (
+    BundleAdjustment,
+    BundleAdjustmentConfig,
+)
+from collab_splats.geometry.loop_closure import PoseGraph, Submap
+from collab_splats.geometry.transforms import (
     OPENGL_TO_OPENCV,
     estimate_intrinsics_from_points,
     extract_intrinsics,
@@ -38,11 +41,11 @@ def __getattr__(name: str) -> type:
         AttributeError: any other name.
     """
     if name == "LoopClosure":
-        from .loop_closure import LoopClosure
+        from collab_splats.geometry.loop_closure import LoopClosure
 
         return LoopClosure
     if name == "LoopClosureConfig":
-        from .loop_closure import LoopClosureConfig
+        from collab_splats.geometry.loop_closure import LoopClosureConfig
 
         return LoopClosureConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

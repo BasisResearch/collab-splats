@@ -51,7 +51,6 @@ def _make_vggt_mock():
     tp = types.ModuleType("vggt.dependency.track_predict")
     tp.predict_tracks = MagicMock()
     proj = types.ModuleType("vggt.dependency.projection")
-    proj.project_3D_points_np = MagicMock()
     vggt.dependency.track_predict = tp
     vggt.dependency.projection = proj
     return vggt, tp, proj
@@ -115,6 +114,7 @@ def test_extract_tracks_shape():
     ):
         # Re-import to pick up mocked module
         import importlib
+
         import collab_splats.geometry.bundle_adjustment as ba_mod
         importlib.reload(ba_mod)
 
@@ -173,7 +173,10 @@ def test_extract_tracks_tensor_images_reach_target_device():
         "collab_splats.geometry.bundle_adjustment.predict_tracks",
         side_effect=fake_predict,
     ):
-        from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig, extract_tracks_vggsfm
+        from collab_splats.geometry.bundle_adjustment import (
+            BundleAdjustmentConfig,
+            extract_tracks_vggsfm,
+        )
         extract_tracks_vggsfm(
             images_cpu,
             conf=None,
@@ -220,6 +223,7 @@ def test_extract_tracks_conf_4d():
         },
     ):
         import importlib
+
         import collab_splats.geometry.bundle_adjustment as ba_mod
         importlib.reload(ba_mod)
 
@@ -290,8 +294,6 @@ def test_optimize_raises_below_inlier_threshold():
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
 
     vggt_mod, _, proj_mod = _make_vggt_mock()
-    proj_cam = np.ones((N, 3, P), dtype=np.float32)
-    proj_mod.project_3D_points_np = MagicMock(return_value=(tracks.copy(), proj_cam))
     bae_mod = _make_bae_mock()
 
     extra_mods = {
@@ -317,7 +319,10 @@ def test_optimize_raises_below_inlier_threshold():
         spec.loader.exec_module(ba_mod)
 
         ba = ba_mod.BundleAdjustment(ba_mod.BundleAdjustmentConfig(max_reproj_error=4.0))
-        with pytest.raises(ValueError, match="too few active frames/points"):
+        with (
+            patch.object(ba_mod, "project", wraps=ba_mod.project) as project_spy,
+            pytest.raises(ValueError, match="too few active frames/points"),
+        ):
             ba._optimize(
                 pts3d=pts3d,
                 extrinsics=extrinsics,
@@ -326,7 +331,8 @@ def test_optimize_raises_below_inlier_threshold():
                 vis_scores=vis_mask.astype(np.float32),
             )
 
-    proj_mod.project_3D_points_np.assert_called_once()
+    # The reprojection filter projects the points into every frame once
+    assert project_spy.call_count == N
 
 
 def _cuda_and_bae_available() -> bool:
@@ -335,8 +341,8 @@ def _cuda_and_bae_available() -> bool:
 
         if not torch.cuda.is_available():
             return False
-        import pypose  # noqa: F401
         import bae  # noqa: F401
+        import pypose  # noqa: F401
 
         return True
     except ImportError:
@@ -346,7 +352,10 @@ def _cuda_and_bae_available() -> bool:
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
 def test_optimize_reduces_reproj_error():
     """With noisy initial poses and clean 2D observations, _optimize must reduce reprojection error."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     rng = np.random.default_rng(0)
     N, P, H, W = 5, 200, 256, 256
@@ -446,7 +455,10 @@ def test_optimize_no_reproj_filter():
         ba = ba_mod.BundleAdjustment(ba_mod.BundleAdjustmentConfig(max_reproj_error=None))
 
         # P=50 is below min_inliers_per_frame, so the solve is refused after the (skipped) filter
-        with pytest.raises(ValueError, match="too few active frames/points"):
+        with (
+            patch.object(ba_mod, "project", wraps=ba_mod.project) as project_spy,
+            pytest.raises(ValueError, match="too few active frames/points"),
+        ):
             ba._optimize(
                 pts3d=pts3d,
                 extrinsics=extrinsics,
@@ -455,7 +467,7 @@ def test_optimize_no_reproj_filter():
                 vis_scores=vis_mask.astype(np.float32),
             )
 
-    proj_mod.project_3D_points_np.assert_not_called()
+    project_spy.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -568,13 +580,14 @@ def test_get_default_solver_falls_back_to_pcg_cudss_import_error():
 # ---------------------------------------------------------------------------
 
 def _make_ff_result_for_ba(N=2, H=8, W=8):
-    """Minimal FeedforwardResult for BundleAdjustment tests."""
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
-    return FeedforwardResult(
+    """Minimal PointcloudResult for BundleAdjustment tests."""
+    from collab_splats.pointcloud.base import PointcloudResult
+    return PointcloudResult(
         points=np.zeros((10, 3), dtype=np.float32),
         colors=np.zeros((10, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
-        intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
+        intrinsics=None,
+        model_intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
         image_paths=[Path(f"img{i}.jpg") for i in range(N)],
         original_coords=np.tile(np.array([0, 0, W, H, W, H], np.float32), (N, 1)),
         model_width=W,
@@ -612,7 +625,10 @@ def test_bundle_adjustment_refine_returns_arrays():
 
 def test_bundle_adjustment_refine_threads_config():
     """Config params and device are passed through to both private functions."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 2, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -634,7 +650,10 @@ def test_bundle_adjustment_refine_threads_config():
 @pytest.mark.skipif(not _pypose_available(), reason="requires pypose")
 def test_optimize_rejects_cpu_device():
     """_optimize must raise a clear error for a non-CUDA device — bae LM is CUDA-only."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
@@ -668,7 +687,10 @@ def test_ba_config_track_quality_defaults():
 
 def test_bundle_adjustment_default_config():
     """BundleAdjustment() with no args uses default BundleAdjustmentConfig."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
     ba = BundleAdjustment()
     assert isinstance(ba.config, BundleAdjustmentConfig)
     assert ba.config.device is None
@@ -679,7 +701,10 @@ def test_bundle_adjustment_default_config():
 @pytest.mark.skipif(not _cuda_and_bae_available(), reason="requires CUDA, pypose, and bae")
 def test_optimize_captures_loss_history_unconditionally():
     """_optimize always records one inner list of per-step losses (no flag gates it)."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
@@ -714,7 +739,10 @@ def test_ba_config_has_no_capture_loss_history_field():
 
 def test_tracks_cache_save_load(tmp_path):
     """extract_tracks saves to zarr; second call returns cached arrays without extracting."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 3, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -745,7 +773,10 @@ def test_tracks_cache_save_load(tmp_path):
 
 def test_tracks_cache_invalidates_on_config_change(tmp_path):
     """Cache is invalidated when query_frame_num changes; extraction runs again."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 3, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -774,7 +805,10 @@ def test_tracks_cache_invalidates_on_config_change(tmp_path):
 
 def test_tracks_cache_invalidates_on_fine_tracking_change(tmp_path):
     """fine_tracking is part of the cache key — flipping it must re-extract."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 3, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -803,7 +837,10 @@ def test_tracks_cache_invalidates_on_fine_tracking_change(tmp_path):
 
 def test_tracks_cache_hit_on_vis_thresh_change(tmp_path):
     """vis_thresh is applied post-extraction — changing it must reuse the cache."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 3, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -829,7 +866,10 @@ def test_tracks_cache_hit_on_vis_thresh_change(tmp_path):
 
 def test_tracks_cache_key_changes_with_world_points():
     """world_points enter the cache key: two backbones over the same images must not share tracks."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig, _compute_tracks_cache_key
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustmentConfig,
+        _compute_tracks_cache_key,
+    )
 
     cfg = BundleAdjustmentConfig()
     paths = [Path("a/frame_000000.png"), Path("a/frame_000001.png")]
@@ -843,7 +883,10 @@ def test_tracks_cache_key_changes_with_world_points():
 
 def test_extract_receives_fine_tracking_kwarg(tmp_path):
     """extract_tracks passes cfg (with fine_tracking) through to extract_tracks_vggsfm."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 3, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -864,7 +907,10 @@ def test_extract_receives_fine_tracking_kwarg(tmp_path):
 
 def test_incremental_ba_increment_size_n_matches_global():
     """increment_size >= N dispatches to the global path: _optimize called exactly once with all N frames."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 4, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -897,7 +943,10 @@ def test_incremental_ba_increment_size_n_matches_global():
 
 def test_incremental_ba_warm_start_updates_registered_frames():
     """_refine_incremental updates extrinsics[:k] after each step (warm start propagates)."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 6, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -936,7 +985,10 @@ def test_incremental_ba_warm_start_updates_registered_frames():
 
 def test_incremental_ba_loss_history_has_one_entry_per_step():
     """loss_history contains one inner list per incremental k-step."""
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
 
     N, H, W = 6, 8, 8
     result = _make_ff_result_for_ba(N, H, W)
@@ -1043,7 +1095,10 @@ def _w2c_from_rt(R, t):
 def test_carry_dropped_frames_applies_active_set_sim3():
     """A dropped frame's camera centre lands at s*R_g@C + t_g, the same map the points took."""
     from collab_splats.geometry.bundle_adjustment import _carry_dropped_frames
-    from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+    from collab_splats.geometry.transforms import (
+        extrinsics_to_homogeneous,
+        invert_poses,
+    )
 
     rng = np.random.default_rng(7)
     N = 5
@@ -1106,7 +1161,10 @@ def test_optimize_carries_dropped_frame_and_shares_focal():
     fix it kept both its pre-BA pose (pre-BA gauge) and its own focal, silently mixing
     refined and unrefined cameras in one reconstruction.
     """
-    from collab_splats.geometry.bundle_adjustment import BundleAdjustment, BundleAdjustmentConfig
+    from collab_splats.geometry.bundle_adjustment import (
+        BundleAdjustment,
+        BundleAdjustmentConfig,
+    )
     from collab_splats.geometry.transforms import (
         extrinsics_to_homogeneous,
         invert_poses,

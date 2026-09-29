@@ -24,9 +24,9 @@ from collab_splats.mesh.features import features2vertex
 from collab_splats.mesh.tsdf import create_tsdf_mesh
 from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
+    VGGTOmegaCreator,
     VGGTXCreator,
 )
-from collab_splats.pointcloud.utils import lift_features
 from collab_splats.preproc import extract_frame
 from collab_splats.preproc import frames as fr
 from collab_splats.preproc.qa import load_video_quality
@@ -38,6 +38,7 @@ from collab_splats.preproc.sampling import (
 from collab_splats.remote import PULL_EXCLUDES, SceneSource
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
+from collab_splats.semantics.lifting import lift_features
 from collab_splats.semantics.utils import (
     cache_store_path,
     extract_feature_cache,
@@ -48,12 +49,6 @@ from collab_splats.semantics.utils import (
 )
 from collab_splats.utils.io import read_image, to_uint8_hwc
 from collab_splats.utils.torch_utils import get_device
-
-# VGGTOmegaCreator requires the vggt-omega submodule; only available when installed.
-try:
-    from collab_splats.pointcloud.feedforward import VGGTOmegaCreator
-except ImportError:
-    VGGTOmegaCreator = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +92,6 @@ def _write_images_dir(
 def _build_creator(env_model: str, conf: float):
     """Instantiate the selected feedforward creator with its confidence arg."""
     if env_model == "vggt_omega":
-        if VGGTOmegaCreator is None:
-            raise ImportError("vggt-omega is not installed; run setup.sh to enable this model")
         return VGGTOmegaCreator(conf_threshold=conf)
     if env_model == "vggtx":
         return VGGTXCreator(conf_threshold=conf)
@@ -367,42 +360,31 @@ def run_pipeline(
                 fps=config.fps if sampling_method == "fps" else None,
                 max_frames=config.max_frames,
             )
-            # images/ is the sole frame store: setup_inference and semantics extraction both
+            # images/ is the sole frame store: create_pointcloud and semantics extraction both
             # read it directly, and localization ref thumbnails resolve pixels through it (see
             # _build_result_figures's images_dir threading). No second staged copy.
             config.frame_indices = [r["frame_idx"] for r in records]
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 
-            # Feedforward pointcloud reconstruction. Decompose run() into its 4 substeps so each
-            # shows in the dashboard (run() = load→preprocess→infer→postprocess, no COLMAP — the
-            # build_colmap export nothing here consumes; this keeps the cloud identical to the notebook).
+            # Feedforward pointcloud reconstruction; no COLMAP export, nothing here consumes it
+            # - load_model runs first so the slow load shows as its own progress step
+            # - create_pointcloud skips the load once the model is resident
             creator = _build_creator(config.env_model, config.conf_threshold)
             t = time.perf_counter()
             op_log.update_progress(25, f"pointcloud: loading model ({config.env_model})")
             creator.load_model()
             op_log.append_line(f"pointcloud: model loaded in {time.perf_counter() - t:.1f}s")
             t = time.perf_counter()
-            op_log.update_progress(32, "pointcloud: preprocessing images")
-            creator.setup_inference(images_dir)
-            op_log.append_line(f"pointcloud: preprocessed in {time.perf_counter() - t:.1f}s")
-            t = time.perf_counter()
-            op_log.update_progress(42, "pointcloud: running inference")
-            creator.run_inference()
-            op_log.append_line(f"pointcloud: inference in {time.perf_counter() - t:.1f}s")
-            t = time.perf_counter()
-            op_log.update_progress(52, "pointcloud: postprocessing")
-            creator.postprocess()
-            result = creator.outputs
-            op_log.append_line(
-                f"pointcloud: postprocessed ({len(result.points):,} pts) in {time.perf_counter() - t:.1f}s"
-            )
+            op_log.update_progress(35, "pointcloud: running inference")
+            result = creator.create_pointcloud(images_dir, out_dir)
+            op_log.append_line(f"pointcloud: {len(result.points):,} pts in {time.perf_counter() - t:.1f}s")
             result.save_zarr(
                 out_dir / "pointcloud.zarr",
                 extra_attrs={"method": "feedforward", "backend": config.env_model},
             )
 
             # Mesh from TSDF depth fusion. The dashboard fuses at model resolution: depth,
-            # RGB and K all come off the same FeedforwardResult grid.
+            # RGB and model_intrinsics all come off the same PointcloudResult model grid.
             op_log.update_progress(60, "mesh: tsdf fusion")
             t = time.perf_counter()
             depths = np.ascontiguousarray(result.depth, dtype=np.float32)
@@ -418,7 +400,7 @@ def run_pipeline(
                 depths,
                 rgbs,
                 invert_poses(result.extrinsics),
-                result.intrinsics,
+                result.model_intrinsics,
                 out_dir,
                 voxel_size=config.mesh_voxel_size,
                 depth_trunc=config.mesh_depth_trunc,
@@ -478,19 +460,18 @@ class LocalizationRunOutput:
 
 def _load_feedforward_result(out_dir: Path, load_world_points: bool = False, load_images: bool = False):
     """Load the reconstruction result from the local zarr (lazy heavy import)."""
-    from collab_splats.pointcloud.feedforward.base import FeedforwardResult
+    from collab_splats.pointcloud.base import PointcloudResult
 
     # Localization reads only the required member set (remote pulls already exclude the
     # dense arrays); skip decoding them for locally-generated scenes too. world_points and
     # images are opted in by the localizer path — CameraLocalizer.from_feedforward requires
     # world_points, and the pairwise LocalMatcher additionally needs model-res ref images.
-    return FeedforwardResult.load_zarr(
+    return PointcloudResult.load_zarr(
         out_dir / "pointcloud.zarr",
         load_depth=False,
         load_world_points=load_world_points,
         load_images=load_images,
         load_confidence=False,
-        load_features=False,
         load_pixel_indices=False,
     )
 

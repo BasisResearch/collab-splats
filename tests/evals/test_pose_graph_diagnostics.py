@@ -8,7 +8,11 @@ import torch
 from collab_splats.geometry.loop_closure import PoseGraph, Submap
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-from pose_graph_diagnostics import _classify_edges, _per_edge_error, capture_pose_graph_loss  # noqa: E402
+from pose_graph_diagnostics import (  # noqa: E402
+    _classify_edges,
+    _per_edge_error,
+    capture_pose_graph_loss,
+)
 from trajectory_metrics import ate_translation, rpe, umeyama_align  # noqa: E402
 
 

@@ -39,8 +39,10 @@ repeated logic.
   commit hash in place of `file:///workspace/collab-data`. Pushing collab-data needs the
   user's explicit OK.
 - **CLI takes explicit paths.** Local runs take video files or frame directories only, no
-  directory globbing for videos. The output dir is `<output-root>/<stem>`, or
-  `<output-root>/<name>` with `--name`. The date-parent derivation (`_DATE_RE`) goes.
+  directory globbing for videos. The output dir is `<output-root>/<stem>` (a frame
+  directory's stem is its folder name); two inputs sharing a stem raise before any stage
+  runs. No `--name`. The date-parent derivation (`_DATE_RE`) goes. Remote runs are
+  unchanged: `<output-root>/<scene id>`.
 - **Legacy input checks go.** The `preprocessing` rename check, the
   `geometric_verification` refusal and the `verify` stage refusal are deleted (no legacy
   file checks).
@@ -142,7 +144,7 @@ Stage bodies:
 | `ConfigLoader` | delete | `configs/datasets/` no longer exists; only a test calls it |
 | `parse_cli_overrides` | make-private | `__main__._parse_overrides`; one caller |
 | `VIDEO_EXTS`, `collect_videos` | delete | CLI takes explicit paths |
-| `_DATE_RE`, `scene_output_dir` | delete | `<output-root>/<stem>` or `--name` |
+| `_DATE_RE`, `scene_output_dir` | delete | local `<output-root>/<stem>`, remote `<output-root>/<scene id>`, inline |
 | `build_scene_config`, `run_scene`, `run_all` | merge | into `__main__` |
 | `_is_rerun`, `discover_scenes`, `prepare_scene` | merge | into `__main__`; `prepare_scene` keeps its raises |
 
@@ -216,8 +218,8 @@ No behavior change.
    `splats`, `reconstruction_quality_report`, `localize` (the one-line `frame_paths` change).
 9. `validate_config` trim; legacy checks and `launch_dashboard` deleted.
 10. `collab_splats/__main__.py`: `local` and `remote` subcommands sharing `--config`,
-    `--base-config`, `--stages`, `--overwrite`, `--set key=value`; `local` adds `--name`
-    and `--keep-viewer`; `remote` adds `--all` and `--keep-local`. Exit codes kept.
+    `--base-config`, `--stages`, `--overwrite`, `--set key=value`; `local` adds
+    `--keep-viewer` and raises on duplicate stems; `remote` adds `--all` and `--keep-local`. Exit codes kept.
     Console script `reconstruct` (`reconstruct local ...`, `reconstruct remote ...`),
     same as `python -m collab_splats`. `wrapper/` and `docs/examples/` deleted.
 11. Callers: `evals/eval.py` (`collab_splats.reconstructor`, `recon.run()`),

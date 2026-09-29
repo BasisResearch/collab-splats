@@ -283,6 +283,8 @@ override-dependencies = [
     # docs/superpowers/specs/2026-08-17-vismatch-local-matcher-design.md).
     "uniception==0.1.7",
     "lightning>=2.6",
+    # hloc requires plain `pycolmap`, which would overwrite pycolmap-cuda12's module; drop it
+    "pycolmap; sys_platform == 'never'",
 ]
 # bae + gsplat + fused-ssim + nvdiffrast import torch at build time → must build without isolation.
 no-build-isolation-package = ["bae", "gsplat", "fused-ssim", "nvdiffrast"]

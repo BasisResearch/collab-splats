@@ -1,34 +1,73 @@
+"""
+Ground-truth eval datasets: frames plus world-to-camera poses per sequence.
+
+- one loader per dataset type, looked up by `get_dataset`
+- every loader returns frames in GT order, capped at max_frames
+"""
+
 from __future__ import annotations
 
+import gzip
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
-
-from collab_splats.preproc import frames as fr
-from collab_splats.preproc.qa import load_video_quality
-from collab_splats.preproc.sampling import sample_uniform
+from scipy.spatial.transform import Rotation
 
 
 @dataclass
 class EvalDataset:
+    """
+    One sequence: frames and world-to-camera GT poses, in GT order.
+
+    - intrinsics: CO3Dv2 only, (N, 3, 3) pixel K
+    - depth_paths: 7-Scenes only, uint16 millimeter PNGs aligned with images
+    """
+
     images: list[Path]
-    gt_poses: np.ndarray  # (N, 4, 4) world-to-cam float32
-    intrinsics: np.ndarray | None = None  # (N, 3, 3) float32, optional
+    gt_poses: np.ndarray  # (N, 4, 4) float32 world-to-camera
+    intrinsics: np.ndarray | None = None
+    depth_paths: list[Path] | None = None
+
+
+def load_gt_depth(path: Path) -> np.ndarray:
+    """
+    7-Scenes depth frame in meters.
+
+    - 65535 is the sensor's no-return code; it becomes 0 like every other invalid pixel
+
+    Args:
+        path: `*.depth.png`, uint16 millimeters.
+
+    Returns:
+        (H, W) float32 depth in meters, 0 where invalid.
+    """
+    raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    depth = raw.astype(np.float32) / 1000.0
+    depth[raw == 65535] = 0.0
+    return depth
 
 
 def _load_7scenes(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
+    """
+    7-Scenes sequence: `frame-NNNNNN.color.png` with a camera-to-world `.pose.txt` each.
+    """
     seq_dir = Path(seq_dir)
     images = sorted(seq_dir.glob("*.color.png"))[:max_frames]
     poses = np.stack([np.linalg.inv(np.loadtxt(seq_dir / f"{p.stem.split('.')[0]}.pose.txt")) for p in images]).astype(
         np.float32
     )
-    return EvalDataset(images=images, gt_poses=poses)
+    depth_paths = [seq_dir / f"{p.name.split('.')[0]}.depth.png" for p in images]
+    return EvalDataset(images=images, gt_poses=poses, depth_paths=depth_paths)
 
 
 def _read_tum_assoc(path: Path) -> list[tuple[float, str]]:
-    """Read a TUM-format association file. Lines: 'timestamp value [...]', '#' comments."""
+    """
+    TUM list file as (timestamp, first value) pairs; `#` lines skipped.
+    """
     out: list[tuple[float, str]] = []
     for line in path.read_text().splitlines():
         line = line.strip()
@@ -40,12 +79,11 @@ def _read_tum_assoc(path: Path) -> list[tuple[float, str]]:
 
 
 def _read_tum_groundtruth(path: Path) -> list[tuple[float, np.ndarray]]:
-    """Read TUM groundtruth.txt: 'timestamp tx ty tz qx qy qz qw' (camera-to-world).
-
-    Returns (timestamp, c2w 4x4 float64) pairs.
     """
-    from scipy.spatial.transform import Rotation
+    TUM groundtruth.txt as (timestamp, camera-to-world 4x4 float64) pairs.
 
+    - line format: timestamp tx ty tz qx qy qz qw
+    """
     out: list[tuple[float, np.ndarray]] = []
     for line in path.read_text().splitlines():
         line = line.strip()
@@ -63,6 +101,11 @@ def _read_tum_groundtruth(path: Path) -> list[tuple[float, np.ndarray]]:
 
 
 def _load_tum(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
+    """
+    TUM RGB-D sequence: each rgb.txt frame paired with the nearest GT pose.
+
+    - frames with no GT pose within 0.02 s are dropped
+    """
     seq_dir = Path(seq_dir)
     rgb_entries = _read_tum_assoc(seq_dir / "rgb.txt")
     gt_entries = _read_tum_groundtruth(seq_dir / "groundtruth.txt")
@@ -82,90 +125,18 @@ def _load_tum(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     return EvalDataset(images=images, gt_poses=gt_poses)
 
 
-def _load_kitti(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
-    """Load a KITTI Odometry sequence.
-
-    Layout (per official KITTI Odometry):
-        seq_dir/image_2/{000000.png, 000001.png, ...}   (left color camera)
-        seq_dir/poses.txt                                 (3x4 cam-to-world per line)
-            OR
-        seq_dir/../../poses/{NN}.txt                      (alt layout: split poses dir)
-
-    Pose convention is documented in `evals/trajectory_io.py:kitti_3x4_flat_to_w2c`,
-    which inverts cam-to-world to world-to-cam for us.
-    """
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from trajectory_io import kitti_file_to_w2c
-
-    seq_dir = Path(seq_dir)
-    images = sorted((seq_dir / "image_2").glob("*.png"))[:max_frames]
-
-    primary = seq_dir / "poses.txt"
-    alt = seq_dir.parent.parent / "poses" / f"{seq_dir.name}.txt"
-    if primary.exists():
-        poses_path = primary
-    elif alt.exists():
-        poses_path = alt
-    else:
-        raise FileNotFoundError(f"KITTI poses file not found. Tried: {primary} and {alt}")
-
-    poses = kitti_file_to_w2c(poses_path)[:max_frames].astype(np.float32)
-    return EvalDataset(images=images, gt_poses=poses)
-
-
-def _load_waymo(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
-    """Load a Waymo Open Dataset segment that has been pre-extracted from .tfrecord.
-
-    Waymo's tfrecord format requires the ``waymo-open-dataset`` pip wheel which
-    pins TensorFlow and conflicts with the nerfstudio env's torch/CUDA stack.
-    To keep this loader light, we expect the sequence to have been extracted by
-    ``evals/data/extract_waymo.py`` (run in a sidecar env) into a flat
-    on-disk layout::
-
-        seq_dir/images/{000000.png, 000001.png, ...}   (front camera)
-        seq_dir/groundtruth.txt                         (TUM format, c2w camera)
-
-    Image i is paired 1:1 with line i of groundtruth.txt — the extraction
-    sidecar guarantees that ordering.
-    """
-    seq_dir = Path(seq_dir)
-    images = sorted((seq_dir / "images").glob("*.png"))[:max_frames]
-    gt_entries = _read_tum_groundtruth(seq_dir / "groundtruth.txt")
-    if len(gt_entries) < len(images):
-        raise ValueError(
-            f"Waymo seq {seq_dir} has {len(images)} images but only "
-            f"{len(gt_entries)} groundtruth entries — extraction is misaligned"
-        )
-    gt_T = np.stack([T for _, T in gt_entries[: len(images)]])
-    poses = np.linalg.inv(gt_T).astype(np.float32)
-    return EvalDataset(images=images, gt_poses=poses)
-
-
 def _load_co3dv2(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
-    """Load a single CO3Dv2 sequence.
-
-    Layout:
-        seq_dir/images/frame000001.jpg, ...
-        seq_dir/frame_annotations.jgz   (gzip-compressed JSON list of frame dicts)
-
-    Each frame dict viewpoint fields:
-        R: [[...], ...] — 3x3 rotation in PyTorch3D row-major convention
-                          (x_cam = x_world @ R + T; left-handed axes: +x=left, +y=up, +z=fwd)
-        T: [tx, ty, tz] — world-to-cam translation in PyTorch3D camera space
-        focal_length: [fx_ndc, fy_ndc] — relative to min(H,W)/2
-        principal_point: [px_ndc, py_ndc] — offset from image centre, relative to min(H,W)/2
-
-    Converted to OpenCV w2c convention: R_cv = S @ R.T, T_cv = S @ T
-    where S = diag(-1,-1,1) maps PyTorch3D→OpenCV camera axes.
     """
-    import gzip
-    import json as _json
+    CO3Dv2 sequence: `images/` plus the category's frame_annotations.jgz.
 
+    - annotations: seq_dir or its category parent
+    - viewpoint R, T: PyTorch3D, x_cam = x_world @ R + T, axes +x left, +y up
+    - to OpenCV w2c: R_cv = S @ R.T, T_cv = S @ T, S = diag(-1, -1, 1)
+    - focal_length, principal_point: NDC, units of min(H, W) / 2
+    """
     seq_dir = Path(seq_dir)
-    # CO3Dv2 stores frame_annotations.jgz at the category level (parent dir)
-    # when the download is a single-sequence subset — fall back automatically.
+
+    # Annotations sit beside the sequence or, as CO3Dv2 ships them, in the category dir
     ann_path = seq_dir / "frame_annotations.jgz"
     if not ann_path.exists():
         ann_path = seq_dir.parent / "frame_annotations.jgz"
@@ -173,18 +144,13 @@ def _load_co3dv2(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
         raise FileNotFoundError(f"frame_annotations.jgz not found in {seq_dir} or {seq_dir.parent}")
 
     with gzip.open(ann_path, "rt", encoding="utf-8") as f:
-        all_annotations = _json.load(f)
+        all_annotations = json.load(f)
 
-    # Filter to frames belonging to this sequence (by sequence_name field or path prefix)
+    # Keep this sequence's frames; the category file holds every sequence
     seq_name = seq_dir.name
-    annotations = [
-        a
-        for a in all_annotations
-        if a.get("sequence_name") == seq_name or Path(a["image"]["path"]).parts[0] == seq_name
-    ]
+    annotations = [a for a in all_annotations if a.get("sequence_name") == seq_name]
     if not annotations:
-        # fall back: use all annotations (single-sequence file)
-        annotations = all_annotations
+        raise ValueError(f"no annotations for sequence '{seq_name}' in {ann_path}")
 
     def _frame_number(ann: dict) -> int:
         stem = Path(ann["image"]["path"]).stem
@@ -204,20 +170,16 @@ def _load_co3dv2(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
         vp = ann["viewpoint"]
         R = np.array(vp["R"], dtype=np.float32)
         T = np.array(vp["T"], dtype=np.float32)
-        # CO3Dv2 / PyTorch3D convention: x_cam = x_world @ R + T  (row-major, left-handed axes)
-        # PyTorch3D camera axes: +x=left, +y=up, +z=forward
-        # OpenCV camera axes:    +x=right, +y=down, +z=forward
-        # Let S = diag(-1,-1,1).  Then x_cam_cv = S @ x_cam_p3d.
-        # Substituting: x_cam_cv = S @ (R.T @ x_world + T)
-        #   => R_cv = S @ R.T,  T_cv = S @ T
+        # PyTorch3D to OpenCV camera axes
+        # - x_cam_cv = S @ x_cam_p3d, S = diag(-1, -1, 1)
+        # - so R_cv = S @ R.T, T_cv = S @ T
         _S = np.array([-1.0, -1.0, 1.0], dtype=np.float32)
         pose = np.eye(4, dtype=np.float32)
         pose[:3, :3] = _S[:, None] * R.T  # equivalent to diag(S) @ R.T
         pose[:3, 3] = _S * T
         gt_poses_list.append(pose)
 
-        # Convert CO3Dv2 NDC intrinsics → pixel-space K
-        # NDC: focal_length in units of min(H,W)/2; principal_point offset from centre
+        # NDC intrinsics to pixel K; NDC y points up, image y down
         H, W = ann["image"]["size"]
         s = min(H, W) / 2.0
         fx_ndc, fy_ndc = vp["focal_length"]
@@ -234,51 +196,26 @@ def _load_co3dv2(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
     return EvalDataset(images=images, gt_poses=gt_poses, intrinsics=intrinsics)
 
 
-def _load_bicycle(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
-    """Load a LLFF/bicycle-format sequence from the images_4/ subdirectory."""
-    # Glob all pngs in images_4/ sorted lexicographically, then cap at max_frames
-    images = sorted((seq_dir / "images_4").glob("*.png"))[:max_frames]
-    # GT poses not available for LLFF format; zeros placeholder preserves EvalDataset shape
-    return EvalDataset(images=images, gt_poses=np.zeros((len(images), 4, 4), dtype=np.float32))
-
-
-def _load_video(seq_dir: Path, max_frames: int = 500) -> EvalDataset:
-    """
-    Sample max_frames evenly over a video, writing to a sidecar _frames/images/ dir.
-    """
-    # Output frames into <stem>_frames/ sibling directory; created if absent
-    frames_dir = seq_dir.parent / (seq_dir.stem + "_frames")
-    frames_dir.mkdir(parents=True, exist_ok=True)
-
-    # Measure once, select once; the report is reused across re-runs of the eval
-    report = load_video_quality(seq_dir, frames_dir / "video_quality_report.json")
-
-    # Decode video once: sample_uniform returns in-memory frames + records
-    frames, records = sample_uniform(str(seq_dir), max_frames=max_frames, report=report)
-
-    # Write the PNGs ONCE from the in-memory frames; the returned paths ARE the dataset
-    images = fr.write_frames(
-        frames_dir / "images",
-        frames,
-        records,
-        {"video_path": str(seq_dir), "method": "uniform", "max_frames": max_frames},
-    )
-    # GT poses not available for raw video; zeros placeholder
-    return EvalDataset(images=images, gt_poses=np.zeros((len(images), 4, 4), dtype=np.float32))
-
-
 _REGISTRY: dict[str, Callable[..., EvalDataset]] = {
     "7scenes": _load_7scenes,
     "tum": _load_tum,
-    "kitti": _load_kitti,
-    "waymo": _load_waymo,
     "co3dv2": _load_co3dv2,
-    "bicycle": _load_bicycle,
-    "video": _load_video,
 }
 
 
 def get_dataset(name: str) -> Callable[..., EvalDataset]:
+    """
+    Loader for a dataset type.
+
+    Args:
+        name: dataset type key.
+
+    Returns:
+        Loader taking (seq_dir, max_frames).
+
+    Raises:
+        KeyError: unknown type; the message lists valid ones.
+    """
     if name not in _REGISTRY:
         raise KeyError(f"unknown dataset '{name}'. Available: {sorted(_REGISTRY)}")
     return _REGISTRY[name]

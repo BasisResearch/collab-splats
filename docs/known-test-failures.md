@@ -358,10 +358,6 @@ Three structural unblocks (deps-by-default, `tests/nerfstudio_methods` rename, t
   `_no_loss_history_by_default`: real bae/pypose `RobustModel.forward(target)` bug, deferred. Only
   run when CUDA+bae present.
 - **2 skipped** — environment-gated (e.g. ffmpeg / evo_ape CLI not installed).
-- **1 flagged docstring** (no test impact) — `evals/pose_graph_diagnostics.py:20` `_classify_edges` still claims
-  "Loop edges use Robust(Huber)"; post-`011c56f` loop and sequential edges use identical Gaussian
-  noise so the function can no longer separate them. Instrumentation degraded by design; fixing
-  needs a production change to track edge provenance. Owner's call.
 - **1 nondeterministic flake** — `tests/dashboard/test_viz_utils.py::test_view_transform_scales_to_target_radius`
   fails ~1/3 of runs even in isolation on identical code (verified 2026-07-15: FAIL/PASS/PASS across
   three isolated runs at the same commit). Unseeded randomness or float-tolerance issue in the
@@ -428,7 +424,6 @@ raises and these suites **cannot be collected at all** — they are collection e
 failures, and a `pytest tests/ -q` run will report them as errors before any test body runs:
 
 - `tests/wrapper/test_splats_stage.py`
-- `tests/evals/test_eval_splats.py`
 - `tests/splats/` (the whole directory)
 
 `tests/wrapper/test_vda_context.py` **used to be on this list and no longer is.** It never

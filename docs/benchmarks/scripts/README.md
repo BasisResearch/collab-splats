@@ -27,6 +27,9 @@ compute **no** trajectory metric — ATE/RPE/AUC come from the existing
 `evals/scripts/eval_compare.py`, unmodified. Imports use an explicit `sys.path` insert
 because this directory is not a package and is not on the path.
 
+`evals/trajectory_io.py` and `evals/scripts/eval_compare.py` were removed in the evals
+release, so these scripts now run only from a checkout of `2c0b2f06`.
+
 ## The one-off diagnostics
 
 A diagnostic earns a place here when it is the only record of *how* a claim was established.

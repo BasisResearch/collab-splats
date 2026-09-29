@@ -20,8 +20,10 @@ A report must be reproducible from tracked code, but measurement scaffolding is 
 code. Everything a comparison needed and the package did not already have is archived in
 [`scripts/`](scripts/README.md) — libraries, driver, their tests, and the one-off diagnostics
 that back a specific claim — tracked and runnable, but imported by nothing and collected by no
-CI run. Metrics themselves are the exception: they come from `evals/metrics.py` via
-`evals/scripts/eval_compare.py`, unmodified, because that runner already existed.
+CI run. Metrics themselves are the exception: they came from `evals/metrics.py` via
+`evals/scripts/eval_compare.py`, unmodified, because that runner already existed. Both were
+removed in the evals release (now `evals/gt_metrics.py`); the versions this report used are at
+`2c0b2f06`.
 
 ## What makes a report trustworthy
 

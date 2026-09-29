@@ -110,8 +110,10 @@ collab_splats/
     io.py                  # to_json_safe + write_json: atomic, NaN -> null, numpy -> python
     torch_utils.py         # RegistryMixin, pytorch_gc, infer_batch_size, batch_iterator, get_device
 evals/
-  scripts/eval.py          # compute script — CLI/tmux only, never run in notebook
-  datasets.py              # dataset loaders (7-Scenes, CO3Dv2)
+  eval.py                  # GT grid runner: datasets x config-override conditions -> Reconstructor
+  gt_metrics.py            # ATE / RPE (evo), pairwise AUC, GT depth error
+  datasets.py              # dataset loaders (7-Scenes, TUM, CO3Dv2)
+  configs/                 # grid YAMLs (base block + conditions)
   results/                 # gitignored
 ```
 
@@ -166,8 +168,8 @@ evals/
 
 ## Evaluation
 
-- `evals/scripts/eval.py` = compute (CLI/tmux only); notebooks in `docs/` = visualization only
-- Results: `evals/results/` (gitignored); pass `--submap_size 50` for >100-frame sequences
+- `python -m evals.eval --config evals/configs/<grid>.yaml` = compute (CLI/tmux only); notebooks in `docs/` = visualization only
+- Results: `evals/results/` (gitignored); windowing for >100-frame sequences is `pointcloud.loop_closure: {submap_size: N, lc_retrieval_threshold: 0.0}` in the grid's `base`
 
 ## Commit Conventions
 
@@ -178,5 +180,5 @@ Conventional commits with scope: `feat(pointcloud):`, `fix(ba):`, `refactor(sema
 ```bash
 black . && isort .                                                  # format
 /opt/venv/reconstruction/bin/python -m pytest tests/               # test
-/opt/venv/reconstruction/bin/python evals/scripts/eval.py --help   # eval
+/opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/7scenes.yaml --dry_run   # eval
 ```

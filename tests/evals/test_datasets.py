@@ -1,21 +1,23 @@
-import sys
+"""
+Tests for evals.datasets.
+"""
+
+import gzip
+import json
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
-# Local `evals/` is shadowed by an installed `evals`/`datasets` package; insert the
-# evals dir on sys.path and import the module directly (sibling-test convention,
-# mirrors the retired tests/evals/test_lc_parity_common.py).
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-
-from datasets import _load_video  # noqa: E402
+from evals.datasets import get_dataset, load_gt_depth
 
 
 def _make_seq(tmp_path: Path, n_frames: int, poses: list[np.ndarray] | None = None) -> Path:
     """Create a minimal synthetic 7-Scenes sequence directory (flat layout)."""
     for i in range(n_frames):
         (tmp_path / f"frame-{i:06d}.color.png").touch()
+        (tmp_path / f"frame-{i:06d}.depth.png").touch()
         p = poses[i] if poses else np.eye(4, dtype=np.float64)
         np.savetxt(tmp_path / f"frame-{i:06d}.pose.txt", p)
     return tmp_path
@@ -50,105 +52,17 @@ def _make_tum_seq(
     return tmp_path
 
 
-def _make_waymo_seq(tmp_path: Path, n_frames: int, poses_c2w: list[np.ndarray] | None = None) -> Path:
-    """Synthesize a pre-extracted Waymo segment (images/ + groundtruth.txt)."""
-    seq = tmp_path / "seg"
-    (seq / "images").mkdir(parents=True)
-    for i in range(n_frames):
-        (seq / "images" / f"{i:06d}.png").touch()
-    from scipy.spatial.transform import Rotation
-
-    lines = []
-    for i in range(n_frames):
-        T = poses_c2w[i] if poses_c2w else np.eye(4)
-        t = T[:3, 3]
-        q = Rotation.from_matrix(T[:3, :3]).as_quat()  # [x, y, z, w]
-        lines.append(f"{float(i):.6f} {t[0]:.9f} {t[1]:.9f} {t[2]:.9f} " f"{q[0]:.9f} {q[1]:.9f} {q[2]:.9f} {q[3]:.9f}")
-    (seq / "groundtruth.txt").write_text("\n".join(lines) + "\n")
-    return seq
-
-
-def test_load_waymo_count(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    seq = _make_waymo_seq(tmp_path, n_frames=8)
-    dataset = get_dataset("waymo")(seq, max_frames=8)
-    assert len(dataset.images) == 8
-    assert dataset.gt_poses.shape == (8, 4, 4)
-
-
-def test_load_waymo_max_frames(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    seq = _make_waymo_seq(tmp_path, n_frames=8)
-    dataset = get_dataset("waymo")(seq, max_frames=3)
-    assert len(dataset.images) == 3
-    assert dataset.gt_poses.shape == (3, 4, 4)
-
-
-def test_load_waymo_pose_inverted(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    c2w = np.eye(4)
-    c2w[:3, 3] = [1.0, 2.0, 3.0]
-    seq = _make_waymo_seq(tmp_path, n_frames=1, poses_c2w=[c2w])
-    dataset = get_dataset("waymo")(seq, max_frames=1)
-    expected = np.eye(4, dtype=np.float32)
-    expected[:3, 3] = [-1.0, -2.0, -3.0]
-    np.testing.assert_allclose(dataset.gt_poses[0], expected, atol=1e-5)
-
-
-def test_load_waymo_dtype(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    seq = _make_waymo_seq(tmp_path, n_frames=3)
-    dataset = get_dataset("waymo")(seq)
-    assert dataset.gt_poses.dtype == np.float32
-
-
-def test_load_waymo_misaligned_raises(tmp_path):
-    """If groundtruth has fewer entries than images, fail loud."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    seq = _make_waymo_seq(tmp_path, n_frames=5)
-    gt_path = seq / "groundtruth.txt"
-    lines = gt_path.read_text().splitlines()
-    gt_path.write_text("\n".join(lines[:2]) + "\n")
-    with pytest.raises(ValueError, match="misaligned"):
-        get_dataset("waymo")(seq)
-
-
 def test_get_dataset_unknown_raises():
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     with pytest.raises(KeyError, match="unknown dataset"):
         get_dataset("nonexistent")
 
 
+def test_get_dataset_names_valid_types():
+    with pytest.raises(KeyError, match="7scenes"):
+        get_dataset("kitti")
+
+
 def test_load_7scenes_count(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     _make_seq(tmp_path, n_frames=10)
     dataset = get_dataset("7scenes")(tmp_path, max_frames=10)
     assert len(dataset.images) == 10
@@ -156,11 +70,6 @@ def test_load_7scenes_count(tmp_path):
 
 
 def test_load_7scenes_max_frames(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     _make_seq(tmp_path, n_frames=10)
     dataset = get_dataset("7scenes")(tmp_path, max_frames=5)
     assert len(dataset.images) == 5
@@ -169,11 +78,6 @@ def test_load_7scenes_max_frames(tmp_path):
 
 def test_load_7scenes_pose_inverted(tmp_path):
     """7-Scenes poses are cam-to-world; loader must invert to world-to-cam."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     cam_to_world = np.eye(4, dtype=np.float64)
     cam_to_world[:3, 3] = [1.0, 2.0, 3.0]
     _make_seq(tmp_path, n_frames=1, poses=[cam_to_world])
@@ -184,14 +88,22 @@ def test_load_7scenes_pose_inverted(tmp_path):
 
 
 def test_load_7scenes_dtype(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     _make_seq(tmp_path, n_frames=3)
     dataset = get_dataset("7scenes")(tmp_path)
     assert dataset.gt_poses.dtype == np.float32
+
+
+def test_load_7scenes_depth_paths(tmp_path):
+    _make_seq(tmp_path, n_frames=3)
+    dataset = get_dataset("7scenes")(tmp_path)
+    assert [p.name for p in dataset.depth_paths] == [f"frame-{i:06d}.depth.png" for i in range(3)]
+    assert all(p.exists() for p in dataset.depth_paths)
+
+
+def test_load_gt_depth_meters_and_invalid(tmp_path):
+    raw = np.array([[1000, 65535], [0, 2500]], dtype=np.uint16)
+    cv2.imwrite(str(tmp_path / "d.png"), raw)
+    np.testing.assert_allclose(load_gt_depth(tmp_path / "d.png"), [[1.0, 0.0], [0.0, 2.5]])
 
 
 def test_load_7scenes_works_for_any_scene_name(tmp_path):
@@ -199,11 +111,6 @@ def test_load_7scenes_works_for_any_scene_name(tmp_path):
     layout matters. Documents the multi-scene contract used by the download script
     (chess/fire/office).
     """
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     # Mimic real 7-Scenes layout literally: <scene>/seq-01/frame-*.{color.png,pose.txt}
     seq_dir = tmp_path / "fire" / "seq-01"
     seq_dir.mkdir(parents=True)
@@ -217,11 +124,6 @@ def test_load_7scenes_works_for_any_scene_name(tmp_path):
 
 
 def test_load_tum_count(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     rgb = [(float(i) * 0.033, f"{i:06d}.png") for i in range(5)]
     gt = [(float(i) * 0.033, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)) for i in range(5)]
     _make_tum_seq(tmp_path, rgb, gt)
@@ -232,11 +134,6 @@ def test_load_tum_count(tmp_path):
 
 def test_load_tum_pose_inverted(tmp_path):
     """TUM gt is cam-to-world; loader must invert to world-to-cam."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     rgb = [(0.0, "000000.png")]
     # identity rotation, translation (1, 0, 0)
     gt = [(0.0, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))]
@@ -246,11 +143,6 @@ def test_load_tum_pose_inverted(tmp_path):
 
 
 def test_load_tum_max_frames(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     rgb = [(float(i) * 0.033, f"{i:06d}.png") for i in range(10)]
     gt = [(float(i) * 0.033, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)) for i in range(10)]
     _make_tum_seq(tmp_path, rgb, gt)
@@ -260,11 +152,6 @@ def test_load_tum_max_frames(tmp_path):
 
 
 def test_load_tum_dtype(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     rgb = [(float(i) * 0.033, f"{i:06d}.png") for i in range(3)]
     gt = [(float(i) * 0.033, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)) for i in range(3)]
     _make_tum_seq(tmp_path, rgb, gt)
@@ -274,11 +161,6 @@ def test_load_tum_dtype(tmp_path):
 
 def test_load_tum_associates_rgb_to_nearest_gt(tmp_path):
     """rgb ts 0.51 with gt ts {0.5, 0.55} → nearest is 0.5 (|0.01|<|0.04|)."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
     rgb = [(0.51, "000000.png")]
     # Two gt entries; nearest should be 0.5 (translation (7,0,0)) over 0.55 (translation (9,0,0))
     gt = [
@@ -291,150 +173,53 @@ def test_load_tum_associates_rgb_to_nearest_gt(tmp_path):
     np.testing.assert_allclose(dataset.gt_poses[0, :3, 3], np.array([-7.0, 0.0, 0.0]), atol=1e-5)
 
 
-# ----------------------------- KITTI Odometry tests ----------------------------- #
+# ----------------------------- CO3Dv2 tests ----------------------------- #
 
 
-def _make_kitti_seq(
-    seq_dir: Path,
-    n_frames: int,
-    poses_lines: list[str] | None = None,
-    write_poses: bool = True,
-) -> Path:
-    """Create a minimal synthetic KITTI Odometry sequence directory.
-
-    Layout:
-        seq_dir/image_2/{000000.png ... 00000{N-1}.png}
-        seq_dir/poses.txt   (optional; 12-float 3x4 cam-to-world per line)
-    """
-    img_dir = seq_dir / "image_2"
-    img_dir.mkdir(parents=True, exist_ok=True)
-    for i in range(n_frames):
-        (img_dir / f"{i:06d}.png").touch()
-    if write_poses:
-        if poses_lines is None:
-            poses_lines = ["1 0 0 0 0 1 0 0 0 0 1 0"] * n_frames
-        (seq_dir / "poses.txt").write_text("\n".join(poses_lines) + "\n")
+def _make_co3dv2_seq(tmp_path: Path, n_frames: int = 4, seq_name: str = "seq1") -> Path:
+    """Category dir holding frame_annotations.jgz and one sequence of images."""
+    seq_dir = tmp_path / "apple" / seq_name
+    (seq_dir / "images").mkdir(parents=True)
+    annotations = []
+    for i in range(1, n_frames + 1):
+        fname = f"frame{i:06d}.jpg"
+        (seq_dir / "images" / fname).write_bytes(b"fake")
+        annotations.append(
+            {
+                "sequence_name": seq_name,
+                "image": {"path": f"apple/{seq_name}/images/{fname}", "size": [480, 640]},
+                "viewpoint": {
+                    "R": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    "T": [i * 0.1, 0.0, 1.0],
+                    "focal_length": [1.2, 1.2],
+                    "principal_point": [0.0, 0.0],
+                },
+            }
+        )
+    with gzip.open(seq_dir.parent / "frame_annotations.jgz", "wt", encoding="utf-8") as f:
+        json.dump(annotations, f)
     return seq_dir
 
 
-def test_load_kitti_count(tmp_path):
-    import sys
+def test_load_co3dv2_count_and_intrinsics(tmp_path):
+    ds = get_dataset("co3dv2")(_make_co3dv2_seq(tmp_path), max_frames=3)
+    assert len(ds.images) == 3
+    assert ds.gt_poses.shape == (3, 4, 4) and ds.gt_poses.dtype == np.float32
+    assert ds.intrinsics.shape == (3, 3, 3) and ds.intrinsics.dtype == np.float32
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    _make_kitti_seq(tmp_path, n_frames=5)
-    dataset = get_dataset("kitti")(tmp_path, max_frames=10)
-    assert len(dataset.images) == 5
-    assert dataset.gt_poses.shape == (5, 4, 4)
+    # NDC focal 1.2 in units of min(H, W) / 2 = 240 px; principal point at image center
+    np.testing.assert_allclose(ds.intrinsics[0], [[288.0, 0.0, 320.0], [0.0, 288.0, 240.0], [0.0, 0.0, 1.0]])
 
 
-def test_load_kitti_max_frames(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    _make_kitti_seq(tmp_path, n_frames=10)
-    dataset = get_dataset("kitti")(tmp_path, max_frames=4)
-    assert len(dataset.images) == 4
-    assert dataset.gt_poses.shape == (4, 4, 4)
+def test_load_co3dv2_pytorch3d_to_opencv(tmp_path):
+    ds = get_dataset("co3dv2")(_make_co3dv2_seq(tmp_path, n_frames=2), max_frames=2)
+    np.testing.assert_allclose(ds.gt_poses[0, :3, :3], np.diag([-1.0, -1.0, 1.0]), atol=1e-6)
+    np.testing.assert_allclose(ds.gt_poses[1, :3, 3], [-0.2, 0.0, 1.0], atol=1e-6)
 
 
-def test_load_kitti_pose_inverted(tmp_path):
-    """KITTI poses are cam-to-world; loader must invert to world-to-cam."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    # cam-to-world identity rotation with translation (1, 0, 0); w2c translation → (-1, 0, 0).
-    _make_kitti_seq(tmp_path, n_frames=1, poses_lines=["1 0 0 1 0 1 0 0 0 0 1 0"])
-    dataset = get_dataset("kitti")(tmp_path, max_frames=1)
-    np.testing.assert_allclose(dataset.gt_poses[0, :3, 3], np.array([-1.0, 0.0, 0.0]), atol=1e-5)
-
-
-def test_load_kitti_dtype(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    _make_kitti_seq(tmp_path, n_frames=3)
-    dataset = get_dataset("kitti")(tmp_path)
-    assert dataset.gt_poses.dtype == np.float32
-
-
-def test_load_kitti_alt_poses_path(tmp_path):
-    """Loader falls back to <root>/poses/<NN>.txt when seq_dir/poses.txt is absent."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    seq_dir = tmp_path / "sequences" / "00"
-    _make_kitti_seq(seq_dir, n_frames=2, write_poses=False)
-    poses_dir = tmp_path / "poses"
-    poses_dir.mkdir(parents=True, exist_ok=True)
-    (poses_dir / "00.txt").write_text("1 0 0 0 0 1 0 0 0 0 1 0\n1 0 0 0 0 1 0 0 0 0 1 0\n")
-    dataset = get_dataset("kitti")(seq_dir, max_frames=2)
-    assert len(dataset.images) == 2
-    assert dataset.gt_poses.shape == (2, 4, 4)
-
-
-def test_load_kitti_missing_poses_raises(tmp_path):
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "evals"))
-    from datasets import get_dataset
-
-    seq_dir = tmp_path / "sequences" / "00"
-    _make_kitti_seq(seq_dir, n_frames=2, write_poses=False)
-    with pytest.raises(FileNotFoundError) as ei:
-        get_dataset("kitti")(seq_dir, max_frames=2)
-    msg = str(ei.value)
-    assert "poses.txt" in msg
-    assert "00.txt" in msg
-
-
-# ------------------- Video loading via the images/ store (single decode) ------------------- #
-
-
-def test_load_video_single_decode(tmp_path, monkeypatch):
-    """
-    _load_video writes the images/ store once (single decode), not extract_frames (re-decode).
-    """
-    # Create synthetic frames and records
-    n_frames = 5
-    synthetic_frames = [np.random.randint(0, 255, (32, 32, 3), dtype=np.uint8) for _ in range(n_frames)]
-    synthetic_records = [{"frame_idx": i, "timestamp": float(i) * 0.1} for i in range(n_frames)]
-
-    # Patch the sampler to return synthetic data; count calls. max_frames is the
-    # sampler's own contract now, so the double honours it instead of the caller trimming.
-    call_count = [0]
-
-    def mock_sample_uniform(video_path, *, max_frames, report, **kwargs):
-        call_count[0] += 1
-        return synthetic_frames[:max_frames], synthetic_records[:max_frames]
-
-    monkeypatch.setattr("datasets.sample_uniform", mock_sample_uniform)
-    monkeypatch.setattr("datasets.load_video_quality", lambda *a, **k: {"frames": {}})
-
-    # Create a minimal fake video file to pass to _load_video
-    video_path = tmp_path / "test_video.mp4"
-    video_path.touch()
-
-    # Call _load_video with max_frames limit
-    result = _load_video(video_path, max_frames=3)
-
-    # Exactly one decode pass (extract_frames would have made it two)
-    assert call_count[0] == 1, f"sample_uniform called {call_count[0]} times, expected 1"
-
-    # Verify result contains the expected number of images (max_frames=3)
-    assert len(result.images) == 3, f"Expected 3 images, got {len(result.images)}"
-    assert all(img.exists() for img in result.images), "Not all image paths exist"
-    assert all(img.suffix.lower() == ".png" for img in result.images), "Images should be PNGs"
-
-    # Verify GT poses are zeros placeholder
-    assert result.gt_poses.shape == (3, 4, 4)
-    assert np.allclose(result.gt_poses, 0.0)
+def test_load_co3dv2_unknown_sequence_raises(tmp_path):
+    seq_dir = _make_co3dv2_seq(tmp_path)
+    other = seq_dir.parent / "seq2"
+    (other / "images").mkdir(parents=True)
+    with pytest.raises(ValueError, match="seq2"):
+        get_dataset("co3dv2")(other, max_frames=4)

@@ -16,7 +16,7 @@ def test_config_verify_match_ratio_defaults_to_none():
 
 
 def test_explicit_config_none_resolves_to_model_default():
-    # The plumbing-gap case: explicit config (eval_gt.py path) must still pick
+    # The plumbing-gap case: explicit config (the pipeline's dict path) must still pick
     # up the creator's calibrated threshold when verify_match_ratio is unset.
     lc = LoopClosure(_CreatorWithDefault(), config=LoopClosureConfig(submap_size=16))
     assert lc.config.verify_match_ratio == 0.72

@@ -1235,6 +1235,11 @@ git commit -m "feat(mesh): mesh.mask_sky drops sky depth before TSDF fusion on b
 
 ### Task 7: A/B harness
 
+> **Superseded (evals release, 2026-09-28).** `evals/scripts/eval_sky_mask.py` and
+> `analyze_splats.py` were removed. The A/B is two conditions in an `evals.eval` grid config,
+> identical but for `mesh: {mask_sky: true}`. Mesh numbers wait for a mesh quality report,
+> which is not built yet. Tasks 7-8 stay as the record of the original design.
+
 Reuses `mesh_stats` from `analyze_splats.py` rather than re-deriving connected components,
 so the numbers stay comparable to the floater-cleanup and banded-fusion runs. Note its
 `largest_component_fraction` is a TRIANGLE fraction; the spec says "vertex fraction". The

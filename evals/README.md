@@ -1,156 +1,84 @@
-# `evals/` — evaluation harness
+# `evals/` — ground-truth evaluation
 
-Compute scripts for reconstruction accuracy: ground-truth ATE/RPE evaluation of the
-collab-splats pipelines (feedforward → BA → LC). **Compute runs in CLI/tmux only** — notebooks in `docs/` are for
-visualization. Heavy inference/eval → tmux, one model at a time (46 GB cgroup cap).
-
-```bash
-PY=/opt/conda/envs/reconstruction/bin/python      # py3.11; NOT base conda
-$PY evals/scripts/eval.py --help
-```
-
-> **Note on the `evals` package name:** a same-named `evals` pip package is installed
-> and shadows this dir at import time. Tests import script modules via
-> `sys.path.insert(0, ".../evals/scripts"); from scripts.X import …` (see `tests/evals/`).
-
----
-
-## Running an evaluation
-
-`scripts/eval.py` is the one runner. Interpreter: `/opt/venv/reconstruction/bin/python` (py3.11) — run in **tmux**, one model at a time (heavy GPU, 46 GB cap). `results/` is gitignored scratch.
-
-```bash
-PY=/opt/venv/reconstruction/bin/python
-```
-
-**1 — one model, given parameters (goal: run a model + params → metrics).**
-Each condition runs in its own subprocess (clean GPU). Metrics land in `<output_dir>/metrics.json` (per-condition ATE, RPE trans+rot, AUC@{5,15,30}, `n_loops_applied`) + TUM trajectories + plots.
-
-```bash
-$PY scripts/eval.py \
-    --dataset 7scenes --seq_dir data/7scenes/chess/seq-01 \
-    --backbone vggt_omega --conditions baseline lc \
-    --submap_size 16 --max_frames 500 \
-    --output_dir results/omega_chess
-```
-- `--backbone`: `vggt_omega | vggtx | mapanything | loger`. Per-model LC layer + verify-threshold calibrations are applied automatically.
-- `--conditions`: `baseline | ba | lc | ba_track-density-N | incremental_ba-N`.
-- `--submap_size` for >100-frame sequences (windowed); omit for single-pass short clips.
-
-**2 — compare across models and/or datasets (config-driven grid).**
-Declare the axes in a flat YAML; `eval.py` expands `datasets × backbones × conditions`, runs each cell serially, **resumes** (skips cells with an existing `metrics.json`), and writes `comparison.md` + `comparison.json`.
-
-```bash
-$PY scripts/eval.py --config configs/cross_model_chess.yaml            # compare backbones on chess
-$PY scripts/eval.py --config configs/7scenes.yaml                      # chess/fire/office × backbones × conditions
-$PY scripts/eval.py --config configs/7scenes.yaml --dry_run            # print the per-cell plan, run nothing
-```
-Author a new experiment by copying a config in `configs/`.
-
-**3 — compare arbitrary trajectories already on disk.**
-Drop each method's `<name>.tum` (+ a `gt.tum`) into a dir; aggregate them into one table:
-
-```bash
-$PY scripts/eval_compare.py --results-dir results/omega_chess --gt-path results/omega_chess/gt.tum
-```
-
-**Datasets:** `$PY data/download_datasets.py <7scenes|co3dv2|kitti|tum|waymo>`.
-
----
-
-## Layout
+Runs the production pipeline (`Reconstructor`) over sequences with known poses and scores the
+result against ground truth. Reference-free quality is not measured here: each stage writes its
+own `*_quality_report.json`, and the runner copies those into the cell's `eval_metrics.json`.
 
 ```
 evals/
-  *.py            library modules (see tables below)
-  scripts/        entry points: eval runner, comparison, diagnostic tools
-  baselines/      committed reference results (frozen; see below)
-  results/        gitignored scratch output of eval_gt runs
-  data/           datasets (7-Scenes etc; large, gitignored)
-  envs/           conda env files
+  eval.py         grid runner: datasets x conditions -> one Reconstructor run per cell
+  gt_metrics.py   ATE / RPE (evo), pairwise AUC, GT depth error
+  datasets.py     loaders: 7scenes, tum, co3dv2
+  configs/        grid YAMLs
+  results/        output (gitignored)
 ```
 
----
+## Get data
 
-## Entry points (active)
+Paths below match `configs/`; run from the repo root.
 
-| file | role |
-|---|---|
-| `scripts/eval.py` | **Main GT eval runner.** Single-cell: feedforward backbone × condition (`baseline`/`lc`/`ba`/`ba_track-density-N`) → ATE/RPE/AUC vs GT, each condition in its own subprocess (clean GPU). Config-driven grid: `eval.py --config configs/7scenes.yaml` expands datasets × backbones × conditions, resumes on existing `metrics.json`, and aggregates a `comparison.md`/`comparison.json`. Writes `metrics.json` (ATE, RPE trans+rot, AUC@{5,15,30}, `n_loops_applied`), TUM trajectories, plots. |
-| `scripts/eval_compare.py` | Comparison aggregation over multiple methods/cells (`scan_results_dir`/`collect_grid_metrics`/`format_markdown*`); imported by `eval.py` and runnable standalone over a results dir. |
+```bash
+# 7-Scenes: scene zip holds one zip per sequence; unzip exit 1 is a harmless size warning
+mkdir -p data/7scenes && cd data/7scenes
+wget http://download.microsoft.com/download/2/8/5/28564B23-0828-408F-8631-23B1EFF1DAC8/chess.zip
+unzip -q chess.zip && unzip -q chess/seq-01.zip -d chess     # -> chess/seq-01/frame-*.{color,depth}.png, *.pose.txt
+cd -
 
-## Library (imported by the harness)
+# TUM RGB-D
+mkdir -p data/tum
+wget https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_desk.tgz -O data/tum/fr1_desk.tgz
+tar -xzf data/tum/fr1_desk.tgz -C data/tum
 
-| file | role |
-|---|---|
-| `datasets.py` | Dataset loaders: 7-Scenes, CO3Dv2, TUM association files. `get_dataset(name)`; GT-TUM/frame helpers (`write_tum_allowed_frames`, `collect_frames`). |
-| `metrics.py` | Thin `evo` ATE/RPE wrapper + `compute_auc` (TUM-file pose AUC). ATE/RPE source of truth. |
-| `trajectory_io.py` | Trajectory read/write (TUM etc). |
-| `trajectory_metrics.py` | In-memory pose-array ATE / RPE / pairwise AUC (`ate_translation`, `rpe`, `auc_at_threshold`, `umeyama_align`); ATE and AUC Umeyama-align first, RPE is alignment-free. |
-| `pose_graph_diagnostics.py` | Loop-closure pose-graph diagnostics: `capture_pose_graph_loss` (per-iteration LM cost, per-edge residuals). |
+# CO3Dv2: the downloader must run from inside its package dir
+git clone https://github.com/facebookresearch/co3d /tmp/co3d
+cd /tmp/co3d/co3d && python download_dataset.py --download_folder "$OLDPWD/data/co3dv2" --download_categories apple
+```
 
-## Dataset downloaders (utility)
+## Grid config
 
-`data/download_datasets.py <dataset>` — one consolidated CLI with a subcommand per dataset: `7scenes` (`--parity` for the LC-parity set), `co3dv2`, `kitti`, `tum`, `waymo`. `data/extract_waymo.py` converts a Waymo tfrecord → flat layout.
+```yaml
+name: cross_model_chess
+output_dir: evals/results/cross_model_chess
+base:                        # merged into every cell, over configs/base.yaml
+  semantics: {enabled: false}
+  mesh: {enabled: false}
+  pointcloud:
+    loop_closure: {submap_size: 50, lc_retrieval_threshold: 0.0}   # windowed, no loop edges
+datasets:
+  - {name: chess, type: 7scenes, seq_dir: data/7scenes/chess/seq-01, max_frames: 500}
+conditions:                  # label -> override merged over base
+  omega:    {pointcloud: {backend: vggt_omega}}
+  omega_lc: {pointcloud: {backend: vggt_omega, loop_closure: {lc_retrieval_threshold: 0.95}}}
+```
 
-## Parity references
+A flag under test (sky masking, BA, a backend) is one more condition, not a script.
+The pipeline refuses `bundle_adjustment` together with `loop_closure`, so a BA condition runs
+single-pass and needs a `max_frames` the backend fits in one go.
 
-VGGT-SPARK / VGGT-SLAM parity (method, pinned commits, headline numbers): [`../docs/parity.md`](../docs/parity.md).
+## Run
 
-## Other eval tools (standalone)
+```bash
+/opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/cross_model_chess.yaml --dry_run
+/opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/cross_model_chess.yaml   # in tmux
+```
 
-| file | role | status |
-|---|---|---|
-| `eval_similarity_calibration.py` | Sweep LC verify layer per backbone (DINO-SALAD pairs). Produced the per-model `_lc_layer_index` calibration. | keep (re-runnable tool) |
-| `eval_multiview_conf.py` | Multiview-confidence eval across backbones (chess). | keep |
+Each cell runs in its own subprocess; a cell holding `eval_metrics.json` is skipped on re-run.
 
----
+## Output
 
-## `baselines/` — committed reference results
+Per cell, `<output_dir>/<dataset>__<condition>/`:
 
-| dir | what |
-|---|---|
-| `cross_model/` | Cross-model benchmark (2026-05-31, chess). One dir per `<backbone>__<frameset>__<sm>/` with `metrics.json` + `ate.json` + TUM; `slam_d*` framesets are fixed keyframe lists (the frames are the `gt.tum` timestamps). `_layersweep/` omega LC-layer sweep, `_core_matrix_table.md`. Heavy COLMAP/ply/plots/npz **gitignored** (see `.gitignore`). |
-| `lc_parity_d5/`, `lc_parity_d5_postfix/` | LC on chess d5 (384 keyframes), before and after the 2026-07 loop-edge fixes: `metrics.json` + `lc_decisions_*.json` per backbone (+ `loop_pr.json` post-fix). |
-| `lc_parity_matrix/` | LC on 7s office / redkitchen + TUM fr3_office (+ 25%/50% keyframe prefixes) per backbone: `loop_pr.json` (loop precision/recall), plus `metrics.json` on TUM. |
+- `eval_metrics.json`: ATE, RPE, AUC@{5,15,30}, GT depth error (7-Scenes), stage reports, config,
+  `registered_frames` / `n_frames`
+- `trajectories.npz`: GT and predicted camera-to-world poses in GT order, `gt_idx`, per-frame ATE,
+  Sim3-aligned predicted camera centers
+- `plots/`: `trajectory.png`, `ate_per_frame.png`
+- `input/` (frame symlinks), `run/` (the pipeline's own output)
 
----
+Per grid: `comparison.md` and `comparison.json`, one row per finished cell.
 
-## Tests / benchmarks performed
+Unregistered frames (an sfm backend may drop some):
 
-- **Cross-model LC benchmark** (chess, 2026-05-31): backbones × {single-pass, windowed
-  baseline, lc} × {d10, d5_long}; numbers in `baselines/cross_model/_core_matrix_table.md`.
-  Headline then: windowing is free; `vggt_omega` best baseline. LC results predate the
-  2026-07 loop-edge fixes (see `lc_parity_d5_postfix/`).
-- **Unit tests:** `tests/evals/` (runner, table, eval_gt helpers, AUC) and
-  `tests/pointcloud/` (AUC metric, LC eval). Run: `$PY -m pytest tests/`.
-  Known pre-existing failures: `docs/known-test-failures.md`.
-
-## Investigations — scripts grouped by what they probed
-
-Grouped by topic so the "why" behind each investigation is discoverable. B is a
-closed investigation (parameter absorbed elsewhere) whose scripts have been deleted.
-C and D's scripts are still retained and re-runnable; several compute paths from their
-directory depth (`Path(__file__).parents[N]`), so moving them would silently break path
-resolution.
-
-### B. Bundle-adjustment tuning
-Goal: pick BA track-density / increment params. **Outcome:** folded into `eval_gt` `ba`
-and `ba_track-density-N` conditions — this capability is now native to the main runner,
-so the sweep scripts are deleted. CO3Dv2 notes in `EVAL_NOTES.md`.
-
-### C. LC similarity / verify-layer calibration
-| script | what it probed |
-|---|---|
-| `eval_similarity_calibration.py` | Per-backbone LC verify layer (DINO-SALAD pairs) → `_lc_layer_index`. See memory `project_lc_layer_calibration`. |
-| `eval_multiview_conf.py` | Multiview-confidence comparison across backbones. |
-
-### D. Cross-model benchmark (2026-05-31)
-Goal: rank backbones; separate windowing cost from LC benefit. The frozen
-2026-05-31 numbers live under `baselines/cross_model/`. The bespoke sweep/table
-drivers that generated them have been retired; reproduce or extend the matrix for a
-different backbone/frameset via `eval.py --config configs/7scenes.yaml` (or
-`configs/cross_model_chess.yaml`).
-
-> **Housekeeping:** if bundle-adjustment tuning is revisited, prefer writing
-> plots to the gitignored `results/` rather than the source tree.
+- poses match GT by frame name; ATE, RPE and depth score the registered frames only
+- AUC counts every pair touching an unregistered frame as a failure (COLMAP benchmark convention)
+- `comparison.md` shows `registered` N/M beside every cell

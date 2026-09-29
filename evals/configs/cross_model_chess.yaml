@@ -1,16 +1,24 @@
-# Cross-model chess benchmark: every feedforward backbone over 7-Scenes chess,
-# baseline vs loop-closure. One single-cell eval.py subprocess per (backbone x condition).
+# Cross-model chess: every feedforward backbone, windowed baseline vs loop closure
+# - run from the repo root: python -m evals.eval --config evals/configs/cross_model_chess.yaml
 name: cross_model_chess
-
 output_dir: evals/results/cross_model_chess
 
-# Chess seq-01 is >100 frames -> windowed inference.
-submap_size: 50
-max_frames: 500
+# Applied to every cell before its condition
+# - loop_closure with retrieval 0.0 = windowed inference, no loop edges
+base:
+  semantics: {enabled: false}
+  mesh: {enabled: false}
+  pointcloud:
+    loop_closure: {submap_size: 50, lc_retrieval_threshold: 0.0}
 
 datasets:
-  - {name: chess, type: 7scenes, seq_dir: data/7scenes/chess/seq-01, keyframe_list: null}
+  - {name: chess, type: 7scenes, seq_dir: data/7scenes/chess/seq-01, max_frames: 500}
 
-backbones: [vggtx, vggt_omega, mapanything]
-
-conditions: [baseline, lc]
+# Label -> override merged over base
+conditions:
+  vggtx:          {pointcloud: {backend: vggtx}}
+  vggtx_lc:       {pointcloud: {backend: vggtx, loop_closure: {lc_retrieval_threshold: 0.95}}}
+  omega:          {pointcloud: {backend: vggt_omega}}
+  omega_lc:       {pointcloud: {backend: vggt_omega, loop_closure: {lc_retrieval_threshold: 0.95}}}
+  mapanything:    {pointcloud: {backend: mapanything}}
+  mapanything_lc: {pointcloud: {backend: mapanything, loop_closure: {lc_retrieval_threshold: 0.95}}}

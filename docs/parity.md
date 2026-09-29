@@ -5,6 +5,8 @@ The one place the two external parity references are described.
 - our loop closure (`collab_splats/geometry/loop_closure/`) ports VGGT-SLAM's SL(4) pose graph
 - both references were used only to check that port against upstream numbers
 - neither was ever part of the shipped pipeline; both are removed from the repo
+- `Source:` paths are local run output under `evals/results/` (gitignored); the committed
+  copies, then under `evals/baselines/`, are at `2c0b2f06`
 
 ---
 
@@ -110,16 +112,16 @@ All baseline files cited below were removed from the repo by the commit
 
 | source | min_disparity | keyframes | submaps | loops | ATE (m) |
 |---|---|---|---|---|---|
-| `evals/baselines/lc_parity/7s_chess/slam/metrics.json` | 50 | 29 | 2 | 0 | 0.0389 |
-| `evals/baselines/lc_parity_d5/7s_chess/slam/metrics.json` | 5 | 384 | 45 | 21 | 0.0455 |
-| `evals/baselines/vggt_slam/chess_seq01/metrics.json` | 5 | 384 | 45 | 21 | 0.0464 |
+| `evals/results/lc_parity/7s_chess/slam/metrics.json` | 50 | 29 | 2 | 0 | 0.0389 |
+| `evals/results/lc_parity_d5/7s_chess/slam/metrics.json` | 5 | 384 | 45 | 21 | 0.0455 |
+| `evals/results/vggt_slam/chess_seq01/metrics.json` | 5 | 384 | 45 | 21 | 0.0464 |
 
 - ATE rounded to 4 dp from `ate_rmse`
 - the two d5 rows are separate runs recorded by different drivers (parity harness vs `run_vggt_slam.py`, `max_frames` null vs 1000)
 
 ### Pose-extraction parity (windowed baseline, chess, VGGT-SLAM keyframes)
 
-Source: `evals/baselines/cross_model/_core_matrix_table.md` (SPARK rows, removed; `Δslam` = ATE minus VGGT-SLAM's)
+Source: `evals/results/cross_model/_core_matrix_table.md` (SPARK rows, removed; `Δslam` = ATE minus VGGT-SLAM's)
 
 | backbone | frameset | cond | ATE | RPE-t | RPE-r° | AUC5 | AUC15 | AUC30 | Δslam |
 |---|---|---|---|---|---|---|---|---|---|
@@ -133,7 +135,7 @@ Source: `evals/baselines/cross_model/_core_matrix_table.md` (SPARK rows, removed
 
 ### Disparity sweep (chess, `max_frames` 200)
 
-Source: `evals/baselines/disparity_sweep/{slam,ours}_d*/` (removed; ours = `vggt_spark`, `--lc_scale_method none`; measured before geometry-round3 deleted `scale_method`, so `none` can no longer be rerun)
+Source: `evals/results/disparity_sweep/{slam,ours}_d*/` (removed; ours = `vggt_spark`, `--lc_scale_method none`; measured before geometry-round3 deleted `scale_method`, so `none` can no longer be rerun)
 
 | min_disparity | SLAM keyframes | SLAM ATE (m) | ours baseline ATE (m) | ours lc ATE (m) |
 |---|---|---|---|---|
@@ -147,7 +149,7 @@ Source: `evals/baselines/disparity_sweep/{slam,ours}_d*/` (removed; ours = `vggt
 
 ### LC parity probe, chess d5 — before and after the loop-edge fixes
 
-Pre-fix source: `evals/baselines/lc_parity_d5/_parity_table.md`
+Pre-fix source: `evals/results/lc_parity_d5/_parity_table.md`
 
 | scene | kf | submaps | SLAM ATE | SLAM loops | ours ATE (base) | ours ATE (lc) | ours loops | base gate | lc gate |
 |---|---|---|---|---|---|---|---|---|---|
@@ -155,7 +157,7 @@ Pre-fix source: `evals/baselines/lc_parity_d5/_parity_table.md`
 | 7s_chess [vggt_omega] | 384 | 45 | 0.0455 | 21 | 0.0300 | 0.6255 | 20 | — | HARMFUL |
 | 7s_chess [vggt_spark] | 384 | 45 | 0.0455 | 21 | 0.0442 | 0.0442 | 0 | PASS | FAIL |
 
-Post-fix source: `evals/baselines/lc_parity_d5_postfix/_parity_table.md`
+Post-fix source: `evals/results/lc_parity_d5_postfix/_parity_table.md`
 
 | scene | kf | submaps | SLAM ATE | SLAM loops | ours ATE (base) | ours ATE (lc) | ours loops | loop P | loop R | base gate | lc gate |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -170,7 +172,7 @@ Post-fix source: `evals/baselines/lc_parity_d5_postfix/_parity_table.md`
 
 ### Multi-scene matrix, main runs (paper config, `min_disparity` 50)
 
-Source: `evals/baselines/lc_parity_matrix/_parity_table.md` (removed)
+Source: `evals/results/lc_parity_matrix/_parity_table.md` (removed)
 
 | scene | kf | submaps | SLAM ATE | SLAM loops | ours ATE (base) | ours ATE (lc) | ours loops | loop P | loop R | base gate | lc gate |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -188,7 +190,7 @@ Source: `evals/baselines/lc_parity_matrix/_parity_table.md` (removed)
 
 ### SPARK native loop-verify scores (chess d5 positives)
 
-Source: `evals/baselines/results/parity_harness/vggt_spark_similarity.json` (removed)
+Source: `evals/results/parity_harness/vggt_spark_similarity.json` (removed)
 
 | positives | min `image_match_ratio` | max | ≥ 0.95 |
 |---|---|---|---|
@@ -208,7 +210,7 @@ Source: `evals/baselines/results/parity_harness/vggt_spark_similarity.json` (rem
 - the `BaseFeedforwardCreator` LC classvars default to `None`; `_verify_loop_candidate` raises when they are unset
 - calibrated per creator: `vggtx` (10 / 1.17), `vggt_omega` (13 / 1.55), `mapanything` (4 / 1.46)
 - `loger` sets none, so LC refuses it
-- per-backbone calibration method: clean-negative sweep (21 SLAM-confirmed positives vs 20 GT-clean negatives, seed 42), `evals/scripts/eval_similarity_calibration.py`
+- per-backbone calibration method: clean-negative sweep (21 SLAM-confirmed positives vs 20 GT-clean negatives, seed 42), `evals/scripts/eval_similarity_calibration.py` (removed in `4b5b02bf`; last at `2c0b2f06`)
 
 ---
 

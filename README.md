@@ -171,7 +171,7 @@ balanced. GUI toggles: camera visibility and flat per-node coloring (shows part 
 ## Evaluation
 
 ```bash
-/opt/venv/reconstruction/bin/python evals/scripts/eval.py --help
+/opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/7scenes.yaml --dry_run
 ```
 
-Results land in `evals/results/` (gitignored). See `docs/source/tutorials/evals/ground_truth_evals.ipynb` for visualization.
+Results land in `evals/results/` (gitignored); data download and grid configs: `evals/README.md`. See `docs/source/tutorials/evals/ground_truth_evals.ipynb` for visualization.

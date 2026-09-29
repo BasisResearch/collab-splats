@@ -24,6 +24,9 @@ PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh")
 # Single modules held to the contract, release checks included, before their whole package is
 MODULES = ("utils/io.py",)
 
+# Repo-root dirs outside collab_splats/ held to the contract; their top-level *.py only
+TOP_LEVEL = ("evals",)
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # Sections that terminate the bulleted body; `Attributes:` is deliberately NOT one of
@@ -38,7 +41,7 @@ MIN_RUN = 3
 
 def _sources() -> list[pathlib.Path]:
     """
-    Every .py file in the packages the contract covers, plus its single MODULES.
+    Every .py file in the packages the contract covers, plus its MODULES and TOP_LEVEL files.
 
     Returns:
         Paths, sorted, relative to the repo root.
@@ -47,7 +50,17 @@ def _sources() -> list[pathlib.Path]:
     for pkg in PACKAGES:
         out += sorted((ROOT / "collab_splats" / pkg).rglob("*.py"))
     out += [ROOT / "collab_splats" / m for m in MODULES]
+    for top in TOP_LEVEL:
+        out += sorted((ROOT / top).glob("*.py"))
     return out
+
+
+def _package_path(path: pathlib.Path) -> pathlib.Path:
+    """
+    Path relative to collab_splats/ for package files, to the repo root for TOP_LEVEL ones.
+    """
+    rel = path.relative_to(ROOT)
+    return rel.relative_to("collab_splats") if rel.parts[0] == "collab_splats" else rel
 
 
 SOURCES = _sources()
@@ -195,7 +208,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 ########################################################################
 
 # Packages that finished their release cleanup; the rest xfail the release checks
-RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats", "mesh"})
+RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats", "mesh", "evals"})
 
 # Module-level numbers that are facts, not tunables
 FIXED_FACTS = frozenset({"SCHEMA_VERSION", "_LOGER_PATCH"})
@@ -464,7 +477,7 @@ def _release_params() -> list:
     """
     params = []
     for path, pid in zip(SOURCES, SOURCE_IDS):
-        rel = path.relative_to(ROOT / "collab_splats")
+        rel = _package_path(path)
         pkg = rel.parts[0]
         released = pkg in RELEASED or str(rel) in MODULES
         marks = [] if released else [pytest.mark.xfail(strict=False, reason=f"{pkg}: release cleanup pending")]
@@ -540,7 +553,7 @@ ROUND3_CHECKS = {
     [
         pytest.param(p, name, id=f"{pid}::{name}")
         for p, pid in zip(SOURCES, SOURCE_IDS)
-        if p.relative_to(ROOT / "collab_splats").parts[0] in ("geometry", "mesh")
+        if _package_path(p).parts[0] in ("geometry", "mesh")
         for name in ROUND3_CHECKS
     ],
 )

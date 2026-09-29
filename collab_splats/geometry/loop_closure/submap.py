@@ -89,11 +89,43 @@ class Submap:
     # Graph-corrected world reads
     ####################################################################
 
+    def get_world_grid(self, graph: PoseGraph) -> np.ndarray:
+        """
+        Dense per-pixel points in the world frame, corrected by the pose graph, unmasked.
+
+        - frame i uses the optimized SL(4) homography of node `frame_start + i`
+
+        Args:
+            graph: optimized PoseGraph holding one homography per frame.
+
+        Returns:
+            World-frame grid, (K, H, W, 3) float32.
+
+        Raises:
+            ValueError: if the submap has no dense points.
+        """
+        if self.points is None:
+            raise ValueError(f"Submap {self.submap_id} has no dense points")
+
+        out = np.empty(self.points.shape, dtype=np.float32)
+        for i in range(self.points.shape[0]):
+            # Lift the frame's points to homogeneous and apply its homography
+            H = graph.get_homography(self.frame_start + i).astype(np.float64)
+            flat = self.points[i].reshape(-1, 3).astype(np.float64)  # (H*W, 3)
+            hom = np.hstack([flat, np.ones((flat.shape[0], 1), dtype=np.float64)])
+            out_hom = (H @ hom.T).T  # (H*W, 4)
+
+            # Dehomogenize by w, guarding near-zero w (plane at infinity)
+            w = out_hom[:, 3:4]
+            w = np.where(np.abs(w) < 1e-10, 1e-10, w)
+            out[i] = (out_hom[:, :3] / w).reshape(self.points.shape[1:])
+
+        return out
+
     def get_points_in_world_frame(self, graph: PoseGraph, skip_first: int = 0) -> np.ndarray:
         """
         Dense points in the world frame, corrected by the pose graph and masked by confidence.
 
-        - frame i uses the optimized SL(4) homography of node `frame_start + i`
         - frame order and mask match `get_points_colors` for the same skip_first
 
         Args:
@@ -110,27 +142,15 @@ class Submap:
             raise ValueError(f"Submap {self.submap_id} has no dense points")
         if self.conf is None:
             raise ValueError(f"Submap {self.submap_id} has no conf; cannot compute world-frame points")
-        out = []
-        for i in range(skip_first, self.points.shape[0]):
-            # Lift the frame's points to homogeneous and apply its homography
-            H = graph.get_homography(self.frame_start + i).astype(np.float64)
-            flat = self.points[i].reshape(-1, 3).astype(np.float64)  # (H*W, 3)
-            hom = np.hstack([flat, np.ones((flat.shape[0], 1), dtype=np.float64)])
-            out_hom = (H @ hom.T).T  # (H*W, 4)
-
-            # Dehomogenize by w, guarding near-zero w (plane at infinity)
-            w = out_hom[:, 3:4]
-            w = np.where(np.abs(w) < 1e-10, 1e-10, w)
-            world = out_hom[:, :3] / w
-
-            # Confidence mask; same predicate and order as get_points_colors
-            mask = self.conf[i].reshape(-1) > self.conf_threshold
-            out.append(world[mask])
 
         # A pure-overlap tail submap skips every frame; return empty
-        if not out:
+        if skip_first >= self.points.shape[0]:
             return np.empty((0, 3), dtype=np.float32)
-        return np.vstack(out).astype(np.float32)
+
+        # Confidence mask; same predicate and order as get_points_colors
+        grid = self.get_world_grid(graph)[skip_first:]
+        mask = self.conf[skip_first:] > self.conf_threshold
+        return grid[mask]
 
     def get_points_colors(self, skip_first: int = 0) -> np.ndarray:
         """

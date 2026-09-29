@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 import torch
 
+from collab_splats.geometry.loop_closure.graph import PoseGraph
+from collab_splats.geometry.loop_closure.map import GraphMap
 from collab_splats.geometry.loop_closure.submap import Submap
+from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+from collab_splats.geometry.transforms import transform_points
 from collab_splats.pointcloud.base import PointcloudResult
 from tests.geometry.loop_closure._helpers import record_driven_submaps
 from tests.pointcloud.conftest import _frame_files, _frames
@@ -787,6 +791,56 @@ def test_assemble_result_intrinsics_first_occurrence_dedup():
     assert out.model_height == 3 and out.model_width == 4
 
 
+def test_assemble_result_carries_depth_confidence_world_points(tmp_path):
+    """
+    LC result carries per-frame depth, confidence and world points consistent with its poses.
+
+    - depth is the z of world_points under the corrected extrinsics
+    - overlap frame 2 comes from s0, the first submap to cover it
+    - depth survives a zarr round trip
+    """
+    n_frames = 5
+    s0 = _dense_submap_with_fx(0, frame_start=0, fx_values=[100.0, 101.0, 102.0])
+    s1 = _dense_submap_with_fx(1, frame_start=2, fx_values=[202.0, 203.0, 204.0])
+
+    # Two-submap graph, one optimize per add as the wrapper does
+    pg = PoseGraph()
+    for s in (s0, s1):
+        pg.add_submap(s, overlap_frames=1)
+        pg.optimize()
+
+    base = MagicMock()
+    base.max_points = 500_000
+    base.image_paths = [f"img_{i}.png" for i in range(n_frames)]
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))
+
+    lc = LoopClosure(base)
+    lc.map = GraphMap()
+    for s in (s0, s1):
+        lc.map.add_submap(s)
+    lc.graph = pg
+    out = lc._assemble_result(n_frames)
+
+    # Per-pixel fields cover every frame on the model grid
+    assert out.depth.shape == (n_frames, 3, 4)
+    assert out.world_points.shape == (n_frames, 3, 4, 3)
+    assert tuple(out.confidence.shape) == (n_frames, 3, 4)
+
+    # Depth is camera-frame z of the corrected world points
+    for g in range(n_frames):
+        cam = transform_points(out.world_points[g].astype(np.float64), out.extrinsics[g].astype(np.float64))
+        np.testing.assert_allclose(out.depth[g], cam[..., 2], rtol=1e-5, atol=1e-5)
+
+    # Overlap frame takes s0's grid and confidence, not s1's
+    np.testing.assert_allclose(out.world_points[2], s0.get_world_grid(pg)[2], rtol=1e-6)
+    np.testing.assert_array_equal(np.asarray(out.confidence[2]), s0.conf[2])
+
+    # Depth round-trips through zarr
+    out.save_zarr(tmp_path / "pc.zarr")
+    loaded = PointcloudResult.load_zarr(tmp_path / "pc.zarr")
+    np.testing.assert_allclose(loaded.depth, out.depth)
+
+
 def test_assemble_result_caps_cloud_to_max_points():
     """
     _assemble_result caps the dense cloud to base.max_points before the COLMAP export.
@@ -913,9 +967,7 @@ def _run_one_window(raw: dict, window):
     # Full-frame box per frame
     base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     lc = LoopClosure(base)
-    return lc.run_predictions(
-        window, 0, 0, [], [], lambda frames: torch.zeros(frames.shape[0], 8), MagicMock()
-    )
+    return lc.run_predictions(window, 0, 0, [], [], lambda frames: torch.zeros(frames.shape[0], 8), MagicMock())
 
 
 def test_run_predictions_requires_intrinsics_key():

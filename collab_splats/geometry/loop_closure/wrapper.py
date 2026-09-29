@@ -26,7 +26,11 @@ from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.map import GraphMap
 from collab_splats.geometry.loop_closure.matching import find_loop_closures
 from collab_splats.geometry.loop_closure.submap import Submap
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous, invert_poses
+from collab_splats.geometry.transforms import (
+    extrinsics_to_homogeneous,
+    invert_poses,
+    transform_points,
+)
 from collab_splats.localization import BaseRetrievalExtractor
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.utils import subsample_points
@@ -630,18 +634,32 @@ class LoopClosure:
         intrinsics = np.tile(np.eye(3, dtype=np.float32), (n_frames, 1, 1))
         assigned = np.zeros(n_frames, dtype=bool)
         model_height = model_width = None
+        world_points = depth = confidence = None
         for s in self.map.ordered_submaps_by_key():
             if s.is_lc_submap:
                 continue
 
+            # Size the per-pixel arrays from the first dense grid
             if model_height is None and s.points is not None:
                 model_height, model_width = int(s.points.shape[1]), int(s.points.shape[2])
+                world_points = np.zeros((n_frames, model_height, model_width, 3), dtype=np.float32)
+                depth = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
+                confidence = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
 
+            grid = s.get_world_grid(self.graph) if s.points is not None else None
             for local_i in range(s.intrinsics.shape[0]):
                 g = s.frame_start + local_i
-                if 0 <= g < n_frames and not assigned[g]:
-                    intrinsics[g] = s.intrinsics[local_i].astype(np.float32)
-                    assigned[g] = True
+                if not 0 <= g < n_frames or assigned[g]:
+                    continue
+
+                intrinsics[g] = s.intrinsics[local_i].astype(np.float32)
+                assigned[g] = True
+
+                # Per-pixel world points, depth under the corrected pose, and confidence
+                if grid is not None:
+                    world_points[g] = grid[local_i]
+                    depth[g] = transform_points(grid[local_i], extrinsics[g])[..., 2]
+                    confidence[g] = s.conf[local_i]
 
         # Fail fast on an empty cloud or zero model dims
         # - every submap lacked dense points or was fully confidence-masked
@@ -662,4 +680,7 @@ class LoopClosure:
             original_coords=self.base.original_coords,
             model_width=model_width,
             model_height=model_height,
+            confidence=torch.from_numpy(confidence),
+            world_points=world_points,
+            depth=depth,
         )

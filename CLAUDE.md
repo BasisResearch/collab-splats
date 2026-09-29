@@ -28,7 +28,6 @@ These tasks are started but not complete — do not assume their targets are don
 - **sky-mask** — ONNX sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
-- **pointcloud-unify** — one `PointcloudResult` (zarr, COLMAP export-only), `depth.py`, shared sfm `create()`, projection.py / lifting / subsample / SIFT DB / InstantSfM in-memory dedups on `clean/pointcloud-release`; supersedes pointcloud-reorg; spec approved, implementing ([spec](docs/superpowers/specs/2026-09-27-pointcloud-unify-design.md) · [plan](docs/superpowers/plans/2026-09-27-pointcloud-unify.md))
 - **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
 
 ## Recently Completed
@@ -58,21 +57,23 @@ bash setup.sh                    # full install (uv sync — all deps incl. VGGT
 
 ## Architecture Overview
 
-Core pipeline: video/images → pointcloud (feedforward: VGGT-X / VGGT-Omega / MapAnything / LoGeR, or sfm: InstantSfM + VDA depth) → optional BA / optional LC (both feedforward only — sfm refuses them) → `pointcloud.zarr` → mesh/features/splats.
+Core pipeline: video/images → pointcloud (feedforward: VGGT-X / VGGT-Omega / MapAnything / LoGeR, or sfm: InstantSfM / COLMAP / hloc + VDA depth) → optional BA / optional LC (both feedforward only — sfm refuses them) → `pointcloud.zarr` → mesh/features/splats.
 
 ```
 collab_splats/
   pointcloud/              # main reconstruction pipeline
     base.py                # BasePointcloudCreator, PointcloudResult (both Ks; COLMAP export-only via to_colmap)
-    feedforward/           # BaseFeedforwardCreator (template method in _reconstruct), VGGTXCreator, MapAnythingCreator
+    feedforward/           # BaseFeedforwardCreator (template method in _reconstruct), VGGTX, VGGTOmega, MapAnything, LoGeR creators
     sfm/                   # InstantSfMCreator (global SfM via upstream python API)
                            #   + ColmapCreator / HlocCreator (incremental; SFM_CREATORS dispatch; sift_db.py shared SIFT)
     depth.py               # estimate_depth (VDA metric depth per keyframe) + align_depth (COLMAP model
                            #   + VDA depth -> PointcloudResult at COLMAP scale)
-    utils.py               # clean_pointcloud (result -> result), outlier_mask, confidence_mask, subsample_points
+    utils.py               # clean_pointcloud (result -> result), outlier_mask, confidence_mask, subsample_points,
+                           #   cross_frame_attention_ratio
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
     transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV, project_to_so3,
                            #   decompose_camera, intrinsics_4x4, rescale_intrinsics, shift_intrinsics
+    projection.py          # unproject/project, depth_residual, depth_agreement, multiview_depth_confidence
     bundle_adjustment.py   # Levenberg-Marquardt BA: array-in refine, check_model_resolution
     metrics.py             # compute_reconstruction_quality -> reconstruction_quality_report.json
     loop_closure/          # submap pose graph (SL4/SE3), DINO-SALAD retrieval gate, LoopClosure wrapper
@@ -84,6 +85,7 @@ collab_splats/
   semantics/               # 2D feature extraction
     features/              # BaseFeatureExtractor + RegistryMixin (base.py); registered
                            #   dinov2, maskclip, talk2dino — all ViT-width (384-1024D)
+    lifting.py             # lift_features: per-pixel features -> points
     compression.py         # FeatureAutoencoder: per-point encode/decode + recon_cosine
     segmentation/          # BaseSegmentation; registered insid3, mobilesamv2, sam3,
                            #   skywater (sky masks for mesh.mask_sky)
@@ -103,6 +105,8 @@ collab_splats/
   remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed
   dashboard/               # interactive video/scene browser (reads the FLAT dashboard layout only)
   utils/
+    image.py               # open/resize_image, upsample_depths (guided), fill_missing_pixels
+    colmap.py              # read/write_colmap_reconstruction
     io.py                  # to_json_safe + write_json: atomic, NaN -> null, numpy -> python
     torch_utils.py         # RegistryMixin, pytorch_gc, infer_batch_size, batch_iterator, get_device
 evals/

@@ -114,6 +114,10 @@ simply not executed until gsplat is rebuilt from the pinned rev.
 
 ## 2026-08-23 — pre-existing on `refactor/cu121-uv-migration`: 2 `test_qa` OpenCV-cannot-fit tests + 4 env/working-tree failures
 
+**The `test_run_pipeline_remote` entry is RESOLVED as of 2026-09-29** — `SCENE_ID_RE` is
+path-safe by design (`sceneA`, `2026_07_20` are valid ids), so the test now rejects only
+path-unsafe ids and is `::test_main_rejects_a_scene_id_that_is_not_path_safe`.
+
 **The two `test_qa` entries are RESOLVED as of 2026-09-05** — both pass on this branch
 (measured 52/52 in `tests/preproc/test_qa.py` before the Task 26 collapse), and
 `compute_parallax` no longer exists: the pair-motion helpers collapsed into

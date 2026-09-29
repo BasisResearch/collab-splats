@@ -32,12 +32,9 @@ from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.localizer import CameraLocalizer
 from collab_splats.mesh import (
     clean_repair_mesh,
-    fuse_tsdf,
-    fuse_tsdf_bands,
-    texture_mesh,
+    create_texture_mesh,
+    create_tsdf_mesh,
 )
-from collab_splats.mesh.io import render_tsdf_inputs, upsample_depths
-from collab_splats.mesh.tsdf import check_bands
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.depth_align import result_from_reconstruction
 from collab_splats.pointcloud.feedforward.base import (
@@ -70,6 +67,7 @@ from collab_splats.semantics.utils import (
     load_feature_maps,
     write_point_features,
 )
+from collab_splats.utils.image import upsample_depths
 from collab_splats.utils.io import write_json
 
 if TYPE_CHECKING:
@@ -613,12 +611,12 @@ def _run_tsdf_mesh(
     voxel_size: float,
     depth_trunc: float,
     sdf_trunc_mult: float = 4.0,
-    bands: list[dict] | None = None,
     conf_percentile: float | None = None,
     mask_sky: bool = False,
     source: str = "feedforward",
     splats_ckpt: Path | None = None,
     texture: bool = False,
+    use_convex_hull: bool = False,
 ) -> Path:
     """
     Fuse depth and RGB into a TSDF mesh, clean it, and optionally texture it.
@@ -628,21 +626,24 @@ def _run_tsdf_mesh(
         pointcloud_zarr: the scene's pointcloud.zarr; read on the feedforward path only.
         output_dir: receives mesh.ply, and texture/ when texture is set.
         images_dir: the scene's images/ directory of original-resolution keyframes.
-        voxel_size: TSDF voxel edge, world units; ignored when bands is set.
-        depth_trunc: ignore depth beyond this, world units; ignored when bands is set.
+        voxel_size: TSDF voxel edge, world units.
+        depth_trunc: ignore depth beyond this, world units.
         sdf_trunc_mult: truncation band as a multiple of voxel_size; sets the thin-structure floor.
-        bands: list of {depth_min, depth_trunc, voxel_size} to fuse per band and merge (None = one volume).
         conf_percentile: drop depth below this confidence percentile (None = off); feedforward only.
         mask_sky: zero out depth where the sky segmenter fires; applies to both sources.
         source: "feedforward" (zarr depth lifted to frame resolution) or "splats" (checkpoint renders).
         splats_ckpt: the splats stage's ckpt.pt; required when source is "splats".
         texture: also decimate, unwrap and project the fused views into output_dir/texture/.
+        use_convex_hull: trim the ragged outer edge and patch the ground out to a rounded convex hull.
     Returns:
         Path to output_dir/mesh.ply.
     """
     # Splats source: renders come out at frame resolution carrying the poses they were rendered
     # with, pose-opt deltas included, so nothing here has to be lifted or re-posed.
     if source == "splats":
+        # gsplat is CUDA-only; import lazily so Reconstructor stays importable without it
+        from collab_splats.splats.checkpoint import render_tsdf_inputs
+
         depths, rgbs, c2w, intrinsics, image_ids = render_tsdf_inputs(splats_ckpt, images_dir)
     else:
         ff = FeedforwardResult.load_zarr(pointcloud_zarr, load_images=False, load_world_points=False)
@@ -699,35 +700,19 @@ def _run_tsdf_mesh(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Banded fusion runs one volume per depth range so the near field can be finer than the
-    # far field; the scalar voxel_size/depth_trunc are the single-volume case of the same thing
-    if bands:
-        mesh_path = fuse_tsdf_bands(
-            depths,
-            rgbs,
-            c2w,
-            intrinsics,
-            output_dir,
-            bands=bands,
-            sdf_trunc_mult=sdf_trunc_mult,
-        )
-        texture_voxel = min(band["voxel_size"] for band in bands)
-    else:
-        mesh_path = fuse_tsdf(
-            depths,
-            rgbs,
-            c2w,
-            intrinsics,
-            output_dir,
-            voxel_size=voxel_size,
-            depth_trunc=depth_trunc,
-            sdf_trunc=sdf_trunc_mult * voxel_size,
-        )
-        texture_voxel = voxel_size
-
-    clean_repair_mesh(mesh_path)
+    mesh_path = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        intrinsics,
+        output_dir,
+        voxel_size=voxel_size,
+        depth_trunc=depth_trunc,
+        sdf_trunc=sdf_trunc_mult * voxel_size,
+    )
+    clean_repair_mesh(mesh_path, use_convex_hull=use_convex_hull)
     if texture:
-        texture_mesh(mesh_path, output_dir / "texture", rgbs, c2w, intrinsics, voxel_size=texture_voxel)
+        create_texture_mesh(mesh_path, output_dir / "texture", rgbs, c2w, intrinsics, voxel_size=voxel_size)
     return mesh_path
 
 
@@ -925,15 +910,6 @@ class Reconstructor:
         sdf_mult = config.get("mesh", {}).get("sdf_trunc_mult")
         if isinstance(sdf_mult, bool) or not isinstance(sdf_mult, (int, float)) or sdf_mult < 1.0:
             raise ValueError(f"mesh.sdf_trunc_mult must be a number >= 1.0, got {sdf_mult!r}")
-
-        # Mesh bands: null keeps the single volume built from voxel_size/depth_trunc. A list has
-        # to partition depth — a gap loses the geometry inside it, an overlap double-surfaces it
-        bands = config.get("mesh", {}).get("bands")
-        if bands is not None:
-            try:
-                check_bands(bands)
-            except ValueError as exc:
-                raise ValueError(f"mesh.bands invalid: {exc}") from exc
 
         return config
 
@@ -1340,12 +1316,12 @@ class Reconstructor:
             voxel_size=mesh_cfg["voxel_size"],
             depth_trunc=mesh_cfg["depth_trunc"],
             sdf_trunc_mult=mesh_cfg["sdf_trunc_mult"],
-            bands=mesh_cfg["bands"],
             conf_percentile=mesh_cfg["conf_percentile"],
             mask_sky=mesh_cfg["mask_sky"],
             source=source,
             splats_ckpt=splats_ckpt,
             texture=mesh_cfg["texture"],
+            use_convex_hull=mesh_cfg["use_convex_hull"],
         )
         logger.info("Mesh saved to %s", out)
         return out

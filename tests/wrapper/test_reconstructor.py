@@ -13,7 +13,7 @@ import yaml
 from mergedeep import merge
 
 from collab_splats.geometry import metrics
-from collab_splats.mesh import fuse_tsdf
+from collab_splats.mesh import create_tsdf_mesh
 from collab_splats.pointcloud.feedforward.base import (
     FeedforwardResult,
     build_pycolmap_reconstruction,
@@ -666,7 +666,7 @@ def test_mesh_skip_check_matches_tsdf_writer_filename(tmp_path):
     intrinsics = np.eye(3, dtype=np.float32)[None].repeat(2, axis=0)
     intrinsics[:, 0, 0] = intrinsics[:, 1, 1] = 32.0
     intrinsics[:, 0, 2] = intrinsics[:, 1, 2] = 16.0
-    written = fuse_tsdf(
+    written = create_tsdf_mesh(
         depths,
         np.full((2, 32, 32, 3), 128, np.uint8),
         c2w,
@@ -748,7 +748,7 @@ def test_run_tsdf_mesh_fuses_colmap_intrinsics(tmp_path, monkeypatch):
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
     fuse = MagicMock(return_value=tmp_path / "mesh.ply")
-    monkeypatch.setattr(R, "fuse_tsdf", fuse)
+    monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
     monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
 
     R._run_tsdf_mesh(
@@ -764,14 +764,14 @@ def test_run_tsdf_mesh_fuses_colmap_intrinsics(tmp_path, monkeypatch):
 
 def _tsdf_mesh_fuse_kwargs(tmp_path, monkeypatch, **overrides):
     """
-    Run _run_tsdf_mesh over doubles and return the kwargs fuse_tsdf was called with.
+    Run _run_tsdf_mesh over doubles and return the kwargs create_tsdf_mesh was called with.
     """
     result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
     monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
     fuse = MagicMock(return_value=tmp_path / "mesh.ply")
-    monkeypatch.setattr(R, "fuse_tsdf", fuse)
+    monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
     monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
 
     R._run_tsdf_mesh(
@@ -786,49 +786,19 @@ def _tsdf_mesh_fuse_kwargs(tmp_path, monkeypatch, **overrides):
     return fuse.call_args.kwargs
 
 
-def test_run_tsdf_mesh_bands_fuse_per_band_and_drive_the_texture_voxel(tmp_path, monkeypatch):
+def test_run_tsdf_mesh_passes_use_convex_hull_to_cleaning(tmp_path, monkeypatch):
     """
-    mesh.bands routes to fuse_tsdf_bands, and texturing follows the finest band.
+    mesh.use_convex_hull reaches clean_repair_mesh, and is off unless asked for.
     """
-    result, ff = _tsdf_mesh_doubles(model_hw=(16, 16))
-    monkeypatch.setattr(FeedforwardResult, "load_zarr", staticmethod(lambda *a, **k: ff))
-    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
-    monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
-    single, banded, texture = (
-        MagicMock(return_value=tmp_path / "mesh.ply"),
-        MagicMock(return_value=tmp_path / "mesh.ply"),
-        MagicMock(),
-    )
-    monkeypatch.setattr(R, "fuse_tsdf", single)
-    monkeypatch.setattr(R, "fuse_tsdf_bands", banded)
-    monkeypatch.setattr(R, "texture_mesh", texture)
-    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
-
-    bands = [
-        {"depth_min": 0.0, "depth_trunc": 2.0, "voxel_size": 0.005},
-        {"depth_min": 2.0, "depth_trunc": 8.0, "voxel_size": 0.02},
-    ]
-    R._run_tsdf_mesh(
-        result=result,
-        pointcloud_zarr=tmp_path / "pointcloud.zarr",
-        output_dir=tmp_path,
-        images_dir=tmp_path / "images",
-        voxel_size=0.01,
-        depth_trunc=2.0,
-        sdf_trunc_mult=1.5,
-        bands=bands,
-        texture=True,
-    )
-
-    # The scalar voxel_size/depth_trunc are the no-bands case and must not be fused as well
-    single.assert_not_called()
-    assert banded.call_args.kwargs == {"bands": bands, "sdf_trunc_mult": 1.5}
-    assert texture.call_args.kwargs["voxel_size"] == pytest.approx(0.005)
+    for flag in (False, True):
+        overrides = {"use_convex_hull": True} if flag else {}
+        _tsdf_mesh_fuse_kwargs(tmp_path, monkeypatch, **overrides)
+        assert R.clean_repair_mesh.call_args.kwargs == {"use_convex_hull": flag}
 
 
 def test_run_tsdf_mesh_sdf_trunc_mult_scales_the_truncation_band(tmp_path, monkeypatch):
     """
-    sdf_trunc reaches fuse_tsdf as sdf_trunc_mult x voxel_size, defaulting to 4x.
+    sdf_trunc reaches create_tsdf_mesh as sdf_trunc_mult x voxel_size, defaulting to 4x.
 
     - the multiplier, not voxel_size, sets the thin-structure floor: a TSDF cancels anything
       thinner than 2 x sdf_trunc, so the default band is 8 voxels wide
@@ -852,7 +822,7 @@ def test_run_tsdf_mesh_uses_colmap_poses(tmp_path, monkeypatch):
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(R, "upsample_depths", lambda d, r, b: np.ones((2, 32, 32), np.float32))
     fuse = MagicMock(return_value=tmp_path / "mesh.ply")
-    monkeypatch.setattr(R, "fuse_tsdf", fuse)
+    monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
     monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
 
     R._run_tsdf_mesh(
@@ -900,7 +870,7 @@ def test_run_tsdf_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
         return np.ones((2, 32, 32), np.float32)
 
     monkeypatch.setattr(R, "upsample_depths", spy_upsample)
-    monkeypatch.setattr(R, "fuse_tsdf", MagicMock(return_value=tmp_path / "mesh.ply"))
+    monkeypatch.setattr(R, "create_tsdf_mesh", MagicMock(return_value=tmp_path / "mesh.ply"))
     monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
 
     R._run_tsdf_mesh(
@@ -1524,10 +1494,10 @@ def test_base_yaml_mesh_has_fidelity_keys():
         "voxel_size",
         "sdf_trunc_mult",
         "depth_trunc",
-        "bands",
         "conf_percentile",
         "mask_sky",
         "texture",
+        "use_convex_hull",
     }
     assert cfg["mesh"]["source"] == "feedforward"
     assert cfg["mesh"]["texture"] is False

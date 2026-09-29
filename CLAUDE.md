@@ -96,7 +96,7 @@ collab_splats/
     frames.py              # images/frame_NNNNNN.png + frames.json: the COLMAP-style keyframe store
     undistort.py           # calibrate_camera (pycolmap) + undistort_frames (pycolmap framing, cv2 pixels)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)
-  mesh/                    # TSDF meshing from arrays: io, tsdf, clean, texture, features
+  mesh/                    # TSDF meshing from arrays: tsdf, clean, texture, features
   splats/                  # gsplat training: trainer, checkpoint, gaussian, scaffold, losses, rendering, cameras, utils
   wrapper/                 # stage orchestration: Reconstructor (config-driven pipeline), batch drivers
   remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed
@@ -143,7 +143,7 @@ evals/
       """
   ```
 
-  `tests/test_docstring_contract.py` enforces all of the above — docstrings, annotations and comment runs — for `preproc`, `semantics`, `pointcloud` and `geometry`. Add a package to its `PACKAGES` tuple as it is cleaned up.
+  `tests/test_docstring_contract.py` enforces all of the above — docstrings, annotations and comment runs — for `preproc`, `semantics`, `pointcloud`, `geometry` and `mesh`. Add a package to its `PACKAGES` tuple as it is cleaned up.
 - **Blank lines between blocks:** a run of statements that does one thing is separated from the next run, and every block comment gets a blank line above it. Walls of undifferentiated code are not human-readable.
 - **Don't over-complicate:** prefer the simplest implementation that solves the problem. No premature abstractions, no dead branches for hypothetical future use, no wrapper layers that add no value. If a param is always default, ask whether it should exist.
 - `logging` not `print()` — use `logger.debug()` / `logger.info()` throughout module code

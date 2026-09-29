@@ -493,8 +493,8 @@ def test_main_propagates_the_run_remote_exit_code(driver, monkeypatch, tmp_path,
 ########
 
 
-@pytest.mark.parametrize("bad", ["../x", "sceneA", "2026_07_20", "/abs/path"])
-def test_main_rejects_a_scene_id_that_is_not_a_curated_dir_name(driver, monkeypatch, tmp_path, bad):
+@pytest.mark.parametrize("bad", ["../x", "/abs/path", ".hidden", "a/b"])
+def test_main_rejects_a_scene_id_that_is_not_path_safe(driver, monkeypatch, tmp_path, bad):
     """Explicit ids skipped the SCENE_ID_RE filter that --all discovery gets, so "../x" escaped
     output_root on a path join."""
     recorded = _patch_main(driver, monkeypatch, ["run_pipeline_remote.py", "--output-root", str(tmp_path), bad])

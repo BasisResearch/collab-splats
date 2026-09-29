@@ -18,7 +18,7 @@ from tests.wrapper._stubs import minimal_feedforward_result, minimal_pose_result
 
 def _run_feedforward_mesh(tmp_path, fused, sky_return, **kwargs):
     """
-    Drive _run_tsdf_mesh's feedforward arm with everything below fuse_tsdf stubbed out.
+    Drive _run_tsdf_mesh's feedforward arm with everything below create_tsdf_mesh stubbed out.
     """
     result = minimal_feedforward_result()
 
@@ -33,7 +33,7 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **kwargs):
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
         patch("collab_splats.wrapper.reconstructor.upsample_depths", side_effect=lambda d, r, b: d),
-        patch("collab_splats.wrapper.reconstructor.fuse_tsdf", side_effect=spy_fuse),
+        patch("collab_splats.wrapper.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
         patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
         patch("collab_splats.wrapper.reconstructor.sky_masks", return_value=sky_return) as sky,
     ):
@@ -104,8 +104,8 @@ def test_mask_sky_asks_for_splats_frames_in_checkpoint_order(tmp_path):
         return tmp_path / "mesh.ply"
 
     with (
-        patch("collab_splats.wrapper.reconstructor.render_tsdf_inputs", return_value=rendered),
-        patch("collab_splats.wrapper.reconstructor.fuse_tsdf", side_effect=spy_fuse),
+        patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered),
+        patch("collab_splats.wrapper.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
         patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
         patch("collab_splats.wrapper.reconstructor.sky_masks", side_effect=fake_sky_masks) as sky,
     ):

@@ -90,34 +90,6 @@ def test_sdf_trunc_mult_below_one_is_rejected_at_config_load():
         Reconstructor.validate_config(cfg)  # must not raise
 
 
-def test_base_yaml_mesh_bands_default_is_null():
-    """
-    base.yaml ships one TSDF volume; banding is opt-in.
-    """
-    assert _base_config()["mesh"]["bands"] is None
-
-
-def test_mesh_bands_that_do_not_partition_depth_are_rejected_at_config_load():
-    """
-    A gap between bands loses the geometry inside it and an overlap double-surfaces it.
-    """
-    gap = [
-        {"depth_min": 0, "depth_trunc": 2, "voxel_size": 0.01},
-        {"depth_min": 3, "depth_trunc": 8, "voxel_size": 0.04},
-    ]
-    for bad in ([], gap, [{"depth_min": 0, "depth_trunc": 2}], [{"depth_min": 0, "depth_trunc": 2, "voxel_size": 0}]):
-        cfg = _base_config()
-        cfg["mesh"]["bands"] = bad
-        with pytest.raises(ValueError, match=r"mesh.bands invalid"):
-            Reconstructor.validate_config(cfg)
-
-    # null and a contiguous ascending list both pass
-    for good in (None, [{"depth_min": 0, "depth_trunc": 2, "voxel_size": 0.01}], gap[:1] + [dict(gap[1], depth_min=2)]):
-        cfg = _base_config()
-        cfg["mesh"]["bands"] = good
-        Reconstructor.validate_config(cfg)  # must not raise
-
-
 def test_refine_poses_refuses_sfm_method(tmp_path):
     """
     refine_poses refuses outright when pointcloud.method is sfm.

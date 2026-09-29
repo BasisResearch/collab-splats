@@ -452,9 +452,7 @@ def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(mon
     the guided filter only consults the guide where depth varies, so a constant map returns the
     same answer under any guide at all and could not see this.
     """
-    from collab_splats.mesh import io as mesh_io
-
-    real = mesh_io.upsample_depths
+    real = metrics.upsample_depths
     lifted = []
 
     def spy(depths, rgbs, crop_boxes):
@@ -462,7 +460,7 @@ def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(mon
         lifted.append(out)
         return out
 
-    monkeypatch.setattr(mesh_io, "upsample_depths", spy)
+    monkeypatch.setattr(metrics, "upsample_depths", spy)
     img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
     model_d = np.stack([np.concatenate(
         [np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)], axis=1)] * 2)

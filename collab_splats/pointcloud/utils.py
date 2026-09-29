@@ -1,6 +1,6 @@
 # collab_splats/pointcloud/utils.py
 """
-Geometric pointcloud utilities: outlier masking, subsampling, plane fitting, feature lifting.
+Geometric pointcloud utilities: outlier masking, subsampling, feature lifting.
 
 Coordinate convention, everywhere in this module:
 
@@ -22,7 +22,6 @@ import torch.nn.functional as F
 from collab_splats.geometry.transforms import (
     extrinsics_to_homogeneous,
     invert_poses,
-    rotation_align_vectors,
 )
 
 if TYPE_CHECKING:
@@ -136,44 +135,6 @@ def subsample_points(
         colors = colors[idx] if colors is not None else None
 
     return points, colors
-
-
-########################################################
-########## Geometry: plane fitting #####################
-########################################################
-
-
-def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """
-    RANSAC floor plane, as the rigid transform that puts it at Z-up, z=0.
-
-    - open3d segment_plane over the full cloud; largest inlier set is taken as the floor
-    - no heuristic percentile
-
-    Args:
-        points: (N, 3) point cloud.
-
-    Returns:
-        R: (3, 3) rotation taking the floor normal onto [0, 0, 1].
-        t: (3,) translation placing the floor at z=0 after that rotation.
-    """
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
-    plane_model, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
-    a, b, c, d = plane_model
-    n_mag = np.linalg.norm([a, b, c])
-    normal = np.array([a, b, c]) / n_mag
-    d_norm = d / n_mag  # plane: normal · x + d_norm = 0; floor at z = -d_norm after rotation
-
-    # Ensure normal points upward (positive Z component after alignment)
-    if normal[2] < 0:
-        normal = -normal
-        d_norm = -d_norm
-
-    R = rotation_align_vectors(normal, np.array([0.0, 0.0, 1.0]))
-    # After R, floor is at z = -d_norm. Translate by d_norm to bring to z = 0.
-    t = np.array([0.0, 0.0, d_norm])
-    return R.astype(np.float64), t.astype(np.float64)
 
 
 ########################################################

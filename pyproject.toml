@@ -43,22 +43,19 @@ dependencies = [
     "pyvista[jupyter]",
     # viser — websocket 3D viewer for live scene visualization (collab_splats/viewer.py)
     "viser>=1.0",
-    "pyntcloud",
     "trame",
     "trame-vuetify",
     "trame-vtk",
     "plyfile",
     # Texture bake: nvdiffrast rasterizes the UV atlas, Warp ray-casts occlusion and runs the
-    # per-texel projection kernel, meshoptimizer decimates.
+    # per-texel projection kernel, meshoptimizer decimates, meshlib patches holes.
     # meshoptimizer's only published wheel is a pre-release; the explicit ==a0 pin is what
     # makes uv accept it without a global --prerelease flag.
     # nvdiffrast ships no wheel; at this rev it compiles its CUDA extension at INSTALL (AOT),
     # so it needs nvcc at build time only (see setup.sh) and no build isolation (below).
-    # xatlas is the second unwrapper: UVAtlas shatters curved scenes into ~11k charts and
-    # packs them at ~62% fill, xatlas grows larger charts and packs them tighter.
     "warp-lang==1.14.0",
     "meshoptimizer==0.2.30a0",
-    "xatlas==0.0.11",
+    "meshlib==3.1.4.297",
     "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast@253ac4fcea7de5f396371124af597e6cc957bfae",
     "python-dotenv",
     "hydra-core",

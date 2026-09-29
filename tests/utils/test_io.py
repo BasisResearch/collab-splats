@@ -12,6 +12,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
+import trimesh
 import zarr
 from PIL import Image
 
@@ -22,6 +23,7 @@ from collab_splats.utils.io import (
     to_json_safe,
     to_uint8_hwc,
     write_json,
+    write_textured_obj,
 )
 
 
@@ -201,3 +203,21 @@ def test_io_imports_without_torch():
     env = {**os.environ, "PYTHONPATH": str(root)}
     proc = subprocess.run([sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_write_textured_obj_splits_corners_with_white_kd_and_normals(tmp_path):
+    """A shared vertex becomes one corner per face, so each face keeps its own UV."""
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.float64)
+    faces = np.array([[0, 1, 2], [0, 2, 3]])
+    normals = np.tile([0.0, 0.0, 1.0], (4, 1))
+    uvs = np.random.default_rng(0).random((2, 3, 2)).astype(np.float32)
+    albedo = np.full((8, 8, 3), 200, dtype=np.uint8)
+
+    out = write_textured_obj(tmp_path / "tex", vertices, faces, normals, uvs, albedo)
+
+    assert sorted(p.name for p in out.parent.iterdir()) == ["albedo.png", "mesh.mtl", "mesh.obj"]
+    assert "Kd 1.00000000 1.00000000 1.00000000" in (out.parent / "mesh.mtl").read_text()
+    assert "\nvn " in out.read_text()
+    loaded = trimesh.load(out, process=False)
+    assert len(loaded.vertices) == 6
+    np.testing.assert_allclose(loaded.visual.uv, uvs.reshape(-1, 2), atol=1e-6)

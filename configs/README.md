@@ -60,7 +60,7 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
                                ←   (+ local_features/<extractor>/reconstruction if localize ran)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
-    texture/                   ← mesh.ply (UV-carrying) + albedo.png (only if mesh.texture=true)
+    texture/                   ← mesh.obj + mesh.mtl + albedo.png (only if mesh.texture=true)
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × latent_dim)
       <extractor>_ae.pt        ← autoencoder weights (if semantics.n_components set)
@@ -366,12 +366,12 @@ parameter and raises.
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
 | `mesh.enabled` | bool | `true` | Fuse a TSDF mesh after the pointcloud stage, writing `<backend>/mesh.ply` |
 | `mesh.source` | str | `feedforward` | `feedforward` fuses `pointcloud.zarr` depth lifted onto the original frames; `splats` fuses depth and color rendered from the splats stage's `ckpt.pt` (needs the splats stage, which is never auto-run) |
-| `mesh.voxel_size` | float | `0.0025` | TSDF voxel edge, world units. Halving this buys finer geometry for roughly 8× the memory. Ignored when `mesh.bands` is set |
+| `mesh.voxel_size` | float | `0.0025` | TSDF voxel edge, world units. Halving this buys finer geometry for roughly 8× the memory. |
 | `mesh.sdf_trunc_mult` | float | `4.0` | Truncation band as a multiple of `voxel_size`. This, not `voxel_size`, sets the thin-structure floor: a TSDF cannot resolve anything thinner than `2 × sdf_trunc`, and where a structure's front and back surface both fall inside one band they cancel and it disappears entirely. A bar seen only from the front does not cancel — it is fattened to the floor width instead, which is how a railing survives fusion as a slab and then dies as a floater. At the default the floor is `8 × voxel_size`, four times coarser than the voxel grid itself. `4.0` is Open3D's default for noisy sensor RGBD; rendered splat depth is much cleaner, so `1.5`–`2.0` recovers fence posts and railings at the same voxel size and the same memory. Must be `>= 1.0` — a band narrower than a voxel punctures the surface |
-| `mesh.depth_trunc` | float | `1.5` | Ignore depth beyond this, world units. Feedforward depth is not metric, so this is in the reconstruction's own scale, not meters. Ignored when `mesh.bands` is set |
-| `mesh.bands` | list\|null | `null` | `null` fuses one volume at `voxel_size`/`depth_trunc`. A list of `{depth_min, depth_trunc, voxel_size}` — ascending and contiguous — fuses the views once per band and merges the results, so the near field can be finer than the far field. TSDF memory goes as surface area ÷ voxel², and far pixels cover most of the area (one pixel at depth 100 covers 55× the world area of one at 13.7), so a near band several times finer costs a fraction of what refining the whole scene would. Bands are merged finest-first and a coarse vertex is dropped only where a finer band already covers it (within 1.5 of the coarse voxel), so a surface two bands both saw keeps its finer copy and one that only a coarse band saw is never lost |
+| `mesh.depth_trunc` | float | `1.5` | Ignore depth beyond this, world units. Feedforward depth is not metric, so this is in the reconstruction's own scale, not meters. |
 | `mesh.conf_percentile` | float\|null | `20` | Drop depth below this global confidence percentile before fusing (`null` = off). `source: feedforward` only; a reconstruction that carries no confidence (sfm) fuses unmasked and logs that it did |
-| `mesh.texture` | bool | `false` | Also decimate, UV-unwrap and project the fused views into `<backend>/texture/` (`albedo.png` beside a UV-carrying `mesh.ply`). Needs a GPU |
+| `mesh.texture` | bool | `false` | Also decimate, UV-unwrap and project the fused views into `<backend>/texture/` (`mesh.obj` + `mesh.mtl` + `albedo.png`). Needs a GPU |
+| `mesh.use_convex_hull` | bool | `false` | Trim the ragged outer edge and patch the ground out to a rounded convex hull before hole filling (`make_convex_hull`). Ground-dominated outdoor scenes only; a mesh without a dominant ground raises. See `docs/mesh.md` |
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the COLMAP poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
@@ -565,7 +565,7 @@ Not changed yet.
     pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
-    texture/                   ← mesh.ply (UV-carrying) + albedo.png (only if mesh.texture=true)
+    texture/                   ← mesh.obj + mesh.mtl + albedo.png (only if mesh.texture=true)
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × n_components)
       <extractor>_ae.pt        ← autoencoder weights, needed to decode them (if n_components set)
@@ -585,7 +585,7 @@ A processed scene (`environments-processed/<scene>/`) carries:
 |---|---|
 | `<backend>/sparse_pc.ply` | any pipeline — binary little-endian, float32 xyz + uchar rgb |
 | `<backend>/mesh.ply` | any pipeline |
-| `<backend>/texture/mesh.ply` + `albedo.png` | any pipeline — textured mesh (only if `mesh.texture: true`) |
+| `<backend>/texture/mesh.obj` + `mesh.mtl` + `albedo.png` | any pipeline — textured mesh (only if `mesh.texture: true`) |
 | `<backend>/semantics/<extractor>_lifted.zarr` | per-point latent codes (`semantics.n_components`-D) |
 | `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |

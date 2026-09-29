@@ -19,7 +19,7 @@ import tokenize
 
 import pytest
 
-PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats")
+PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh")
 
 # Single modules held to the contract, release checks included, before their whole package is
 MODULES = ("utils/io.py",)
@@ -195,7 +195,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 ########################################################################
 
 # Packages that finished their release cleanup; the rest xfail the release checks
-RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats"})
+RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats", "mesh"})
 
 # Module-level numbers that are facts, not tunables
 FIXED_FACTS = frozenset({"SCHEMA_VERSION"})
@@ -527,7 +527,7 @@ def test_silent_fallback_check_flags_or_number_and_swallowed_exception():
     assert _silent_fallbacks(src) == ["1: `or 30.0` fallback", "5: except Exception without re-raise"]
 
 
-# Round-3 checks: enforced for geometry only; other packages are a changelog follow-up
+# Round-3 checks: enforced for geometry and mesh; other packages are a changelog follow-up
 ROUND3_CHECKS = {
     "nested-def": _nested_defs,
     "quote-line-docstring": _quote_line_docstrings,
@@ -540,7 +540,7 @@ ROUND3_CHECKS = {
     [
         pytest.param(p, name, id=f"{pid}::{name}")
         for p, pid in zip(SOURCES, SOURCE_IDS)
-        if p.relative_to(ROOT / "collab_splats").parts[0] == "geometry"
+        if p.relative_to(ROOT / "collab_splats").parts[0] in ("geometry", "mesh")
         for name in ROUND3_CHECKS
     ],
 )

@@ -26,6 +26,7 @@ from collab_splats.geometry.transforms import (
     transform_points,
 )
 from collab_splats.preproc import frames
+from collab_splats.utils.image import upsample_depths
 
 logger = logging.getLogger(__name__)
 
@@ -213,17 +214,12 @@ def compute_photometric_ncc(
             )
 
         # Crop boxes are in original pixels, so `images` must be that canvas
-        # - same check, same refusal as the native-resolution mesh path (mesh/io.py)
         expected_hw = (int(original_coords[0, 5]), int(original_coords[0, 4]))
         if (ih, iw) != expected_hw:
             raise ValueError(
                 f"images are {(ih, iw)} but original_coords say the original resolution is "
                 f"{expected_hw} — they are from different preprocessing runs."
             )
-
-        # Imported here to keep this metric import-light
-        # - collab_splats.mesh reaches Warp and meshoptimizer through texture.py
-        from collab_splats.mesh.io import upsample_depths
 
         model_h, model_w = depth.shape[1:]
 

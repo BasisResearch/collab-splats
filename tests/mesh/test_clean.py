@@ -1,12 +1,20 @@
+import meshlib.mrmeshnumpy as mn
 import numpy as np
 import open3d as o3d
+import open3d.core as o3c
 import pytest
+from scipy.spatial import cKDTree
 
 from collab_splats.mesh.clean import (
+    bridge_mesh_edges,
     clean_repair_mesh,
+    decimate_mesh,
     fill_holes,
     get_scene_scale,
+    make_convex_hull,
+    make_manifold,
     remove_floaters,
+    trim_mesh_edges,
 )
 
 
@@ -21,8 +29,10 @@ def _holed_sphere_with_strays(path, radius=1.0, resolution=20, color=None):
     far = o3d.geometry.TriangleMesh.create_sphere(radius=radius * 0.1, resolution=6)
     far.translate((radius * 9, 0.0, 0.0))
     combined = sphere + near + far
+
     if color is not None:
         combined.paint_uniform_color(color)
+
     o3d.io.write_triangle_mesh(str(path), combined)
     return path
 
@@ -64,26 +74,45 @@ def test_remove_floaters_empty_mesh_is_a_no_op():
 def test_fill_holes_closes_small_hole(tmp_path):
     mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
     assert _n_boundary_edges(mesh) == 14
-    filled = fill_holes(mesh, max_hole_frac=0.2)
+    filled = fill_holes(mesh, max_hole_perimeter_ratio=0.2)
     assert _n_boundary_edges(filled) == 0
     assert filled.is_edge_manifold(allow_boundary_edges=False)
     assert len(filled.triangles) > len(mesh.triangles)
-    # Guards the Open3D tensor round-trip: a freed vertex buffer blows the extent up
+    # Guards the meshlib round-trip: source geometry comes back where it was
     orig_extent = mesh.get_axis_aligned_bounding_box().get_extent()
     assert np.allclose(filled.get_axis_aligned_bounding_box().get_extent(), orig_extent, atol=1e-5)
 
 
+def test_fill_holes_without_subdivide_fill_adds_a_flat_lid(tmp_path):
+    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+    flat = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=False)
+    fine = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=True)
+    assert _n_boundary_edges(flat) == 0
+    assert len(flat.vertices) == len(mesh.vertices)  # the rim is triangulated, never split
+    assert len(flat.triangles) == len(mesh.triangles) + 12  # a 14-edge loop takes 14 - 2 triangles
+    assert len(fine.triangles) > len(flat.triangles)
+
+
+def test_fill_holes_keeps_outer_rim_open_at_any_bound():
+    plane = _dense_plane(30)
+    centers = np.asarray(plane.vertices)[np.asarray(plane.triangles)].mean(axis=1)
+    plane.remove_triangles_by_mask(np.abs(centers[:, :2] - 0.5).max(axis=1) < 0.1)
+    rim_edges = 4 * 29
+    assert _n_boundary_edges(plane) > rim_edges
+    filled = fill_holes(plane, max_hole_perimeter_ratio=100.0)
+    assert _n_boundary_edges(filled) == rim_edges  # the interior hole closes, the rim never does
+
+
 def test_fill_holes_leaves_large_holes_alone(tmp_path):
     mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
-    # The fixture's scene scale is 10.38 (the far stray sets it): the hole fills at
-    # max_hole_frac >= 0.017 and survives below it
-    filled = fill_holes(mesh, max_hole_frac=0.005)
+    # Hole perimeter 0.75 over scene scale 10.38: fills above ratio 0.072, survives below
+    filled = fill_holes(mesh, max_hole_perimeter_ratio=0.005)
     assert _n_boundary_edges(filled) == 14
 
 
 def test_clean_repair_mesh_writes_in_place(tmp_path):
     mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply")
-    out = clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_frac=0.2)
+    out = clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
     assert out == mesh_path
     after = o3d.io.read_triangle_mesh(str(mesh_path))
     assert _n_components(after) == 2
@@ -93,15 +122,312 @@ def test_clean_repair_mesh_writes_in_place(tmp_path):
 @pytest.mark.parametrize("radius", [1.0, 10.0])
 def test_clean_repair_thresholds_follow_mesh_scale(tmp_path, radius):
     mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply", radius=radius)
-    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_frac=0.2)
+    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
     after = o3d.io.read_triangle_mesh(str(mesh_path))
     assert (_n_components(after), _n_boundary_edges(after)) == (2, 0)
 
 
 def test_clean_repair_preserves_vertex_colors(tmp_path):
     mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply", color=(0.2, 0.6, 0.9))
-    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_frac=0.2)
+    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
     after = o3d.io.read_triangle_mesh(str(mesh_path))
     assert after.has_vertex_colors()
     colors = np.asarray(after.vertex_colors)
     assert np.allclose(colors, [0.2, 0.6, 0.9], atol=0.02)
+
+
+######## make_convex_hull fixtures
+
+
+def _ground_scene(n=140, res=0.17, upside_down=False):
+    """Height-field ground at TSDF-like edge length: a raised box, a star-shaped outline, a slit; normals up."""
+    rows, cols = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    x = (cols - n / 2) * res
+    y = (rows - n / 2) * res
+    z = np.where((np.abs(x) < 1.5) & (np.abs(y) < 1.0), 1.0, 0.0)
+    verts = np.stack([x, y, z], axis=-1).reshape(-1, 3)
+
+    # Two counter-clockwise triangles per grid quad, so normals point +z
+    idx = (rows * n + cols)[:-1, :-1].reshape(-1)
+    quads = np.stack([idx, idx + 1, idx + n + 1, idx + n], axis=1)
+    faces = np.concatenate([quads[:, [0, 1, 2]], quads[:, [0, 2, 3]]])
+
+    # Star-shaped outline plus a two-cell slit cut in from the rim
+    center = verts[faces].mean(axis=1)
+    radius = np.linalg.norm(center[:, :2], axis=1)
+    angle = np.arctan2(center[:, 1], center[:, 0])
+    reach = 0.4 * n * res * (0.8 + 0.2 * np.sin(5 * angle))
+    slit = (center[:, 0] > 4.0) & (np.abs(center[:, 1] - 3.0) < res)
+    faces = faces[(radius < reach) & ~slit]
+
+    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces))
+    mesh.vertex_colors = o3d.utility.Vector3dVector(np.clip(0.5 + 0.1 * verts, 0, 1))
+    mesh.remove_unreferenced_vertices()
+
+    if upside_down:
+        mesh.rotate(np.diag([1.0, -1.0, -1.0]), center=(0, 0, 0))
+
+    return mesh
+
+
+def _loop_perimeters(mesh):
+    mmesh = mn.meshFromFacesVerts(
+        np.ascontiguousarray(np.asarray(mesh.triangles), dtype=np.int32),
+        np.ascontiguousarray(np.asarray(mesh.vertices), dtype=np.float64),
+    )
+    return sorted(mmesh.holePerimeter(hole) for hole in mmesh.topology.findHoleRepresentiveEdges())
+
+
+######## make_convex_hull
+
+
+def test_make_convex_hull_then_fill_holes_leaves_one_manifold_piece_with_only_the_outer_rim():
+    filled = fill_holes(make_convex_hull(_ground_scene()), max_hole_perimeter_ratio=3.9)
+    assert len(_loop_perimeters(filled)) == 1
+    assert len(filled.get_non_manifold_edges(allow_boundary_edges=True)) == 0
+    assert _n_components(filled) == 1
+
+
+def test_make_convex_hull_patch_lies_on_the_ground_and_is_kept():
+    scene = _ground_scene()
+    hull = make_convex_hull(scene)
+    dist, _ = cKDTree(np.asarray(scene.vertices)).query(np.asarray(hull.vertices))
+    patch = np.asarray(hull.vertices)[dist > 1e-6]
+    assert len(patch) > 500
+    assert np.abs(patch[:, 2]).max() < 0.01
+
+
+def test_bridge_mesh_edges_turns_a_narrow_inlet_into_an_interior_hole():
+    """A one-cell slit from the rim to the middle of a plane: bridged at its mouth, it is a hole."""
+    plane = _dense_plane(n=60)
+    faces = np.asarray(plane.triangles)
+    center = np.asarray(plane.vertices)[faces].mean(axis=1)
+    step = 1.0 / 59
+    slit = (np.abs(center[:, 1] - 0.5) < 0.5 * step) & (center[:, 0] > 0.5)
+    plane.triangles = o3d.utility.Vector3iVector(faces[~slit])
+    assert len(_loop_perimeters(plane)) == 1
+    bridged = bridge_mesh_edges(plane, radius=3.0)
+    assert len(_loop_perimeters(bridged)) == 2
+    assert _loop_perimeters(bridged)[-1] < _loop_perimeters(plane)[-1] - 0.5
+
+
+def test_trim_mesh_edges_cuts_a_thin_spur_off_the_rim_and_keeps_the_vertices():
+    """A three-cell-wide spur out of a disc's rim falls outside the opened outline and touches the rim."""
+    plane = _dense_plane(n=100)
+    faces = np.asarray(plane.triangles)
+    center = np.asarray(plane.vertices)[faces].mean(axis=1)
+    step = 1.0 / 99
+    disc = np.linalg.norm(center[:, :2] - 0.5, axis=1) < 0.3
+    spur = (np.abs(center[:, 1] - 0.5) < 1.5 * step) & (center[:, 0] > 0.5)
+    plane.triangles = o3d.utility.Vector3iVector(faces[disc | spur])
+
+    trimmed = trim_mesh_edges(plane)
+    kept = np.asarray(trimmed.vertices)[np.asarray(trimmed.triangles)].mean(axis=1)
+    assert len(trimmed.vertices) == len(plane.vertices)
+    assert np.linalg.norm(kept[:, :2] - 0.5, axis=1).max() < 0.3 + 2 * step
+    assert len(kept) > 0.95 * disc.sum()
+
+
+def test_make_convex_hull_shortens_the_outline():
+    scene = _ground_scene()
+    assert _loop_perimeters(make_convex_hull(scene))[-1] < 0.8 * _loop_perimeters(scene)[-1]
+
+
+def test_make_convex_hull_caps_patch_edges_that_touch_the_rim():
+    # Jitter the outer ground band, so rim heights jump but stay inside the rim height gate
+    scene = _ground_scene()
+    verts = np.asarray(scene.vertices).copy()
+    band = (verts[:, 2] < 1e-6) & (np.linalg.norm(verts[:, :2], axis=1) > 0.2 * 140 * 0.17)
+    verts[band, 2] += np.random.default_rng(1).uniform(-3.5, 3.5, band.sum()) * 0.17
+    scene.vertices = o3d.utility.Vector3dVector(verts)
+    faces = np.asarray(scene.triangles)
+    res = np.median(np.linalg.norm(verts[faces] - verts[np.roll(faces, 1, axis=1)], axis=2))
+
+    # Bridges off: they span two rim edges by design, the cap is on patch faces
+    hull = make_convex_hull(scene, rim_max_edge=3.0, bridge_radius=0.0)
+
+    # Patch faces with both a source vertex and a patch vertex: none reaches past the cap
+    hull_verts = np.asarray(hull.vertices)
+    dist, _ = cKDTree(verts).query(hull_verts)
+    is_source = dist < 1e-6
+    hull_faces = np.asarray(hull.triangles)
+    mixed = hull_faces[is_source[hull_faces].any(axis=1) & ~is_source[hull_faces].all(axis=1)]
+    assert len(mixed) > 0
+    longest = np.linalg.norm(hull_verts[mixed] - hull_verts[np.roll(mixed, 1, axis=1)], axis=2).max(axis=1)
+    assert longest.max() < 3.0 * res
+
+
+def test_make_convex_hull_rejects_a_mesh_without_ground():
+    box = o3d.geometry.TriangleMesh.create_box(5.0, 5.0, 3.0)
+    box.compute_triangle_normals()
+    walls = np.abs(np.asarray(box.triangle_normals)[:, 2]) < 0.5
+    box.triangles = o3d.utility.Vector3iVector(np.asarray(box.triangles)[walls])
+
+    with pytest.raises(ValueError, match="no dominant ground"):
+        make_convex_hull(box)
+
+
+def test_make_convex_hull_is_the_same_either_way_up():
+    upright = make_convex_hull(_ground_scene())
+    flipped = make_convex_hull(_ground_scene(upside_down=True))
+    flipped.rotate(np.diag([1.0, -1.0, -1.0]), center=(0, 0, 0))
+    assert abs(len(flipped.triangles) - len(upright.triangles)) < 0.05 * len(upright.triangles)
+    assert abs(flipped.get_surface_area() - upright.get_surface_area()) < 0.02 * upright.get_surface_area()
+    dist, _ = cKDTree(np.asarray(upright.vertices)).query(np.asarray(flipped.vertices))
+    assert np.percentile(dist, 99) < 0.17
+
+
+def test_make_convex_hull_leaves_the_input_untouched():
+    scene = _ground_scene()
+    verts, faces = np.asarray(scene.vertices).copy(), np.asarray(scene.triangles).copy()
+    make_convex_hull(scene)
+    np.testing.assert_array_equal(np.asarray(scene.vertices), verts)
+    np.testing.assert_array_equal(np.asarray(scene.triangles), faces)
+
+
+def test_clean_repair_mesh_runs_the_convex_hull_only_when_asked(tmp_path):
+    paths = {name: tmp_path / f"{name}.ply" for name in ("default", "off", "on")}
+
+    for path in paths.values():
+        o3d.io.write_triangle_mesh(str(path), _ground_scene())
+
+    clean_repair_mesh(paths["default"])
+    clean_repair_mesh(paths["off"], use_convex_hull=False)
+    clean_repair_mesh(paths["on"], use_convex_hull=True)
+    assert paths["off"].read_bytes() == paths["default"].read_bytes()
+    on = o3d.io.read_triangle_mesh(str(paths["on"]))
+    default = o3d.io.read_triangle_mesh(str(paths["default"]))
+    assert _loop_perimeters(on)[-1] < _loop_perimeters(default)[-1]
+
+
+######## Prepare for UV unwrap fixtures
+
+
+def _dense_plane(n=60, noise=0.0, seed=0):
+    """Unit plane in z=0 tessellated n×n, optional gaussian z-noise; normals face +z."""
+    rng = np.random.default_rng(seed)
+    xs, ys = np.meshgrid(np.linspace(0, 1, n), np.linspace(0, 1, n))
+    v = np.stack([xs.ravel(), ys.ravel(), rng.normal(0, noise, n * n)], axis=1)
+    i = np.arange(n * n).reshape(n, n)
+    a, b, c, d = i[:-1, :-1].ravel(), i[:-1, 1:].ravel(), i[1:, :-1].ravel(), i[1:, 1:].ravel()
+    f = np.concatenate([np.stack([a, b, c], 1), np.stack([b, d, c], 1)])
+    return o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+
+
+def _sphere(res=40):
+    return o3d.geometry.TriangleMesh.create_sphere(radius=0.5, resolution=res)
+
+
+def _bowtie():
+    """Two triangles sharing only vertex 0 (a non-manifold vertex, no non-manifold edge)."""
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [-1, 0, 0], [0, -1, 0]], float)
+    f = np.array([[0, 1, 2], [0, 3, 4]])
+    return o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+
+
+def _deviation_p99(reference, decimated):
+    """99th-percentile distance from reference vertices to the decimated surface."""
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(decimated))
+    d = scene.compute_distance(o3c.Tensor(np.asarray(reference.vertices), dtype=o3c.float32)).numpy()
+    return float(np.percentile(d, 99))
+
+
+######## make_manifold
+
+
+def test_make_manifold_splits_bowtie_vertex():
+    m = _bowtie()
+    assert len(m.get_non_manifold_vertices()) == 1
+    out = make_manifold(m)
+    assert len(out.get_non_manifold_vertices()) == 0
+    assert len(out.vertices) == 6 and len(out.triangles) == 2
+    v0, v1 = np.asarray(m.vertices), np.asarray(out.vertices)
+    f0, f1 = np.asarray(m.triangles), np.asarray(out.triangles)
+    assert np.allclose(v0[f0], v1[f1])  # every corner keeps its position
+    assert np.allclose(v1[5], v0[0])  # the copy sits exactly on vertex 0
+    assert len(m.vertices) == 5  # input not mutated
+
+
+def test_make_manifold_bowtie_copy_keeps_colors():
+    m = _bowtie()
+    m.vertex_colors = o3d.utility.Vector3dVector(np.linspace(0, 1, 15).reshape(5, 3))
+    out = make_manifold(m)
+    c = np.asarray(out.vertex_colors)
+    assert c.shape == (6, 3) and np.allclose(c[5], c[0])
+
+
+def test_make_manifold_noop_on_manifold():
+    m = _sphere(10)
+    out = make_manifold(m)
+    assert len(out.vertices) == len(m.vertices) and len(out.triangles) == len(m.triangles)
+
+
+def test_make_manifold_drops_opposite_winding_duplicates_and_fold_overs():
+    # A reversed duplicate face and a fold-over: manifold to Open3D, non-manifold to UVAtlas
+    m = _dense_plane(n=4)
+    f = np.asarray(m.triangles)
+    dup = f[0][[0, 2, 1]]
+    fold = np.array([f[3][0], f[3][1], 99])
+    v = np.vstack([np.asarray(m.vertices), [[5.0, 5.0, 5.0]] * 84])
+    f = np.vstack([f, dup[None], fold[None]])
+    m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+    assert not m.is_orientable()
+    n_faces_in = len(m.triangles)
+    out = make_manifold(m)
+    assert len(m.triangles) == n_faces_in  # input not mutated
+    assert out.is_orientable()
+    assert len(out.get_non_manifold_edges()) == 0 and len(out.get_non_manifold_vertices()) == 0
+    fo = np.asarray(out.triangles)
+    de = np.concatenate([fo[:, [0, 1]], fo[:, [1, 2]], fo[:, [2, 0]]])
+    assert np.unique(de, axis=0).shape[0] == len(de)  # every directed edge used once
+    assert len(fo) == 18  # dup dropped, fold dropped, f3 (first owner) kept
+    o3d.t.geometry.TriangleMesh.from_legacy(out).compute_uvatlas(size=64)
+
+
+def test_make_manifold_removes_degenerate_before_fold_over_check():
+    # Degenerate [0,1,1] shares directed edge (0,1) with valid [0,1,2]; only the degenerate goes
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], float)
+    f = np.array([[0, 1, 2], [1, 3, 2], [0, 1, 1]])
+    m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+    fo = np.asarray(make_manifold(m).triangles)
+    assert len(fo) == 2 and [0, 1, 2] in fo.tolist()
+
+
+def test_make_manifold_after_decimate_yields_uvatlas_ready_mesh():
+    m = make_manifold(_dense_plane(n=80, noise=0.003))
+    out, _ = decimate_mesh(m, max_error=0.01)
+    out = make_manifold(out)
+    assert len(out.get_non_manifold_edges()) == 0
+    assert len(out.get_non_manifold_vertices()) == 0
+    tm = o3d.t.geometry.TriangleMesh.from_legacy(out)
+    tm.compute_uvatlas(size=256)
+    assert tm.triangle.texture_uvs.shape[0] == len(out.triangles)
+
+
+######## decimate_mesh
+
+
+def test_decimate_mesh_respects_absolute_bound():
+    m = _dense_plane(noise=0.002)
+    bound = 0.01
+    out, result_error = decimate_mesh(m, max_error=bound)
+    assert len(out.triangles) < len(m.triangles)
+    assert _deviation_p99(m, out) <= 1.5 * bound
+    assert result_error <= bound + 1e-6
+
+
+def test_decimate_mesh_keeps_curvature_relative_to_planes():
+    plane, sphere = _dense_plane(n=60), _sphere(res=40)
+    p, _ = decimate_mesh(plane, max_error=0.01)
+    s, _ = decimate_mesh(sphere, max_error=0.01)
+    assert len(p.triangles) < 0.05 * len(plane.triangles)  # a plane collapses to a handful
+    assert len(s.triangles) > len(p.triangles)  # a sphere keeps many to stay in bound
+
+
+def test_decimate_mesh_never_moves_vertices():
+    m = _dense_plane(n=20, noise=0.001)
+    out, _ = decimate_mesh(m, max_error=0.01)
+    # meshlib holds float32 coordinates; a kept vertex lands within float32 rounding of its source
+    dist, _ = cKDTree(np.asarray(m.vertices)).query(np.asarray(out.vertices))
+    assert dist.max() < 1e-6

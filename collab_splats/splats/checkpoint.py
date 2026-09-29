@@ -3,6 +3,7 @@ Writing the splat stage's outputs and loading a checkpoint back.
 
 - `write_outputs`: splats.ply, ckpt.pt and splats_quality_report.json
 - `load_checkpoint`: ckpt.pt back into a render-only model and its cameras
+- `render_tsdf_inputs`: depth + RGB + poses at the training cameras, for TSDF fusion
 - `MODEL_CLASSES`: representation name -> model class
 """
 
@@ -18,11 +19,12 @@ from gsplat.exporter import export_splats
 from gsplat.losses import ssim_loss
 from torch import Tensor
 
+from collab_splats.preproc.frames import read_frames
 from collab_splats.splats.cameras import CameraOpt
 from collab_splats.splats.gaussian import Gaussians
 from collab_splats.splats.rendering import render_views
 from collab_splats.splats.scaffold import Scaffold
-from collab_splats.utils.io import write_json
+from collab_splats.utils.io import to_uint8_hwc, write_json
 from collab_splats.utils.progress import progress
 
 # Annotation-only: a runtime import of the trainer would be circular
@@ -190,3 +192,67 @@ def load_checkpoint(
     intrinsics = ckpt["intrinsics"].to(device).float()
     height, width = ckpt["image_size"]
     return model, camera_opt, cam_to_world, intrinsics, list(ckpt["image_ids"]), (int(height), int(width))
+
+
+def render_tsdf_inputs(
+    ckpt_path: Path | str,
+    images_dir: Path | str | None = None,
+    device: str = "cuda",
+    depth_source: str = "expected",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[int]]:
+    """
+    Render depth (+ RGB) from a trained splat checkpoint at its training cameras.
+
+    - image_ids follow the checkpoint's order, NOT the images/ directory's filename order
+
+    Args:
+        ckpt_path: splats/ckpt.pt written by the splats stage.
+        images_dir: keyframe directory (images/ + frames.json); when given, RGB comes from
+            the source frames matched by image id instead of the render.
+        device: torch device for rendering.
+        depth_source: which 2dgs depth to fuse, "expected" (alpha-weighted mean) or "median"
+            (sharper, blank where no gaussian crosses the median); 3dgs has only the expected.
+
+    Returns:
+        (depths, rgbs, c2w, K, image_ids): depths (N, H, W) float32 with 0 where alpha is 0,
+        rgbs (N, H, W, 3) uint8, c2w (N, 4, 4) float32, K (N, 3, 3) float32, and the source
+        frame_idx per row.
+    """
+    if depth_source not in ("expected", "median"):
+        raise ValueError(f"depth_source must be 'expected' or 'median', got {depth_source!r}")
+    model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = load_checkpoint(Path(ckpt_path), device)
+
+    # One int list for both the RGB lookup and the return
+    image_ids = [int(i) for i in image_ids]
+
+    # Source frames replace rendered RGB when a keyframe directory is given
+    rgbs = None
+    if images_dir is not None:
+        rgbs = read_frames(images_dir, image_ids)
+        if rgbs.shape[1:3] != (height, width):
+            raise ValueError(f"{images_dir} frames are {rgbs.shape[1:3]} but the checkpoint renders {(height, width)}")
+
+    # Render every camera; only 2dgs offers a choice, so "median" falls back to "depth"
+    key = "median_depth" if depth_source == "median" else "depth"
+    depths, rendered = [], []
+    for view in render_views(model, camera_opt, cam_to_world, intrinsics, height, width):
+        depth = view[key] if key in view else view["depth"]
+        depth = depth.detach().cpu().numpy().reshape(height, width, -1)[..., 0]
+        alpha = view["alpha"].detach().cpu().numpy().reshape(height, width, -1)[..., 0]
+        depths.append(np.where(alpha > 0, depth, 0.0).astype(np.float32))
+
+        if rgbs is None:
+            rgb = view["rgb"].detach().cpu().numpy().reshape(height, width, -1)[..., :3]
+            rendered.append(to_uint8_hwc(rgb, channels_first=False))
+
+    if rgbs is None:
+        rgbs = np.stack(rendered)
+
+    logger.info("render_tsdf_inputs: %d views at %dx%d from %s", len(depths), height, width, ckpt_path)
+    return (
+        np.stack(depths),
+        rgbs,
+        cam_to_world.detach().cpu().numpy().astype(np.float32),
+        intrinsics.detach().cpu().numpy().astype(np.float32),
+        image_ids,
+    )

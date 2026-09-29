@@ -1,9 +1,16 @@
 # collab_splats/utils/image.py
-"""Pure PIL image utilities — no torch dependency."""
+"""
+Image helpers that stay torch-free.
+
+- open_image, resize_image: PIL coercion and aspect-preserving resize
+- upsample_depths: model-res depth onto the original-res RGB grid (guided filter)
+- fill_missing_pixels: push-pull fill of unknown pixels (texture atlas, hull ground heights)
+"""
 
 from pathlib import Path
 from typing import Union
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -56,3 +63,145 @@ def resize_image(image: Image.Image, longest_edge: int) -> Image.Image:
     new_width = int(width * ratio)
     new_height = int(height * ratio)
     return image.resize((new_width, new_height), Image.BILINEAR)
+
+
+########################################################
+########## Depth upsampling ############################
+########################################################
+
+
+def _box(x: np.ndarray, radius: int) -> np.ndarray:
+    """
+    Normalized box filter, the O(1) primitive of the guided filter.
+
+    - kernel is 2 × radius + 1, reflect border
+    """
+    k = 2 * radius + 1
+    return cv2.boxFilter(x, -1, (k, k), normalize=True, borderType=cv2.BORDER_REFLECT)
+
+
+def _guided_filter(guide: np.ndarray, src: np.ndarray, radius: int, eps: float) -> np.ndarray:
+    """
+    He et al. gray-guide guided filter: edge-preserving smoothing of src steered by guide.
+
+    - guide (H, W) float32 in [0, 1]; eps regularizes the guide variance
+    """
+    mean_g = _box(guide, radius)
+    mean_s = _box(src, radius)
+    var_g = _box(guide * guide, radius) - mean_g * mean_g
+    cov_gs = _box(guide * src, radius) - mean_g * mean_s
+    a = cov_gs / (var_g + eps)
+    b = mean_s - a * mean_g
+    return _box(a, radius) * guide + _box(b, radius)
+
+
+def _guided_upsample_depth(
+    depth: np.ndarray, rgb_full: np.ndarray, crop_box: np.ndarray, radius: int | None = None, eps: float = 1e-3
+) -> np.ndarray:
+    """
+    Upsample one model-res depth map into its crop region of the original-res RGB canvas.
+
+    - crop_box (tl_x, tl_y, cr_x, cr_y) in original pixels; radius None = ~2 × the upsample factor
+    - masked pixels stay 0, canvas outside the crop is 0
+    """
+    H, W = rgb_full.shape[:2]
+    tl_x, tl_y, cr_x, cr_y = (int(round(v)) for v in crop_box)
+    cw, ch = cr_x - tl_x, cr_y - tl_y
+    if cw <= 0 or ch <= 0:
+        raise ValueError(f"Degenerate crop box {crop_box} — original_coords are corrupt")
+    if tl_x < 0 or tl_y < 0 or cr_x > W or cr_y > H:
+        raise ValueError(f"Crop box {crop_box} lies outside the {H}x{W} canvas")
+
+    # Nearest resize of depth and validity to crop size — blocky but never invents values
+    depth_nn = cv2.resize(depth, (cw, ch), interpolation=cv2.INTER_NEAREST)
+    valid_nn = (depth_nn > 0).astype(np.float32)
+
+    # Gray guide in [0, 1] from the original-res crop; radius spans ~2x the upsample factor
+    guide = cv2.cvtColor(rgb_full[tl_y:cr_y, tl_x:cr_x], cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    if radius is None:
+        radius = max(1, int(np.ceil(2 * cw / depth.shape[1])))
+
+    # Validity-weighted filtering: masked pixels contribute nothing to their neighbors
+    num = _guided_filter(guide, depth_nn * valid_nn, radius, eps)
+    den = _guided_filter(guide, valid_nn, radius, eps)
+    filtered = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
+
+    # The guide must never resurrect deleted depth, and depth must stay non-negative
+    filtered[valid_nn == 0] = 0.0
+    np.maximum(filtered, 0.0, out=filtered)
+
+    canvas = np.zeros((H, W), dtype=np.float32)
+    canvas[tl_y:cr_y, tl_x:cr_x] = filtered
+    return canvas
+
+
+def upsample_depths(depths: np.ndarray, rgbs: np.ndarray, crop_boxes: np.ndarray) -> np.ndarray:
+    """
+    Guided-filter upsample model-res depth maps onto their original-res RGB frames.
+
+    Args:
+        depths: (N, h, w) model-res depth, 0 = no observation.
+        rgbs: (N, H, W, 3) uint8 original-res frames; H, W set the output size.
+        crop_boxes: (N, 4) [tl_x, tl_y, cr_x, cr_y] model crops in original pixels
+            (original_coords[:, :4]).
+
+    Returns:
+        (N, H, W) float32 depth at frame resolution.
+    """
+    depths = np.asarray(depths)
+    rgbs = np.asarray(rgbs)
+    crop_boxes = np.asarray(crop_boxes)
+    if not (len(depths) == len(rgbs) == len(crop_boxes)):
+        raise ValueError(f"{len(depths)} depths, {len(rgbs)} rgbs, {len(crop_boxes)} crop boxes")
+
+    # One guided upsample per frame into a preallocated stack
+    n, H, W = len(depths), rgbs.shape[1], rgbs.shape[2]
+    out = np.zeros((n, H, W), dtype=np.float32)
+    for i in range(n):
+        out[i] = _guided_upsample_depth(np.asarray(depths[i], dtype=np.float32), rgbs[i], crop_boxes[i])
+    return out
+
+
+########################################################
+########## Hole filling ################################
+########################################################
+
+
+def fill_missing_pixels(image: np.ndarray, known: np.ndarray) -> np.ndarray:
+    """
+    Push-pull pyramid fill: every unknown pixel takes the smooth continuation of the known ones.
+
+    - fills any distance from a known pixel; the coarsest pyramid level is never empty
+    - known pixels come back unchanged
+    - with nothing known the result is zero
+
+    Args:
+        image: (H, W) or (H, W, C) values; unknown pixels are ignored.
+        known: (H, W) bool, True where image holds a real value.
+
+    Returns:
+        float32 array shaped like image.
+    """
+
+    # Weight broadcast over channels when the image has them
+    def expand(weight: np.ndarray) -> np.ndarray:
+        return weight[..., None] if image.ndim == 3 else weight
+
+    # Pull: repeatedly halve value-sum and weight-sum
+    values = [np.ascontiguousarray(image * expand(known), dtype=np.float32)]
+    weights = [known.astype(np.float32)]
+
+    while min(values[-1].shape[:2]) > 1:
+        values.append(cv2.pyrDown(values[-1]))
+        weights.append(cv2.pyrDown(weights[-1]))
+
+    # Push: normalize each level and let the coarser result show through wherever weight is missing
+    out = values[-1] / np.maximum(expand(weights[-1]), 1e-8)
+
+    for level in range(len(values) - 2, -1, -1):
+        h, w = values[level].shape[:2]
+        up = cv2.resize(out, (w, h), interpolation=cv2.INTER_LINEAR)
+        weight = expand(np.clip(weights[level], 0.0, 1.0))
+        out = values[level] / np.maximum(weight, 1e-8) * weight + up * (1.0 - weight)
+
+    return out.astype(np.float32)

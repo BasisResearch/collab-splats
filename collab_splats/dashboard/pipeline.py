@@ -21,7 +21,7 @@ from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.mesh.clean import clean_repair_mesh
 from collab_splats.mesh.features import features2vertex
-from collab_splats.mesh.tsdf import fuse_tsdf
+from collab_splats.mesh.tsdf import create_tsdf_mesh
 from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
     VGGTXCreator,
@@ -414,7 +414,7 @@ def run_pipeline(
 
             # images is [0, 1] on every backend; round to uint8 HWC once for the fusion
             rgbs = to_uint8_hwc(images, channels_first=True)
-            mesh_path = fuse_tsdf(
+            mesh_path = create_tsdf_mesh(
                 depths,
                 rgbs,
                 invert_poses(result.extrinsics),

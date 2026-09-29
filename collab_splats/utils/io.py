@@ -4,6 +4,7 @@ Torch-free IO helpers: images, JSON reports, zarr stores.
 - images: read_image decodes RGB; to_uint8_hwc turns [0, 1] floats into uint8 HWC
 - JSON: to_json_safe makes strict-JSON values; write_json writes them atomically
 - zarr: one LZ4 codec, the unreadable-store error set, open_valid for cache checks
+- meshes: write_textured_obj writes a UV-textured OBJ + MTL + albedo PNG
 """
 
 import json
@@ -14,7 +15,9 @@ from typing import Any
 
 import cv2
 import numpy as np
+import trimesh
 import zarr
+from PIL import Image
 from zarr.codecs import BloscCodec
 
 logger = logging.getLogger(__name__)
@@ -188,3 +191,57 @@ def open_valid(path: str | Path, expected: dict[str, Any]) -> zarr.Group | zarr.
         logger.info("Store at %s is stale (%s), treating it as absent", path, stale)
         return None
     return store
+
+
+########################################################################
+# Meshes
+########################################################################
+
+
+def write_textured_obj(
+    out_dir: str | Path,
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    vertex_normals: np.ndarray,
+    uvs: np.ndarray,
+    albedo: np.ndarray,
+) -> Path:
+    """
+    Textured mesh as out_dir/mesh.obj + mesh.mtl + albedo.png.
+
+    - one vertex per face corner: a seam vertex carries a different UV in each face
+    - normals are written per corner (vn), so shading stays smooth across UV seams
+    - diffuse is white (Kd 1 1 1): trimesh's 0.4 default darkens the texture in every viewer
+
+    Args:
+        out_dir: directory to create.
+        vertices: (V, 3) positions.
+        faces: (F, 3) vertex indices.
+        vertex_normals: (V, 3) per-vertex normals.
+        uvs: (F, 3, 2) per-corner texture coordinates in [0, 1].
+        albedo: (S, S, 3) uint8 texture.
+
+    Returns:
+        Path to out_dir/mesh.obj.
+    """
+    # Split every face corner into its own vertex so each carries its own UV
+    faces = np.asarray(faces)
+    corners = np.asarray(vertices)[faces].reshape(-1, 3)
+    corner_normals = np.asarray(vertex_normals)[faces].reshape(-1, 3)
+    material = trimesh.visual.material.SimpleMaterial(
+        image=Image.fromarray(albedo), name="albedo", diffuse=[255, 255, 255, 255]
+    )
+    textured = trimesh.Trimesh(
+        corners,
+        np.arange(len(corners)).reshape(-1, 3),
+        vertex_normals=corner_normals,
+        visual=trimesh.visual.TextureVisuals(uv=np.asarray(uvs).reshape(-1, 2), material=material),
+        process=False,
+    )
+
+    # trimesh names the texture after the material: albedo.png beside mesh.obj + mesh.mtl
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "mesh.obj"
+    textured.export(out, mtl_name="mesh.mtl")
+    return out

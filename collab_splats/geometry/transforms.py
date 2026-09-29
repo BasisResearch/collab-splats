@@ -8,6 +8,7 @@ NumPy/SciPy camera geometry shared across the pipeline.
 from __future__ import annotations
 
 import numpy as np
+import open3d as o3d
 from scipy.linalg import rq
 
 ########################################################################
@@ -414,6 +415,39 @@ def rotation_align_vectors(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
     angle = np.arccos(np.clip(np.dot(src, dst), -1.0, 1.0))
     K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
     return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
+
+
+def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    RANSAC floor plane, as the rigid transform that puts it at Z-up, z=0.
+
+    - open3d segment_plane over the full cloud; largest inlier set is taken as the floor
+    - no heuristic percentile
+
+    Args:
+        points: (N, 3) point cloud.
+
+    Returns:
+        R: (3, 3) rotation taking the floor normal onto [0, 0, 1].
+        t: (3,) translation placing the floor at z=0 after that rotation.
+    """
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
+    plane_model, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
+    a, b, c, d = plane_model
+    n_mag = np.linalg.norm([a, b, c])
+    normal = np.array([a, b, c]) / n_mag
+    d_norm = d / n_mag  # plane: normal · x + d_norm = 0; floor at z = -d_norm after rotation
+
+    # Ensure normal points upward (positive Z component after alignment)
+    if normal[2] < 0:
+        normal = -normal
+        d_norm = -d_norm
+
+    R = rotation_align_vectors(normal, np.array([0.0, 0.0, 1.0]))
+    # After R, floor is at z = -d_norm. Translate by d_norm to bring to z = 0.
+    t = np.array([0.0, 0.0, d_norm])
+    return R.astype(np.float64), t.astype(np.float64)
 
 
 ########################################################################

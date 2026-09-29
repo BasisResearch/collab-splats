@@ -11,9 +11,9 @@ import pytest
 import torch
 import zarr
 
-from collab_splats.mesh.io import upsample_depths
 from collab_splats.preproc import frames as fr
 from collab_splats.splats.utils import prepare_target
+from collab_splats.utils.image import upsample_depths
 from evals.scripts.eval_splats import (
     _model_res_images,
     _native_images_and_intrinsics,

@@ -12,20 +12,26 @@ def _features2vertex_numpy_reference(mesh_vertices, points, features, k=5, sdf_t
     vertices = np.asarray(mesh_vertices)
     M, D = len(vertices), features.shape[1]
     distances, indices = cKDTree(vertices).query(points, k=k)
+
     if k == 1:
         distances, indices = distances[:, None], indices[:, None]
+
     valid_mask = distances[:, 0] <= sdf_trunc
+
     if not np.any(valid_mask):
         return np.zeros((M, D), dtype=features.dtype)
+
     distances, indices, feats = distances[valid_mask], indices[valid_mask], features[valid_mask]
     sigma = np.mean(distances)
     weights = np.exp(-(distances**2) / (2 * sigma**2))
     weights /= weights.sum(axis=1, keepdims=True)
     out = np.zeros((M, D), dtype=np.float64)
     wsum = np.zeros((M, 1), dtype=np.float64)
+
     for j in range(k):
         np.add.at(out, indices[:, j], feats * weights[:, j : j + 1])
         np.add.at(wsum, indices[:, j], weights[:, j : j + 1])
+
     nz = wsum[:, 0] > 0
     out[nz] /= wsum[nz]
     return out.astype(features.dtype)

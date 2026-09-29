@@ -1,13 +1,14 @@
 """
 Point features onto mesh vertices, and clustering of the result.
 
-  - features2vertex: Gaussian-weighted k-NN scatter, truncated at sdf_trunc
-  - mesh_clustering: connected components over high-similarity vertices within a radius
+- features2vertex: Gaussian-weighted k-NN scatter, truncated at sdf_trunc
+- mesh_clustering: connected components over high-similarity vertices within a radius
 """
 
 from __future__ import annotations
 
 import numpy as np
+import open3d as o3d
 import torch
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
@@ -15,19 +16,28 @@ from scipy.spatial import cKDTree
 
 from collab_splats.utils.torch_utils import get_device
 
-######## Feature transfer
+########################
+# Feature transfer
+########################
 
 
-def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
+def features2vertex(
+    mesh_vertices: np.ndarray,
+    points: np.ndarray,
+    features: np.ndarray,
+    k: int = 5,
+    sdf_trunc: float = 0.03,
+) -> np.ndarray:
     """
     Gaussian-weighted k-NN scatter of point features onto mesh vertices.
 
     Args:
-        mesh_vertices: (M, 3) float vertex positions.
-        points: (P, 3) float point positions in the same frame.
-        features: (P, D) array of per-point features.
-        k: int, nearest vertices each point contributes to.
-        sdf_trunc: float, points whose nearest vertex is farther than this (world units) are dropped.
+        mesh_vertices: (M, 3) vertex positions.
+        points: (P, 3) point positions in the same frame.
+        features: (P, D) per-point features.
+        k: nearest vertices each point contributes to.
+        sdf_trunc: points whose nearest vertex is farther than this (world units) are dropped.
+
     Returns:
         (M, D) array in features.dtype; vertices no point reached are zero.
     """
@@ -46,8 +56,10 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
 
     # Drop points whose closest vertex is beyond the truncation band
     valid_mask = distances[:, 0] <= sdf_trunc
+
     if not np.any(valid_mask):
         return np.zeros((M, D), dtype=features.dtype)
+
     distances = distances[valid_mask]
     indices = indices[valid_mask]
     feats = features[valid_mask]
@@ -66,6 +78,7 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     # Scatter weighted features to vertices; accumulate weights for normalization
     acc = torch.zeros((M, D), dtype=torch.float32, device=device)
     wsum = torch.zeros((M, 1), dtype=torch.float32, device=device)
+
     for j in range(k):
         acc.index_add_(0, idx[:, j], f * w[:, j : j + 1])
         wsum.index_add_(0, idx[:, j], w[:, j : j + 1])
@@ -77,24 +90,34 @@ def features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03):
     return acc.cpu().numpy().astype(features.dtype)
 
 
-######## Clustering
+########################
+# Clustering
+########################
 
 
-def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_radius=0.03, min_cluster_size=10):
+def mesh_clustering(
+    mesh: o3d.geometry.TriangleMesh,
+    similarity_values: np.ndarray,
+    similarity_threshold: float = 0.8,
+    spatial_radius: float = 0.03,
+    min_cluster_size: int = 10,
+) -> list[np.ndarray]:
     """
     Group spatially connected vertices whose similarity exceeds a threshold.
 
     Args:
-        mesh: open3d.geometry.TriangleMesh; only its vertices are read.
-        similarity_values: (V,) float per-vertex similarity.
-        similarity_threshold: float, vertices with similarity above this are candidates.
-        spatial_radius: float, candidates within this distance (world units) are connected.
-        min_cluster_size: int, clusters with fewer vertices are dropped.
+        mesh: input mesh; only its vertices are read.
+        similarity_values: (V,) per-vertex similarity.
+        similarity_threshold: vertices with similarity above this are candidates.
+        spatial_radius: candidates within this distance (world units) are connected.
+        min_cluster_size: clusters with fewer vertices are dropped.
+
     Returns:
-        list of (n_i,) int arrays of vertex indices into the mesh, one per cluster.
+        (n_i,) int arrays of vertex indices into the mesh, one per cluster.
     """
     similarity_values = np.asarray(similarity_values)
     valid = np.flatnonzero(similarity_values > similarity_threshold)
+
     if len(valid) == 0:
         return []
 
@@ -107,8 +130,10 @@ def mesh_clustering(mesh, similarity_values, similarity_threshold=0.8, spatial_r
 
     # Map component labels back to original vertex indices; drop small clusters
     clusters = []
+
     for label in np.unique(labels):
         members = valid[labels == label]
+
         if len(members) >= min_cluster_size:
             clusters.append(members)
 

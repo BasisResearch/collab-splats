@@ -40,7 +40,7 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
         patch("collab_splats.wrapper.reconstructor.upsample_depths", side_effect=lambda d, r, b: d),
-        patch("collab_splats.wrapper.reconstructor.fuse_tsdf", side_effect=spy_fuse),
+        patch("collab_splats.wrapper.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
         patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
         caplog.at_level("INFO"),
     ):

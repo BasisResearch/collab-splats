@@ -17,9 +17,9 @@ import torch
 import yaml
 import zarr
 
-from collab_splats.mesh.io import upsample_depths
 from collab_splats.splats.trainer import SplatsConfig
 from collab_splats.splats.utils import prepare_target
+from collab_splats.utils.image import upsample_depths
 from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES
 from tests.wrapper._stubs import _stub_reconstructor
 
@@ -197,8 +197,10 @@ def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path):
         [0, 1, 2],
     )
     with (
-        patch("collab_splats.wrapper.reconstructor.render_tsdf_inputs", return_value=rendered) as render,
-        patch("collab_splats.wrapper.reconstructor.fuse_tsdf", return_value=recon.backend_dir / "mesh.ply") as fuse,
+        patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered) as render,
+        patch(
+            "collab_splats.wrapper.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply"
+        ) as fuse,
         patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
     ):
         out = recon.mesh()

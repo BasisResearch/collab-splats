@@ -225,11 +225,11 @@ def test_mapanything_postprocess_pipeline(tmp_path):
 
 def test_tsdf_mesh_synthetic(tmp_path):
     """
-    fuse_tsdf over synthetic depth + RGB frames.
+    create_tsdf_mesh over synthetic depth + RGB frames.
 
-    rgbs must be uint8 [0, 255] — fuse_tsdf rejects float color outright.
+    rgbs must be uint8 [0, 255] — create_tsdf_mesh rejects float color outright.
     """
-    from collab_splats.mesh import fuse_tsdf
+    from collab_splats.mesh import create_tsdf_mesh
 
     n, h, w = 4, 64, 64
     rng = np.random.default_rng(1)
@@ -241,7 +241,7 @@ def test_tsdf_mesh_synthetic(tmp_path):
     K = np.array([[50, 0, 32], [0, 50, 32], [0, 0, 1]], dtype=np.float32)
     intrinsics = np.tile(K, (n, 1, 1))
 
-    mesh_path = fuse_tsdf(depths, rgbs, c2w, intrinsics, tmp_path, voxel_size=0.05, depth_trunc=5.0)
+    mesh_path = create_tsdf_mesh(depths, rgbs, c2w, intrinsics, tmp_path, voxel_size=0.05, depth_trunc=5.0)
     assert isinstance(mesh_path, Path)
     assert mesh_path.exists()
 

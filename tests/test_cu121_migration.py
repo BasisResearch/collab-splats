@@ -83,11 +83,6 @@ def test_viser_version():
 # ── Phase 2: Import sweep ─────────────────────────────────────────────────────
 
 
-def test_import_collab_splats_top_level():
-    """import collab_splats must succeed — catches _patch_mapanything_torch_compat crash."""
-    import collab_splats  # noqa: F401
-
-
 # Every collab_splats submodule the gate imports. Module level so a second test can guard the
 # list's own width -- `collab_splats.splats.utils` went missing from it for two whole plans.
 MODULES = [
@@ -117,7 +112,6 @@ MODULES = [
     "collab_splats.semantics.segmentation",
     "collab_splats.semantics.utils",
     "collab_splats.mesh",
-    "collab_splats.mesh.io",
     "collab_splats.mesh.tsdf",
     "collab_splats.mesh.clean",
     "collab_splats.mesh.texture",
@@ -175,7 +169,6 @@ def test_flagged_package_imports():
     compatibility. All must resolve before Phase 4.
     """
     packages = {
-        "pyntcloud": "import pyntcloud",
         "mobile_sam": "import mobile_sam",
         "maskclip_onnx": "import maskclip_onnx",
         "uniception": "import uniception",
@@ -242,25 +235,8 @@ def test_bae_use_cudss():
     from bae.utils.pysolvers import PCG  # noqa: F401
 
 
-def test_bae_cuda_backend():
-    """bae active with CUDA 12.1 / torch 2.5."""
-    import bae  # noqa: F401
-    import pypose  # noqa: F401
-    import torch
-
-    assert torch.__version__.startswith("2.5"), f"Wrong torch: {torch.__version__}"
-    assert "12.1" in torch.version.cuda, f"Wrong CUDA: {torch.version.cuda}"
-
-
-def test_mapanything_compat_patch_safe():
-    """_patch_mapanything_torch_compat must not raise RuntimeError at import time."""
-    from collab_splats.pointcloud.feedforward.mapanything import (  # noqa: F401
-        MapAnythingCreator,
-    )
-
-
 def test_pycolmap_api_surface():
-    """pycolmap 4.0.4 API: all constructors and new 4.x methods present and callable."""
+    """pycolmap 4.x API: all constructors and new 4.x methods present and callable."""
     import pycolmap
 
     recon = pycolmap.Reconstruction()

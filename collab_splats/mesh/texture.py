@@ -1,219 +1,132 @@
 """
-Texture a fused mesh.
+Texture a fused mesh: one albedo atlas baked from the source views.
 
-  - decimate_mesh: error-bounded QEM decimation
-  - _make_manifold: repair to what UVAtlas accepts
-  - unwrap_mesh_uvs: UV atlas over the repaired mesh
-  - project_images_to_texture: visibility-weighted projection of the source views
+- fill_holes, decimate_mesh, make_manifold (clean.py): a mesh UVAtlas accepts
+- unwrap_mesh_uvs: UV atlas (Open3D UVAtlas)
+- _rasterize_atlas: per-texel world position + normal (nvdiffrast)
+- project_images_to_texture: per-texel color, two Warp kernel passes then fill_missing_pixels
+- write_textured_obj (utils/io.py): mesh.obj + mesh.mtl + albedo.png
 """
 
 from __future__ import annotations
 
 import logging
-import time
+from pathlib import Path
 
-import cv2
-import meshoptimizer as mo
 import numpy as np
 import nvdiffrast.torch as dr
 import open3d as o3d
 import torch
-import xatlas
 import warp as wp
 
 from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
-from collab_splats.mesh.io import write_textured_ply
+from collab_splats.mesh.clean import decimate_mesh, fill_holes, make_manifold
+from collab_splats.mesh.tsdf import _validate_views
+from collab_splats.utils.image import fill_missing_pixels
+from collab_splats.utils.io import to_uint8_hwc, write_textured_obj
 
 logger = logging.getLogger(__name__)
 
 
-######## Decimation
+########################
+# Entry point
+########################
 
 
-def decimate_mesh(mesh, max_error):
+def create_texture_mesh(
+    mesh_path: Path | str,
+    out_dir: Path | str,
+    rgbs: np.ndarray,
+    c2w: np.ndarray,
+    K: np.ndarray,
+    *,
+    voxel_size: float,
+    max_hole_perimeter_ratio: float = 3.9,
+    decimate_max_error: float = 0.5,
+    tex_size: int = 8192,
+) -> Path:
     """
-    QEM decimation to an absolute surface-deviation bound; vertices are removed, never moved.
+    Fill, decimate, repair, unwrap and texture a fused mesh; the input file is never modified.
+
+    - fill at full density, decimate, make_manifold; lid the pinholes that opens, repair again
+    - the unfilled input is the occluder, so invented patches never hide a real surface
+    - voxel_size sets both the decimation bound and the occlusion tolerance
+    - outer rims stay open whatever max_hole_perimeter_ratio (see fill_holes)
+    - writes out_dir/mesh.obj + mesh.mtl + albedo.png via write_textured_obj
 
     Args:
-        mesh: open3d.geometry.TriangleMesh.
-        max_error: float, largest allowed surface deviation in world units.
+        mesh_path: fused mesh.ply (from create_tsdf_mesh + clean_repair_mesh).
+        out_dir: directory to create.
+        rgbs: (N, H, W, 3) uint8 views that were fused.
+        c2w: (N, 4, 4) camera-to-world poses.
+        K: (N, 3, 3) intrinsics at image resolution.
+        voxel_size: TSDF voxel the mesh was fused at, world units.
+        max_hole_perimeter_ratio: patch holes with a perimeter under this × scene_scale.
+        decimate_max_error: decimation bound as a multiple of voxel_size.
+        tex_size: atlas edge in texels.
+
     Returns:
-        (decimated open3d.geometry.TriangleMesh, float result error in world units).
+        Path to out_dir/mesh.obj.
     """
-    # meshoptimizer simplify under an absolute error bound; target_index_count=3 = as few as allowed
-    v = np.ascontiguousarray(np.asarray(mesh.vertices), dtype=np.float32)
-    idx = np.ascontiguousarray(np.asarray(mesh.triangles), dtype=np.uint32).ravel()
-    dst = np.zeros_like(idx)
-    err = np.zeros(1, dtype=np.float32)
-    n = mo.simplify(
-        dst,
-        idx,
-        v,
-        target_index_count=3,
-        target_error=float(max_error),
-        options=mo.SIMPLIFY_ERROR_ABSOLUTE,
-        result_error=err,
+    rgbs, c2w, K, _ = _validate_views(rgbs, c2w, K)
+    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
+    filled = fill_holes(mesh, max_hole_perimeter_ratio=max_hole_perimeter_ratio)
+    decimated, err = decimate_mesh(filled, max_error=decimate_max_error * voxel_size)
+    manifold = make_manifold(decimated)
+
+    # Decimation and repair open pinholes; flat lids close them, then repair what the lids fold
+    lidded = fill_holes(manifold, max_hole_perimeter_ratio=max_hole_perimeter_ratio, subdivide_fill=False)
+    manifold = make_manifold(lidded)
+    tm = unwrap_mesh_uvs(manifold, tex_size)
+    albedo = project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps=voxel_size, occluder=mesh)
+
+    # Smooth per-vertex normals for the OBJ; without them viewers shade split corners flat
+    tm.compute_vertex_normals()
+    out = write_textured_obj(
+        out_dir,
+        tm.vertex.positions.numpy(),
+        tm.triangle.indices.numpy(),
+        tm.vertex.normals.numpy(),
+        tm.triangle.texture_uvs.numpy(),
+        albedo,
     )
-
-    # Rebuild as a legacy mesh and drop the vertices no triangle references any more
-    out = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(np.asarray(mesh.vertices)),
-        o3d.utility.Vector3iVector(dst[:n].reshape(-1, 3).astype(np.int32)),
-    )
-    out.remove_unreferenced_vertices()
-    return out, float(err[0])
-
-
-######## Manifold repair — UVAtlas rejects what Open3D calls manifold
-
-
-def _find(parent, x):
-    """
-    Union-find root of x with path halving.
-
-    Args:
-        parent: dict, node -> parent node.
-        x: int, node id.
-    Returns:
-        int, root node of x.
-    """
-    while parent[x] != x:
-        parent[x] = parent[parent[x]]
-        x = parent[x]
-    return x
-
-
-def _split_non_manifold_vertices(mesh):
-    """
-    Duplicate every bowtie vertex once per extra edge-connected triangle fan.
-
-    Args:
-        mesh: open3d.geometry.TriangleMesh; not modified.
-    Returns:
-        (new open3d.geometry.TriangleMesh, int count of vertices split).
-    """
-    v = np.asarray(mesh.vertices).copy()
-    f = np.asarray(mesh.triangles).copy()
-    colors = np.asarray(mesh.vertex_colors).copy() if mesh.has_vertex_colors() else None
-    nm = np.asarray(mesh.get_non_manifold_vertices(), dtype=np.int64)
-    if len(nm) == 0:
-        return o3d.geometry.TriangleMesh(mesh), 0
-
-    # Vertex -> incident-triangle index, built once from the flattened corner array
-    flat = f.ravel()
-    order = np.argsort(flat, kind="stable")
-    starts = np.searchsorted(flat[order], np.arange(len(v) + 1))
-    new_v, new_c = [], []
-    n_split = 0
-    for vid in nm:
-        tris = order[starts[vid] : starts[vid + 1]] // 3
-
-        # Union-find over incident triangles: same fan iff they share a vertex besides vid
-        parent = {int(t): int(t) for t in tris}
-        other = {}
-        for t in tris:
-            for w in f[t]:
-                if w != vid:
-                    other.setdefault(int(w), []).append(int(t))
-        for group in other.values():
-            for t in group[1:]:
-                parent[_find(parent, t)] = _find(parent, group[0])
-        fans = {}
-        for t in tris:
-            fans.setdefault(_find(parent, int(t)), []).append(int(t))
-
-        # First fan keeps vid; every further fan is rewired to a fresh copy
-        for fan in list(fans.values())[1:]:
-            nid = len(v) + len(new_v)
-            new_v.append(v[vid])
-            if colors is not None:
-                new_c.append(colors[vid])
-            for t in fan:
-                f[t][f[t] == vid] = nid
-            n_split += 1
-
-    if new_v:
-        v = np.vstack([v, np.asarray(new_v)])
-        if colors is not None:
-            colors = np.vstack([colors, np.asarray(new_c)])
-    out = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
-    if colors is not None:
-        out.vertex_colors = o3d.utility.Vector3dVector(colors)
-    return out, n_split
-
-
-def _drop_duplicate_and_fold_over_faces(mesh):
-    """
-    Drop duplicate faces in any winding and fold-overs (a directed edge owned by two faces).
-
-    Args:
-        mesh: open3d.geometry.TriangleMesh with degenerate faces already removed.
-    Returns:
-        (new open3d.geometry.TriangleMesh, int duplicates dropped, int fold-overs dropped).
-    """
-    f = np.asarray(mesh.triangles)
-    n_in = len(f)
-    _, first = np.unique(np.sort(f, axis=1), axis=0, return_index=True)
-    f = f[np.sort(first)]
-    n_dup = n_in - len(f)
-
-    # Directed-edge multiplicity: a manifold orientable surface uses each direction once
-    #   - the first face owning a direction keeps it
-    #   - any face owning a non-first copy is dropped
-    de = np.concatenate([f[:, [0, 1]], f[:, [1, 2]], f[:, [2, 0]]])
-    _, first_edge = np.unique(de, axis=0, return_index=True)
-    non_first = np.ones(len(de), dtype=bool)
-    non_first[first_edge] = False
-    fold = non_first.reshape(3, -1).any(axis=0)
-    f = f[~fold]
-    out = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(np.asarray(mesh.vertices)), o3d.utility.Vector3iVector(f)
-    )
-    if mesh.has_vertex_colors():
-        out.vertex_colors = mesh.vertex_colors
-    return out, n_dup, int(fold.sum())
-
-
-def _make_manifold(mesh):
-    """
-    Repair a mesh to a UVAtlas-ready one; the input is left untouched.
-
-    Args:
-        mesh: open3d.geometry.TriangleMesh.
-    Returns:
-        new open3d.geometry.TriangleMesh without degenerate, duplicate or fold-over faces,
-        non-manifold edges or vertices, or orphan vertices.
-    """
-    mesh = o3d.geometry.TriangleMesh(mesh)
-    mesh.remove_degenerate_triangles()
-    mesh, n_dup, n_fold = _drop_duplicate_and_fold_over_faces(mesh)
-    mesh.remove_non_manifold_edges()
-    mesh, n_split = _split_non_manifold_vertices(mesh)
-    mesh.remove_unreferenced_vertices()
     logger.info(
-        "_make_manifold: dropped %d duplicate + %d fold-over faces, split %d bowtie vertices", n_dup, n_fold, n_split
+        "create_texture_mesh: %d -> %d faces (decimation error %.4f) -> %s",
+        len(mesh.triangles),
+        len(tm.triangle.indices),
+        err,
+        out,
     )
-    return mesh
+    return out
 
 
-######## UV atlas
+########################
+# UV unwrap
+########################
 
 
-def unwrap_mesh_uvs(mesh, tex_size, parallel_partitions=16, min_faces_per_partition=1000, max_stretch=0.1667):
+def unwrap_mesh_uvs(
+    mesh: o3d.geometry.TriangleMesh,
+    tex_size: int,
+    parallel_partitions: int = 16,
+    min_faces_per_partition: int = 1000,
+    max_stretch: float = 0.1667,
+) -> o3d.t.geometry.TriangleMesh:
     """
-    Compute a UV atlas with Open3D's UVAtlas.
+    UV atlas from Open3D's UVAtlas.
+
+    - partition count clamped so none is empty; Open3D's PCA partition raises on an empty one
+    - low max_stretch shatters a curved mesh into many small charts, each one a seam
 
     Args:
-        mesh: manifold open3d.geometry.TriangleMesh (see _make_manifold).
-        tex_size: int, atlas edge in texels.
-        parallel_partitions: int, UVAtlas partitions run in parallel (1 = single-threaded, 20+ min at 500k faces).
-        min_faces_per_partition: int, floor clamping the partition count (Open3D's PCA partition
-            raises on an empty one).
-        max_stretch: float in [0, 1], distortion UVAtlas tolerates before cutting a new chart.
-            Low values shatter a curved mesh into thousands of tiny islands, each of which is a
-            seam; raising it trades parameterization accuracy for large continuous swaths.
+        mesh: manifold mesh (see make_manifold).
+        tex_size: atlas edge in texels.
+        parallel_partitions: UVAtlas partitions run in parallel (1 = single-threaded).
+        min_faces_per_partition: fewest faces per partition.
+        max_stretch: distortion in [0, 1] UVAtlas tolerates before cutting a new chart.
+
     Returns:
-        o3d.t.geometry.TriangleMesh with triangle.texture_uvs (F, 3, 2).
+        Tensor mesh with triangle.texture_uvs (F, 3, 2).
     """
     tm = o3d.t.geometry.TriangleMesh.from_legacy(mesh)
     partitions = max(1, min(int(parallel_partitions), len(mesh.triangles) // min_faces_per_partition))
@@ -221,82 +134,28 @@ def unwrap_mesh_uvs(mesh, tex_size, parallel_partitions=16, min_faces_per_partit
     return tm
 
 
-def unwrap_mesh_uvs_xatlas(mesh, tex_size, max_cost=8.0, padding=2, max_iterations=2):
-    """
-    Compute a UV atlas with xatlas instead of UVAtlas, for large charts and tight packing.
-
-    - UVAtlas shatters this scene into ~11k charts and fills only ~62% of the atlas; the rest is
-      dead space between islands, so a third of the texel budget never reaches the surface
-    - max_cost is the distortion xatlas tolerates before cutting a new chart: raising it past the
-      2.0 default merges charts into continuous swaths
-
-    Args:
-        mesh: open3d.geometry.TriangleMesh.
-        tex_size: int, atlas edge in texels.
-        max_cost: float, chart-growth cost ceiling; higher means fewer, larger, more distorted charts.
-        padding: int, texels of empty space xatlas leaves between packed charts.
-        max_iterations: int, chart-refinement passes.
-    Returns:
-        o3d.t.geometry.TriangleMesh with triangle.texture_uvs (F, 3, 2).
-    """
-    verts = np.asarray(mesh.vertices, dtype=np.float32)
-    faces = np.asarray(mesh.triangles, dtype=np.uint32)
-
-    atlas = xatlas.Atlas()
-    atlas.add_mesh(verts, faces)
-    chart_options = xatlas.ChartOptions()
-    chart_options.max_cost = float(max_cost)
-    chart_options.max_iterations = int(max_iterations)
-    pack_options = xatlas.PackOptions()
-    pack_options.resolution = int(tex_size)
-    pack_options.padding = int(padding)
-    pack_options.bruteForce = True
-    atlas.generate(chart_options=chart_options, pack_options=pack_options)
-
-    # xatlas splits vertices at seams, so it returns its own vertex list plus a map back to ours
-    vmapping, indices, uvs = atlas[0]
-    util = atlas.utilization
-    logger.info(
-        "xatlas: %d charts, %d atlas verts from %d, utilization %.1f%%",
-        atlas.chart_count, len(vmapping), len(verts),
-        100 * (util[0] if isinstance(util, (list, tuple)) else util),
-    )
-
-    # Rebuild in the split-vertex indexing xatlas produced, then hand back per-corner uvs
-    out = o3d.geometry.TriangleMesh()
-    out.vertices = o3d.utility.Vector3dVector(verts[vmapping].astype(np.float64))
-    out.triangles = o3d.utility.Vector3iVector(indices.astype(np.int32))
-    tm = o3d.t.geometry.TriangleMesh.from_legacy(out)
-    tm.triangle.texture_uvs = o3d.core.Tensor(
-        uvs.astype(np.float32)[indices.astype(np.int64)].reshape(-1, 3, 2)
-    )
-    return tm
+########################
+# Atlas rasterization
+########################
 
 
-def bake_atlas_attributes(tm, tex_size):
+def _rasterize_atlas(tm: o3d.t.geometry.TriangleMesh, tex_size: int) -> tuple[np.ndarray, np.ndarray]:
     """
     Rasterize a UV atlas into per-texel world position and normal.
 
-    Args:
-        tm: o3d.t.geometry.TriangleMesh with triangle.texture_uvs (from unwrap_mesh_uvs).
-        tex_size: int, atlas edge in texels.
-    Returns:
-        (positions, normals), two (tex_size, tex_size, 3) float32 arrays; zero where no triangle covers.
+    - returns two (tex_size, tex_size, 3) float32 arrays, zero where no triangle covers
     """
     tm.compute_vertex_normals()
     verts = tm.vertex.positions.numpy()
     faces = tm.triangle.indices.numpy()
     vert_normals = tm.vertex.normals.numpy()
 
-    # One vertex per triangle corner
-    #   - a seam vertex carries a different UV in each triangle sharing it
-    #   - a shared-vertex buffer therefore cannot express the atlas
+    # One vertex per triangle corner, since a seam vertex has a different UV in each triangle
     corner_pos = np.ascontiguousarray(verts[faces].reshape(-1, 3), dtype=np.float32)
     corner_nrm = np.ascontiguousarray(vert_normals[faces].reshape(-1, 3), dtype=np.float32)
     corner_tri = np.arange(len(corner_pos), dtype=np.int32).reshape(-1, 3)
 
-    # UV to clip space with v flipped: nvdiffrast's first output row is the top of the atlas
-    #   - measured against Open3D's bake: unflipped off by 47.8 world units, flipped by 2e-5
+    # UV to clip space with v flipped, since nvdiffrast's first output row is the top of the atlas
     uv = tm.triangle.texture_uvs.numpy().reshape(-1, 2)
     zeros = np.zeros(len(uv), dtype=np.float32)
     clip = np.stack([uv[:, 0] * 2.0 - 1.0, (1.0 - uv[:, 1]) * 2.0 - 1.0, zeros, zeros + 1.0], axis=-1)
@@ -315,262 +174,91 @@ def bake_atlas_attributes(tm, tex_size):
     return (positions[0] * covered).cpu().numpy(), (normals[0] * covered).cpu().numpy()
 
 
-######## Projection — NVIDIA Warp, one thread per texel
-
-
-@wp.func
-def _view_footprint(
-    p: wp.vec3,
-    n: wp.vec3,
-    cam: wp.vec3,
-    w2c: wp.mat44,
-    fx: float,
-    fy: float,
-    cx: float,
-    cy: float,
-    W: int,
-    H: int,
-    mesh_id: wp.uint64,
-    eps: float,
-):
-    """
-    World size one source pixel covers at this texel in this view, or -1 if the view cannot see it.
-
-    - footprint = dist / (fx * cos): grazing and distant views resolve the surface coarsely
-    - rejects back-faces, out-of-frustum texels and anything the mesh occludes
-    """
-    to_cam = cam - p
-    dist = wp.length(to_cam)
-    d = to_cam / dist
-    cos = wp.dot(n, d)
-    if cos <= 0.0:
-        return -1.0
-
-    # Project into the image; skip texels behind the camera or outside the frame
-    pc = wp.transform_point(w2c, p)
-    if pc[2] <= 0.0:
-        return -1.0
-    u = fx * pc[0] / pc[2] + cx
-    v = fy * pc[1] / pc[2] + cy
-    if u < 0.0 or v < 0.0 or u > float(W - 1) or v > float(H - 1):
-        return -1.0
-
-    # Occlusion: anything the ray from the camera hits before the texel hides it
-    q = wp.mesh_query_ray(mesh_id, cam, -d, dist - eps)
-    if q.result:
-        return -1.0
-
-    return dist / (fx * cos)
-
-
-@wp.kernel
-def _footprint_kernel(
-    positions: wp.array2d(dtype=wp.vec3),
-    normals: wp.array2d(dtype=wp.vec3),
-    w2c: wp.mat44,
-    fx: float,
-    fy: float,
-    cx: float,
-    cy: float,
-    cam: wp.vec3,
-    mesh_id: wp.uint64,
-    eps: float,
-    width: int,
-    height: int,
-    best_fp: wp.array2d(dtype=float),
-):
-    """
-    Pass one: record the finest footprint any view achieves on each texel.
-    """
-    i, j = wp.tid()
-    n = normals[i, j]
-    if wp.length(n) < 0.5:
-        return
-
-    fp = _view_footprint(positions[i, j], wp.normalize(n), cam, w2c, fx, fy, cx, cy, width, height, mesh_id, eps)
-    if fp > 0.0:
-        wp.atomic_min(best_fp, i, j, fp)
-
-
-@wp.kernel
-def _project_kernel(
-    positions: wp.array2d(dtype=wp.vec3),
-    normals: wp.array2d(dtype=wp.vec3),
-    image: wp.array2d(dtype=wp.vec3),
-    w2c: wp.mat44,
-    fx: float,
-    fy: float,
-    cx: float,
-    cy: float,
-    cam: wp.vec3,
-    mesh_id: wp.uint64,
-    eps: float,
-    best_fp: wp.array2d(dtype=float),
-    fp_ratio: float,
-    rgb_acc: wp.array2d(dtype=wp.vec3),
-    w_acc: wp.array2d(dtype=float),
-):
-    i, j = wp.tid()
-    p = positions[i, j]
-    n = normals[i, j]
-    if wp.length(n) < 0.5:
-        return
-    n = wp.normalize(n)
-
-    H = image.shape[0]
-    W = image.shape[1]
-    fp = _view_footprint(p, n, cam, w2c, fx, fy, cx, cy, W, H, mesh_id, eps)
-    if fp <= 0.0:
-        return
-
-    # Keep only views resolving this texel nearly as finely as the best one does. Averaging every
-    # view that can see a point drags a sharp close-up down to the blur of a hundred distant ones
-    if fp > best_fp[i, j] * fp_ratio:
-        return
-
-    # Bilinear sample, weighted by how finely this view resolves the texel
-    pc = wp.transform_point(w2c, p)
-    u = fx * pc[0] / pc[2] + cx
-    v = fy * pc[1] / pc[2] + cy
-    weight = best_fp[i, j] / fp
-    x0 = int(wp.floor(u))
-    y0 = int(wp.floor(v))
-    x1 = wp.min(x0 + 1, W - 1)
-    y1 = wp.min(y0 + 1, H - 1)
-    ax = u - float(x0)
-    ay = v - float(y0)
-    c = (image[y0, x0] * (1.0 - ax) + image[y0, x1] * ax) * (1.0 - ay) + (
-        image[y1, x0] * (1.0 - ax) + image[y1, x1] * ax
-    ) * ay
-    rgb_acc[i, j] = rgb_acc[i, j] + c * weight
-    w_acc[i, j] = w_acc[i, j] + weight
-
-
-def _dilate_texels(albedo, filled, gutter_px):
-    """
-    Grow filled texels into unfilled neighbors so bilinear sampling never reads black seams.
-
-    Args:
-        albedo: (S, S, 3) float atlas.
-        filled: (S, S) bool, texels some view colored.
-        gutter_px: int, dilation radius in texels.
-    Returns:
-        (S, S, 3) float32 atlas with the gutter filled by the mean of filled neighbors.
-    """
-    out = albedo.astype(np.float32)
-    mask = filled.astype(np.float32)
-    for _ in range(gutter_px):
-        num = cv2.boxFilter(out * mask[..., None], -1, (3, 3), normalize=False, borderType=cv2.BORDER_CONSTANT)
-        den = cv2.boxFilter(mask, -1, (3, 3), normalize=False, borderType=cv2.BORDER_CONSTANT)
-        grow = (den > 0) & (mask == 0)
-        out[grow] = num[grow] / den[grow][:, None]
-        mask[grow] = 1.0
-    return out
-
-
-def _fill_unseen(albedo, filled):
-    """
-    Push-pull pyramid fill so no texel stays black, however far it is from a seen one.
-
-    Args:
-        albedo: (S, S, 3) float atlas.
-        filled: (S, S) bool, texels some view colored.
-    Returns:
-        (S, S, 3) float32 atlas with every texel defined; unseen regions carry the smooth
-        low-frequency continuation of their surroundings rather than a hole.
-    """
-    # Pull: repeatedly halve colour-sum and weight-sum, so the coarsest level is never empty
-    cols = [np.ascontiguousarray(albedo * filled[..., None], dtype=np.float32)]
-    masks = [filled.astype(np.float32)]
-    while min(cols[-1].shape[:2]) > 1:
-        cols.append(cv2.pyrDown(cols[-1]))
-        masks.append(cv2.pyrDown(masks[-1]))
-
-    # Push: normalize each level and let the coarser result show through wherever weight is missing
-    out = cols[-1] / np.maximum(masks[-1][..., None], 1e-8)
-    for lvl in range(len(cols) - 2, -1, -1):
-        h, w = cols[lvl].shape[:2]
-        up = cv2.resize(out, (w, h), interpolation=cv2.INTER_LINEAR)
-        wt = np.clip(masks[lvl], 0.0, 1.0)[..., None]
-        cur = cols[lvl] / np.maximum(wt, 1e-8)
-        out = cur * wt + up * (1.0 - wt)
-    return out.astype(np.float32)
+########################
+# Projection
+########################
 
 
 def project_images_to_texture(
-    tm, rgbs, c2w, K, tex_size, occlusion_eps, gutter_px=4, occluder=None, fill_unseen=False, view_ratio=1.5
-):
+    tm: o3d.t.geometry.TriangleMesh,
+    rgbs: np.ndarray,
+    c2w: np.ndarray,
+    K: np.ndarray,
+    tex_size: int,
+    occlusion_eps: float,
+    occluder: o3d.geometry.TriangleMesh | None = None,
+    view_ratio: float = 1.5,
+) -> np.ndarray:
     """
     Visibility-weighted projection of images into a mesh's UV atlas.
 
+    - texels no view reaches take a push-pull fill from their seen surroundings
+    - a hole-filled mesh hides its own observed surface, so pass the pre-fill mesh as occluder
+    - view_ratio 1.0 is single-best-view (sharpest, seam-prone); large values average everything
+
     Args:
-        tm: o3d.t.geometry.TriangleMesh with triangle.texture_uvs (from unwrap_mesh_uvs).
+        tm: mesh with triangle.texture_uvs (from unwrap_mesh_uvs).
         rgbs: (N, H, W, 3) uint8 images.
         c2w: (N, 4, 4) camera-to-world poses.
         K: (N, 3, 3) intrinsics at image resolution.
-        tex_size: int, atlas edge in texels.
-        occlusion_eps: float, ray-test tolerance in world units (≈ voxel size) so a surface never occludes itself.
-        gutter_px: int, texels of color dilation around every chart.
-        occluder: optional (verts, faces) to ray-test against instead of `tm` itself. A hole-filled mesh
-            occludes its own observed surface with invented geometry, so pass the pre-fill mesh here.
-        fill_unseen: bool, push-pull fill every texel no view reached instead of leaving it black.
-        view_ratio: float, keep views whose pixel footprint is within this factor of the texel's best view.
-            1.0 is single-best-view (sharpest, seam-prone); large values fall back to averaging everything.
+        tex_size: atlas edge in texels.
+        occlusion_eps: ray-test tolerance in world units (≈ voxel size); stops self-occlusion.
+        occluder: mesh to ray-test against instead of tm.
+        view_ratio: keep views whose pixel size at the texel is within this factor of the texel's best.
+
     Returns:
-        (tex_size, tex_size, 3) uint8 albedo; texels no view saw are 0.
+        (tex_size, tex_size, 3) uint8 albedo.
     """
     wp.init()
 
     # Per-texel world position and normal from the atlas
-    positions, normals = bake_atlas_attributes(tm, tex_size)
+    positions, normals = _rasterize_atlas(tm, tex_size)
     posw = wp.array(positions, dtype=wp.vec3)
     nrmw = wp.array(normals, dtype=wp.vec3)
 
     # BVH over the mesh for the occlusion ray test; a separate occluder wins when given
     if occluder is None:
-        verts = tm.vertex.positions.numpy().astype(np.float32)
-        faces = tm.triangle.indices.numpy().astype(np.int32)
+        verts = tm.vertex.positions.numpy()
+        faces = tm.triangle.indices.numpy()
     else:
-        verts = np.asarray(occluder[0], dtype=np.float32)
-        faces = np.asarray(occluder[1], dtype=np.int32)
-        logger.info("occlusion tested against a separate %d-triangle mesh", len(faces))
-    wmesh = wp.Mesh(points=wp.array(verts, dtype=wp.vec3), indices=wp.array(faces.ravel(), dtype=wp.int32))
+        verts = np.asarray(occluder.vertices)
+        faces = np.asarray(occluder.triangles)
+        logger.debug("occlusion tested against a separate %d-triangle mesh", len(faces))
 
+    wmesh = wp.Mesh(
+        points=wp.array(verts.astype(np.float32), dtype=wp.vec3),
+        indices=wp.array(faces.astype(np.int32).ravel(), dtype=wp.int32),
+    )
+
+    # One Camera struct per view, shared by both passes
     c2w = np.asarray(c2w, dtype=np.float64)
     w2c = invert_poses(c2w)
-    height, width = int(rgbs[0].shape[0]), int(rgbs[0].shape[1])
+    cameras = []
 
-    # Pass one: the finest footprint any view achieves per texel. Nothing is sampled yet, this only
-    # establishes the resolution each texel is entitled to before pass two decides who may vote
-    best_fp = wp.full((tex_size, tex_size), value=1.0e30, dtype=float)
     for i in range(len(rgbs)):
-        fx, fy, cx, cy = extract_intrinsics(K[i])
+        cam = _Camera()
+        cam.w2c = wp.mat44(w2c[i].astype(np.float32))
+        cam.center = wp.vec3(c2w[i, :3, 3].astype(np.float32))
+        cam.fx, cam.fy, cam.cx, cam.cy = extract_intrinsics(K[i])
+        cam.height, cam.width = int(rgbs[i].shape[0]), int(rgbs[i].shape[1])
+        cameras.append(cam)
+
+    # Pass one: finest pixel size any view achieves per texel, used to gate voters in pass two
+    best_px_size = wp.full((tex_size, tex_size), value=1.0e30, dtype=float)
+
+    for cam in cameras:
         wp.launch(
-            _footprint_kernel,
+            _finest_pixel_size_kernel,
             dim=(tex_size, tex_size),
-            inputs=[
-                posw,
-                nrmw,
-                wp.mat44(w2c[i].astype(np.float32)),
-                fx,
-                fy,
-                cx,
-                cy,
-                wp.vec3(c2w[i, :3, 3].astype(np.float32)),
-                wmesh.id,
-                float(occlusion_eps),
-                width,
-                height,
-                best_fp,
-            ],
+            inputs=[posw, nrmw, cam, wmesh.id, float(occlusion_eps), best_px_size],
         )
 
     # Pass two: sample color from the views that resolve each texel within view_ratio of its best
     rgb_acc = wp.zeros((tex_size, tex_size), dtype=wp.vec3)
     w_acc = wp.zeros((tex_size, tex_size), dtype=float)
-    for i in range(len(rgbs)):
-        image = wp.array(np.ascontiguousarray(rgbs[i], dtype=np.float32) / 255.0, dtype=wp.vec3)
-        fx, fy, cx, cy = extract_intrinsics(K[i])
+
+    for rgb, cam in zip(rgbs, cameras):
+        image = wp.array(np.ascontiguousarray(rgb, dtype=np.float32) / 255.0, dtype=wp.vec3)
         wp.launch(
             _project_kernel,
             dim=(tex_size, tex_size),
@@ -578,26 +266,20 @@ def project_images_to_texture(
                 posw,
                 nrmw,
                 image,
-                wp.mat44(w2c[i].astype(np.float32)),
-                fx,
-                fy,
-                cx,
-                cy,
-                wp.vec3(c2w[i, :3, 3].astype(np.float32)),
+                cam,
                 wmesh.id,
                 float(occlusion_eps),
-                best_fp,
+                best_px_size,
                 float(view_ratio),
                 rgb_acc,
                 w_acc,
             ],
         )
 
-    # Normalize, dilate the gutter, quantize
+    # Normalize the weighted sum
     rgb = rgb_acc.numpy()
     w = w_acc.numpy()
     albedo = np.where(w[..., None] > 0, rgb / np.maximum(w[..., None], 1e-12), 0.0)
-    albedo = _dilate_texels(albedo, w > 0, gutter_px)
 
     # Two unrelated blacks: atlas space no chart claimed, and surface no camera ever reached
     seen = w > 0
@@ -608,50 +290,143 @@ def project_images_to_texture(
         100 * float((covered & ~seen).sum()) / max(int(covered.sum()), 1),
         100 * (~seen).mean(),
     )
-    if fill_unseen:
-        albedo = _fill_unseen(albedo, seen)
-    return (np.clip(albedo, 0, 1) * 255).astype(np.uint8)
+
+    # Fill everything no view reached, then quantize
+    albedo = fill_missing_pixels(albedo, seen)
+    return to_uint8_hwc(albedo, channels_first=False)
 
 
-######## Entry point
+########################
+# Projection kernels (Warp)
+########################
 
 
-def texture_mesh(mesh_path, out_dir, rgbs, c2w, K, *, voxel_size, decimate_max_error=0.25, tex_size=8192):
+@wp.struct
+class _Camera:
     """
-    Decimate, repair, unwrap and texture a fused mesh; the input file is never modified.
-
-    Args:
-        mesh_path: Path or str to the fused mesh.ply (from fuse_tsdf + clean_repair_mesh).
-        out_dir: Path or str, directory to create; receives mesh.ply (with UVs) and albedo.png.
-        rgbs: (N, H, W, 3) uint8 views that were fused.
-        c2w: (N, 4, 4) camera-to-world poses.
-        K: (N, 3, 3) intrinsics at image resolution.
-        voxel_size: float, TSDF voxel the mesh was fused at, world units; sets the decimation
-            bound and the occlusion tolerance.
-        decimate_max_error: float, decimation bound as a multiple of voxel_size.
-        tex_size: int, atlas edge in texels.
-    Returns:
-        Path to out_dir/mesh.ply.
+    One source view: world-to-camera pose, center, pinhole intrinsics and image size.
     """
-    t0 = time.perf_counter()
-    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
-    decimated, err = decimate_mesh(mesh, decimate_max_error * voxel_size)
-    manifold = _make_manifold(decimated)
-    t1 = time.perf_counter()
-    tm = unwrap_mesh_uvs(manifold, tex_size)
-    t2 = time.perf_counter()
-    albedo = project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps=voxel_size)
-    t3 = time.perf_counter()
-    out = write_textured_ply(tm.to_legacy(), tm.triangle.texture_uvs.numpy(), albedo, out_dir)
-    logger.info(
-        "texture_mesh: %d -> %d faces (error %.4f) in %.1fs, uvatlas %.1fs, projection %.1fs over %d views -> %s",
-        len(mesh.triangles),
-        len(manifold.triangles),
-        err,
-        t1 - t0,
-        t2 - t1,
-        t3 - t2,
-        len(rgbs),
-        out,
-    )
-    return out
+
+    w2c: wp.mat44
+    center: wp.vec3
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+    width: int
+    height: int
+
+
+@wp.func
+def _pixel_size_at_texel(p: wp.vec3, n: wp.vec3, camera: _Camera, mesh_id: wp.uint64, eps: float):
+    """
+    World size one source pixel covers at this texel, and the pixel (u, v) it projects to.
+
+    - pixel size = dist / (fx * cos): grazing and distant views resolve the surface coarsely
+    - pixel size -1 for back-faces, out-of-frustum texels and anything the mesh occludes
+    """
+    to_cam = camera.center - p
+    dist = wp.length(to_cam)
+    d = to_cam / dist
+    cos = wp.dot(n, d)
+
+    if cos <= 0.0:
+        return wp.vec3(-1.0, 0.0, 0.0)
+
+    # Project into the image; skip texels behind the camera or outside the frame
+    pc = wp.transform_point(camera.w2c, p)
+
+    if pc[2] <= 0.0:
+        return wp.vec3(-1.0, 0.0, 0.0)
+
+    u = camera.fx * pc[0] / pc[2] + camera.cx
+    v = camera.fy * pc[1] / pc[2] + camera.cy
+
+    if u < 0.0 or v < 0.0 or u > float(camera.width - 1) or v > float(camera.height - 1):
+        return wp.vec3(-1.0, 0.0, 0.0)
+
+    # Occlusion: anything the ray from the camera hits before the texel hides it
+    q = wp.mesh_query_ray(mesh_id, camera.center, -d, dist - eps)
+
+    if q.result:
+        return wp.vec3(-1.0, 0.0, 0.0)
+
+    return wp.vec3(dist / (camera.fx * cos), u, v)
+
+
+@wp.func
+def _bilinear(image: wp.array2d(dtype=wp.vec3), u: float, v: float):
+    """
+    Bilinear sample of an image at a pixel position inside the frame.
+    """
+    x0 = int(wp.floor(u))
+    y0 = int(wp.floor(v))
+    x1 = wp.min(x0 + 1, image.shape[1] - 1)
+    y1 = wp.min(y0 + 1, image.shape[0] - 1)
+    ax = u - float(x0)
+    ay = v - float(y0)
+    top = image[y0, x0] * (1.0 - ax) + image[y0, x1] * ax
+    bottom = image[y1, x0] * (1.0 - ax) + image[y1, x1] * ax
+    return top * (1.0 - ay) + bottom * ay
+
+
+@wp.kernel
+def _finest_pixel_size_kernel(
+    positions: wp.array2d(dtype=wp.vec3),
+    normals: wp.array2d(dtype=wp.vec3),
+    camera: _Camera,
+    mesh_id: wp.uint64,
+    eps: float,
+    best_px_size: wp.array2d(dtype=float),
+):
+    """
+    Pass one: record the finest pixel size any view achieves on each texel.
+    """
+    i, j = wp.tid()
+    n = normals[i, j]
+
+    if wp.length(n) < 0.5:
+        return
+
+    px_size = _pixel_size_at_texel(positions[i, j], wp.normalize(n), camera, mesh_id, eps)[0]
+
+    if px_size > 0.0:
+        wp.atomic_min(best_px_size, i, j, px_size)
+
+
+@wp.kernel
+def _project_kernel(
+    positions: wp.array2d(dtype=wp.vec3),
+    normals: wp.array2d(dtype=wp.vec3),
+    image: wp.array2d(dtype=wp.vec3),
+    camera: _Camera,
+    mesh_id: wp.uint64,
+    eps: float,
+    best_px_size: wp.array2d(dtype=float),
+    view_ratio: float,
+    rgb_acc: wp.array2d(dtype=wp.vec3),
+    w_acc: wp.array2d(dtype=float),
+):
+    """
+    Pass two: accumulate color from every view within view_ratio of the texel's best pixel size.
+    """
+    i, j = wp.tid()
+    n = normals[i, j]
+
+    if wp.length(n) < 0.5:
+        return
+
+    hit = _pixel_size_at_texel(positions[i, j], wp.normalize(n), camera, mesh_id, eps)
+    px_size = hit[0]
+
+    if px_size <= 0.0:
+        return
+
+    # Keep only views resolving this texel nearly as finely as the best one
+    if px_size > best_px_size[i, j] * view_ratio:
+        return
+
+    # Bilinear sample, weighted by how finely this view resolves the texel
+    weight = best_px_size[i, j] / px_size
+    rgb_acc[i, j] = rgb_acc[i, j] + _bilinear(image, hit[1], hit[2]) * weight
+    w_acc[i, j] = w_acc[i, j] + weight

@@ -25,11 +25,11 @@ import numpy as np
 import open3d as o3d
 
 from collab_splats.geometry.transforms import invert_poses
-from collab_splats.mesh import clean_repair_mesh, fuse_tsdf
-from collab_splats.mesh.io import render_tsdf_inputs
+from collab_splats.mesh import clean_repair_mesh, create_tsdf_mesh
 from collab_splats.pointcloud.feedforward.base import FeedforwardResult
 from collab_splats.pointcloud.utils import confidence_mask
 from collab_splats.splats import load_checkpoint, render_views
+from collab_splats.splats.checkpoint import render_tsdf_inputs
 from collab_splats.utils.io import to_uint8_hwc, write_json
 
 logging.basicConfig(level=logging.INFO)
@@ -183,7 +183,7 @@ def build_mesh(name: str, inputs: tuple, results_dir: Path) -> dict:
 
     Args:
         name: source label — both the row's "source" field and the PLY's filename suffix.
-        inputs: (depths, rgbs, c2w, K) exactly as fuse_tsdf takes them.
+        inputs: (depths, rgbs, c2w, K) exactly as create_tsdf_mesh takes them.
         results_dir: directory that receives mesh_<name>.ply.
     Returns:
         Stats dict: vertices, triangles, components, largest_component_fraction, source,
@@ -195,7 +195,7 @@ def build_mesh(name: str, inputs: tuple, results_dir: Path) -> dict:
     # Time fusion AND cleaning — clean_repair is not optional in the pipeline, so a
     # fuse-only number would understate what the mesh actually costs
     start = time.perf_counter()
-    mesh_path = fuse_tsdf(depths, rgbs, c2w, intrinsics, work_dir, **MESH_KWARGS)
+    mesh_path = create_tsdf_mesh(depths, rgbs, c2w, intrinsics, work_dir, **MESH_KWARGS)
     clean_repair_mesh(mesh_path)
     seconds = time.perf_counter() - start
 
@@ -292,7 +292,7 @@ def main() -> None:
         keep = confidence_mask(np.asarray(ff.confidence), args.conf_percentile)
         depths = np.where(keep, depths, 0.0)
 
-    # images is (N, 3, H, W) float in [0, 1]; fuse_tsdf takes (N, H, W, 3) uint8
+    # images is (N, 3, H, W) float in [0, 1]; create_tsdf_mesh takes (N, H, W, 3) uint8
     rgbs = to_uint8_hwc(np.asarray(ff.images), channels_first=True)
 
     mesh_rows = [build_mesh("feedforward", (depths, rgbs, invert_poses(ff.extrinsics), ff.intrinsics), args.results)]

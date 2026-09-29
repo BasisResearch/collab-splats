@@ -218,7 +218,8 @@ No behavior change.
 10. `collab_splats/__main__.py`: `local` and `remote` subcommands sharing `--config`,
     `--base-config`, `--stages`, `--overwrite`, `--set key=value`; `local` adds `--name`
     and `--keep-viewer`; `remote` adds `--all` and `--keep-local`. Exit codes kept.
-    Console script `collab-reconstruct`. `wrapper/` and `docs/examples/` deleted.
+    Console script `reconstruct` (`reconstruct local ...`, `reconstruct remote ...`),
+    same as `python -m collab_splats`. `wrapper/` and `docs/examples/` deleted.
 11. Callers: `evals/eval.py` (`collab_splats.reconstructor`, `recon.run()`),
     `configs/README.md` run instructions, `docs/known-test-failures.md` paths.
 12. `tests/test_docstring_contract.py`: `MODULES` gains `reconstructor.py`, `remote.py`,

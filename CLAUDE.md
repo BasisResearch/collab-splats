@@ -74,7 +74,7 @@ collab_splats/
     transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV, project_to_so3,
                            #   decompose_camera, intrinsics_4x4, rescale_intrinsics, shift_intrinsics
     projection.py          # unproject/project, depth_residual, depth_agreement, multiview_depth_confidence
-    bundle_adjustment.py   # Levenberg-Marquardt BA: array-in refine, check_model_resolution
+    bundle_adjustment.py   # Levenberg-Marquardt BA: array-in refine over VGGSfM tracks
     metrics.py             # compute_reconstruction_quality -> reconstruction_quality_report.json
     loop_closure/          # submap pose graph (SL4/SE3), DINO-SALAD retrieval gate, LoopClosure wrapper
   localization/            # camera localization: query image → pose in known reconstruction

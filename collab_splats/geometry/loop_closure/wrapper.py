@@ -132,10 +132,10 @@ class LoopClosure:
         # - None: every viewer hook is a no-op and output is unchanged
         self.viz = None
 
-        # True once _run_lc_loop has assembled base.outputs from the GraphMap dense cloud
+        # Result _run_lc_loop assembles from the GraphMap dense cloud
         # - _reconstruct then returns it as is, so base._postprocess does not overwrite it
         # - cleared at the start of each _run_lc_loop
-        self._lc_assembled: bool = False
+        self.outputs: PointcloudResult | None = None
 
     ####################################################################
     # Delegation to self.base
@@ -154,26 +154,6 @@ class LoopClosure:
             getattr(base, name).
         """
         return getattr(self.base, name)
-
-    @property
-    def outputs(self) -> Any:
-        """
-        The wrapped creator's outputs.
-
-        Returns:
-            base.outputs.
-        """
-        return self.base.outputs
-
-    @outputs.setter
-    def outputs(self, value: Any) -> None:
-        """
-        Set the wrapped creator's outputs.
-
-        Args:
-            value: new base.outputs.
-        """
-        self.base.outputs = value
 
     @property
     def raw_outputs(self) -> Any:
@@ -195,8 +175,8 @@ class LoopClosure:
         self.base.load_model()
         self.base.setup_inference(paths)
         self.run_inference()
-        if self._lc_assembled:
-            return self.base.outputs
+        if self.outputs is not None:
+            return self.outputs
         return self.base._postprocess(self.base.raw_outputs)
 
     ####################################################################
@@ -207,7 +187,7 @@ class LoopClosure:
         """
         Run the LC loop, or fall back to the creator's own forward pass.
 
-        - LC loop: sets base.outputs to the assembled PointcloudResult
+        - LC loop: sets outputs to the assembled PointcloudResult
         - fewer than submap_size frames: the creator's run_inference
         - DINO-SALAD fails to load: sets base.raw_outputs only; outputs is not assembled
         """
@@ -513,7 +493,7 @@ class LoopClosure:
 
     def _run_lc_loop(self) -> None:
         """
-        Slide windows over the frames, close loops, then assemble base.outputs.
+        Slide windows over the frames, close loops, then assemble outputs.
 
         - loop carrier: a 2-frame Submap (is_lc_submap) per accepted loop candidate
         - carrier frames: the query frame and its detected frame, jointly forwarded by
@@ -528,8 +508,8 @@ class LoopClosure:
         self.map = GraphMap()
         self.graph = PoseGraph()
 
-        # see _lc_assembled in __init__
-        self._lc_assembled = False
+        # see outputs in __init__
+        self.outputs = None
 
         # Window geometry: stride = submap_size, matching VGGT-SLAM main.py:109-130 (not K-O)
         cfg = self.config
@@ -604,9 +584,8 @@ class LoopClosure:
         # Hook 3: final PGO done; re-upload so the scene snaps to loop-closed poses
         self._viz_reupload_all()
 
-        # Assemble outputs from the graph-corrected GraphMap cloud; see _lc_assembled in __init__
-        self.base.outputs = self._assemble_result(N)
-        self._lc_assembled = True
+        # Assemble outputs from the graph-corrected GraphMap cloud; see outputs in __init__
+        self.outputs = self._assemble_result(N)
 
     def _assemble_result(self, n_frames: int) -> PointcloudResult:
         """

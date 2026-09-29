@@ -22,7 +22,6 @@ from mergedeep import merge
 from collab_splats.geometry.bundle_adjustment import (
     BundleAdjustment,
     BundleAdjustmentConfig,
-    check_model_resolution,
 )
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
 from collab_splats.geometry.metrics import compute_reconstruction_quality
@@ -1147,9 +1146,7 @@ class Reconstructor:
         ff = PointcloudResult.load_zarr(zarr_path, load_images=True)
 
         # Refine poses with LM BA, then re-derive the point set under the new cameras
-        # - VGGSfM tracks live on the model grid, so K must too; checked before the slow extraction
         # - intrinsics=None: __post_init__ re-derives the full-res K from the refined model-grid K
-        check_model_resolution(ff.model_intrinsics, ff.images, ff.original_coords)
         cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir)
         ba = BundleAdjustment(cfg)
         extrinsics, intrinsics = ba.refine(

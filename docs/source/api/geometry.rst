@@ -20,7 +20,6 @@ Bundle adjustment
 ``BundleAdjustment.refine`` takes arrays (images, confidence, world points,
 extrinsics, the result's ``model_intrinsics``) and returns ``(extrinsics, intrinsics)``, K
 on the model grid.
-Callers run ``check_model_resolution`` on K first.
 
 .. automodule:: collab_splats.geometry.bundle_adjustment
    :members:

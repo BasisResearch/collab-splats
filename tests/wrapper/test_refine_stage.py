@@ -112,23 +112,6 @@ def test_refine_poses_skips_when_marker_exists(tmp_path):
     mock_resolve.assert_called_once()
 
 
-def test_refine_poses_rejects_original_res_k_before_ba(tmp_path):
-    """An original-res K in pointcloud.zarr raises in the stage, before BA runs."""
-    r = _reconstructor(tmp_path)
-    _write_ff_zarr(r.backend_dir)
-
-    # Original-res K: cx at the 64-px source center instead of the 8-px model grid's
-    store = zarr.open(str(r.backend_dir / "pointcloud.zarr"), mode="r+")
-    K = store["model_intrinsics"][:]
-    K[:, 0, 2] = 32.0
-    store["model_intrinsics"][:] = K
-
-    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine") as mock_refine:
-        with pytest.raises(ValueError, match="original resolution"):
-            r.refine_poses()
-    mock_refine.assert_not_called()
-
-
 def test_refine_poses_refines_and_persists(tmp_path):
     """refine_poses: BA refine + reproject, COLMAP rewritten, zarr updated, marker written."""
     r = _reconstructor(tmp_path)

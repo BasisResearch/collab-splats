@@ -285,7 +285,6 @@ def compute_photometric_ncc(
     logger.info("Photometric NCC: %d frames at %dx%d, max_separation=%d", N, iw, ih, max_separation)
 
     # Lift model-grid depth to the image grid
-    # - see bundle_adjustment.check_model_resolution
     if depth.shape[1:] != (ih, iw):
         if original_coords is None:
             raise ValueError(

@@ -1,11 +1,9 @@
 """
 Pointcloud reconstruction: feedforward creator lookup and the shared result type.
 
-- get_creator / make_creator resolve the feedforward backbones by name
+- get_creator resolves the feedforward backbones by name
 - every creator returns a PointcloudResult; see base.py
 """
-
-from typing import Any
 
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.feedforward import (
@@ -31,22 +29,6 @@ def get_creator(name: str) -> type[BaseFeedforwardCreator]:
     return BaseFeedforwardCreator.get(name)
 
 
-def make_creator(name: str, **kwargs: Any) -> BasePointcloudCreator:
-    """
-    Construct a registered feedforward creator.
-
-    - for loop closure, wrap it: `collab_splats.geometry.LoopClosure(creator, config=...)`
-
-    Args:
-        name: registry key; see get_creator.
-        kwargs: forwarded to the creator's constructor.
-
-    Returns:
-        The creator instance.
-    """
-    return get_creator(name)(**kwargs)
-
-
 __all__ = [
     "BasePointcloudCreator",
     "BaseFeedforwardCreator",
@@ -54,5 +36,4 @@ __all__ = [
     "PointcloudResult",
     "VGGTXCreator",
     "get_creator",
-    "make_creator",
 ]

@@ -36,7 +36,6 @@ def _make_ff_result(**overrides):
 def _make_mock_creator(ff_result):
     """Returns a mock that duck-types as BaseFeedforwardCreator."""
     m = MagicMock()
-    m.outputs = ff_result
     m.raw_outputs = {}
     return m
 
@@ -122,36 +121,6 @@ def test_mapanything_no_use_ba_field():
 
     field_names = {f.name for f in dataclasses.fields(MapAnythingCreator)}
     assert "use_ba" not in field_names
-
-
-########################################################
-########## make_creator tests #########################
-########################################################
-
-
-def test_make_creator_no_wrappers():
-    from collab_splats.pointcloud import make_creator
-    from collab_splats.pointcloud.feedforward import VGGTXCreator
-
-    creator = make_creator("vggtx")
-    assert isinstance(creator, VGGTXCreator)
-
-
-def test_make_creator_rejects_the_removed_lc_kwargs():
-    """
-    use_lc / lc_config are gone; a stale caller fails loudly instead of silently regaining them.
-    """
-    from collab_splats.pointcloud import make_creator
-
-    with pytest.raises(TypeError):
-        make_creator("vggtx", use_lc=True)
-
-
-def test_make_creator_unknown_name():
-    from collab_splats.pointcloud import make_creator
-
-    with pytest.raises(ValueError, match="Unknown 'unknown_backend'"):
-        make_creator("unknown_backend")
 
 
 ########################################################
@@ -622,7 +591,7 @@ def test_conf_percentile_reaches_window_and_loop_submaps():
 
 
 def test_lc_output_assembled_from_graphmap():
-    """LC output (base.outputs) is assembled from the GraphMap dense cloud, not the old merge.
+    """LC output (lc.outputs) is assembled from the GraphMap dense cloud, not the old merge.
 
     Uses the strengthened harness (non-identity geometry, dense depth, >=1 driven loop).
     Asserts points/colors == map.get_world_pointcloud, extrinsics == graph.extract_extrinsics,
@@ -694,7 +663,7 @@ def test_lc_output_assembled_from_graphmap():
     # A loop edge must have actually driven the graph, else the harness has no teeth.
     assert len(driven["lc_submaps"]) >= 1
 
-    out = base.outputs
+    out = lc.outputs
     assert isinstance(out, PointcloudResult)
 
     # points/colors are exactly the GraphMap dense cloud (float32/uint8, aligned, non-empty).
@@ -954,7 +923,7 @@ def test_lc_submaps_keep_frames_after_unproject():
         assert s.frames is not None, f"submap {s.submap_id} lost frames (needed for loop verify)"
 
     # Output assembly still runs
-    assert lc.base.outputs.points.shape[0] > 0
+    assert lc.outputs.points.shape[0] > 0
 
 
 def _run_one_window(raw: dict, window):
@@ -1322,7 +1291,7 @@ def test_lc_rejects_non_finite_loop_pose():
         lc.run_inference()
 
     assert driven["lc_submaps"] == []
-    assert np.isfinite(base.outputs.extrinsics).all()
+    assert np.isfinite(lc.outputs.extrinsics).all()
 
 
 def _run_lc_harness_with_timing(loop_edge_timing):
@@ -1390,7 +1359,7 @@ def _run_lc_harness_with_timing(loop_edge_timing):
         mock_retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
         lc.run_inference()
 
-    return base.outputs, len(driven["lc_submaps"]), n_frames
+    return lc.outputs, len(driven["lc_submaps"]), n_frames
 
 
 def test_loop_edge_timing_default_is_deferred():

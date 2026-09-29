@@ -506,7 +506,7 @@ def test_build_pointcloud_frees_the_dense_arrays_after_save(tmp_path):
     rec = Reconstructor(_make_config(tmp_path))
     refs = {}
 
-    # A real result held on self.outputs, as the feedforward _reconstruct leaves it
+    # A real result held on self.outputs, as the LoopClosure wrapper leaves it
     # - weakrefs only: the test itself must not keep a dense array alive
     class _Creator:
         def __init__(self, **kwargs):

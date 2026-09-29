@@ -299,12 +299,11 @@ def test_loop_closure_assembled_result_is_cleaned(tmp_path):
     LC's assembled result skips _postprocess but still gets the outlier removal.
     """
     creator = _EchoCreator(clean=True)
-    creator.outputs = replace(_outlier_result(), pixel_indices=None)
 
     # The state _run_lc_loop leaves: outputs assembled from the GraphMap
     lc = LoopClosure.__new__(LoopClosure)
     lc.base = creator
-    lc._lc_assembled = True
+    lc.outputs = replace(_outlier_result(), pixel_indices=None)
     lc.run_inference = lambda: None
     out = lc.create_pointcloud(_images_dir(tmp_path), tmp_path / "out")
 

@@ -68,7 +68,6 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
     image_paths: list[Path] | None = field(default=None, init=False, repr=False)
     original_coords: np.ndarray | None = field(default=None, init=False, repr=False)
     raw_outputs: Any = field(default=None, init=False, repr=False)
-    outputs: PointcloudResult | None = field(default=None, init=False, repr=False)
 
     def _reconstruct(self, paths: list[Path], out_dir: Path) -> PointcloudResult:
         """

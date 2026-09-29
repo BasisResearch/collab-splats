@@ -3,7 +3,6 @@ Levenberg-Marquardt bundle adjustment over VGGSfM tracks.
 
 - BundleAdjustmentConfig: solver, filter and track-extraction settings
 - BundleAdjustment: refines poses and focal from arrays, K at model resolution
-- check_model_resolution: the K-grid guard callers run before refine
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ from collab_splats.geometry.transforms import (
     umeyama_sim3,
 )
 
-__all__ = ["BundleAdjustment", "BundleAdjustmentConfig", "check_model_resolution"]
+__all__ = ["BundleAdjustment", "BundleAdjustmentConfig"]
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +100,7 @@ class BundleAdjustment:
     """
     Refines camera poses and focal via VGGSfM tracks and LM bundle adjustment.
 
-    - refines arrays whose K is at model resolution; see check_model_resolution
+    - refines arrays whose K is at model resolution
     - the refine stage refuses sfm results
     - does not reproject points; the caller re-derives them under the new poses
     """
@@ -255,7 +254,7 @@ class BundleAdjustment:
         """
         Refine camera poses and focal against VGGSfM tracks.
 
-        - K must be at model resolution; callers run check_model_resolution first
+        - K must be at model resolution
         - points are not touched; the caller re-derives them under the new poses
 
         Args:
@@ -619,34 +618,6 @@ def _get_default_solver(device: str | None = None) -> Any:
 ########################################################################
 # Helpers
 ########################################################################
-
-
-def check_model_resolution(intrinsics: np.ndarray, images: Any, original_coords: np.ndarray) -> None:
-    """
-    Raise unless K is at model (depth) resolution, the `pointcloud.zarr` contract.
-
-    - model-res K has 2·cx ≈ W_model
-    - original-res K has cx ≈ the crop center, so 2·cx ≈ tl_x + cr_x in original pixels
-    - raises when 2·cx is closer to tl_x + cr_x than to W_model
-    - checks frame 0 only
-    - only a `pointcloud.zarr` written before the model-res K contract fails
-
-    Args:
-        intrinsics: (N, 3, 3) stored K.
-        images: (N, 3, H, W) model-resolution images.
-        original_coords: (N, 6) crop boxes `[tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]`.
-
-    Raises:
-        ValueError: K is at original resolution.
-    """
-    W_model = float(images.shape[-1])
-    tl_x, cr_x = float(original_coords[0, 0]), float(original_coords[0, 2])
-    cx2 = 2.0 * float(intrinsics[0, 0, 2])
-    if abs(cx2 - W_model) > abs(cx2 - (tl_x + cr_x)):
-        raise ValueError(
-            "BA: intrinsics are at original resolution, not model resolution — this "
-            "pointcloud.zarr predates the model-res K contract; re-run the pointcloud stage"
-        )
 
 
 def _filter_observations(

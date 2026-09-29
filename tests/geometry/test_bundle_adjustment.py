@@ -22,13 +22,11 @@ import torch
 from collab_splats.geometry.bundle_adjustment import (
     BundleAdjustment,
     BundleAdjustmentConfig,
-    check_model_resolution,
 )
 
 
 def _refine(ba, result):
-    """Old-style call: check K, refine arrays, return the result with refined cameras."""
-    check_model_resolution(result.intrinsics, result.images, result.original_coords)
+    """Old-style call: refine arrays, return the result with refined cameras."""
     ext, K = ba.refine(
         result.images, result.confidence, result.world_points, result.extrinsics, result.intrinsics, result.image_paths
     )
@@ -1016,23 +1014,6 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
         f"expected 3 inner lists for 3 steps; got {len(ba.loss_history)}"
     )
     assert all(isinstance(entry, list) for entry in ba.loss_history)
-
-
-# ---------------------------------------------------------------------------
-# Tests for the model-resolution K guard and its metrics inverse
-# ---------------------------------------------------------------------------
-
-def test_check_model_resolution_accepts_model_res_K():
-    K = np.tile(np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]]), (2, 1, 1))
-    coords = np.tile(np.array([11, 7, 59, 47, 64, 48], np.float32), (2, 1))
-    check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)  # 2*cx == W_model: passes
-
-
-def test_check_model_resolution_rejects_original_res_K():
-    K = np.tile(np.array([[40.0, 0, 35.0], [0, 50.0, 27.0], [0, 0, 1]]), (2, 1, 1))
-    coords = np.tile(np.array([11, 7, 59, 47, 64, 48], np.float32), (2, 1))
-    with pytest.raises(ValueError, match="re-run the pointcloud stage"):
-        check_model_resolution(K, np.zeros((2, 3, 8, 12)), coords)
 
 
 # ---------------------------------------------------------------------------

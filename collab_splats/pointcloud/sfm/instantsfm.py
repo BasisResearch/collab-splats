@@ -20,7 +20,7 @@ import numpy as np
 import pycolmap
 
 from collab_splats.pointcloud.sfm.base import BaseSfmCreator
-from collab_splats.pointcloud.sfm.sift_db import ensure_sift_database
+from collab_splats.pointcloud.sfm.sift_db import ensure_sift_database, fetch_vocab_tree
 
 if TYPE_CHECKING:
     from instantsfm.controllers.config import Config
@@ -39,20 +39,37 @@ class InstantSfMCreator(BaseSfmCreator):
     """
     Global SfM via InstantSfM on a scene directory.
 
-    - SIFT DB at <out_dir>/colmap/instantsfm.db, exhaustive pairing
+    - SIFT DB at <out_dir>/colmap/instantsfm.db, exhaustive pairing by default
     - depth priors read from <out_dir>/depth_vda/
 
     Attributes:
-        use_depths: feed depth_vda/ maps into the solve as depth priors.
         retriangulation: retriangulate and re-run BA after the global solve.
         random_seed: seed for the solve; None leaves it unseeded, so runs differ.
         min_num_view_per_track: drop tracks seen in fewer views; None keeps upstream's 3.
     """
 
-    use_depths: bool = True
+    pairing: str = "exhaustive"
     retriangulation: bool = False
     random_seed: int | None = None
     min_num_view_per_track: int | None = None
+
+    def __post_init__(self) -> None:
+        """
+        Refuse a seed outside np.random.seed's domain or a track floor below two views.
+        """
+        super().__post_init__()
+
+        # Seed must be None or an int in np.random.seed's [0, 2**32)
+        seed = self.random_seed
+
+        if seed is not None and (isinstance(seed, bool) or not (isinstance(seed, int) and 0 <= seed < 2**32)):
+            raise ValueError(f"random_seed must be None or an int in [0, 2**32), got {seed!r}")
+
+        # A track needs two views to triangulate
+        views = self.min_num_view_per_track
+
+        if views is not None and (isinstance(views, bool) or not (isinstance(views, int) and views >= 2)):
+            raise ValueError(f"min_num_view_per_track must be None or an int >= 2, got {views!r}")
 
     def _build_config(self) -> Config:
         """
@@ -86,7 +103,7 @@ class InstantSfMCreator(BaseSfmCreator):
         """
         InstantSfM over the keyframes; returns the model in memory.
 
-        - depth priors from out_dir/depth_vda/ when use_depths
+        - depth priors from out_dir/depth_vda/
         - SIFT DB at out_dir/colmap/instantsfm.db, reused on re-runs
         """
         # Import InstantSfM here since it is an optional install with CUDA extensions
@@ -102,10 +119,10 @@ class InstantSfMCreator(BaseSfmCreator):
         _patch_pypose_robustmodel_target()
         _patch_bae_pcg_column_shape()
 
-        # Find the depth maps folder, and fail if depths are needed but missing
+        # Find the depth maps folder, and fail if it is missing
         path_info = ReadData(str(out_dir))
 
-        if self.use_depths and not path_info.depth_path:
+        if not path_info.depth_path:
             raise RuntimeError(f"no depth_vda/ under {out_dir} — estimate_depth must run first")
 
         colmap_dir = out_dir / "colmap"
@@ -117,7 +134,10 @@ class InstantSfMCreator(BaseSfmCreator):
             images_dir,
             db_path,
             names,
-            pairing="exhaustive",
+            pairing=self.pairing,
+            overlap=self.overlap,
+            num_retrieved=self.num_retrieved,
+            vocab_tree=fetch_vocab_tree if "retrieval" in self.pairing else None,
             num_threads=self.num_threads,
         )
 
@@ -127,18 +147,16 @@ class InstantSfMCreator(BaseSfmCreator):
         if view_graph is None or cameras is None or images is None:
             raise RuntimeError(f"InstantSfM could not read {db_path}")
 
-        # Configure the solver, and load the depth maps as priors when enabled
+        # Configure the solver with the depth maps as priors
         config = self._build_config()
-        config.RUNTIME_OPTIONS["use_depths"] = self.use_depths
+        config.RUNTIME_OPTIONS["use_depths"] = True
+        logger.info("InstantSfM: loading depths from %s", path_info.depth_path)
 
-        if self.use_depths:
-            logger.info("InstantSfM: loading depths from %s", path_info.depth_path)
+        for idx in range(len(images)):
+            camera = cameras[images[idx].cam_id]
+            images.features[idx] = _nudge_edge_keypoints(images.features[idx], camera.width, camera.height)
 
-            for idx in range(len(images)):
-                camera = cameras[images[idx].cam_id]
-                images.features[idx] = _nudge_edge_keypoints(images.features[idx], camera.width, camera.height)
-
-            ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
+        ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
 
         # Run global mapping, turning its unhelpful IndexError into a clear error
         try:

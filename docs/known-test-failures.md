@@ -1,6 +1,9 @@
 # Known Test Failures
 
-## 2026-09-06 — RESOLVED: `tests/wrapper/test_splats_stage.py`: 3 `KeyError: 'splat_max_depth_frac'` failures
+`tests/wrapper/` became `tests/reconstructor/` on 2026-09-29 (wrapper package deleted); paths
+below use the new name except in verbatim captured output.
+
+## 2026-09-06 — RESOLVED: `tests/reconstructor/test_splats_stage.py`: 3 `KeyError: 'splat_max_depth_frac'` failures
 
 Reproduced on `clean/splats` at `6611ef7c`; **pre-existing, not caused by the splats cleanup.** At
 that point the cleanup had not touched `reconstructor.py` at all, and its only edits to the other two
@@ -17,7 +20,8 @@ FAILED tests/wrapper/test_splats_stage.py::test_mesh_stage_forwards_splat_depth_
 
 That output is kept verbatim; the first test is now called
 `test_mesh_source_splats_fuses_from_the_checkpoint`, renamed by the same task that closed this entry
-when `splats.zarr` was retired in favour of `splats/ckpt.pt`.
+when `splats.zarr` was retired in favor of `splats/ckpt.pt`. The second is now
+`test_mesh_sfm_zarr_fuses`; the third no longer exists.
 
 All three raised `KeyError: 'splat_max_depth_frac'` in `Reconstructor.mesh()`, on the `mesh_cfg`
 subscripts that build the `_run_tsdf_mesh` call.
@@ -74,49 +78,11 @@ owner change touching a file three concurrent sessions build against — deliber
 done from the preproc session. Until then, do not hand-edit `uv.lock`: its entries carry
 hashes and a hand-added block will not match what a re-lock produces.
 
-## 2026-09-05 — env drift: `tests/wrapper/test_splats_stage.py` cannot collect, `gsplat.losses` missing (SUPERSEDED 2026-09-06 — venv rebuilt to the pinned `1.5.3 @ d2f5c0f`)
-
-`tests/wrapper/test_splats_stage.py` fails at COLLECTION, so any full `tests/wrapper` run
-either aborts or needs `--continue-on-collection-errors` to report the rest:
-
-```
-E   ImportError: cannot import name 'losses' from 'gsplat'
-      (/opt/venv/reconstruction/lib/python3.11/site-packages/gsplat/__init__.py)
-```
-
-The venv holds released **gsplat 1.4.0 from PyPI**, which has no `gsplat.losses`.
-`pyproject.toml:259` pins the source build instead — `rev = "d2f5c0f"`, upstream main
-@ 2026-07-09, version string 1.5.3, which does have it. A plain `uv sync` or a stray
-`pip install gsplat` replaces the source build with the PyPI wheel; the pin itself is
-committed and correct.
-
-Not a code regression — no repo change causes it, and it predates the pointcloud-cleanup
-work. Workaround for a green run: `--continue-on-collection-errors`, or
-`--ignore=tests/wrapper/test_splats_stage.py`. Real fix: rebuild gsplat from the pinned rev
-in the venv.
-
-`tests/wrapper/test_sfm_stage.py` was `test_vda_context.py` until 2026-09-05, when the VDA
-context stream was deleted and the surviving `_run_sfm` tests were renamed with the file. It
-used to be caught by both env gaps — it imported `_stub_reconstructor` from
-`test_splats_stage.py`, so it failed the same collection, and its `_run_sfm` tests then died
-on `importlib.metadata.version("instantsfm")` (`PackageNotFoundError`; `instantsfm` is not
-installed in this venv at all). Neither applies any more: the shared stub moved to
-`tests/wrapper/_stubs.py` (`9c09585b`), the misfiled splats test moved back to
-`test_splats_stage.py`, dropping the cross-module import, and `_patched_sfm` stubs the version
-lookup alongside every other leg of that same dependency. The module collects and passes
-standalone in this venv — 10 tests, no ignore needed.
-
-One test lost coverage in that move rather than gaining it:
-`test_splats_conf_percentile_log_reports_the_masked_fraction` now lives in
-`test_splats_stage.py`, which is the module that cannot collect. It passed while it was
-misfiled in `test_sfm_stage.py` and does not run at all now — it is not a failure, it is
-simply not executed until gsplat is rebuilt from the pinned rev.
-
 ## 2026-08-23 — pre-existing on `refactor/cu121-uv-migration`: 2 `test_qa` OpenCV-cannot-fit tests + 4 env/working-tree failures
 
-**The `test_run_pipeline_remote` entry is RESOLVED as of 2026-09-29** — `SCENE_ID_RE` is
+**The remote scene-id entry is RESOLVED as of 2026-09-29** — `SCENE_ID_RE` is
 path-safe by design (`sceneA`, `2026_07_20` are valid ids), so the test now rejects only
-path-unsafe ids and is `::test_main_rejects_a_scene_id_that_is_not_path_safe`.
+path-unsafe ids and is `tests/reconstructor/test_cli.py::test_remote_rejects_unsafe_scene_ids`.
 
 **The two `test_qa` entries are RESOLVED as of 2026-09-05** — both pass on this branch
 (measured 52/52 in `tests/preproc/test_qa.py` before the Task 26 collapse), and
@@ -129,9 +95,9 @@ path-unsafe ids and is `::test_main_rejects_a_scene_id_that_is_not_path_safe`.
 branch (`compute_parallax` returns a finite value, 0.0123, where the test expects NaN) — not a
 splats-module regression; owed to the preproc-cleanup owner. Seen in the same run and also
 NOT regressions:
-`tests/examples/test_run_pipeline_remote.py::test_main_rejects_a_scene_id_that_is_not_a_curated_dir_name`
-×2 (the fix lives in a concurrent session's **uncommitted** edit to that test + `remote/rerun.py`
-on the base checkout; committed HEAD fails).
+the remote driver's scene-id rejection test ×2, in a test file since deleted (the fix lived in a
+concurrent session's **uncommitted** edit to that test + the remote re-run module on the base
+checkout; committed HEAD failed).
 
 ## 2026-08-21 — RESOLVED: xfeat GPU parity test failed under TF32 import pollution
 
@@ -156,7 +122,7 @@ correctness issue; parity is asserted at full precision, where the paths are byt
 
 ## 2026-08-21 — RESOLVED 2026-09-07: 3 reconstructor/base.yaml failures, now committed state
 
-**2026-09-05 correction.** The entry below called these a concurrent session's *uncommitted*
+**2026-09-05 correction.** The original (transient) entry called these a concurrent session's *uncommitted*
 `configs/base.yaml` edit and predicted they would resolve when that session committed. The
 session committed the yaml and never updated the tests, so three of the six are now a
 standing red on `refactor/cu121-uv-migration`:
@@ -185,26 +151,8 @@ the exact six-key set the shipped block carries (`enabled`, `source`, `voxel_siz
 `depth_trunc`, `conf_percentile`, `texture`). `test_init_fills_defaults_from_base_yaml` now
 reads `fps == 2.0`, matching the committed yaml. All three pass; this entry is closed.
 
-The other three names in the original entry (`test_build_localization_db_runs_when_missing`
-and the two in `test_reconstructor_loger_kwargs.py`) do pass now.
-
-The original entry follows.
-
-## 2026-08-21 — transient: 6 reconstructor/base.yaml failures from a concurrent session's working tree (SUPERSEDED 2026-09-06)
-
-`tests/wrapper/test_reconstructor.py` (`test_init_fills_defaults_from_base_yaml`,
-`test_mesh_clean_repair_defaults_off`, `test_build_localization_db_runs_when_missing`,
-`test_base_yaml_mesh_has_fidelity_keys`) and `tests/wrapper/test_reconstructor_loger_kwargs.py`
-(both tests) failed in the 2026-08-21 full-suite run because a **concurrent session's
-uncommitted `configs/base.yaml` edit** deleted the `pointcloud.loger` block and changed the
-mesh defaults (`voxel_size`, `sdf_trunc`, `clean_repair: true`, `conf_percentile: 20`,
-`native_resolution: true`, `color_map_iterations: 300`) that these tests assert. Working-tree
-state, not repo state: at HEAD the tests' targets exist. Resolves when that session commits
-(with test updates) or reverts. Do not "fix" the tests or the yaml from another session.
-
-**Superseded 2026-09-06:** the yaml did commit; these are stale asserts, not working-tree
-state, and they were owed to the mesh owner. All three are resolved — see the 2026-09-06
-resolution note in the entry above.
+The other three names in the original (transient, since dropped) entry pass or are gone: the two in
+`test_reconstructor_loger_kwargs.py` pass, and the localization-DB one was deleted with the wrapper.
 
 ## 2026-08-18 — RESOLVED: 3 BA `test_optimize_*` xfails (bae/pypose target bug)
 
@@ -339,9 +287,10 @@ Three structural unblocks (deps-by-default, `tests/nerfstudio_methods` rename, t
   `httpx`. `collab_splats/webapp/` was deleted 2026-07-29 (dead prototype, superseded by
   `collab_splats/dashboard/`); both dev deps and `asyncio_mode = "auto"` went with it.
 - **Two real product bugs found + handled** (the "no regressions" assumption was wrong):
-  - `docs/examples/reconstruct.py` `_REPO_ROOT` was `.parent.parent` after the move from
-    `scripts/`, pointing `--config_dir` at the nonexistent `docs/configs`. **Fixed** to
-    `.parent.parent.parent` (commit `1d331b6`).
+  - the reproduce script's `_REPO_ROOT` was `.parent.parent` after the move from
+    `scripts/`, pointing its configs dir at the nonexistent `docs/configs`. **Fixed** to
+    `.parent.parent.parent` (commit `1d331b6`); the script was deleted 2026-09-29 in favor of
+    `reconstruct local`.
   - BA `test_optimize_*` (CUDA+bae only) hit a real bae/pypose bug: bae's `LM.step` calls pypose
     `RobustModel.forward(input, target)` with only `input` → `missing 'target'`. **Deferred**:
     xfail(strict=False) with a follow-up reason (`a36d1d7`). Tests are correct; production needs a
@@ -423,26 +372,19 @@ the commit `setup.sh` pins, `d2f5c0f` (v1.5.3). The env has **gsplat 1.4.0**, so
 raises and these suites **cannot be collected at all** — they are collection errors, not
 failures, and a `pytest tests/ -q` run will report them as errors before any test body runs:
 
-- `tests/wrapper/test_splats_stage.py`
+- `tests/reconstructor/test_splats_stage.py`
 - `tests/splats/` (the whole directory)
 
-`tests/wrapper/test_vda_context.py` **used to be on this list and no longer is.** It never
-imported gsplat itself — it imported the `_stub_reconstructor` helper from
+`tests/reconstructor/test_sfm_stage.py` (ex `test_vda_context.py`) **used to be on this list and
+no longer is.** It never imported gsplat itself — it imported the `_stub_reconstructor` helper from
 `test_splats_stage.py`, which imports `SplatsConfig` at module level, and inherited the
-dependency through that. Commit `9c09585b` moved the helper to `tests/wrapper/_stubs.py`,
+dependency through that. Commit `9c09585b` moved the helper to `tests/reconstructor/_stubs.py`,
 which imports nothing from `collab_splats.splats`, and the file collects 33 tests again.
 Do not re-add it to any `--ignore` list.
 
-One test in it *does* still fail on gsplat:
-`test_splats_conf_percentile_log_reports_the_masked_fraction` patches
-`collab_splats.splats.trainer.train`, and importing that package raises
-`ImportError: cannot import name 'losses' from 'gsplat'`. It surfaces as
-`AttributeError: module 'collab_splats' has no attribute 'splats'`. One test, not a
-collection error — the other 32 still run.
-
 Plus four real failures from the same cause:
 
-- `tests/wrapper/test_absent_confidence.py::test_splats_depth_targets_skip_masking_when_confidence_absent`
+- `tests/reconstructor/test_absent_confidence.py::test_splats_depth_targets_skip_masking_when_confidence_absent`
 - `tests/test_cu121_migration.py::test_import_all_modules` — asserts on a list of import
   failures; the five it reports are `collab_splats.splats` and its `losses`, `rendering`,
   `trainer`, `outputs` submodules, all the same `ImportError`
@@ -464,39 +406,18 @@ work around it in code. Note that gsplat is the one break here that a pip instal
 building it needs `nvcc`, and `/usr/local/cuda-12.1` in this container is runtime-only (no
 `bin/`). Restoring the pin needs a container with the CUDA build toolkit.
 
-`_run_sfm` integration coverage is **not** blocked by this. `tests/wrapper/test_sfm_stage.py`
-(ex `test_vda_context.py`) is the only suite exercising `Reconstructor._run_sfm` end to end,
-and since `9c09585b` it collects; its `_run_sfm` tests fail on the separate `instantsfm`
-break below.
+## RESOLVED: `instantsfm` not installed (env, not a code bug) — 2026-09-05
 
-## `instantsfm` not installed (env, not a code bug) — 2026-09-05
+The failing `importlib.metadata.version("instantsfm")` provenance lookup was removed 2026-09-27
+(package versions are no longer recorded), and `instantsfm` imports in the venv as of 2026-09-29.
 
-`collab_splats/wrapper/reconstructor.py:1197` calls `importlib.metadata.version("instantsfm")`
-to record backend provenance, which raises:
+## `collab_data` venv copy is stale (env, not a code bug) — 2026-09-05, updated 2026-09-29
 
-```
-importlib.metadata.PackageNotFoundError: No package metadata was found for instantsfm
-```
+Not resolved: the venv's `site-packages/collab_data` predates the tlb-3d-tools commits.
 
-This is what actually blocks end-to-end coverage of the SfM stage. It fails the four
-`_run_sfm` tests in `tests/wrapper/test_sfm_stage.py` (the file was `test_vda_context.py`
-until the VDA context stream was deleted on 2026-09-05). Measured on the
-`preproc/integration` x `391d44fb` merge: that module reports `5 failed`, split **4
-instantsfm + 1 gsplat**, and nothing else — the 14 earlier instantsfm failures went with
-the VDA context tests, which are deleted.
-
-Same root cause as the other env breaks — a plain `uv sync` pruned the venv and `setup.sh`'s
-post-sync blocks were never re-run; `pyproject.toml:107-109` warns about exactly this. Unlike
-gsplat it needs no CUDA toolkit, so re-running the InstantSfM block of `setup.sh` fixes it.
-
-## `collab_data` not installed (env, not a code bug) — 2026-09-05
-
-`collab_splats/remote/sources.py:14` imports `collab_data.data_dashboard.rclone_client`. The
-package is not in the venv, so these fail at collection:
-
-- `tests/remote/test_sources.py`
-- `tests/remote/test_rerun.py`
-
-Because a collection error aborts the whole pytest run, this and the gsplat break above must
-both be `--ignore`d to get any result at all from `pytest tests/`. Neither is caused by repo
-code; do not work around either in source.
+- `collab_splats/remote.py` imports `STATS_ARGS` from `collab_data.data_dashboard.rclone_client`; the venv copy lacks it (`ImportError`)
+- fails at collection: `tests/remote/test_remote.py`, `tests/reconstructor/test_cli.py`
+- fails at runtime too, not just in tests: `reconstruct` (local included) and `collab_splats.dashboard.operation_log` (`parse_percent`) both fail to import
+- workaround: `PYTHONPATH=<wt>:/workspace/collab-data`
+- real fix: push collab-data `tlb-3d-tools`, bump the pyproject pin, reinstall (pending user OK)
+- do not work around it in source

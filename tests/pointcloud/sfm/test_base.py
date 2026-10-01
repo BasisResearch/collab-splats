@@ -101,12 +101,7 @@ def scene(tmp_path, monkeypatch):
     Store of NAMES (pixel value = frame index), constant VDA depth, and the create_pointcloud() dirs.
     """
     images_dir = tmp_path / "images"
-    fr.write_frames(
-        images_dir,
-        [np.full((HEIGHT, WIDTH, 3), i, np.uint8) for i in FRAME_IDX],
-        [{"frame_idx": i, "blur_score": 1.0} for i in FRAME_IDX],
-        {"video_path": "x.mp4", "method": "uniform"},
-    )
+    fr.write_frames(images_dir, [np.full((HEIGHT, WIDTH, 3), i, np.uint8) for i in FRAME_IDX], FRAME_IDX)
     calls = []
 
     # Constant metric depth, no VDA model

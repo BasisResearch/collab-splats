@@ -9,7 +9,7 @@ from typing import Any, Callable
 import panel as pn
 import param
 
-from collab_splats.remote import parse_rclone_percent
+from collab_data.data_dashboard.rclone_client import parse_percent
 
 
 class _OpLogHandler(logging.Handler):
@@ -95,7 +95,7 @@ class OperationLog(param.Parameterized):
         """Return an on_line callback that forwards rclone --stats percent to the status label."""
 
         def _on_line(line: str) -> None:
-            pct = parse_rclone_percent(line)
+            pct = parse_percent(line)
             if pct is not None:
                 self.update_progress(pct, label, log=False)
 

@@ -39,9 +39,8 @@ _FRAME_IDXS = [0, 3, 7, 9]
 def _make_images_dir(tmp_path) -> Path:
     """Write a scene images/ directory whose frame indices are non-contiguous."""
     frames = [np.full((32, 48, 3), idx, dtype=np.uint8) for idx in _FRAME_IDXS]
-    records = [{"frame_idx": idx, "blur_score": 1.0} for idx in _FRAME_IDXS]
     images_dir = tmp_path / "images"
-    fr.write_frames(images_dir, frames, records, {"video_path": "v"})
+    fr.write_frames(images_dir, frames, _FRAME_IDXS)
     return images_dir
 
 
@@ -50,7 +49,7 @@ def test_setup_inference_labels_are_file_stems(tmp_path):
 
     creator.setup_inference(fr.frame_paths(_make_images_dir(tmp_path)))
 
-    # Labels are the filename stems — never the row position, which would misjoin poses to frames.json
+    # Labels are the filename stems — never the row position, which would misjoin poses to frames
     assert [p.name for p in creator.image_paths] == [f"frame_{i:06d}" for i in _FRAME_IDXS]
     assert [f.shape for f in creator.views] == [(32, 48, 3)] * 4
     assert creator.original_coords.shape == (4, 6)

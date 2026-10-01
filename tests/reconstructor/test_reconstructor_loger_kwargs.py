@@ -1,18 +1,14 @@
-"""The per-backend config block reaches the creator via build_pointcloud, not just _run_feedforward."""
+"""The per-backend config block reaches the creator constructor via the pointcloud stage."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 
-from collab_splats.wrapper.reconstructor import Reconstructor
+from collab_splats.reconstructor import Reconstructor
+from tests.reconstructor._stubs import stub_creator_cls
 
 CONFIGS = Path(__file__).resolve().parents[2] / "configs"
-
-
-class _StopAtFeedforward(Exception):
-    """Sentinel raised in place of _run_feedforward to halt build_pointcloud at the call site."""
 
 
 def _loger_block() -> dict:
@@ -25,15 +21,14 @@ def _loger_block() -> dict:
     return (cfg.get("pointcloud") or {}).get("loger") or {}
 
 
-def test_loger_block_reaches_run_feedforward_as_creator_kwargs(tmp_path):
-    """build_pointcloud forwards pointcloud.<backend> verbatim as creator_kwargs."""
+def test_loger_block_reaches_the_creator_as_kwargs(tmp_path):
+    """The pointcloud stage forwards pointcloud.<backend> verbatim into the creator constructor."""
     # Read the expected values from the same file the Reconstructor merges, so the test pins the
     # passthrough rather than a snapshot of the numbers a concurrent tuning pass may change.
     expected = _loger_block()
     assert expected, "configs/base.yaml has no pointcloud.loger block — nothing left to pass through"
 
-    # Reconstructor.__init__ deep-merges over the shipping base.yaml, so only the backend override
-    # is needed; pc_cfg is read with strict key access and a hand-rolled config would KeyError.
+    # Reconstructor.__init__ deep-merges over the shipping base.yaml, so only the backend override is needed
     recon = Reconstructor(
         {
             "input_path": str(tmp_path / "video.mp4"),
@@ -41,21 +36,15 @@ def test_loger_block_reaches_run_feedforward_as_creator_kwargs(tmp_path):
             "pointcloud": {"backend": "loger"},
         }
     )
+    creator_cls = stub_creator_cls(MagicMock())
 
-    # Raise instead of returning: build_pointcloud continues into cleaning and a PLY re-export
-    # (clean.enabled is true in base.yaml), which would then run against a mock. The mock records
-    # the call for us, so no hand-rolled recorder is needed.
-    with patch(
-        "collab_splats.wrapper.reconstructor._run_feedforward", side_effect=_StopAtFeedforward
-    ) as ff:
-        with pytest.raises(_StopAtFeedforward):
-            recon.build_pointcloud()
+    with patch("collab_splats.reconstructor.get_creator", return_value=creator_cls):
+        recon.pointcloud()
 
-    # .get() so a dropped key reads as a named assertion, not a bare KeyError in the test itself.
-    arrived = ff.call_args.kwargs.get("creator_kwargs")
-    assert arrived == expected, (
-        f"creator_kwargs arrived as {arrived!r}; expected the base.yaml pointcloud.loger block {expected!r}"
-    )
+    # .get() so a dropped key reads as a named assertion, not a bare KeyError in the test itself
+    kwargs = creator_cls.call_args.kwargs
+    arrived = {key: kwargs.get(key) for key in expected}
+    assert arrived == expected, f"creator got {kwargs!r}; expected the base.yaml pointcloud.loger block {expected!r}"
 
 
 def test_base_yaml_declares_the_loger_block():

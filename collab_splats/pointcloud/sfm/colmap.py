@@ -15,7 +15,10 @@ from pathlib import Path
 import pycolmap
 
 from collab_splats.pointcloud.sfm.base import BaseSfmCreator
-from collab_splats.pointcloud.sfm.sift_db import ensure_sift_database, fetch_vocab_tree
+from collab_splats.pointcloud.sfm.sift_db import (
+    ensure_sift_database,
+    fetch_vocab_tree,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +35,8 @@ class ColmapCreator(BaseSfmCreator):
 
     - features, matches and mapping all run in pycolmap
     - one shared SIMPLE_RADIAL camera, refined by the mapper
-
-    Attributes:
-        pairing: sequential | retrieval | sequential+retrieval | exhaustive.
-        overlap: sequential neighbors per frame.
-        num_retrieved: vocab-tree neighbors per frame when pairing retrieves.
+    - num_retrieved neighbors come from a vocab tree (9.5 MB, fetched once)
     """
-
-    pairing: str = "sequential+retrieval"
-    overlap: int = 10
-    num_retrieved: int = 20
 
     def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
         """

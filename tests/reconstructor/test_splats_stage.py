@@ -15,19 +15,19 @@ import torch
 import yaml
 import zarr
 
+from collab_splats.reconstructor import LEAF_STAGES, STAGES
 from collab_splats.splats.trainer import SplatsConfig
 from collab_splats.splats.utils import prepare_target
 from collab_splats.utils.image import upsample_depths
-from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES
-from tests.wrapper._stubs import _stub_reconstructor
+from tests.reconstructor._stubs import _stub_reconstructor, minimal_feedforward_result
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
 
 def test_splats_is_a_leaf_stage():
-    assert "splats" in _STAGE_ORDER
-    assert _STAGE_ORDER.index("splats") < _STAGE_ORDER.index("mesh")
-    assert _STAGE_DEPS["splats"] == ["pointcloud"]
+    assert "splats" in STAGES
+    assert list(STAGES).index("splats") < list(STAGES).index("mesh")
+    assert STAGES["splats"] == ("pointcloud",)
     assert "splats" in LEAF_STAGES
 
 
@@ -46,10 +46,11 @@ def test_base_yaml_defaults():
 
 def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
     recon = _stub_reconstructor(tmp_path)
-    # Feedforward rows in store order (0, 1, 2) with per-frame distinguishable depth = frame_idx + 1
-    depth = np.stack([np.full((4, 4), view + 1, np.float32) for view in range(3)])
+
+    # Zarr rows in the result's order (frames 2, 1, 0), per-frame distinguishable depth = frame_idx + 1
+    depth = np.stack([np.full((4, 4), view + 1, np.float32) for view in (2, 1, 0)])
     feedforward = SimpleNamespace(
-        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
+        image_paths=recon.result.image_paths,
         depth=depth,
         confidence=torch.ones(3, 4, 4),
         original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
@@ -59,9 +60,8 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
         patch("collab_splats.splats.trainer.train") as train,
         patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
     ):
-        out = recon.splats()
+        recon.splats()
 
-    assert out == recon.backend_dir / "splats" / "ckpt.pt"
     cfg, images, world_to_cam, intrinsics, points, colors, out_dir = train.call_args.args
     depth_targets = train.call_args.kwargs["depth_targets"]
     assert cfg.max_steps == 1
@@ -70,25 +70,8 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
     assert out_dir == recon.backend_dir / "splats"
     # Model-res depth is lifted onto the 8x8 frames through each row's crop box
     assert depth_targets.shape == (3, 8, 8)
-    # Depth rows reordered to image_paths (reversed): row 0 is frame 2, row 2 is frame 0
+    # Depth rows pair with the frames read for them: row 0 is frame 2, row 2 is frame 0
     assert depth_targets[0, 0, 0] == pytest.approx(3) and depth_targets[2, 0, 0] == pytest.approx(1)
-
-
-def test_splats_stage_rejects_frames_missing_from_feedforward(tmp_path):
-    recon = _stub_reconstructor(tmp_path)
-    feedforward = SimpleNamespace(
-        image_paths=[Path("frame_000000.jpg"), Path("frame_000001.jpg")],
-        depth=np.ones((2, 4, 4), np.float32),
-        confidence=None,
-    )
-    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
-    with (
-        patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
-        pytest.raises(ValueError, match="no depth"),
-    ):
-        recon.splats()
-    train.assert_not_called()
 
 
 def test_splats_stage_requires_pointcloud_zarr_for_depth_loss(tmp_path):
@@ -105,72 +88,31 @@ def test_splats_stage_skips_depth_targets_when_depth_loss_off(tmp_path):
     assert train.call_args.kwargs["depth_targets"] is None
 
 
-def test_splats_stage_skips_when_output_exists(tmp_path):
+def test_splats_stage_refuses_when_output_exists(tmp_path):
     recon = _stub_reconstructor(tmp_path)
-    recon._stage_output_exists = lambda stage: stage == "splats"
-    with patch("collab_splats.splats.trainer.train") as train:
-        recon.splats()
+    recon.done = lambda stage: stage in ("preproc", "pointcloud", "splats")
+    with patch("collab_splats.splats.trainer.train") as train, pytest.raises(ValueError, match="already exists"):
+        recon.run(["splats"])
     train.assert_not_called()
-
-
-def test_splats_stage_skip_path_returns_the_checkpoint_path(tmp_path):
-    """
-    The early return is a second return statement — the trained path's assertion cannot reach it.
-    """
-    recon = _stub_reconstructor(tmp_path)
-    recon._stage_output_exists = lambda stage: stage == "splats"
-    with patch("collab_splats.splats.trainer.train"):
-        out = recon.splats()
-    assert out == recon.backend_dir / "splats" / "ckpt.pt"
 
 
 def test_splats_stage_output_marker_is_the_checkpoint(tmp_path):
     """
-    The stage marker is a third site, read by run_pipeline and by the skip-check above.
+    The stage marker is read by run() for its skip and refuse rules.
     """
     recon = _stub_reconstructor(tmp_path)
-    del recon._stage_output_exists  # _stub_reconstructor stubs it out; this test wants the real one
     splats_dir = recon.backend_dir / "splats"
     splats_dir.mkdir(parents=True)
 
-    assert not recon._stage_output_exists("splats")
+    assert not recon.done("splats")
     (splats_dir / "ckpt.pt").write_bytes(b"")
-    assert recon._stage_output_exists("splats")
-
-
-def test_splats_conf_percentile_log_reports_the_zero_target_fraction(tmp_path, caplog):
-    """
-    An SfM zarr has no confidence channel; the log must say so AND report the share of
-    targets that are already zero, rather than dropping the setting silently.
-    """
-    recon = _stub_reconstructor(tmp_path)
-
-    # Quarter of the target pixels zeroed, exactly what VDA writes where it has no depth
-    depth = np.ones((3, 4, 4), np.float32)
-    depth[:, 0, :] = 0.0
-    feedforward = SimpleNamespace(
-        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
-        depth=depth,
-        confidence=None,
-        original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
-    )
-    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
-
-    with (
-        patch("collab_splats.splats.trainer.train"),
-        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
-        caplog.at_level("INFO"),
-    ):
-        recon.splats()
-
-    assert "conf_percentile=20 not applied (no confidence channel)" in caplog.text
-    assert "25.00% of target pixels are zero" in caplog.text
+    assert recon.done("splats")
 
 
 def test_mesh_source_splats_without_a_checkpoint_raises(tmp_path):
     recon = _stub_reconstructor(tmp_path)
     recon.config["mesh"]["source"] = "splats"
-    with pytest.raises(ValueError, match="mesh.source: splats"):
+    with pytest.raises(FileNotFoundError, match="mesh.source: splats"):
         recon.mesh()
 
 
@@ -197,16 +139,16 @@ def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path):
     with (
         patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered) as render,
         patch(
-            "collab_splats.wrapper.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply"
+            "collab_splats.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply"
         ) as fuse,
-        patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
+        patch("collab_splats.reconstructor.clean_repair_mesh") as clean,
     ):
-        out = recon.mesh()
+        recon.mesh()
 
     assert render.call_args.args == (splats_dir / "ckpt.pt", recon.images_dir)
     fused = fuse.call_args.args[0]
     assert [float(fused[view].min()) for view in range(3)] == [1.0, 2.0, 3.0]
-    assert out == recon.backend_dir / "mesh.ply"
+    assert clean.call_args.args == (recon.backend_dir / "mesh.ply",)
 
 
 def test_mesh_source_unknown_raises(tmp_path):
@@ -220,9 +162,11 @@ def test_splats_sfm_uses_zarr_depth(tmp_path):
     # sfm scene reads depth targets from the zarr like feedforward
     recon = _stub_reconstructor(tmp_path)
     recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
-    depth = np.stack([np.full((4, 4), view + 1, np.float32) for view in range(3)])
+
+    # Zarr rows in the result's order (frames 2, 1, 0), depth = frame_idx + 1
+    depth = np.stack([np.full((4, 4), view + 1, np.float32) for view in (2, 1, 0)])
     feedforward = SimpleNamespace(
-        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
+        image_paths=recon.result.image_paths,
         depth=depth,
         confidence=None,  # sfm scenes carry no confidence — unmasked targets
         original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
@@ -237,7 +181,7 @@ def test_splats_sfm_uses_zarr_depth(tmp_path):
 
     depth_targets = train.call_args.kwargs["depth_targets"]
     assert depth_targets.shape == (3, 8, 8)
-    # Rows reordered to image_paths (reversed): row 0 is frame 2, row 2 is frame 0
+    # Row 0 is frame 2, row 2 is frame 0
     assert depth_targets[0, 0, 0] == pytest.approx(3) and depth_targets[2, 0, 0] == pytest.approx(1)
 
 
@@ -245,13 +189,20 @@ def test_mesh_sfm_zarr_fuses(tmp_path):
     # sfm zarr reaches TSDF fusion
     recon = _stub_reconstructor(tmp_path)
     recon.config["pointcloud"] = {"method": "sfm", "backend": "instantsfm"}
-    group = zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
-    group.attrs["depth_scale"] = "colmap"
-    with patch("collab_splats.wrapper.reconstructor._run_tsdf_mesh") as fuse:
-        fuse.return_value = recon.backend_dir / "mesh" / "mesh.ply"
-        out = recon.mesh()
-    fuse.assert_called_once()
-    assert out == recon.backend_dir / "mesh" / "mesh.ply"
+    sfm = minimal_feedforward_result(n=3)
+    sfm.image_paths = [Path(f"frame_{view:06d}.jpg") for view in range(3)]
+
+    with (
+        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=sfm),
+        patch("collab_splats.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply") as fuse,
+        patch("collab_splats.reconstructor.clean_repair_mesh"),
+    ):
+        recon.mesh()
+
+    # Unmasked unit depth: sfm carries no confidence, so conf_percentile cannot drop anything
+    depths = fuse.call_args.args[0]
+    assert depths.shape == (3, 8, 8)
+    assert np.all(depths == 1.0)
 
 
 def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
@@ -268,11 +219,14 @@ def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
     ramp = np.tile(np.arange(1, 9, dtype=np.float32), (4, 1))
     depth = np.stack([ramp * (view + 1) for view in range(3)])
     boxes = np.array([[2 + view, 1, 18 + view, 9, 20, 10] for view in range(3)], np.float32)
+
+    # The zarr holds those rows in the result's order: image_paths is reversed store order
+    order = [2, 1, 0]
     feedforward = SimpleNamespace(
-        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(3)],
-        depth=depth,
+        image_paths=recon.result.image_paths,
+        depth=depth[order],
         confidence=None,
-        original_coords=boxes,
+        original_coords=boxes[order],
     )
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
@@ -289,7 +243,6 @@ def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
     )
 
     # Outside each crop box there is no target; a full-frame stretch fills it
-    order = [2, 1, 0]  # image_paths is reversed store order
     for row, store_row in enumerate(order):
         tl_x, tl_y, cr_x, cr_y = boxes[store_row, :4].astype(int)
         inside = np.zeros((10, 20), bool)

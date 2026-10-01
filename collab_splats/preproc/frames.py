@@ -1,13 +1,12 @@
 """
-Keyframe store: a COLMAP-style images/ directory plus frames.json beside it.
+Keyframe store: a COLMAP-style images/ directory of PNGs.
 
-- images/frame_NNNNNN.png, lossless PNG, RGB at both boundaries
-- frames.json holds selection records and provenance COLMAP has no slot for
+- images/frame_NNNNNN.png, named by source frame index, lossless, RGB at both boundaries
+- selection config lives in <backend>/run_config.yaml, per-frame quality in video_quality_report.json
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Sequence
 from pathlib import Path
@@ -15,7 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from collab_splats.utils.io import read_image, write_json
+from collab_splats.utils.io import read_image
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +22,8 @@ logger = logging.getLogger(__name__)
 # Constants
 ########################
 
-SCHEMA_VERSION = 2
-
-# The repo's single image-extension listing — reconstructor and feedforward both defer here
+# Image extensions every frame directory reader accepts
 IMAGE_EXTS = (".png", ".jpg", ".jpeg")
-
-_MANIFEST_NAME = "frames.json"
-
-
-########################
-# Helpers
-########################
-
-
-def _manifest_path(dir: Path | str) -> Path:
-    """
-    frames.json, which sits beside the images directory rather than inside it.
-    """
-    return Path(dir).parent / _MANIFEST_NAME
 
 
 ########################
@@ -48,25 +31,14 @@ def _manifest_path(dir: Path | str) -> Path:
 ########################
 
 
-def frame_name(idx: int) -> str:
-    """
-    Stem of a keyframe file in the images/ store.
-
-    Args:
-        idx: source-video frame index.
-
-    Returns:
-        frame_ plus the index zero-padded to six digits.
-    """
-    return f"frame_{int(idx):06d}"
-
-
 def frame_idx_from_path(path: Path | str) -> int:
     """
-    Source frame index encoded in a frame_{idx:06d}.<ext> filename.
+    Source frame index encoded in a frame filename.
+
+    - reads the numeric tail after the last underscore: frame_000042 -> 42, IMG_1234 -> 1234
 
     Args:
-        path: path whose stem ends in the zero-padded source index.
+        path: path whose stem ends in the source index.
 
     Returns:
         The source video frame index.
@@ -74,78 +46,84 @@ def frame_idx_from_path(path: Path | str) -> int:
     return int(Path(path).stem.split("_")[-1])
 
 
-def frame_paths(dir: Path | str) -> list[Path]:
+def frame_paths(dir: Path | str, idxs: Sequence[int] | None = None) -> list[Path]:
     """
-    Image paths in a frame directory, in filename order.
+    Image paths in a frame directory, by source frame index or in filename order.
+
+    - idxs select by source frame_idx, never by row position
 
     Args:
         dir: directory holding frame_NNNNNN.<ext> images.
+        idxs: source frame indices, in the order wanted; None takes every image.
 
     Returns:
-        Sorted image paths; empty when the directory is missing or holds none.
+        Image paths; empty when the directory is missing or holds none.
+
+    Raises:
+        KeyError: when idxs names a frame_idx the directory does not hold.
     """
     dir = Path(dir)
-    if not dir.is_dir():
-        return []
-    return sorted(p for p in dir.iterdir() if p.suffix.lower() in IMAGE_EXTS)
+    paths = sorted(p for p in dir.iterdir() if p.suffix.lower() in IMAGE_EXTS) if dir.is_dir() else []
+
+    if idxs is None:
+        return paths
+
+    # Map source index to path, refusing any index the directory lacks
+    by_idx = {frame_idx_from_path(p): p for p in paths}
+    missing = [int(i) for i in idxs if int(i) not in by_idx]
+
+    if missing:
+        raise KeyError(f"frame_paths: frame_idx {missing[:5]} not in {dir}")
+
+    return [by_idx[int(i)] for i in idxs]
 
 
 def write_frames(
     dir: Path | str,
     frames: Sequence[np.ndarray] | np.ndarray,
-    records: Sequence[dict],
-    provenance: dict,
+    idxs: Sequence[int],
     *,
     png_compression: int = 1,
 ) -> list[Path]:
     """
-    Write frames as PNGs and the manifest beside them.
+    Write frames as PNGs named by their source frame index.
 
     Args:
         dir: images directory to create; stale frame images in it are removed first.
-        frames: RGB uint8 (H, W, 3) frames, one per record.
-        records: selection records, each carrying an int 'frame_idx' (source index).
-        provenance: descriptive dict stamped into frames.json.
+        frames: RGB uint8 (H, W, 3) frames, one per index.
+        idxs: source video frame index of each frame.
         png_compression: cv2 PNG level 0-9; higher is smaller and slower.
 
     Returns:
-        Written image paths, in record order.
+        Written image paths, in idxs order.
 
     Raises:
-        ValueError: frames and records differ in length, or a record lacks 'frame_idx'.
+        ValueError: frames and idxs differ in length, or idxs is empty.
     """
     dir = Path(dir)
-    if len(frames) != len(records):
-        raise ValueError(f"write_frames: {len(frames)} frames against {len(records)} records")
-    if not records or "frame_idx" not in records[0]:
-        raise ValueError("write_frames: every record must contain 'frame_idx' (source video index)")
+
+    if len(frames) != len(idxs):
+        raise ValueError(f"write_frames: {len(frames)} frames against {len(idxs)} indices")
+
+    if not len(idxs):
+        raise ValueError("write_frames: no frames selected")
 
     dir.mkdir(parents=True, exist_ok=True)
 
-    # A re-run selecting fewer frames must not leave the previous run's extras behind,
-    # where frame_paths would serve them as if they were this run's selection
+    # Remove a previous run's frames so frame_paths never serves them as this run's
     for stale in frame_paths(dir):
         stale.unlink()
 
     # Store is RGB at the boundary; cv2 writes BGR
     paths: list[Path] = []
-    for frame, record in zip(frames, records):
-        path = dir / f"{frame_name(record['frame_idx'])}.png"
+    for frame, idx in zip(frames, idxs):
+        path = dir / f"frame_{int(idx):06d}.png"
         cv2.imwrite(
             str(path),
             cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
             [cv2.IMWRITE_PNG_COMPRESSION, png_compression],
         )
         paths.append(path)
-
-    # Row-oriented: a reader wants one frame's record, not one column
-    # - write_json turns numpy scalars into python values and nan into null
-    manifest = {
-        "schema_version": SCHEMA_VERSION,
-        "provenance": dict(provenance),
-        "frames": list(records),
-    }
-    write_json(_manifest_path(dir), manifest)
 
     logger.info("frames: wrote %d PNGs to %s", len(paths), dir)
     return paths
@@ -162,40 +140,14 @@ def read_frames(dir: Path | str, idxs: Sequence[int] | None = None) -> np.ndarra
 
     Returns:
         (N, H, W, 3) uint8 RGB.
+
+    Raises:
+        FileNotFoundError: when no frame resolves: idxs is None over an empty directory, or idxs is empty.
+        KeyError: when idxs names a frame_idx the directory does not hold.
     """
-    paths = frame_paths(dir)
+    paths = frame_paths(dir, idxs)
+
     if not paths:
         raise FileNotFoundError(f"read_frames: no frame images in {dir}")
 
-    # idxs select by source frame_idx, never by row position — a caller holding a
-    # frame_idx from a record must not have to know where it landed in the directory
-    if idxs is not None:
-        by_idx = {frame_idx_from_path(p): p for p in paths}
-        missing = [int(i) for i in idxs if int(i) not in by_idx]
-        if missing:
-            raise KeyError(f"read_frames: frame_idx {missing[:5]} not in {dir}")
-        paths = [by_idx[int(i)] for i in idxs]
-
     return np.stack([read_image(p) for p in paths])
-
-
-def read_manifest(dir: Path | str) -> dict:
-    """
-    Selection records and provenance written beside an images directory.
-
-    Args:
-        dir: images directory; frames.json sits in its parent.
-
-    Returns:
-        {'schema_version', 'provenance', 'frames'}.
-
-    Raises:
-        FileNotFoundError: frames.json is missing.
-    """
-    path = _manifest_path(dir)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"read_manifest: {path} not found; re-run the preproc stage to write images/ + frames.json "
-            "(a scene holding frames.zarr must be re-extracted)"
-        )
-    return json.loads(path.read_text())

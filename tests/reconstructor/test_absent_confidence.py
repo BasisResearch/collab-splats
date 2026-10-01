@@ -3,7 +3,7 @@ Absent-confidence seams.
 
 A pointcloud.zarr may carry no confidence array (absent, never zeros — e.g. one
 written by an SfM backend). Three seams must tolerate that: mesh fusion
-(_run_tsdf_mesh), feature lifting (lift_features), and the splats
+(Reconstructor.mesh via frame_depths), feature lifting (lift_features), and the splats
 depth-targets block in Reconstructor.splats() (sfm scenes use the same zarr path).
 """
 
@@ -16,9 +16,9 @@ import torch
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
+from collab_splats.reconstructor import Reconstructor
 from collab_splats.semantics.lifting import lift_features
-from collab_splats.wrapper.reconstructor import Reconstructor, _run_tsdf_mesh
-from tests.wrapper._stubs import minimal_feedforward_result
+from tests.reconstructor._stubs import minimal_feedforward_result
 
 
 def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
@@ -27,6 +27,8 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
     """
     result = minimal_feedforward_result()
     fused = {}
+    mesh_cfg = {"enabled": True, "voxel_size": 0.01, "depth_trunc": 2.0, "conf_percentile": 20}
+    rec = Reconstructor({"input_path": str(tmp_path / "v.mp4"), "output_path": str(tmp_path), "mesh": mesh_cfg})
 
     def spy_fuse(depths, rgbs, c2w, K, out_dir, **kwargs):
         fused["depths"] = depths
@@ -35,26 +37,15 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
         patch(
-            "collab_splats.wrapper.reconstructor.frames.read_frames",
+            "collab_splats.reconstructor.frames.read_frames",
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
-        patch("collab_splats.wrapper.reconstructor.upsample_depths", side_effect=lambda d, r, b: d),
-        patch("collab_splats.wrapper.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
-        patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
+        patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
+        patch("collab_splats.reconstructor.clean_repair_mesh"),
         caplog.at_level("INFO"),
     ):
-        _run_tsdf_mesh(
-            result=SimpleNamespace(
-                extrinsics=np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
-                intrinsics=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], np.float32), (2, 1, 1)),
-            ),
-            pointcloud_zarr=tmp_path / "pointcloud.zarr",
-            output_dir=tmp_path,
-            images_dir=tmp_path / "images",
-            voxel_size=0.01,
-            depth_trunc=2.0,
-            conf_percentile=20,
-        )
+        rec.mesh()
 
     np.testing.assert_array_equal(fused["depths"], result.depth)  # unmasked
     assert any("no confidence" in r.message for r in caplog.records)
@@ -89,7 +80,7 @@ def test_lift_features_uniform_weights_when_confidence_absent():
 def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
     """Minimal Reconstructor stub for exercising the splats() depth-targets block.
 
-    Same lightweight pattern as tests/wrapper/test_splats_stage.py's
+    Same lightweight pattern as tests/reconstructor/_stubs.py's
     _stub_reconstructor: patch train() + PointcloudResult.load_zarr, no real
     training or zarr reconstruction needed.
     """
@@ -98,16 +89,14 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
         "output_path": str(tmp_path),
         "pointcloud": {"method": "feedforward", "backend": "vggtx"},
         "mesh": {"conf_percentile": 20},
+        "semantics": {"extractor": "dinov2"},
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
     }
-    recon._stage_output_exists = lambda stage: False
-
     # The scene's images/ directory sits directly under output_path, which is tmp_path here
     frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
-    records = [{"frame_idx": view} for view in range(n_views)]
-    fr.write_frames(tmp_path / "images", frames, records, {"video_path": "v"})
+    fr.write_frames(tmp_path / "images", frames, list(range(n_views)))
     image_paths = [Path(f"frame_{view:06d}.jpg") for view in range(n_views)]
-    recon._resolve_result = lambda: SimpleNamespace(
+    recon._result = SimpleNamespace(
         image_paths=image_paths,
         extrinsics=np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1)),
         intrinsics=np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1)),

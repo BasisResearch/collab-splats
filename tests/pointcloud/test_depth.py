@@ -575,7 +575,7 @@ def test_partial_depth_cache_is_wiped_and_regenerated(tmp_path, monkeypatch):
     np.save(npy_dir / "frame_000007.npy", np.ones((4, 4), dtype=np.float32))
     (tmp_path / "depth_vda" / "leftover.txt").write_text("stale")
 
-    # A sibling under out_dir (the mapper's SIFT DB in _run_sfm) is outside the wipe
+    # A sibling under out_dir (the mapper's SIFT DB in the sfm stage) is outside the wipe
     sibling = tmp_path / "colmap" / "keep.db"
     sibling.parent.mkdir()
     sibling.write_text("db")

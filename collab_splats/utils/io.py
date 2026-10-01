@@ -33,6 +33,7 @@ def to_json_safe(obj: Any) -> Any:
 
     - dicts, lists and tuples are walked; tuples become lists, as json.dumps writes them
     - numpy arrays become lists, numpy scalars python scalars
+    - enums (enum.Enum and pybind11 enums alike) become their name
     - non-finite floats (nan, inf) become None: json.dumps would write a bare NaN/Infinity
     - any other value passes through untouched
 
@@ -46,6 +47,8 @@ def to_json_safe(obj: Any) -> Any:
         return {k: to_json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [to_json_safe(v) for v in obj]
+    if hasattr(type(obj), "__members__") and hasattr(obj, "name"):
+        return obj.name
     if isinstance(obj, np.ndarray):
         return to_json_safe(obj.tolist())
     if isinstance(obj, np.generic):

@@ -1,4 +1,3 @@
-import inspect
 from pathlib import Path
 
 import cv2
@@ -6,8 +5,7 @@ import numpy as np
 import pytest
 
 from collab_splats.preproc import frames as fr
-from collab_splats.wrapper import reconstructor
-from collab_splats.wrapper.reconstructor import Reconstructor
+from collab_splats.reconstructor import Reconstructor
 
 
 @pytest.fixture(scope="module")
@@ -28,7 +26,7 @@ def tiny_video(tmp_path_factory):
 
 
 def _make_config(tmp_path, video_path):
-    """Minimal valid Reconstructor config for a video input (matches tests/wrapper/test_reconstructor.py)."""
+    """Minimal valid Reconstructor config for a video input (matches tests/reconstructor/test_reconstructor.py)."""
     return {
         "input_path": str(video_path),
         "output_path": str(tmp_path / "out"),
@@ -55,10 +53,11 @@ def _make_config(tmp_path, video_path):
 def test_preprocess_writes_images_dir(tmp_path, tiny_video):
     cfg = _make_config(tmp_path, tiny_video)
     rec = Reconstructor(cfg)
-    rec.preprocess()
+    rec.preproc()
 
     images_dir = Path(cfg["output_path"]) / "images"
     assert 0 < len(fr.frame_paths(images_dir)) <= 5
+
     # images/ is the sole persistent frame store — no frames.zarr is written
     assert not (Path(cfg["output_path"]) / "frames.zarr").exists()
 
@@ -70,7 +69,7 @@ def test_preprocess_images_dir_path_property(tmp_path, tiny_video):
 
 
 def test_preprocess_writes_images_dir_for_image_dir(tmp_path):
-    """Dir-input branch also produces an images/ store, with nan blur_score records."""
+    """Dir-input branch also produces an images/ store, indexed by position."""
     img_dir = tmp_path / "images_in"
     img_dir.mkdir()
     for i in range(3):
@@ -78,10 +77,9 @@ def test_preprocess_writes_images_dir_for_image_dir(tmp_path):
 
     cfg = _make_config(tmp_path, img_dir)
     rec = Reconstructor(cfg)
-    rec.preprocess()
+    rec.preproc()
 
-    assert len(fr.frame_paths(rec.images_dir)) == 3
-    assert fr.read_manifest(rec.images_dir)["frames"][0]["blur_score"] is None
+    assert [fr.frame_idx_from_path(p) for p in fr.frame_paths(rec.images_dir)] == [0, 1, 2]
 
 
 def test_preprocess_writes_a_quality_report_beside_the_images_dir(tmp_path, tiny_video):
@@ -91,7 +89,7 @@ def test_preprocess_writes_a_quality_report_beside_the_images_dir(tmp_path, tiny
     cfg = _make_config(tmp_path, tiny_video)
     rec = Reconstructor(cfg)
 
-    rec.preprocess()
+    rec.preproc()
 
     out = Path(cfg["output_path"])
     assert (out / "video_quality_report.json").exists()
@@ -110,67 +108,27 @@ def test_preprocess_image_dir_writes_no_quality_report(tmp_path):
     cfg = _make_config(tmp_path, img_dir)
     rec = Reconstructor(cfg)
 
-    rec.preprocess()
+    rec.preproc()
 
     assert not (Path(cfg["output_path"]) / "video_quality_report.json").exists()
 
 
-def test_extract_frames_writes_an_images_dir_and_manifest(tmp_path, monkeypatch):
+def test_preprocess_image_dir_renames_to_frame_store(tmp_path):
     """
-    Image-directory input lands as images/frame_NNNNNN.png + frames.json.
+    Image-directory input of any filenames lands as images/frame_NNNNNN.png.
     """
-    import cv2
-    import numpy as np
-
-    from collab_splats.preproc import frames as fr
-    from collab_splats.wrapper.reconstructor import extract_frames
-
     src = tmp_path / "src"
     src.mkdir()
     for i in range(3):
         cv2.imwrite(str(src / f"img_{i}.png"), np.full((8, 12, 3), i * 40 + 5, np.uint8))
 
-    scene = tmp_path / "scene"
-    scene.mkdir()
+    cfg = _make_config(tmp_path, src)
+    rec = Reconstructor(cfg)
+    rec.preproc()
 
-    n = extract_frames(src, scene / "images", "uniform", None, None, 10)
-
-    assert n == 3
-    assert [p.name for p in fr.frame_paths(scene / "images")] == [
+    assert [p.name for p in fr.frame_paths(rec.images_dir)] == [
         "frame_000000.png",
         "frame_000001.png",
         "frame_000002.png",
     ]
-    assert fr.read_manifest(scene / "images")["provenance"]["method"] == "dir"
-
-
-########################################
-# extract_frames branch helpers
-########################################
-
-
-def test_extract_frames_has_no_method_alias():
-    """
-    Each input branch is its own function and the `method = frame_selection` alias is gone.
-    """
-    src = inspect.getsource(reconstructor.extract_frames)
-
-    assert "method = frame_selection" not in src
-    assert callable(reconstructor._frames_from_dir)
-    assert callable(reconstructor._frames_from_video)
-
-
-def test_frames_from_dir_returns_frames_records_and_provenance(tmp_path):
-    """
-    The directory branch called directly: every image in filename order, plus provenance.
-    """
-    src = tmp_path / "src"
-    src.mkdir()
-    for i in range(3):
-        cv2.imwrite(str(src / f"img_{i}.png"), np.full((8, 12, 3), i * 40 + 5, np.uint8))
-
-    frame_arrays, records, prov = reconstructor._frames_from_dir(src, max_frames=10)
-
-    assert len(frame_arrays) == 3 and frame_arrays[0].shape == (8, 12, 3)
-    assert [r["frame_idx"] for r in records] == [0, 1, 2]
-    assert prov["method"] == "dir" and prov["max_frames"] == 10
+    assert fr.read_frames(rec.images_dir)[1][0, 0].tolist() == [45, 45, 45]

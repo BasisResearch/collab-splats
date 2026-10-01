@@ -8,24 +8,27 @@ differs. There is no per-dataset config file — you point the runner at video p
 
 ## Running videos
 
-Use `docs/examples/run_pipeline.py` — the top-level entry point. Point it at a single
-video, several videos, or directories of videos:
+Use `reconstruct local` (console script; also `python -m collab_splats local`). Point it
+at one or more videos or frame directories:
 
 ```bash
 # Single video
-python docs/examples/run_pipeline.py --output-root /workspace/outputs scene.MP4
+reconstruct local --output-root /workspace/outputs scene.MP4
 
-# Several videos + a directory (dirs are globbed for *.mp4/*.mov/*.avi)
-python docs/examples/run_pipeline.py --output-root /workspace/outputs \
+# Several videos + a frame directory (every image in it, filename order)
+reconstruct local --output-root /workspace/outputs \
   /workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4 \
-  /workspace/fieldwork-data/rats/2024-07-11/SplatsSD/
+  /workspace/fieldwork-data/rats/2024-07-11/frames/
 
 # Turn on extra stages via a shared override YAML
-python docs/examples/run_pipeline.py --output-root /workspace/outputs \
+reconstruct local --output-root /workspace/outputs \
   --config my_overrides.yaml /workspace/fieldwork-data/birds/*.MP4   # your own YAML, merged over base.yaml
 
+# One-off dotted override (repeatable; wins over --config)
+reconstruct local --output-root /workspace/outputs --set mesh.enabled=true scene.MP4
+
 # Specific steps only
-python docs/examples/run_pipeline.py --output-root /workspace/outputs \
+reconstruct local --output-root /workspace/outputs \
   --stages preproc,pointcloud,localize scene.MP4
 ```
 
@@ -36,26 +39,26 @@ python docs/examples/run_pipeline.py --output-root /workspace/outputs \
 3. **talk2dino semantics** — 2D features lifted to 3D, autoencoder-compressed
 4. **localization database** — per-frame local-feature cache for camera localization
 
-`preprocess` + `pointcloud` always run. `semantics`, `mesh`, and `localize` run only
-when enabled in the config (`semantics.enabled` / `mesh.enabled` /
-`localization.enabled`), or when named explicitly via `--stages`.
+`preproc`, `pointcloud` and `reconstruction_quality_report` always run. `refine`,
+`semantics`, `splats`, `mesh` and `localize` run only when enabled in the config
+(`pointcloud.bundle_adjustment` / `semantics.enabled` / `splats.enabled` /
+`mesh.enabled` / `localization.enabled`), or when named explicitly via `--stages`.
 
 ### Where outputs land
 
-Each video is written to `<output-root>/<session-date>/<video-stem>/` when a date-like
-dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>/`:
+Each input is written to `<output-root>/<name>/` — a video's stem, or a frame directory's
+folder name:
 
 ```
-<output-root>/2024_02_06/C0043/
-  run_config.yaml              ← full merged config (exact settings used — for reproducibility)
+<output-root>/C0043/
   images/frame_NNNNNN.png      ← decode-once keyframe store (COLMAP-style dir, lossless PNG)
-  frames.json                  ← selection records + provenance for those frames
   video_quality_report.json    ← per-frame photometry + per-pair motion of the source video
   photometric.png              ← the report rendered: blur / laplacian / exposure / clipped fractions
   motion.png                   ←   per-pair translation / parallax (failed pairs = red | at 0) / matches
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
+    run_config.yaml            ← full merged config of this backend's run (exact settings used)
     pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
                                ←   (+ local_features/<extractor>/reconstruction if localize ran)
     sparse_pc.ply
@@ -70,19 +73,20 @@ dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>
 
 ## The two drivers
 
-There are two entry points. They share `collab_splats/wrapper/batch.py`, so the stages,
-the config merge, and the `run_config.yaml` they leave behind are identical — they differ
-only in where scenes come from and what happens afterwards.
+`reconstruct` (`collab_splats/__main__.py`) has two subcommands. They share one scene
+runner, so the stages, the config merge, and the `run_config.yaml` they leave behind are
+identical — they differ only in where scenes come from and what happens afterwards.
 
-| driver | input | where a scene lands |
+| command | input | where a scene lands |
 |---|---|---|
-| `docs/examples/run_pipeline.py` | local videos and/or directories of videos (dirs are globbed for `*.mp4`/`*.mov`/`*.avi`) | `<output-root>/<session-date>/<video-stem>/` when a date-like dir (`YYYY-MM-DD`) appears in the video's path, else `<output-root>/<video-stem>/` |
-| `docs/examples/run_pipeline_remote.py` | scenes in the `environments-curated` GCS bucket — named scene ids, or `--all` | `<output-root>/<scene>/`, deleted again after a verified push |
+| `reconstruct local` | video files and/or frame directories | `<output-root>/<name>/` — video stem or directory name |
+| `reconstruct remote` | scenes in the `environments-curated` GCS bucket — named scene ids, or `--all` | `<output-root>/<scene>/`, deleted again after a verified push |
 
 Shared flags: `--output-root` (required), `--config` (override YAML merged over
-`base.yaml`), `--config-dir`, `--stages`, `--overwrite`. `run_pipeline.py` adds
-`--keep-viewer` (keep the viser viewer alive for browser inspection).
-`run_pipeline_remote.py` adds `--all` and `--keep-local`.
+`base.yaml`), `--base-config` (defaults YAML; default `configs/base.yaml`), `--stages`,
+`--overwrite`, `--set key.sub=value` (repeatable, value parsed as YAML, wins over
+`--config`). `local` adds `--keep-viewer` (keep the last viser viewer alive for browser
+inspection). `remote` adds `--all` and `--keep-local`.
 
 ### Remote scenes
 
@@ -93,22 +97,19 @@ the driver's log.
 
 ```bash
 # Named scenes
-python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs \
+reconstruct remote --output-root /workspace/outputs \
   2026_07_20-birds-C0043 2026_07_21-rats-C0100
 
 # Everything in the bucket
-python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs --all
+reconstruct remote --output-root /workspace/outputs --all
 
 # Keep the local copy for inspection (skips the delete, not the push)
-python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs --all --keep-local
+reconstruct remote --output-root /workspace/outputs --all --keep-local
 ```
 
-Scenes that already exist in `environments-processed` are skipped (a `SKIPPED` row in the
-summary) unless `--overwrite` is passed, so an `--all` run only processes what is new and a
-batch with nothing to rebuild exits 0. The check is directory presence, so a partially-pushed
-scene counts as processed — `--overwrite` (with the scene named) is the way to redo it.
-Leaf-stage re-runs are exempt: their work list comes from the processed bucket by definition,
-and the per-stage refusal below governs overwrite there.
+`--all` re-runs every curated scene and overwrites its outputs in `environments-processed`; nothing is skipped.
+
+A standalone `--stages refine` leaves mesh, semantics and the report stale, so re-run them; on remote the old `local_features/` stays in the bucket, because the push is `rclone copy`.
 
 Per scene: pull the video, reconstruct, push to `environments-processed/<scene>/`, verify
 the push with `rclone check --one-way`, then delete the local copy. The curated video
@@ -148,11 +149,11 @@ out of `environments-processed` instead of rebuilding it from its curated video:
 
 ```bash
 # Re-mesh every processed scene with a new voxel size
-python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs \
+reconstruct remote --output-root /workspace/outputs \
   --stages mesh --overwrite --config remesh.yaml --all
 
 # Add semantics to one scene reconstructed without it (no --overwrite: nothing to replace)
-python docs/examples/run_pipeline_remote.py --output-root /workspace/outputs \
+reconstruct remote --output-root /workspace/outputs \
   --stages semantics 2026_07_20-birds-C0043
 ```
 
@@ -168,14 +169,13 @@ With `--all`, the bucket listed follows the same rule: a leaf re-run enumerates
 The whole scene is pulled, with no excludes. `PULL_EXCLUDES` is the *viewer's* default and
 drops `depth`/`world_points`/`images` — exactly what meshing reads.
 
-Five things are errors rather than surprises, and each fails only its own scene:
+Four things are errors rather than surprises, and each fails only its own scene:
 
 | situation | outcome |
 |---|---|
 | scene has no processed outputs | `FileNotFoundError` — run the full pipeline first |
-| pulled scene has no `run_config.yaml` | `FileNotFoundError` — the backend is unknowable |
-| pulled `run_config.yaml` has no `pointcloud.backend` | `ValueError` — the backend is unknowable |
-| `--config` backend ≠ pulled backend | `ValueError` naming both — never a silent retarget |
+| no `--set pointcloud.backend` and not exactly one `<backend>/run_config.yaml` | `ValueError` listing the recorded backends — pick one |
+| named backend has no `<backend>/run_config.yaml` | `FileNotFoundError` — that backend was never run here |
 | named leaf stage's output already exists | `ValueError` — pass `--overwrite` to replace it |
 
 That last one applies only to *leaf* stages named on `--stages`. When `--stages` is omitted the
@@ -184,7 +184,7 @@ re-run resume rather than fail. Naming a leaf stage means asking for it; inherit
 config does not. Named *non-leaf* stages also still skip when already done — that is how
 `--stages preproc,pointcloud,localize` resumes after a `localize` failure.
 
-Config for a re-run is the pulled `run_config.yaml` minus the sections of the stages being
+Config for a re-run is the pulled `<backend>/run_config.yaml` minus the sections of the stages being
 re-run, with `base.yaml` and `--config` supplying fresh parameters for exactly those. Provenance
 for every stage that is *not* re-running is preserved verbatim.
 
@@ -246,18 +246,21 @@ refine run (BA config + LM loss history) is in `<backend>/colmap/refine.json`.
 
 ## Reproducing an exact run
 
-Every output dir gets a `run_config.yaml` recording the exact settings used. Re-run it
-with `docs/examples/reconstruct.py` (the `input_path` / `output_path` are baked in):
+Every backend dir gets a `run_config.yaml` recording the exact settings used, so one scene
+compared across backends keeps one record per backend. Re-run it
+by passing it as `--config`; the CLI re-sets `input_path` / `output_path` from the input
+and `--output-root`:
 
 ```bash
-python docs/examples/reconstruct.py \
-  --config /workspace/outputs/2024_02_06/C0043/run_config.yaml
+reconstruct local /workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4 \
+  --output-root /workspace/outputs \
+  --config /workspace/outputs/C0043/vggt_omega/run_config.yaml
 
-# Tweak a saved run and send it to a separate dir
-python docs/examples/reconstruct.py \
-  --config /workspace/outputs/2024_02_06/C0043/run_config.yaml \
-  output_path=/workspace/outputs/2024_02_06/C0043_vggtx \
-  pointcloud.backend=vggtx
+# Tweak a saved run and send it to a separate root
+reconstruct local /workspace/fieldwork-data/birds/2024-02-06/SplatsSD/C0043.MP4 \
+  --output-root /workspace/outputs_vggtx \
+  --config /workspace/outputs/C0043/vggt_omega/run_config.yaml \
+  --set pointcloud.backend=vggtx
 ```
 
 ---
@@ -271,7 +274,7 @@ This project separates **code + configs** (versioned in git) from **data + outpu
 /workspace/
   collab-splats/               ← this repo (configs live here)
     configs/base.yaml
-    docs/examples/run_pipeline.py
+    collab_splats/__main__.py  ← the `reconstruct` command
   fieldwork-data/              ← input videos (never in repo, ~GB each)
   outputs/                     ← reconstruction outputs (never in repo, ~10-50 GB per scene)
 ```
@@ -299,7 +302,7 @@ Preproc runs in two steps: **measure**, then **select**.
    a marginal histogram and the kept frames marked by faint green lines. `motion.png`
    is skipped when the report has no pairs. They are written whenever
    frames are extracted and never otherwise — scenes processed before 2026-08-23
-   have no PNGs until `preprocess(overwrite=True)` re-extracts.
+   have no PNGs until `--stages preproc --overwrite` re-extracts.
 2. **Select.** The sampler reads that report through `filter_frame_quality`,
    which cuts on a robust MAD z-score over `log(laplacian)` (`sharpness_k`, default
    2.0 — relative to the video's own sharpness spread, not an absolute value) plus an
@@ -354,7 +357,7 @@ parameter and raises.
 | `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
 | `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
-| `preproc.undistort` | bool | `false` | After `images/` is written, self-calibrate one shared OPENCV camera from those frames (pycolmap, ≤60 of them) and rewrite `images/` undistorted. COLMAP framing: focal kept, canvas resized to the undistorted corners, so frame dims change. `images/` reuse is by existence — toggling on an existing scene needs `preprocess(overwrite=True)`. Localization query images are not undistorted. |
+| `preproc.undistort` | bool | `false` | After `images/` is written, self-calibrate one shared OPENCV camera from those frames (pycolmap, ≤60 of them) and rewrite `images/` undistorted. COLMAP framing: focal kept, canvas resized to the undistorted corners, so frame dims change. `images/` reuse is by existence — toggling on an existing scene needs `--stages preproc --overwrite`. Localization query images are not undistorted. |
 | `preproc.on_empty_slot` | str | `rescue` | `fps` method only: a slot with no eligible frame keeps its sharpest frame (`rescue`) or is skipped (`drop`). A preproc-level key, not under `quality`. |
 | `preproc.quality.sharpness_k` | float | `2.0` | Eligibility gate for every sampler: MAD z-score cut on `log(laplacian)`; larger keeps more |
 | `preproc.quality.max_clipped_frac` | float | `0.25` | Eligibility gate for every sampler: ceiling on `clipped_low_frac + clipped_high_frac`; larger keeps more |
@@ -362,6 +365,9 @@ parameter and raises.
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, or `loger`; sfm: `instantsfm`, `colmap` or `hloc` (dispatched through `SFM_CREATORS` in `collab_splats.pointcloud.sfm`) |
 | `pointcloud.<backend>` | dict | `{}` | Per-backend creator kwargs, e.g. `pointcloud.loger.window_size`. Only the block matching `backend` is read. `max_points`, `min_views`, `mv_rel_thresh` and `clean` are rejected here. |
 | `pointcloud.instantsfm.random_seed` | int\|null | `null` | Seed InstantSfM's `RUNTIME_OPTIONS` (numpy/random/torch/cuda). Upstream `InitializeRandomPositions` draws unseeded, so two runs of one scene differ. `null` = upstream behavior |
+| `pointcloud.instantsfm.pairing` | str | `exhaustive` | Same four values as `colmap.pairing`; global SfM wants every pair, so the default stays exhaustive |
+| `pointcloud.instantsfm.overlap` | int | `10` | As `colmap.overlap` |
+| `pointcloud.instantsfm.num_retrieved` | int | `20` | As `colmap.num_retrieved` |
 | `pointcloud.instantsfm.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
 | `pointcloud.instantsfm.num_threads` | int | `8` | CPU SIFT thread cap; the GPU path ignores it |
 | `pointcloud.colmap.pairing` | str | `sequential+retrieval` | Image pairs matched: `sequential`, `retrieval`, `sequential+retrieval` or `exhaustive` (see "The colmap backend") |
@@ -446,10 +452,9 @@ READ by the clean step" in `base.yaml` itself; `depth_align` chose between the `
 a `run_config.yaml` still setting the old key raises a `TypeError` from `filter_frame_quality`.
 
 **Migration (2026-09-27):** geometric verification was removed — the `verify` stage and
-`pointcloud.geometric_verification`. `--stages verify` and a config with
-`geometric_verification: true` raise a `ValueError`; `geometric_verification: false`, which
-every published `run_config.yaml` carries, is still accepted and ignored, so leaf re-runs of
-those scenes keep working. `colmap/verification.json`, `colmap/verified/` and
+`pointcloud.geometric_verification`. `--stages verify` is an unknown stage (`ValueError`);
+the config key is no longer read, so published `run_config.yaml` files that carry it still
+load. `colmap/verification.json`, `colmap/verified/` and
 `colmap/database.db` are no longer written; old files on disk are ignored.
 
 **Migration (2026-09-26):** `pointcloud.instantsfm` now refuses unknown keys at config load. A
@@ -544,8 +549,8 @@ re-run the setup.sh block afterwards.
 VDA metric weights are CC-BY-NC-4.0.
 
 **Unsupported with any sfm backend (all `ValueError` at config validation):**
-`bundle_adjustment: true` (the sfm mapper runs its own BA; `refine_poses` / `--stages refine`
-also refuse) and `loop_closure` (not a sequential submap pipeline).
+`bundle_adjustment: true` (the sfm mapper runs its own BA; the `refine` stage also
+refuses) and `loop_closure` (not a sequential submap pipeline).
 
 **Output layout** (`<backend>` is `instantsfm/`):
 
@@ -636,7 +641,7 @@ A knob the pairing ignores is not recorded, so changing it keeps the DB.
 - below `min_registered_frac` of the keyframes registered: `RuntimeError` with N/M
 - above it: depth, names and keyframes are filtered to the registered stems, with a warning
 - `registered_frames` / `total_frames` in the zarr attrs record the split
-- `images/` still holds every keyframe; downstream stages (semantics, mesh, localize, verify,
+- `images/` still holds every keyframe; downstream stages (semantics, mesh, localize,
   splats, reconstruction_quality_report) read only the frames `pointcloud.zarr` names in its
   `image_paths` attr, joined on frame index; the unregistered ones are never read
 - the 2D semantics cache `semantics/<extractor>.zarr` stays scene-level (every `images/`
@@ -706,14 +711,13 @@ the mapper database is rebuilt every run.
 
 ```
 <output_path>/
-  run_config.yaml              ← full merged config (exact settings used — for reproducibility)
   images/frame_NNNNNN.png      ← canonical decode-once keyframe store (COLMAP-style dir, lossless PNG)
-  frames.json                  ← selection records + provenance for those frames
   video_quality_report.json    ← source-video quality measurements (report-only)
   photometric.png, motion.png  ← the report rendered (two files, written with images/)
   semantics/
     <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
+    run_config.yaml            ← full merged config of this backend's run (exact settings used)
     pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
     sparse_pc.ply
     mesh.ply                   ← (only if mesh.enabled=true)
@@ -745,8 +749,8 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
 | `<backend>/colmap/sparse/0/*.bin` | further processing inside this repo |
 | `<backend>/pointcloud.zarr` | further processing inside this repo (depth, poses, confidence when the method produces it) — see below |
-| `images/` + `frames.json` | the keyframes the reconstruction was built from; required to localize |
-| `run_config.yaml` | exact settings used |
+| `images/` | the keyframes the reconstruction was built from; required to localize |
+| `<backend>/run_config.yaml` | exact settings of that backend's run |
 
 Every geometry-derived artifact sits under `<backend>/`, including `sparse_pc.ply` and the
 per-point semantics. One scene may be reconstructed by several backends, so a per-point
@@ -780,7 +784,7 @@ this repo reads it; drop it when convenient with
     `rclone moveto <remote>:environments-processed/<scene>/<backend>/feedforward.zarr \
       <remote>:environments-processed/<scene>/<backend>/pointcloud.zarr`
   - remote (flat, the layout the dashboard pulls — `pull_zarr_members` in
-    `collab_splats/remote/sources.py`):
+    `collab_splats/remote.py`):
     `rclone moveto <remote>:environments-processed/<scene>/feedforward.zarr \
       <remote>:environments-processed/<scene>/pointcloud.zarr`
 
@@ -790,12 +794,11 @@ this repo reads it; drop it when convenient with
   `tutorial_config.RECON`, which already points at `pointcloud.zarr`; their stored
   *output* cells still print the old path and stay stale until re-executed.
 
-Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote/sources.py`): `/semantics/**` at the
+Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote.py`): `/semantics/**` at the
 scene root (raw 2D patch maps, regenerable from frames + extractor — note the leading slash,
 which is what keeps `<backend>/semantics/**` in the push), the source video, which the remote
 driver fetches into the very scene dir it later pushes and which already lives in
-`environments-curated`, and the COLMAP match databases — `<backend>/colmap/database.db`
-(removed geometric verification, still on older scenes), `<backend>/colmap/instantsfm.db` (instantsfm SIFT),
+`environments-curated`, and the COLMAP match databases — `<backend>/colmap/instantsfm.db` (instantsfm SIFT),
 `<backend>/colmap/colmap.db` (colmap SIFT) and
 `<backend>/colmap/hloc/` (hloc features, matches, pairs and mapper DB), all rebuildable local
 artifacts; the
@@ -843,7 +846,7 @@ mesh. Semantics moved the same way: the 2D cache is `<scene>/semantics/<extracto
 `<backend>/semantics/<extractor>_lifted.zarr` + `_ae.pt` (was
 `<backend>/semantics/<extractor>/features.zarr` + `autoencoder.pt`). There are deliberately no
 legacy fallbacks — they would restore exactly the two-name ambiguity the rename removed. Such
-scenes need `mesh(overwrite=True)` and `extract_semantics(overwrite=True)` run once; the 2D
+scenes need `--stages mesh,semantics --overwrite` run once; the 2D
 cache re-extracts, which is the expensive half.
 
 ---

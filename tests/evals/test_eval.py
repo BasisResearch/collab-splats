@@ -104,7 +104,7 @@ def _fake_run(tmp_path, monkeypatch, n=6, write_report=True, unregistered=()):
             self.out = Path(config["output_path"])
             self.pointcloud_zarr = self.out / "vggt_omega" / "pointcloud.zarr"
 
-        def run_pipeline(self):
+        def run(self):
             if write_report:
                 (self.out / "vggt_omega").mkdir(parents=True)
                 (self.out / "vggt_omega" / "reconstruction_quality_report.json").write_text('{"ok": 1}')

@@ -4,13 +4,13 @@ User-facing documentation for the repository.
 
 Layout mirrors the code tree: a module at `<source-path>/<module>/` has its docs at `docs/<module>/`. The `collab_splats/` prefix is dropped; top-level dirs like `evals/` are preserved.
 
-## Examples
+## Running the pipeline
 
-- [examples/run_pipeline.py](examples/run_pipeline.py) — main driver: local videos / directories of videos
-- [examples/run_pipeline_remote.py](examples/run_pipeline_remote.py) — same pipeline over `environments-curated` GCS scenes, pushing to `environments-processed/`
-- [examples/reconstruct.py](examples/reconstruct.py) — re-run a saved `run_config.yaml`
+- `reconstruct local VIDEO|DIR... --output-root R` — local videos or frame directories, one scene per input
+- `reconstruct remote [SCENE...|--all] --output-root R` — same pipeline over `environments-curated` GCS scenes, pushing to `environments-processed/`
+- `reconstruct local <input> --output-root R --config <scene>/run_config.yaml` — re-run a saved config
 
-Driver flags, output layout, and the processed-scene contract: [../configs/README.md](../configs/README.md).
+Flags, output layout, and the processed-scene contract: [../configs/README.md](../configs/README.md).
 
 ## Module Notebooks
 

@@ -18,18 +18,12 @@ import zarr
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
-from collab_splats.wrapper.reconstructor import (
-    Reconstructor,
-    _build_localization_db,
-    _lift_and_save,
-    _run_tsdf_mesh,
-)
-from tests.wrapper._stubs import minimal_feedforward_result, minimal_pose_result
+from collab_splats.reconstructor import Reconstructor, _build_localization_db
+from tests.reconstructor._stubs import minimal_feedforward_result
 
-RECONSTRUCTOR = "collab_splats.wrapper.reconstructor"
+RECONSTRUCTOR = "collab_splats.reconstructor"
 
-# _run_sfm never opens the video: input_path only reaches config validation (a presence check)
-# and the store's provenance stamp, so a stand-in path is enough — no encoded fixture needed.
+# The sfm stage never opens the video, so a stand-in input_path is enough
 VIDEO_PATH = "/nonexistent/tiny.mp4"
 
 # Source frame indices the fake store is built on. Non-contiguous on purpose: a leg that
@@ -60,19 +54,13 @@ def _sfm_reconstructor(tmp_path, *, random_seed=None, backend="instantsfm", clea
 
     # Real store: the downstream-stage tests read the PNGs off it
     frames = [np.full((8, 8, 3), i, np.uint8) for i in FRAME_IDX]
-    records = [{"frame_idx": int(i), "blur_score": 1.0} for i in FRAME_IDX]
-    fr.write_frames(
-        recon.images_dir,
-        frames,
-        records,
-        {"video_path": VIDEO_PATH, "method": "uniform"},
-    )
+    fr.write_frames(recon.images_dir, frames, FRAME_IDX)
     return recon
 
 
-def _run_sfm_with_mocks(recon, create=None, attrs=None):
+def _run_stage_with_sfm_mock(recon, create=None, attrs=None):
     """
-    Execute _run_sfm with a mock creator class for the recon's backend; returns that class.
+    Run the pointcloud stage with a mock sfm creator class for the recon's backend; returns that class.
 
     - create: side effect for creator.create_pointcloud; default returns a light MagicMock result
     - attrs: the creator's attrs after create_pointcloud
@@ -86,64 +74,62 @@ def _run_sfm_with_mocks(recon, create=None, attrs=None):
 
     # patch.dict restores SFM_CREATORS in place on exit; the mock class is kept by name
     with patch.dict(f"{RECONSTRUCTOR}.SFM_CREATORS", {backend: creator_cls}):
-        recon._run_sfm()
+        recon.pointcloud()
     return creator_cls
 
 
-def test_run_sfm_frees_the_dense_arrays_after_save(tmp_path):
+def test_sfm_stage_frees_the_dense_arrays_after_save(tmp_path):
     """
     The sfm result is light once pointcloud.zarr is written: no dense array stays alive.
     """
     recon = _sfm_reconstructor(tmp_path)
     refs = {}
-    out = {}
 
     # A real dense result per call, reached only through weakrefs from here
     def _dense_result(*args):
         result = minimal_feedforward_result()
         refs["depth"] = weakref.ref(result.depth)
         refs["images"] = weakref.ref(result.images)
-        out["result"] = result
         return result
 
-    _run_sfm_with_mocks(recon, create=_dense_result)
+    _run_stage_with_sfm_mock(recon, create=_dense_result)
 
     # Freed by refcount alone; the zarr keeps the depth for the downstream stages
     assert refs["depth"]() is None and refs["images"]() is None
-    assert out["result"].depth is None and out["result"].points.shape == (5, 3)
+    assert recon.result.points.shape == (5, 3)
     assert zarr.open(str(recon.pointcloud_zarr), mode="r")["depth"].shape == (2, 8, 8)
 
 
 ########################################################################
-# _run_sfm: config pass-through
+# sfm stage: config pass-through
 ########################################################################
 
 
-def test_run_sfm_forwards_random_seed_from_the_config(tmp_path):
+def test_sfm_stage_forwards_random_seed_from_the_config(tmp_path):
     recon = _sfm_reconstructor(tmp_path, random_seed=7)
-    creator_cls = _run_sfm_with_mocks(recon)
+    creator_cls = _run_stage_with_sfm_mock(recon)
     assert creator_cls.call_args.kwargs["random_seed"] == 7
 
 
 @pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
 @pytest.mark.parametrize("clean", [True, False])
-def test_run_sfm_builds_the_creator_from_the_block_and_the_clean_switch(tmp_path, backend, clean):
+def test_sfm_stage_builds_the_creator_from_the_block_and_the_clean_switch(tmp_path, backend, clean):
     recon = _sfm_reconstructor(tmp_path, backend=backend, clean=clean)
-    creator_cls = _run_sfm_with_mocks(recon)
+    creator_cls = _run_stage_with_sfm_mock(recon)
     pc_cfg = recon.config["pointcloud"]
     assert creator_cls.call_args.kwargs == {"clean": clean, "max_points": pc_cfg["max_points"], **pc_cfg[backend]}
     assert creator_cls.call_args.kwargs["min_registered_frac"] == 0.5
 
 
-def test_run_sfm_hands_create_the_scene_dirs(tmp_path):
+def test_sfm_stage_hands_create_the_scene_dirs(tmp_path):
     recon = _sfm_reconstructor(tmp_path)
-    creator_cls = _run_sfm_with_mocks(recon)
+    creator_cls = _run_stage_with_sfm_mock(recon)
     creator_cls.return_value.create_pointcloud.assert_called_once_with(
         recon.images_dir, recon.backend_dir, recon.colmap_model_dir
     )
 
 
-def test_run_sfm_stamps_the_backend_and_the_creator_attrs(tmp_path):
+def test_sfm_stage_stamps_the_backend_and_the_creator_attrs(tmp_path):
     recon = _sfm_reconstructor(tmp_path, backend="colmap")
     attrs = {"method": "sfm", "registered_frames": 3, "total_frames": 4}
     saved = {}
@@ -155,7 +141,7 @@ def test_run_sfm_stamps_the_backend_and_the_creator_attrs(tmp_path):
         result.save_zarr.side_effect = lambda path, extra_attrs: saved.update(extra_attrs)
         return result
 
-    _run_sfm_with_mocks(recon, create=_result, attrs=attrs)
+    _run_stage_with_sfm_mock(recon, create=_result, attrs=attrs)
     assert saved == {"backend": "colmap", **attrs}
 
 
@@ -171,7 +157,7 @@ def _seed_subset_scene(tmp_path):
     """
     A finished colmap run on disk that registered KEPT_IDX out of the FRAME_IDX store.
 
-    - pointcloud.zarr holds only the KEPT_IDX rows, stems as names — what _run_sfm saves
+    - pointcloud.zarr holds only the KEPT_IDX rows, stems as names — what the sfm stage saves
     - colmap/sparse/0 exists, as the stage-exists check requires; nothing reads it back
     """
     recon = _sfm_reconstructor(tmp_path, backend="colmap")
@@ -189,19 +175,13 @@ def _subset_result():
     return result
 
 
-def test_load_pointcloud_from_disk_reads_the_subset_the_zarr_holds(tmp_path):
+def test_result_reads_the_subset_the_zarr_holds(tmp_path):
     recon = _seed_subset_scene(tmp_path)
 
-    # A re-run without overwrite takes the load-from-disk branch: the zarr's rows, not images/'s
-    result = recon.build_pointcloud()
+    # A leaf stage run on its own loads the result from disk: the zarr's rows, not images/'s
+    result = recon.result
     assert [p.name for p in result.image_paths] == [f"frame_{i:06d}" for i in KEPT_IDX]
     assert result.extrinsics.shape == (3, 4, 4)
-
-
-def test_resolve_result_reads_the_subset_the_zarr_holds(tmp_path):
-    # A leaf stage run on its own resolves the result through the same loader
-    result = _seed_subset_scene(tmp_path)._resolve_result()
-    assert [p.name for p in result.image_paths] == [f"frame_{i:06d}" for i in KEPT_IDX]
 
 
 def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
@@ -217,20 +197,17 @@ def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
         lifted["rows"] = [float(fm[0, 0, 0]) for fm in feature_maps]
         return torch.zeros(5, 4)
 
+    # Uncompressed, extractor and writer stubbed: only the row pick and the lift run
+    recon.config["semantics"]["n_components"] = None
+
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
+        patch(f"{RECONSTRUCTOR}.BaseFeatureExtractor"),
+        patch(f"{RECONSTRUCTOR}.extract_feature_cache", return_value=cache),
         patch(f"{RECONSTRUCTOR}.lift_features", side_effect=spy_lift),
+        patch(f"{RECONSTRUCTOR}.write_point_features"),
     ):
-        _lift_and_save(
-            "dinov2",
-            cache,
-            recon.pointcloud_zarr,
-            tmp_path / "semantics",
-            None,
-            target_cosine=None,
-            max_epochs=1,
-            images_dir=recon.images_dir,
-        )
+        recon.semantics()
 
     # The real lift_features pairs map i with zarr row i: three maps, in the zarr's order
     assert lifted["rows"] == [float(i) for i in KEPT_IDX]
@@ -251,7 +228,7 @@ def test_localization_db_pairs_zarr_rows_with_their_own_frames(tmp_path):
             "collab_splats.localization.localizer.CameraLocalizer.from_feedforward", side_effect=spy_from_feedforward
         ),
     ):
-        _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir)
+        _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir, top_k=8)
 
     # from_feedforward pairs image i with geometry row i: M ids, M frames, zarr order
     assert seen["ids"] == [f"frame_{i:06d}.png" for i in KEPT_IDX]
@@ -268,18 +245,11 @@ def test_mesh_fuses_the_frames_the_zarr_rows_came_from(tmp_path):
 
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
-        patch(f"{RECONSTRUCTOR}.upsample_depths", side_effect=lambda d, r, b: d),
+        patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
         patch(f"{RECONSTRUCTOR}.create_tsdf_mesh", side_effect=spy_fuse),
         patch(f"{RECONSTRUCTOR}.clean_repair_mesh"),
     ):
-        _run_tsdf_mesh(
-            result=minimal_pose_result(n=len(KEPT_IDX)),
-            pointcloud_zarr=recon.pointcloud_zarr,
-            output_dir=tmp_path,
-            images_dir=recon.images_dir,
-            voxel_size=0.01,
-            depth_trunc=2.0,
-        )
+        recon.mesh()
 
     # Depth row i fuses with the RGB of the frame it was predicted on, not images/ row i
     assert fused["rgbs"][:, 0, 0, 0].tolist() == list(KEPT_IDX)

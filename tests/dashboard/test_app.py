@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 import yaml
 
 from collab_splats.dashboard.app import SplatsApp
+from collab_splats.dashboard.config import PULL_EXCLUDES
 from collab_splats.dashboard.localize import SceneCache
-from collab_splats.remote import PULL_EXCLUDES
 
 # Flat curated scene id: YYYY_MM_DD-PARENTFOLDER-VIDEONAME, one video inside.
 SCENE = "2026_05_07-birds-clip_03"
@@ -901,3 +901,14 @@ def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
     assert any("localization.localizer" in n for n in imported)
     assert any("dashboard.pipeline" in n for n in imported)
     assert any("semantics.features.base" in n for n in imported)
+
+
+def test_pull_excludes_cover_the_dense_per_pixel_arrays():
+    assert PULL_EXCLUDES == (
+        "pointcloud.zarr/depth/**",
+        "pointcloud.zarr/world_points/**",
+        "pointcloud.zarr/confidence/**",
+        "pointcloud.zarr/features/**",
+        "pointcloud.zarr/pixel_indices/**",
+        "pointcloud.zarr/images/**",
+    )

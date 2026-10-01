@@ -18,7 +18,7 @@ from collab_splats.geometry.metrics import (
 from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
 from collab_splats.pointcloud.feedforward import base as ff_base
 from collab_splats.preproc import frames as fr
-from collab_splats.wrapper.reconstructor import _STAGE_DEPS, _STAGE_ORDER, LEAF_STAGES
+from collab_splats.reconstructor import LEAF_STAGES, STAGES
 
 
 def test_pair_stats_is_keyed_on_frame_index():
@@ -725,8 +725,8 @@ def test_multiview_agreement_is_null_when_no_other_view_sees_the_frame():
 
 def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
     assert "reconstruction_quality_report" in LEAF_STAGES
-    assert _STAGE_DEPS["reconstruction_quality_report"] == ["pointcloud"]
-    assert _STAGE_ORDER.index("reconstruction_quality_report") > _STAGE_ORDER.index("pointcloud")
+    assert STAGES["reconstruction_quality_report"] == ("pointcloud",)
+    assert list(STAGES).index("reconstruction_quality_report") > list(STAGES).index("pointcloud")
 
 
 def test_report_does_not_demote_any_existing_leaf():

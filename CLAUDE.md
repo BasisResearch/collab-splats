@@ -97,13 +97,14 @@ collab_splats/
     qa.py                  # report-only capture quality: compute_video_quality, load_video_quality
     sampling.py            # sample_fps | sample_uniform | sample_optical_flow from filter_frame_quality's
                            #   eligible pool; fps rescue may keep an ineligible frame
-    frames.py              # images/frame_NNNNNN.png + frames.json: the COLMAP-style keyframe store
+    frames.py              # images/frame_NNNNNN.png: the COLMAP-style keyframe store
     undistort.py           # calibrate_camera (pycolmap) + undistort_frames (pycolmap framing, cv2 pixels)
     viz.py                 # sampling analysis plots (notebook-only, not re-exported)
   mesh/                    # TSDF meshing from arrays: tsdf, clean, texture, features
   splats/                  # gsplat training: trainer, checkpoint, gaussian, scaffold, losses, rendering, cameras, utils
-  wrapper/                 # stage orchestration: Reconstructor (config-driven pipeline), batch drivers
-  remote/                  # rclone/GCS: SceneSource over environments-curated + environments-processed
+  reconstructor.py         # Reconstructor: config-driven stage pipeline
+  __main__.py              # reconstruct local|remote CLI
+  remote.py                # rclone/GCS: SceneSource over environments-curated + environments-processed
   dashboard/               # interactive video/scene browser (reads the FLAT dashboard layout only)
   utils/
     image.py               # open/resize_image, upsample_depths (guided), fill_missing_pixels

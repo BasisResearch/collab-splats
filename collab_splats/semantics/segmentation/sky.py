@@ -132,7 +132,7 @@ def sky_masks(
 
     Raises:
         ValueError: when threshold is outside [0, 1), which marks every pixel sky or none.
-        FileNotFoundError: when images_dir holds no frames.
+        FileNotFoundError: when no frame resolves: idxs is None over an empty images_dir, or idxs is empty.
         KeyError: when idxs names a frame_idx the directory does not hold.
     """
     if not 0.0 <= threshold < 1.0:
@@ -141,28 +141,29 @@ def sky_masks(
     images_dir = Path(images_dir)
     cache_dir = Path(cache_dir) if cache_dir is not None else images_dir.parent / "sky"
 
-    paths = frames.frame_paths(images_dir)
+    # Resolve wanted frames up front, so a warm cache rejects junk too
+    paths = frames.frame_paths(images_dir, idxs)
+
     if not paths:
         raise FileNotFoundError(f"sky_masks: no frame images in {images_dir}")
 
-    # Validate every wanted index up front, so a warm cache rejects junk too
-    by_idx = {frames.frame_idx_from_path(p): p for p in paths}
-    wanted = [int(i) for i in idxs] if idxs is not None else list(by_idx)
-    missing = [i for i in wanted if i not in by_idx]
-    if missing:
-        raise KeyError(f"sky_masks: frame_idx {missing[:5]} not in {images_dir}")
+    wanted = [frames.frame_idx_from_path(p) for p in paths]
+    path_of = dict(zip(wanted, paths))
 
     # Segment only the cache misses, one frame at a time
     # - segment() opens the path itself, so no decode step here
     # - frames.read_frames would stack every miss in RAM at once
     cache_dir.mkdir(parents=True, exist_ok=True)
     todo = [i for i in wanted if not (cache_dir / f"frame_{i:06d}.png").exists()]
+
     if todo:
         model = BaseSegmentation.get("skywater")()
+
         for idx in todo:
-            _, meta = model.segment(by_idx[idx])
+            _, meta = model.segment(path_of[idx])
             prob8 = np.rint(np.clip(meta["raw"], 0.0, 1.0) * 255).astype(np.uint8)
             cv2.imwrite(str(cache_dir / f"frame_{idx:06d}.png"), prob8)
+
         logger.info("sky_masks: segmented %d of %d frames into %s", len(todo), len(wanted), cache_dir)
 
     # Threshold on read, so hits and misses share one path and a new threshold reuses the cache

@@ -13,7 +13,6 @@ import pytest
 from collab_splats.preproc import frames as fr
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.preproc.video import iter_frames
-from collab_splats.wrapper.reconstructor import _camera_provenance, extract_frames
 
 
 def _distorted_camera(width=1920, height=1080):
@@ -290,76 +289,3 @@ def test_unstacked_frames_raise():
     # A single (H, W, 3) frame is not a stack; asarray would leave ndim 3
     with pytest.raises(ValueError, match="undistort_frames"):
         undistort_frames(np.zeros((480, 640, 3), np.uint8), _distorted_camera(640, 480))
-
-
-########################################################################
-# extract_frames at the undistort boundary
-########################################################################
-
-
-def test_extract_frames_dir_no_undistort_no_payload(tmp_path):
-    # Default path unchanged: no undistort key in provenance, native dims kept
-    src = tmp_path / "imgs"
-    src.mkdir()
-    cv2.imwrite(str(src / "000.jpg"), np.zeros((480, 640, 3), np.uint8))
-
-    images_dir = tmp_path / "scene" / "images"
-    extract_frames(
-        input_path=src,
-        images_dir=images_dir,
-        frame_selection="fps",
-        fps=None,
-        min_frames=None,
-        max_frames=None,
-    )
-    assert "undistort" not in fr.read_manifest(images_dir)["provenance"]
-    assert fr.read_frames(images_dir)[0].shape == (480, 640, 3)
-
-
-def test_extract_frames_dir_undistorts(tmp_path):
-    # The only test of the undistort=True branch: real calibration off the written
-    # images/, then a rewrite of the same store at the undistorted dims. What lands on
-    # disk must match the camera provenance claims it was written with.
-    src = tmp_path / "imgs"
-    src.mkdir()
-    _write_textured_sequence(src, n=12, width=320, height=240)
-
-    images_dir = tmp_path / "scene" / "images"
-    extract_frames(
-        input_path=src,
-        images_dir=images_dir,
-        frame_selection="fps",
-        fps=None,
-        min_frames=None,
-        max_frames=None,
-        undistort=True,
-    )
-
-    payload = fr.read_manifest(images_dir)["provenance"]["undistort"]
-    assert payload["camera"]["model"] == "OPENCV"
-    assert payload["undistorted_camera"]["model"] == "PINHOLE"
-    assert (payload["camera"]["width"], payload["camera"]["height"]) == (320, 240)
-
-    stack = fr.read_frames(images_dir)
-    assert stack.shape[1:3] == (payload["undistorted_camera"]["height"], payload["undistorted_camera"]["width"])
-
-
-def test_provenance_roundtrip_through_the_manifest(tmp_path):
-    # write_frames json.dumps the provenance dict verbatim, and Camera.todict() hands
-    # back a CameraModelId enum and an ndarray — neither survives that. _camera_provenance
-    # is what makes the payload writable AND readable back as the same camera.
-    camera = _distorted_camera(width=64, height=48)
-
-    fr.write_frames(
-        tmp_path / "images",
-        [np.zeros((48, 64, 3), np.uint8)],
-        [{"frame_idx": 0}],
-        {"undistort": {"camera": _camera_provenance(camera)}},
-    )
-
-    stored = fr.read_manifest(tmp_path / "images")["provenance"]["undistort"]["camera"]
-    restored = pycolmap.Camera(**stored)
-
-    assert restored.model.name == camera.model.name
-    assert (restored.width, restored.height) == (camera.width, camera.height)
-    np.testing.assert_allclose(restored.params, camera.params)

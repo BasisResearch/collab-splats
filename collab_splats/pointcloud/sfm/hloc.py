@@ -16,7 +16,6 @@ from pathlib import Path
 import pycolmap
 
 from collab_splats.pointcloud.sfm.base import BaseSfmCreator
-from collab_splats.pointcloud.sfm.sift_db import PAIRINGS
 
 logger = logging.getLogger(__name__)
 
@@ -32,31 +31,17 @@ class HlocCreator(BaseSfmCreator):
 
     - one shared SIMPLE_RADIAL camera, refined by the mapper
     - h5 features and matches are reused across runs by hloc itself
+    - num_retrieved neighbors come from global descriptors (retrieval_conf)
 
     Attributes:
-        pairing: sequential | retrieval | sequential+retrieval | exhaustive.
-        overlap: sequential neighbors per frame.
-        num_retrieved: global-descriptor neighbors per frame when pairing retrieves.
         retrieval_conf: hloc.extract_features.confs key for global descriptors.
         feature_conf: hloc.extract_features.confs key for local features.
         matcher_conf: hloc.match_features.confs key.
     """
 
-    pairing: str = "sequential+retrieval"
-    overlap: int = 10
-    num_retrieved: int = 20
     retrieval_conf: str = "netvlad"
     feature_conf: str = "superpoint_max"
     matcher_conf: str = "superpoint+lightglue"
-
-    def __post_init__(self) -> None:
-        """
-        Refuse an unknown pairing before any feature extraction.
-        """
-        super().__post_init__()
-
-        if self.pairing not in PAIRINGS:
-            raise ValueError(f"pairing must be one of {PAIRINGS}, got {self.pairing!r}")
 
     def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
         """

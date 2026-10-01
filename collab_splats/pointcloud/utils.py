@@ -13,6 +13,9 @@ import numpy as np
 import open3d as o3d
 import torch
 
+from collab_splats.utils.image import upsample_depths
+from collab_splats.utils.torch_utils import to_numpy
+
 # Import only for type hints, to avoid a circular import with base.py
 if TYPE_CHECKING:
     from collab_splats.pointcloud.base import PointcloudResult
@@ -23,6 +26,26 @@ logger = logging.getLogger(__name__)
 ########################################################################
 # Cleaning and subsampling
 ########################################################################
+
+
+def clean_pointcloud(result: PointcloudResult, *, remove_outliers: bool, max_points: int) -> PointcloudResult:
+    """
+    Optional outlier removal, then a random cap on the point count.
+
+    - one keep mask selects every per-point array, so they stay row-aligned
+
+    Args:
+        result: the cloud to clean.
+        remove_outliers: run outlier_mask first.
+        max_points: point cap, drawn after outlier removal.
+
+    Returns:
+        A new PointcloudResult with the kept points.
+    """
+    keep = outlier_mask(result.points) if remove_outliers else np.ones(len(result.points), dtype=bool)
+    keep = subsample_points(keep, max_points)
+
+    return result.select_points(keep)
 
 
 def outlier_mask(
@@ -67,26 +90,6 @@ def outlier_mask(
     return keep
 
 
-def clean_pointcloud(result: PointcloudResult, *, remove_outliers: bool, max_points: int) -> PointcloudResult:
-    """
-    Optional outlier removal, then a random cap on the point count.
-
-    - one keep mask selects every per-point array, so they stay row-aligned
-
-    Args:
-        result: the cloud to clean.
-        remove_outliers: run outlier_mask first.
-        max_points: point cap, drawn after outlier removal.
-
-    Returns:
-        A new PointcloudResult with the kept points.
-    """
-    keep = outlier_mask(result.points) if remove_outliers else np.ones(len(result.points), dtype=bool)
-    keep = subsample_points(keep, max_points)
-
-    return result.select_points(keep)
-
-
 def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
     """
     Keep-mask for confidence strictly above a percentile of all values.
@@ -111,6 +114,44 @@ def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
     logger.warning("confidence_mask: nothing above p%.1f — keeping the pixels at the cutoff", percentile)
 
     return conf >= cutoff
+
+
+def frame_depths(result: PointcloudResult, rgbs: np.ndarray, *, conf_percentile: float | None) -> np.ndarray:
+    """
+    Model-grid depth, confidence-masked, lifted onto the frame grid.
+
+    - masks on the model grid, where the confidence was predicted
+    - absent confidence (sfm, some backends) fuses unmasked and logs it
+    - rows follow the result's own image_paths; rgbs must match them
+
+    Args:
+        result: reconstruction carrying depth, confidence and original_coords.
+        rgbs: frames in the result's row order, (N, H, W, 3) uint8.
+        conf_percentile: drop depth below this confidence percentile; None keeps every pixel.
+
+    Returns:
+        (N, H, W) float32 depth on the frame grid; 0 marks no depth.
+
+    Raises:
+        ValueError: when the result carries no depth.
+    """
+    if result.depth is None:
+        raise ValueError("frame_depths: result has no depth")
+
+    # Zero out low-confidence depth on the model grid
+    depth = to_numpy(result.depth).astype(np.float32)
+
+    if conf_percentile is not None and result.confidence is None:
+        logger.info("conf_percentile=%s but the result has no confidence; keeping every pixel", conf_percentile)
+    elif conf_percentile is not None:
+        confidence = to_numpy(result.confidence)
+        keep = confidence_mask(confidence, conf_percentile)
+        depth = np.where(keep, depth, 0.0).astype(np.float32)
+
+    # Lift onto the frame grid through each row's crop box
+    crop_boxes = np.asarray(result.original_coords)[:, :4]
+
+    return upsample_depths(depth, rgbs, crop_boxes)
 
 
 def subsample_points(mask: np.ndarray, max_points: int, seed: int = 0) -> np.ndarray:

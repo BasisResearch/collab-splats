@@ -208,7 +208,7 @@ def render_tsdf_inputs(
 
     Args:
         ckpt_path: splats/ckpt.pt written by the splats stage.
-        images_dir: keyframe directory (images/ + frames.json); when given, RGB comes from
+        images_dir: keyframe directory (images/); when given, RGB comes from
             the source frames matched by image id instead of the render.
         device: torch device for rendering.
         depth_source: which 2dgs depth to fuse, "expected" (alpha-weighted mean) or "median"

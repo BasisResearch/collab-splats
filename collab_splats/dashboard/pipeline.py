@@ -16,7 +16,7 @@ import yaml
 import zarr
 from PIL import Image
 
-from collab_splats.dashboard.config import LocalizationConfig, RunConfig
+from collab_splats.dashboard.config import PULL_EXCLUDES, LocalizationConfig, RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.mesh.clean import clean_repair_mesh
@@ -35,7 +35,7 @@ from collab_splats.preproc.sampling import (
     sample_optical_flow,
     sample_uniform,
 )
-from collab_splats.remote import PULL_EXCLUDES, SceneSource
+from collab_splats.remote import SceneSource
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
 from collab_splats.semantics.lifting import lift_features
@@ -55,38 +55,6 @@ logger = logging.getLogger(__name__)
 ########
 # Helpers
 ########
-
-
-def _write_images_dir(
-    frames: list[np.ndarray],
-    records: list[dict],
-    images_dir: Path,
-    *,
-    video_path: Path,
-    method: str,
-    fps: float | None,
-    max_frames: int,
-) -> None:
-    """
-    Write the scene's canonical images/ directory and its frames.json manifest.
-
-    Args:
-        frames: RGB uint8 keyframes, one per record.
-        records: selection records carrying the source 'frame_idx'.
-        images_dir: <scene>/images, the sole persistent frame store.
-        video_path: source video, stamped into provenance with its mtime.
-        method: sampling method name.
-        fps: target fps when method is 'fps', else None.
-        max_frames: selection cap the sampler ran under.
-    """
-    prov = {
-        "video_path": str(video_path),
-        "video_mtime": Path(video_path).stat().st_mtime,
-        "method": method,
-        "fps": fps,
-        "max_frames": max_frames,
-    }
-    fr.write_frames(images_dir, frames, records, prov)
 
 
 def _build_creator(env_model: str, conf: float):
@@ -349,21 +317,9 @@ def run_pipeline(
             # Sample frames from video and persist for creator + viewer
             t = time.perf_counter()
             frames, records = _sample(Path(video_path), config, out_dir, op_log)
-            sampling_method = config.sampling_method
             images_dir = out_dir / "images"
-            _write_images_dir(
-                frames,
-                records,
-                images_dir,
-                video_path=video_path,
-                method=sampling_method,
-                fps=config.fps if sampling_method == "fps" else None,
-                max_frames=config.max_frames,
-            )
-            # images/ is the sole frame store: create_pointcloud and semantics extraction both
-            # read it directly, and localization ref thumbnails resolve pixels through it (see
-            # _build_result_figures's images_dir threading). No second staged copy.
             config.frame_indices = [r["frame_idx"] for r in records]
+            fr.write_frames(images_dir, frames, config.frame_indices)
             op_log.append_line(f"sample ({len(frames)} frames): {time.perf_counter() - t:.1f}s")
 
             # Feedforward pointcloud reconstruction; no COLMAP export, nothing here consumes it
@@ -486,9 +442,7 @@ def _stamp_db_provenance(zarr_path: Path, extractor_name: str, out_dir: Path) ->
     if cfg_path.exists():
         data = yaml.safe_load(cfg_path.read_text()) or {}
 
-        # Two writers share this file name
-        # - batch.py: the Reconstructor config, nested under pointcloud:
-        # - the dashboard: a flat RunConfig
+        # Read either the nested Reconstructor config or the dashboard's flat RunConfig
         if isinstance(data.get("pointcloud"), dict):
             images_dir = Path(out_dir) / "images"
             frame_paths = fr.frame_paths(images_dir) if images_dir.is_dir() else []

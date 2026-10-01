@@ -1,4 +1,4 @@
-"""build_pointcloud writes a real sparse_pc.ply into backend_dir, holding the creator's cleaned set."""
+"""The pointcloud stage writes a real sparse_pc.ply into backend_dir, holding the creator's cleaned set."""
 
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -9,9 +9,10 @@ import numpy as np
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
+from collab_splats.reconstructor import Reconstructor
 from collab_splats.utils.colmap import read_colmap_reconstruction
-from collab_splats.wrapper.reconstructor import Reconstructor
 from tests.pointcloud.conftest import _frame_files, _frames
+from tests.reconstructor._stubs import stub_creator_cls
 
 
 def _pointcloud_result(xyz):
@@ -33,7 +34,7 @@ def _pointcloud_result(xyz):
     )
 
 
-def test_build_pointcloud_writes_sparse_pc_ply(tmp_path):
+def test_pointcloud_stage_writes_sparse_pc_ply(tmp_path):
     """
     The pointcloud stage lands a binary PLY of the final result at backend_dir/sparse_pc.ply.
     """
@@ -46,8 +47,8 @@ def test_build_pointcloud_writes_sparse_pc_ply(tmp_path):
     rec = Reconstructor(config)
     result = _pointcloud_result([[float(i), 0.0, 1.0] for i in range(3)])
 
-    with patch("collab_splats.wrapper.reconstructor._run_feedforward", return_value=(result, None)):
-        rec.build_pointcloud(overwrite=True)
+    with patch("collab_splats.reconstructor.get_creator", return_value=stub_creator_cls(result)):
+        rec.pointcloud()
 
     # The path is the contract: downstream stages and the remote sync both look here by name
     out = rec.backend_dir / "sparse_pc.ply"
@@ -83,7 +84,7 @@ class _ClusterCreator(BaseFeedforwardCreator):
         return replace(result, pixel_indices=np.stack([np.zeros_like(rows), rows % 6, rows % 8], axis=-1))
 
 
-def test_build_pointcloud_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
+def test_pointcloud_stage_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
     """
     The creator cleans before any write: fresh result, zarr reload, COLMAP model and PLY all agree.
     """
@@ -95,19 +96,18 @@ def test_build_pointcloud_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
     rec = Reconstructor(config)
     _frame_files(_frames([(8, 6)]), rec.images_dir)
 
-    with patch("collab_splats.wrapper.reconstructor.get_creator", return_value=_ClusterCreator):
-        fresh = rec.build_pointcloud(overwrite=True)
+    with patch("collab_splats.reconstructor.get_creator", return_value=_ClusterCreator):
+        rec.pointcloud()
 
     # The outlier went before the zarr save; colors and pixel_indices travel with the points
-    assert len(fresh.points) == len(fresh.colors) == len(fresh.pixel_indices) == 60
-    assert np.abs(fresh.points).max() < 1.0
-
-    # A second Reconstructor reloads the stage from disk: the same points, colors and pixels
-    reloaded = Reconstructor(config).build_pointcloud(overwrite=False)
-    np.testing.assert_array_equal(reloaded.points, fresh.points)
-    np.testing.assert_array_equal(reloaded.colors, fresh.colors)
     stored = PointcloudResult.load_zarr(rec.pointcloud_zarr, load_depth=False, load_world_points=False)
-    np.testing.assert_array_equal(stored.pixel_indices, fresh.pixel_indices)
+    assert len(stored.points) == len(stored.colors) == len(stored.pixel_indices) == 60
+    assert np.abs(stored.points).max() < 1.0
+
+    # A second Reconstructor reloads the same points and colors from disk
+    reloaded = Reconstructor(config).result
+    np.testing.assert_array_equal(reloaded.points, stored.points)
+    np.testing.assert_array_equal(reloaded.colors, stored.colors)
 
     # The COLMAP export and the PLY carry the same 60 points
     assert read_colmap_reconstruction(rec.colmap_model_dir).num_points3D() == 60
@@ -115,7 +115,7 @@ def test_build_pointcloud_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
     assert b"element vertex 60\n" in header
 
 
-def test_build_pointcloud_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp_path):
+def test_pointcloud_stage_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp_path):
     """
     pointcloud.clean.enabled False reaches the creator: the outlier survives in every artifact.
     """
@@ -127,16 +127,13 @@ def test_build_pointcloud_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp
     rec = Reconstructor(config)
     _frame_files(_frames([(8, 6)]), rec.images_dir)
 
-    with patch("collab_splats.wrapper.reconstructor.get_creator", return_value=_ClusterCreator):
-        fresh = rec.build_pointcloud(overwrite=True)
+    with patch("collab_splats.reconstructor.get_creator", return_value=_ClusterCreator):
+        rec.pointcloud()
 
-    # All 61 points kept, outlier included
-    assert len(fresh.points) == 61
-    assert np.abs(fresh.points).max() == 50.0
-
-    # The zarr, the COLMAP export and the PLY all hold the uncleaned 61
+    # The zarr, the COLMAP export and the PLY all hold the uncleaned 61, outlier included
     stored = PointcloudResult.load_zarr(rec.pointcloud_zarr, load_depth=False, load_world_points=False)
     assert len(stored.points) == 61
+    assert np.abs(stored.points).max() == 50.0
     assert read_colmap_reconstruction(rec.colmap_model_dir).num_points3D() == 61
     header = (rec.backend_dir / "sparse_pc.ply").read_bytes()[:200]
     assert b"element vertex 61\n" in header

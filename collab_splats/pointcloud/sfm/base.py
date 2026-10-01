@@ -16,6 +16,7 @@ import pycolmap
 
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.depth import align_depth, estimate_depth
+from collab_splats.pointcloud.sfm.sift_db import PAIRINGS
 from collab_splats.preproc import frames
 from collab_splats.utils.io import read_image
 from collab_splats.utils.torch_utils import pytorch_gc
@@ -28,6 +29,17 @@ logger = logging.getLogger(__name__)
 ########################################################################
 
 
+def _require_positive_int(name: str, value: object) -> None:
+    """
+    Refuse anything but an int >= 1.
+
+    - bool is an int subclass, so it is refused explicitly
+    - ValueError names the argument
+    """
+    if isinstance(value, bool) or not (isinstance(value, int) and value >= 1):
+        raise ValueError(f"{name} must be an int >= 1, got {value!r}")
+
+
 @dataclass
 class BaseSfmCreator(BasePointcloudCreator):
     """
@@ -38,11 +50,17 @@ class BaseSfmCreator(BasePointcloudCreator):
     - the exported COLMAP model is the mapper's own, tracks and camera model kept
 
     Attributes:
+        pairing: sequential | retrieval | sequential+retrieval | exhaustive.
+        overlap: sequential neighbors per frame.
+        num_retrieved: retrieval neighbors per frame when pairing retrieves.
         min_registered_frac: minimum share of frames the mapper must register, in (0, 1].
         num_threads: thread cap for CPU SIFT and the mapper.
         attrs: pointcloud.zarr attrs of the last run (method, registered subset, depth alignment).
     """
 
+    pairing: str = "sequential+retrieval"
+    overlap: int = 10
+    num_retrieved: int = 20
     min_registered_frac: float = 0.5
     num_threads: int = 8
     attrs: dict = field(default_factory=dict, init=False, repr=False)
@@ -52,10 +70,23 @@ class BaseSfmCreator(BasePointcloudCreator):
 
     def __post_init__(self) -> None:
         """
-        Refuse a floor outside (0, 1].
+        Refuse an unknown pairing, a non-positive count, or a floor outside (0, 1].
         """
-        if not 0 < self.min_registered_frac <= 1:
-            raise ValueError(f"min_registered_frac must be in (0, 1], got {self.min_registered_frac!r}")
+        # Pairing must name one of sift_db's modes
+        if self.pairing not in PAIRINGS:
+            raise ValueError(f"pairing must be one of {PAIRINGS}, got {self.pairing!r}")
+
+        # Pair counts are positive ints
+        _require_positive_int("overlap", self.overlap)
+        _require_positive_int("num_retrieved", self.num_retrieved)
+
+        # Floor must be a real number in (0, 1]
+        frac = self.min_registered_frac
+
+        if isinstance(frac, bool) or not (isinstance(frac, (int, float)) and 0 < frac <= 1):
+            raise ValueError(f"min_registered_frac must be in (0, 1], got {frac!r}")
+
+        _require_positive_int("num_threads", self.num_threads)
 
     def _colmap_model(self, result: PointcloudResult) -> pycolmap.Reconstruction:
         """

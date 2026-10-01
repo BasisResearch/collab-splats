@@ -1,8 +1,8 @@
-"""Tests for the refine stage: config validation, stage registration, refine_poses."""
+"""Tests for the refine stage: config validation, stage registration, the refine body."""
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 import open3d as o3d
@@ -12,12 +12,8 @@ import torch
 import zarr
 
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.wrapper.reconstructor import (
-    _STAGE_DEPS,
-    _STAGE_ORDER,
-    LEAF_STAGES,
-    Reconstructor,
-)
+from collab_splats.reconstructor import LEAF_STAGES, STAGES, Reconstructor
+from tests.reconstructor._stubs import stub_creator_cls
 
 
 def _cfg(tmp_path, **pointcloud):
@@ -48,7 +44,7 @@ def test_validate_config_allows_ba_without_lc(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Tests for refine_poses
+# Tests for the refine stage body
 # ---------------------------------------------------------------------------
 
 def _write_ff_zarr(backend_dir, N=2, H=8, W=8, P=10):
@@ -92,58 +88,81 @@ def fake_refine(self, images, confidence, world_points, extrinsics, intrinsics, 
     return new_ext, intrinsics
 
 
-def test_refine_poses_missing_zarr_raises(tmp_path):
+def test_refine_missing_zarr_raises(tmp_path):
     """No pointcloud.zarr → clear FileNotFoundError, not a deep BA stack trace."""
     r = _reconstructor(tmp_path)
     with pytest.raises(FileNotFoundError, match="pointcloud.zarr"):
-        r.refine_poses()
+        r.refine()
 
 
-def test_refine_poses_skips_when_marker_exists(tmp_path):
-    """Existing refine.json without overwrite → skip (no BA), matching other stage methods."""
+def test_refine_skips_in_config_run_when_marker_exists(tmp_path):
+    """Existing refine.json in a config-driven run → skip (no BA), like every done stage."""
+    r = _reconstructor(tmp_path)
+    r.images_dir.mkdir(parents=True)
+    r.colmap_model_dir.mkdir(parents=True)
+    (r.backend_dir / "pointcloud.zarr").mkdir()
+    (r.backend_dir / "colmap" / "refine.json").write_text("{}")
+    with patch.object(Reconstructor, "semantics"), \
+         patch.object(Reconstructor, "mesh"), \
+         patch.object(Reconstructor, "reconstruction_quality_report"), \
+         patch("collab_splats.reconstructor.BundleAdjustment.refine") as mock_refine:
+        r.run()
+    mock_refine.assert_not_called()
+
+
+def test_refine_refines_and_persists(tmp_path):
+    """refine: BA refine + reproject, COLMAP rewritten, zarr rewritten with its attrs, marker written."""
+    r = _reconstructor(tmp_path)
+    ff = _write_ff_zarr(r.backend_dir)
+    zarr.open_group(str(r.pointcloud_zarr), mode="r+").attrs.update({"method": "feedforward", "backend": "vggt_omega"})
+
+    with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
+        r.refine()
+
+    # COLMAP rewritten with refined poses
+    assert (r.backend_dir / "colmap" / "sparse" / "0" / "images.bin").exists()
+
+    # zarr extrinsics rewritten — never diverges from COLMAP — and the provenance attrs survive
+    store = zarr.open(str(r.pointcloud_zarr), mode="r")
+    np.testing.assert_allclose(store["extrinsics"][:, 0, 3], ff.extrinsics[:, 0, 3] + 1.0)
+    assert store.attrs["backend"] == "vggt_omega"
+
+    # The reloaded result and the PLY hold the cleaned set the zarr holds
+    assert len(r.result.points) == store["points"].shape[0]
+    ply = o3d.io.read_point_cloud(str(r.backend_dir / "sparse_pc.ply"))
+    assert len(ply.points) == store["points"].shape[0]
+
+    # marker doubles as provenance
+    marker = json.loads((r.backend_dir / "colmap" / "refine.json").read_text())
+    assert "config" in marker and "loss_history" in marker
+
+
+def test_refine_reexports_pinhole(tmp_path):
+    """A vggtx scene is re-exported as PINHOLE after BA."""
+    recon = Reconstructor(_cfg(tmp_path, backend="vggtx", bundle_adjustment=True, loop_closure=False))
+    _write_ff_zarr(recon.backend_dir)
+    with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine), \
+         patch.object(Reconstructor, "result", new_callable=PropertyMock):
+        recon.refine()
+    sparse = recon.backend_dir / "colmap" / "sparse" / "0"
+    cams = list(pycolmap.Reconstruction(str(sparse)).cameras.values())
+    assert {c.model.name for c in cams} == {"PINHOLE"}
+
+    # Full-res K: the 8x8 model grid's fx=10, cx=4 scaled to the 64x64 original
+    assert all(np.allclose(c.params, [80, 80, 32, 32]) for c in cams)
+
+
+def test_pointcloud_rerun_clears_a_stale_refine_marker(tmp_path):
+    """A re-run pointcloud stage removes refine.json, so refine is not reported done on an unrefined zarr."""
     r = _reconstructor(tmp_path)
     marker = r.backend_dir / "colmap" / "refine.json"
     marker.parent.mkdir(parents=True)
     marker.write_text("{}")
-    with patch.object(Reconstructor, "_resolve_result", return_value=MagicMock()) as mock_resolve, \
-         patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine") as mock_refine:
-        r.refine_poses(overwrite=False)
-    mock_refine.assert_not_called()
-    mock_resolve.assert_called_once()
 
+    with patch("collab_splats.reconstructor.get_creator", return_value=stub_creator_cls(MagicMock())):
+        r.pointcloud()
 
-def test_refine_poses_refines_and_persists(tmp_path):
-    """refine_poses: BA refine + reproject, COLMAP rewritten, zarr updated, marker written."""
-    r = _reconstructor(tmp_path)
-    ff = _write_ff_zarr(r.backend_dir)
-
-    fake_result = MagicMock()
-    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine", fake_refine), \
-         patch.object(Reconstructor, "_load_pointcloud_from_disk", return_value=fake_result):
-        out = r.refine_poses()
-
-    # COLMAP rewritten with refined poses
-    assert (r.backend_dir / "colmap" / "sparse" / "0" / "images.bin").exists()
-    # zarr extrinsics updated in place — never diverges from COLMAP
-    store = zarr.open(str(r.backend_dir / "pointcloud.zarr"), mode="r")
-    np.testing.assert_allclose(store["extrinsics"][:, 0, 3], ff.extrinsics[:, 0, 3] + 1.0)
-    # the standard writer refreshed the derived artifact
-    fake_result.write_ply.assert_called_once_with(r.backend_dir / "sparse_pc.ply")
-    # marker doubles as provenance
-    marker = json.loads((r.backend_dir / "colmap" / "refine.json").read_text())
-    assert "config" in marker and "loss_history" in marker
-    assert out is fake_result
-
-
-def test_refine_poses_reexports_pinhole(tmp_path):
-    """A vggtx scene is re-exported as PINHOLE after BA."""
-    recon = Reconstructor(_cfg(tmp_path, backend="vggtx", bundle_adjustment=True, loop_closure=False))
-    _write_ff_zarr(recon.backend_dir)
-    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine", fake_refine), \
-         patch.object(Reconstructor, "_load_pointcloud_from_disk"):
-        recon.refine_poses()
-    sparse = recon.backend_dir / "colmap" / "sparse" / "0"
-    assert {c.model.name for c in pycolmap.Reconstruction(str(sparse)).cameras.values()} == {"PINHOLE"}
+    assert not marker.exists()
 
 
 def _write_outlier_zarr(r):
@@ -167,12 +186,12 @@ def _write_outlier_zarr(r):
     return P
 
 
-def test_refine_poses_recleans_after_reproject(tmp_path):
+def test_refine_recleans_after_reproject(tmp_path):
     """A far pixel reprojected by refine is cleaned from the zarr, COLMAP model and PLY alike."""
     r = _reconstructor(tmp_path)
     P = _write_outlier_zarr(r)
-    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine", fake_refine):
-        r.refine_poses()
+    with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
+        r.refine()
 
     # zarr per-point arrays are resized together and the far point is gone
     store = zarr.open(str(r.backend_dir / "pointcloud.zarr"), mode="r")
@@ -189,24 +208,24 @@ def test_refine_poses_recleans_after_reproject(tmp_path):
     assert len(ply.points) == len(points)
 
 
-def test_refine_poses_keeps_every_point_when_clean_disabled(tmp_path):
+def test_refine_keeps_every_point_when_clean_disabled(tmp_path):
     """pointcloud.clean.enabled: false leaves the reprojected set whole, outlier included."""
     r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=False, clean={"enabled": False}))
     P = _write_outlier_zarr(r)
-    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine", fake_refine):
-        r.refine_poses()
+    with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
+        r.refine()
 
     store = zarr.open(str(r.backend_dir / "pointcloud.zarr"), mode="r")
     assert store["points"].shape[0] == P
     assert np.abs(store["points"][:]).max() > 100.0
 
 
-def test_refine_poses_recaps_to_max_points(tmp_path):
+def test_refine_recaps_to_max_points(tmp_path):
     """A max_points lowered since the pointcloud stage caps the refined set on every artifact."""
     r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=False, max_points=50))
     _write_outlier_zarr(r)
-    with patch("collab_splats.wrapper.reconstructor.BundleAdjustment.refine", fake_refine):
-        r.refine_poses()
+    with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
+        r.refine()
 
     store = zarr.open(str(r.backend_dir / "pointcloud.zarr"), mode="r")
     assert store["points"].shape[0] == 50
@@ -220,29 +239,28 @@ def test_refine_poses_recaps_to_max_points(tmp_path):
 
 def test_refine_is_a_leaf_stage():
     """refine must be re-runnable on its own from environments-processed."""
-    assert "refine" in _STAGE_ORDER
-    assert _STAGE_DEPS["refine"] == ["pointcloud"]
+    assert STAGES["refine"] == ("pointcloud",)
     assert "refine" in LEAF_STAGES
 
 
-def test_run_pipeline_config_driven_appends_refine(tmp_path):
+def test_run_config_driven_appends_refine(tmp_path):
     """bundle_adjustment: true → refine runs right after pointcloud, before dependents."""
     r = _reconstructor(tmp_path)
     calls = []
-    with patch.object(Reconstructor, "preprocess", side_effect=lambda **k: calls.append("preproc")), \
-         patch.object(Reconstructor, "build_pointcloud", side_effect=lambda **k: calls.append("pointcloud")), \
-         patch.object(Reconstructor, "refine_poses", side_effect=lambda **k: calls.append("refine")), \
-         patch.object(Reconstructor, "extract_semantics", side_effect=lambda **k: calls.append("semantics")), \
-         patch.object(Reconstructor, "mesh", side_effect=lambda **k: calls.append("mesh")), \
-         patch.object(Reconstructor, "build_localization_db", side_effect=lambda **k: calls.append("localize")), \
+    with patch.object(Reconstructor, "preproc", side_effect=lambda: calls.append("preproc")), \
+         patch.object(Reconstructor, "pointcloud", side_effect=lambda: calls.append("pointcloud")), \
+         patch.object(Reconstructor, "refine", side_effect=lambda: calls.append("refine")), \
+         patch.object(Reconstructor, "semantics", side_effect=lambda: calls.append("semantics")), \
+         patch.object(Reconstructor, "mesh", side_effect=lambda: calls.append("mesh")), \
+         patch.object(Reconstructor, "localize", side_effect=lambda: calls.append("localize")), \
          patch.object(Reconstructor, "reconstruction_quality_report",
-                      side_effect=lambda **k: calls.append("reconstruction_quality_report")):
-        r.run_pipeline()
+                      side_effect=lambda: calls.append("reconstruction_quality_report")):
+        r.run()
     assert "refine" in calls
     assert calls.index("refine") == calls.index("pointcloud") + 1
 
 
-def test_run_pipeline_named_refine_refuses_existing_output(tmp_path):
+def test_run_named_refine_refuses_existing_output(tmp_path):
     """Named refine with existing refine.json and no overwrite → refusal (generic leaf rule)."""
     r = _reconstructor(tmp_path)
     # Satisfy the pointcloud dependency and the refine marker on disk
@@ -250,4 +268,11 @@ def test_run_pipeline_named_refine_refuses_existing_output(tmp_path):
     (r.backend_dir / "pointcloud.zarr").mkdir()
     (r.backend_dir / "colmap" / "refine.json").write_text("{}")
     with pytest.raises(ValueError, match="already exists"):
-        r.run_pipeline(stages=["refine"])
+        r.run(["refine"])
+
+
+def test_refine_refuses_sfm_method(tmp_path):
+    """refine refuses outright when pointcloud.method is sfm; the guard is its first line."""
+    r = Reconstructor(_cfg(tmp_path, method="sfm", backend="instantsfm"))
+    with pytest.raises(ValueError, match="refine is not supported"):
+        r.refine()

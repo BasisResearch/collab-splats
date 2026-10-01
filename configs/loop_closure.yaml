@@ -10,7 +10,7 @@
 # loop_edge_timing is forced to "live" automatically whenever viz.enabled +
 # loop_closure (reconstructor.py) — no need to set it here.
 #
-#   python docs/examples/run_pipeline.py --config configs/loop_closure.yaml \
+#   reconstruct local --config configs/loop_closure.yaml \
 #       --stages preproc,pointcloud --keep-viewer \
 #       --output-root /path/to/out /path/to/scene.MP4
 #

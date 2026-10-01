@@ -66,3 +66,13 @@ def test_create_tsdf_mesh_sdf_trunc_defaults_to_four_voxels(tmp_path, monkeypatc
     assert len(seen) == 1
     assert seen[0][0] == 0.01 and seen[0][1] == pytest.approx(0.04)
     assert seen[0][2] == o3d.pipelines.integration.TSDFVolumeColorType.RGB8
+
+
+def test_create_tsdf_mesh_refuses_a_band_narrower_than_a_voxel(tmp_path):
+    depths = np.ones((1, 4, 4), np.float32)
+    rgbs = np.zeros((1, 4, 4, 3), np.uint8)
+
+    with pytest.raises(ValueError, match="sdf_trunc"):
+        create_tsdf_mesh(
+            depths, rgbs, np.eye(4)[None], np.eye(3)[None], tmp_path, voxel_size=0.1, depth_trunc=5.0, sdf_trunc=0.05
+        )

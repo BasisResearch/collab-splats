@@ -1,5 +1,4 @@
 # tests/dashboard/test_pipeline.py
-import inspect
 import logging
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
@@ -68,7 +67,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
         patch.object(pl, "load_video_quality", return_value={"frames": {}}),
-        patch.object(pl, "_write_images_dir") as wz,
+        patch.object(pl.fr, "write_frames") as wz,
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "create_tsdf_mesh") as mesh,
         patch.object(pl, "clean_repair_mesh"),
@@ -122,7 +121,7 @@ def test_mesh_rgb_rounds_not_truncates(tmp_path):
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
         patch.object(pl, "load_video_quality", return_value={"frames": {}}),
-        patch.object(pl, "_write_images_dir"),
+        patch.object(pl.fr, "write_frames"),
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "create_tsdf_mesh") as mesh,
         patch.object(pl, "clean_repair_mesh"),
@@ -155,7 +154,7 @@ def test_run_pipeline_does_not_push_on_failure(tmp_path):
     with (
         patch.object(pl, "sample_fps", return_value=_fake_frames()),
         patch.object(pl, "load_video_quality", return_value={"frames": {}}),
-        patch.object(pl, "_write_images_dir"),
+        patch.object(pl.fr, "write_frames"),
         patch.object(pl, "_build_creator", side_effect=RuntimeError("boom")),
     ):
         with pytest.raises(RuntimeError):
@@ -276,19 +275,6 @@ def test_no_second_or_third_ae_policy_survives():
         assert not hasattr(pl, attr), f"pipeline.{attr} is a duplicate autoencoder policy"
     for attr in ("UPGRADE_MAX_EPOCHS", "UPGRADE_TARGET_COSINE"):
         assert not hasattr(viewer_mod, attr), f"viewer.{attr} is a duplicate autoencoder policy"
-
-
-def test_no_fourth_ae_policy_hides_in_a_parameter_default():
-    """A default IS a policy. reconstructor._lift_and_save carried max_epochs=10 against base.yaml's
-    100 — invisible because its only caller passes both, and wrong for any caller that forgets."""
-    from collab_splats.wrapper import reconstructor as recon_mod
-
-    params = inspect.signature(recon_mod._lift_and_save).parameters
-    for name in ("target_cosine", "max_epochs"):
-        assert params[name].default is inspect.Parameter.empty, (
-            f"reconstructor._lift_and_save.{name} defaults to {params[name].default!r} — "
-            "a fourth autoencoder policy a caller can inherit by omission"
-        )
 
 
 def test_lift_and_compress_fit_uses_the_shared_policy(tmp_path):
@@ -454,7 +440,7 @@ def test_load_browse_data_pulls_scene_into_its_local_dir(tmp_path, monkeypatch):
 
 
 def test_stamp_db_provenance_reads_a_reconstructor_run_config(tmp_path):
-    """batch.py writes run_config.yaml as the Reconstructor config; its backbone must be stamped."""
+    """reconstruct writes run_config.yaml as the Reconstructor config; its backbone must be stamped."""
     (tmp_path / "run_config.yaml").write_text(
         yaml.safe_dump(
             {
@@ -463,12 +449,7 @@ def test_stamp_db_provenance_reads_a_reconstructor_run_config(tmp_path):
             }
         )
     )
-    fr.write_frames(
-        tmp_path / "images",
-        np.zeros((2, 4, 4, 3), dtype=np.uint8),
-        [{"frame_idx": 7}, {"frame_idx": 19}],
-        {},
-    )
+    fr.write_frames(tmp_path / "images", np.zeros((2, 4, 4, 3), dtype=np.uint8), [7, 19])
     zarr_path = tmp_path / "pointcloud.zarr"
     zarr.open(str(zarr_path), mode="w")
 

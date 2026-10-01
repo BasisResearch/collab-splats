@@ -11,6 +11,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pycolmap
 import pytest
 import trimesh
 import zarr
@@ -31,6 +32,15 @@ def test_to_json_safe_nulls_every_non_finite_float():
     """json.dumps writes a bare NaN/Infinity, which no strict parser accepts."""
     out = to_json_safe({"rho": float("nan"), "nested": [float("inf"), -np.inf, 1.0], "f32": np.float32("nan")})
     assert out == {"rho": None, "nested": [None, None, 1.0], "f32": None}
+
+
+def test_to_json_safe_writes_a_pybind11_enum_as_its_name():
+    camera = pycolmap.Camera(model="OPENCV", width=64, height=48, params=[50.0, 50.0, 32.0, 24.0, 0.0, 0.0, 0.0, 0.0])
+
+    safe = to_json_safe(camera.todict())
+
+    assert safe["model"] == "OPENCV"
+    json.dumps(safe)
 
 
 def test_to_json_safe_turns_numpy_into_python():

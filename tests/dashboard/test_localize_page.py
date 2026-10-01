@@ -511,7 +511,7 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
     # Real images/ store: the reconstruction ref frame resolves to a known RGB array
     store_pixels = np.full((4, 4, 3), 7, np.uint8)
     images_dir = tmp_path / "images"
-    fr.write_frames(images_dir, [store_pixels], [{"frame_idx": 0}], {"video_path": "x"})
+    fr.write_frames(images_dir, [store_pixels], [0])
 
     # ref 0 = reconstruction (images/ branch); ref 1 = localized (disk branch — write a real JPG)
     localized_jpg = tmp_path / "localized_0001.jpg"

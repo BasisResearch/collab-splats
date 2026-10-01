@@ -19,12 +19,12 @@ import param
 import yaml
 
 from collab_splats.dashboard.async_utils import ensure_local_video, run_off_loop
-from collab_splats.dashboard.config import RunConfig
+from collab_splats.dashboard.config import PULL_EXCLUDES, RunConfig
 from collab_splats.dashboard.gpu_worker import GpuWorker
 from collab_splats.dashboard.localize import SceneCache
 from collab_splats.dashboard.operation_log import OperationLog, busy_html
 from collab_splats.dashboard.viewer import SplitViewer
-from collab_splats.remote import PULL_EXCLUDES, SceneSource
+from collab_splats.remote import SceneSource
 
 # NB: collab_splats.dashboard.pipeline and pointcloud.feedforward pull in the full
 # reconstruction + TSDF mesh stack (~18s import). They are imported lazily inside the
@@ -714,7 +714,7 @@ class SplatsApp(param.Parameterized):
         self._op_log.start_op(f"switching to {mode}")
         self._gpu.submit(job, on_done, doc)
 
-    _LIFT_MEMBERS = ("pixel_indices", "depth", "confidence", "conf")  # 'conf' = legacy key
+    _LIFT_MEMBERS = ("pixel_indices", "depth", "confidence")
 
     def _ensure_lift_inputs(self, scene: "str | None") -> bool:
         """Fetch the dense zarr members a first-query feature lift needs (worker thread).
@@ -741,7 +741,7 @@ class SplatsApp(param.Parameterized):
         if not zarr_dir.exists():
             return False  # nothing local yet; the load path owns the initial pull
         core_missing = any(not (zarr_dir / m).exists() for m in ("pixel_indices", "depth"))
-        conf_missing = not (zarr_dir / "confidence").exists() and not (zarr_dir / "conf").exists()
+        conf_missing = not (zarr_dir / "confidence").exists()
         if not core_missing and not conf_missing:
             return False
         with self._op_log.step(f"{scene}: fetching dense arrays for feature lift (legacy scene)"):

@@ -50,11 +50,18 @@ def create_tsdf_mesh(
 
     Returns:
         Path to out_dir/mesh.ply.
+
+    Raises:
+        ValueError: sdf_trunc is narrower than voxel_size.
     """
     rgbs, c2w, K, depths = _validate_views(rgbs, c2w, K, depths)
 
     if sdf_trunc is None:
         sdf_trunc = 4 * voxel_size
+
+    # A band narrower than a voxel punctures the surface between voxels
+    if sdf_trunc < voxel_size:
+        raise ValueError(f"create_tsdf_mesh: sdf_trunc {sdf_trunc} is narrower than voxel_size {voxel_size}")
 
     # Integrate every view; Open3D wants world-to-camera extrinsics
     n, h, w = depths.shape

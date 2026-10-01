@@ -22,7 +22,7 @@ import pytest
 PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh")
 
 # Single modules held to the contract, release checks included, before their whole package is
-MODULES = ("utils/io.py",)
+MODULES = ("utils/io.py", "reconstructor.py", "remote.py", "__main__.py")
 
 # Repo-root dirs outside collab_splats/ held to the contract; their top-level *.py only
 TOP_LEVEL = ("evals",)
@@ -211,7 +211,18 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats", "mesh", "evals"})
 
 # Module-level numbers that are facts, not tunables
-FIXED_FACTS = frozenset({"SCHEMA_VERSION", "_LOGER_PATCH"})
+FIXED_FACTS = frozenset(
+    {
+        "_LOGER_PATCH",
+        "EXIT_OK",
+        "EXIT_SCENE_FAILED",
+        "EXIT_NOTHING_TO_DO",
+        "EXIT_REMOTE_UNAVAILABLE",
+    }
+)
+
+# Defs whose broad handler is a deliberate fallback: a probe that reads failure as "absent", a lazy client
+FALLBACK_OWNERS = frozenset({"_localization_db_exists", "SceneSource.__init__"})
 
 UPPER_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
 BANNED_RE = re.compile(r"\bmeasured\b|\bhypothesis\b|\d+(\.\d+)?x faster|ffmpeg pipe|replaces the old", re.I)
@@ -349,9 +360,62 @@ def _long_comment_runs(src: str) -> list[str]:
     return out
 
 
+def _records_failure(handler: ast.ExceptHandler) -> bool:
+    """
+    True when a broad handler logs the error AND records the failure.
+
+    - logs: calls `logger.exception` or `logger.error`
+    - records: appends to a list, assigns a name containing "fail", or returns a non-None value
+    - a bare pass, a log-only handler, or a log plus a fallback assignment is still silent
+    """
+    nodes = [n for stmt in handler.body for n in ast.walk(stmt)]
+    calls = [n.func for n in nodes if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+
+    # Logged at error level through the module logger
+    logged = any(
+        isinstance(f.value, ast.Name) and f.value.id == "logger" and f.attr in ("exception", "error") for f in calls
+    )
+
+    # Recorded as a failure the caller can see
+    appended = any(f.attr == "append" for f in calls)
+    targets = [t for n in nodes if isinstance(n, ast.Assign) for t in n.targets]
+    targets += [n.target for n in nodes if isinstance(n, ast.AugAssign)]
+    assigned = any(isinstance(t, ast.Name) and "fail" in t.id.lower() for t in targets)
+    returned = any(
+        isinstance(n, ast.Return)
+        and n.value is not None
+        and not (isinstance(n.value, ast.Constant) and n.value.value is None)
+        for n in nodes
+    )
+    return logged and (appended or assigned or returned)
+
+
+def _owned_handlers(tree: ast.Module) -> set[int]:
+    """
+    ids of the except handlers inside a FALLBACK_OWNERS def.
+
+    - owners are module-level functions (`name`) and methods of module-level classes (`Class.name`)
+    """
+    funcs = (ast.FunctionDef, ast.AsyncFunctionDef)
+    owners = [(n.name, n) for n in tree.body if isinstance(n, funcs)]
+    owners += [
+        (f"{c.name}.{m.name}", m)
+        for c in tree.body
+        if isinstance(c, ast.ClassDef)
+        for m in c.body
+        if isinstance(m, funcs)
+    ]
+    return {
+        id(h) for name, n in owners if name in FALLBACK_OWNERS for h in ast.walk(n) if isinstance(h, ast.ExceptHandler)
+    }
+
+
 def _silent_fallbacks(src: str) -> list[str]:
     """
     `x or <number>` expressions and `except Exception:` handlers that never re-raise.
+
+    - a handler that logs the error and records the failure is not silent (see `_records_failure`)
+    - handlers inside a FALLBACK_OWNERS def are deliberate
 
     Args:
         src: module source.
@@ -359,8 +423,10 @@ def _silent_fallbacks(src: str) -> list[str]:
     Returns:
         "<line>: <idiom>" per offender.
     """
+    tree = ast.parse(src)
+    owned = _owned_handlers(tree)
     out = []
-    for node in ast.walk(ast.parse(src)):
+    for node in ast.walk(tree):
         if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
             last = node.values[-1]
             if (
@@ -373,7 +439,8 @@ def _silent_fallbacks(src: str) -> list[str]:
             broad = node.type is None or (
                 isinstance(node.type, ast.Name) and node.type.id in ("Exception", "BaseException")
             )
-            if broad and not any(isinstance(n, ast.Raise) for n in ast.walk(node)):
+            reraises = any(isinstance(n, ast.Raise) for n in ast.walk(node))
+            if broad and not reraises and not _records_failure(node) and id(node) not in owned:
                 out.append(f"{node.lineno}: except Exception without re-raise")
     return out
 
@@ -493,7 +560,7 @@ def test_release_rules(path, check):
 
 
 def test_numeric_constant_check_flags_a_tunable_and_spares_a_fact():
-    src = "SCHEMA_VERSION = 2\n_LEVEL = 1\nNEG = -0.5\nIMAGE_EXTS = ('.png',)\nFLAG = True\n"
+    src = "EXIT_OK = 0\n_LEVEL = 1\nNEG = -0.5\nIMAGE_EXTS = ('.png',)\nFLAG = True\n"
     assert _numeric_constants(src) == ["2: _LEVEL = 1", "3: NEG = -0.5"]
     assert _numeric_constants("A = B = 5\nC: int = 3\n") == ["1: A = 5", "1: B = 5", "2: C = 3"]
 
@@ -538,6 +605,49 @@ def test_silent_fallback_check_flags_or_number_and_swallowed_exception():
         "try:\n    pass\nexcept ValueError:\n    pass\n"
     )
     assert _silent_fallbacks(src) == ["1: `or 30.0` fallback", "5: except Exception without re-raise"]
+
+
+def _handler_src(body: str) -> str:
+    """
+    A broad `except Exception as exc:` handler whose body is `body`, one statement per `;`.
+    """
+    lines = "".join(f"    {line}\n" for line in body.split(";"))
+    return "try:\n    pass\nexcept Exception as exc:\n" + lines
+
+
+def test_silent_fallback_check_spares_a_logged_and_recorded_failure():
+    # Logged at error level and recorded: per-item isolation, not a fallback
+    accepted = [
+        "logger.exception('x');results.append(('a', 'FAIL', str(exc)))",
+        "logger.exception('x');failure = str(exc)",
+        "logger.error('x');return EXIT_REMOTE_UNAVAILABLE",
+    ]
+    for body in accepted:
+        assert _silent_fallbacks(_handler_src(body)) == [], body
+
+    # Swallowed, log-only, logged-then-defaulted, recorded-but-unlogged, or a None return
+    rejected = [
+        "pass",
+        "logger.exception('x')",
+        "logger.error('x');value = 0",
+        "logger.warning('x');failure = str(exc)",
+        "results.append(exc)",
+        "logger.error('x');return None",
+    ]
+    for body in rejected:
+        assert _silent_fallbacks(_handler_src(body)) == ["3: except Exception without re-raise"], body
+
+
+def test_silent_fallback_check_spares_only_named_owners():
+    handler = "    try:\n        pass\n    except Exception:\n        return False\n"
+    owned = "def _localization_db_exists() -> bool:\n" + handler
+    method = "class SceneSource:\n    def __init__(self) -> None:\n        try:\n            pass\n        except Exception:\n            pass\n"
+    other = "def _probe() -> bool:\n" + handler
+    wrong_class = method.replace("SceneSource", "Other")
+    assert _silent_fallbacks(owned) == []
+    assert _silent_fallbacks(method) == []
+    assert _silent_fallbacks(other) == ["4: except Exception without re-raise"]
+    assert _silent_fallbacks(wrong_class) == ["5: except Exception without re-raise"]
 
 
 # Round-3 checks: enforced for geometry and mesh; other packages are a changelog follow-up

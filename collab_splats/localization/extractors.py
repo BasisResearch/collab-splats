@@ -210,7 +210,7 @@ class LocalMatcher:
                 raise ValueError(
                     "loma feature-level match needs keypoints_normalized. If this cache "
                     "predates the payload, rebuild the localization DB "
-                    "(build_localization_db(overwrite=True)); if a rebuild already ran, "
+                    "(the localize stage with overwrite=True); if a rebuild already ran, "
                     "the payload was not persisted — check save_index's all-or-none "
                     "keypoints_normalized write."
                 )

@@ -95,7 +95,7 @@ def test_render_tsdf_inputs_swaps_in_source_frames_by_image_id(tmp_path, monkeyp
     h, w = 8, 8
     images_dir = tmp_path / "images"
     frames = [np.full((h, w, 3), idx * 10, dtype=np.uint8) for idx in (0, 5, 7)]
-    write_frames(images_dir, frames, [{"frame_idx": idx} for idx in (0, 5, 7)], {})
+    write_frames(images_dir, frames, [0, 5, 7])
     _fake_rendering(monkeypatch, [_view(h, w, 1.0), _view(h, w, 1.0)], [7, 0], (h, w))
     _, rgbs, _, _, _ = render_tsdf_inputs(tmp_path / "ckpt.pt", images_dir=images_dir, device="cpu")
     assert np.all(rgbs[0] == 70) and np.all(rgbs[1] == 0)
@@ -105,7 +105,7 @@ def test_render_tsdf_inputs_returns_the_image_ids_it_read(tmp_path, monkeypatch)
     h, w = 8, 8
     images_dir = tmp_path / "images"
     frames = [np.full((h, w, 3), idx * 10, dtype=np.uint8) for idx in (0, 5, 7)]
-    write_frames(images_dir, frames, [{"frame_idx": idx} for idx in (0, 5, 7)], {})
+    write_frames(images_dir, frames, [0, 5, 7])
     _fake_rendering(monkeypatch, [_view(h, w, 1.0), _view(h, w, 1.0)], [7, 0], (h, w))
     _, rgbs, _, _, image_ids = render_tsdf_inputs(tmp_path / "ckpt.pt", images_dir=images_dir, device="cpu")
 
@@ -116,7 +116,7 @@ def test_render_tsdf_inputs_returns_the_image_ids_it_read(tmp_path, monkeypatch)
 
 def test_render_tsdf_inputs_rejects_frame_size_mismatch(tmp_path, monkeypatch):
     images_dir = tmp_path / "images"
-    write_frames(images_dir, [np.zeros((8, 8, 3), np.uint8)], [{"frame_idx": 0}], {})
+    write_frames(images_dir, [np.zeros((8, 8, 3), np.uint8)], [0])
     _fake_rendering(monkeypatch, [_view(4, 6, 1.0)], [0], (4, 6))
     with pytest.raises(ValueError, match="checkpoint renders"):
         render_tsdf_inputs(tmp_path / "ckpt.pt", images_dir=images_dir, device="cpu")

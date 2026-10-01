@@ -2,7 +2,7 @@
 Video preprocessing: probe and decode, measure quality, select and store keyframes.
 
 - measure then select: qa.load_video_quality measures and caches a report, the samplers pick from it
-- frames.write_frames stores picks as images/frame_NNNNNN.png plus frames.json
+- frames.write_frames stores picks as images/frame_NNNNNN.png
 - plots live in preproc.viz, not re-exported, so pipeline imports skip matplotlib
 """
 
@@ -10,7 +10,6 @@ from collab_splats.preproc.frames import (
     frame_idx_from_path,
     frame_paths,
     read_frames,
-    read_manifest,
     write_frames,
 )
 from collab_splats.preproc.qa import (
@@ -39,7 +38,6 @@ __all__ = [
     "iter_frames",
     "load_video_quality",
     "read_frames",
-    "read_manifest",
     "sample_fps",
     "sample_optical_flow",
     "sample_uniform",

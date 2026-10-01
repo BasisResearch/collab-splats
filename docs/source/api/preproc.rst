@@ -26,8 +26,8 @@ Quickstart
 
 The preprocess stage decodes the source video exactly once and writes
 ``output_path/images/frame_NNNNNN.png`` — a COLMAP-style directory of lossless
-PNGs named by SOURCE video frame index — beside ``output_path/frames.json``,
-which holds the selection records and the provenance COLMAP has no slot for.
+PNGs named by SOURCE video frame index. The selection settings live in
+``<backend>/run_config.yaml`` and the per-frame quality in ``video_quality_report.json``.
 This is the sole persistent frame artifact. Every pixel consumer (pointcloud,
 semantics, localization, dashboard) reads the directory instead of re-decoding
 the video, and path-locked consumers take the directory itself, so nothing
@@ -35,11 +35,10 @@ stages a second copy.
 
 .. code-block:: python
 
-   from collab_splats.preproc import frame_paths, read_frames, read_manifest
+   from collab_splats.preproc import frame_paths, read_frames
 
    paths = frame_paths(run_dir / "images")       # sorted, one path per selected frame
    imgs = read_frames(run_dir / "images")        # (N, H, W, 3) uint8 RGB
-   manifest = read_manifest(run_dir / "images")  # selection records + provenance
 
 Every function in this module takes and returns **RGB**; the BGR conversions
 ``cv2`` needs happen inside ``frames.py`` and nowhere else.

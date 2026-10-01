@@ -193,6 +193,7 @@ line-length = 120
 
 [project.scripts]
 collab-dashboard = "collab_splats.dashboard.__main__:main"
+reconstruct = "collab_splats.__main__:main"
 
 [tool.setuptools.packages]
 find = { include = ["collab_splats", "collab_splats.*"] }

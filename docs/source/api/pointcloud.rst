@@ -19,7 +19,7 @@ SfM backends
 .. autodata:: collab_splats.pointcloud.sfm.SFM_CREATORS
    :no-value:
 
-   Backend name to creator class; ``Reconstructor._run_sfm`` dispatches on it.
+   Backend name to creator class; ``Reconstructor.pointcloud`` dispatches on it.
 
 .. automodule:: collab_splats.pointcloud.sfm.colmap
    :members:

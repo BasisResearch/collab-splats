@@ -54,8 +54,7 @@ def _make_images_dir(n: int, H: int, W: int, tmp_dir: str) -> Path:
     """
     images_dir = Path(tmp_dir) / "images"
     frames = [np.random.randint(0, 255, (H, W, 3), dtype=np.uint8) for _ in range(n)]
-    records = [{"frame_idx": i} for i in range(n)]
-    fr.write_frames(images_dir, frames, records, {"source": "test"})
+    fr.write_frames(images_dir, frames, list(range(n)))
     return images_dir
 
 

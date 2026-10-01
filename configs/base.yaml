@@ -14,7 +14,7 @@ input_path: null
 output_path: null
 
 preproc:
-  # Output: images/frame_NNNNNN.png + frames.json beside it
+  # Output: images/frame_NNNNNN.png
   frame_selection: fps        # fps | uniform | optical_flow
   fps: 2.0                    # fps only: samples per second; fixes spacing, count floats
   min_frames: null            # fps only: floor on the count; null honors fps literally
@@ -32,9 +32,11 @@ pointcloud:
   method: feedforward         # feedforward | sfm
   backend: vggt_omega         # feedforward: vggt_omega | vggtx | mapanything | loger
                               # sfm: instantsfm | colmap | hloc
-  # Per-backend creator kwargs. Only the block matching `backend` is read, so all
-  # four can be documented here at once. max_points is NOT settable here — it is a
-  # pipeline-level guard below.
+  # Per-backend creator kwargs; only the block matching `backend` is read
+  # max_points is NOT settable here — it is a pipeline-level guard below.
+  vggt_omega: {}
+  vggtx: {}
+  mapanything: {}
   loger:
     variant: LoGeR_star       # LoGeR | LoGeR_star (SE(3)); selects config AND weights
     window_size: 32           # sliding-window length; upstream default, see README
@@ -53,11 +55,7 @@ pointcloud:
   viz:
     enabled: false          # instantiate the viser Viewer during loop closure
     port: 8080              # viser server port
-  # LM bundle adjustment pose refinement (leaf stage `refine`; runs inline after the
-  # pointcloud stage when enabled here, or standalone via --stages refine). Rewrites
-  # COLMAP/sparse_pc.ply/pointcloud.zarr poses in place. Mutually
-  # exclusive with loop_closure. Knobs stay on BundleAdjustmentConfig defaults
-  # (global BA; tracks cached in <backend>/).
+  # LM bundle adjustment (leaf stage `refine`); rewrites pointcloud.zarr whole, dropping the localization DB; exclusive with loop_closure
   bundle_adjustment: false
   clean:
     enabled: true              # statistical outlier removal on the final sparse point set
@@ -66,6 +64,9 @@ pointcloud:
     retriangulation: false        # GLOMAP-style retriangulate + up to 5 further BA rounds; extra runtime
     random_seed: null             # seeds InstantSfM's RUNTIME_OPTIONS; null = upstream's unseeded init
     min_num_view_per_track: null  # drop thinner tracks before BA, the memory lever; null = upstream's 3
+    pairing: exhaustive           # sequential | retrieval | sequential+retrieval | exhaustive
+    overlap: 10                   # sequential: pair each frame with the next N
+    num_retrieved: 20             # retrieval: vocab-tree neighbors per image (9.5 MB tree, fetched once)
     min_registered_frac: 0.5      # fail below this share of frames registered; above it, subset
     num_threads: 8                # CPU SIFT thread cap; the GPU path ignores it
   # COLMAP incremental SfM (method: sfm, backend: colmap): pycolmap SIFT + pycolmap mapper.

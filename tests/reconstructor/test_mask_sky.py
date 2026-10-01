@@ -12,14 +12,25 @@ import numpy as np
 import pytest
 
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.wrapper.reconstructor import _run_tsdf_mesh
-from tests.wrapper._stubs import minimal_feedforward_result, minimal_pose_result
+from collab_splats.reconstructor import Reconstructor
+from tests.reconstructor._stubs import minimal_feedforward_result
 
 
-def _run_feedforward_mesh(tmp_path, fused, sky_return, **kwargs):
+def _mesh_reconstructor(tmp_path, **mesh_overrides):
     """
-    Drive _run_tsdf_mesh's feedforward arm with everything below create_tsdf_mesh stubbed out.
+    Reconstructor whose mesh block is base.yaml plus the given overrides.
     """
+    mesh_cfg = {"enabled": True, "voxel_size": 0.01, "depth_trunc": 2.0, **mesh_overrides}
+    config = {"input_path": str(tmp_path / "video.mp4"), "output_path": str(tmp_path / "out"), "mesh": mesh_cfg}
+
+    return Reconstructor(config)
+
+
+def _run_feedforward_mesh(tmp_path, fused, sky_return, **mesh_overrides):
+    """
+    Drive the mesh stage's feedforward arm with everything below create_tsdf_mesh stubbed out.
+    """
+    rec = _mesh_reconstructor(tmp_path, source="feedforward", **mesh_overrides)
     result = minimal_feedforward_result()
 
     def spy_fuse(depths, rgbs, c2w, K, out_dir, **kw):
@@ -29,23 +40,16 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **kwargs):
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
         patch(
-            "collab_splats.wrapper.reconstructor.frames.read_frames",
+            "collab_splats.reconstructor.frames.read_frames",
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
-        patch("collab_splats.wrapper.reconstructor.upsample_depths", side_effect=lambda d, r, b: d),
-        patch("collab_splats.wrapper.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
-        patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
-        patch("collab_splats.wrapper.reconstructor.sky_masks", return_value=sky_return) as sky,
+        patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
+        patch("collab_splats.reconstructor.clean_repair_mesh"),
+        patch("collab_splats.reconstructor.sky_masks", return_value=sky_return) as sky,
     ):
-        _run_tsdf_mesh(
-            result=minimal_pose_result(),
-            pointcloud_zarr=tmp_path / "pointcloud.zarr",
-            output_dir=tmp_path,
-            images_dir=tmp_path / "images",
-            voxel_size=0.01,
-            depth_trunc=2.0,
-            **kwargs,
-        )
+        rec.mesh()
+
     return sky
 
 
@@ -104,23 +108,19 @@ def test_mask_sky_asks_for_splats_frames_in_checkpoint_order(tmp_path):
         fused["depths"] = depths
         return tmp_path / "mesh.ply"
 
+    # The stage refuses a missing checkpoint before rendering, so one must exist on disk
+    rec = _mesh_reconstructor(tmp_path, source="splats", mask_sky=True)
+    ckpt = rec.backend_dir / "splats" / "ckpt.pt"
+    ckpt.parent.mkdir(parents=True)
+    ckpt.touch()
+
     with (
         patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered),
-        patch("collab_splats.wrapper.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
-        patch("collab_splats.wrapper.reconstructor.clean_repair_mesh"),
-        patch("collab_splats.wrapper.reconstructor.sky_masks", side_effect=fake_sky_masks) as sky,
+        patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
+        patch("collab_splats.reconstructor.clean_repair_mesh"),
+        patch("collab_splats.reconstructor.sky_masks", side_effect=fake_sky_masks) as sky,
     ):
-        _run_tsdf_mesh(
-            result=minimal_pose_result(),
-            pointcloud_zarr=tmp_path / "pointcloud.zarr",
-            output_dir=tmp_path,
-            images_dir=tmp_path / "images",
-            voxel_size=0.01,
-            depth_trunc=2.0,
-            source="splats",
-            splats_ckpt=tmp_path / "ckpt.pt",
-            mask_sky=True,
-        )
+        rec.mesh()
 
     assert sky.call_args.kwargs["idxs"] == [7, 0]
     assert np.all(fused["depths"][0] == 0.0)

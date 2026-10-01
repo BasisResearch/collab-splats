@@ -39,12 +39,7 @@ def make_scene(tmp_path: Path, names: list[str]) -> tuple[Path, Path]:
     A backend data dir plus an images/ store holding names as real PNG keyframes.
     """
     images_dir = tmp_path / "images"
-    fr.write_frames(
-        images_dir,
-        [np.zeros((8, 8, 3), np.uint8)] * len(names),
-        [{"frame_idx": int(n[6:12]), "blur_score": 1.0} for n in names],
-        {"video_path": "x.mp4", "method": "uniform"},
-    )
+    fr.write_frames(images_dir, [np.zeros((8, 8, 3), np.uint8)] * len(names), [int(n[6:12]) for n in names])
     return tmp_path / "backend", images_dir
 
 

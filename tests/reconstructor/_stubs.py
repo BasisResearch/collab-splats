@@ -1,21 +1,22 @@
 """
-Shared Reconstructor stubs for the wrapper tests.
+Shared Reconstructor stubs for the reconstructor tests.
 
 This module deliberately imports nothing from `collab_splats.splats`. It used to live in
 `test_splats_stage.py`, which imports `SplatsConfig` at module level; `test_vda_context.py`
 imported the helper from there and so inherited the dependency, and when the environment's
 gsplat stopped matching the pinned commit BOTH files became uncollectible — taking with them
-the only end-to-end exercise of `Reconstructor._run_sfm`, which needs no gsplat at all.
+the only end-to-end exercise of the `Reconstructor.pointcloud` sfm branch, which needs no gsplat at all.
 """
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import numpy as np
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
-from collab_splats.wrapper.reconstructor import Reconstructor
+from collab_splats.reconstructor import Reconstructor
 
 
 def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
@@ -37,15 +38,14 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "texture": False,
             "use_convex_hull": False,
         },
+        "semantics": {"extractor": "dinov2"},
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
     }
-    recon._stage_output_exists = lambda stage: False
 
     frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
-    records = [{"frame_idx": view} for view in range(n_views)]
-    fr.write_frames(recon.images_dir, frames, records, {"video_path": "v"})
+    fr.write_frames(recon.images_dir, frames, list(range(n_views)))
     image_paths = [Path(f"frame_{view:06d}.jpg") for view in reversed(range(n_views))]
-    recon._resolve_result = lambda: SimpleNamespace(
+    recon._result = SimpleNamespace(
         image_paths=image_paths,
         extrinsics=np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1)),
         intrinsics=np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1)),
@@ -57,7 +57,7 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
 
 def minimal_feedforward_result(n=2, h=8, w=8):
     """
-    PointcloudResult with unit depth and confidence=None; the smallest thing _run_tsdf_mesh accepts.
+    PointcloudResult with unit depth and confidence=None; the smallest thing the mesh stage fuses.
     """
     return PointcloudResult(
         points=np.zeros((5, 3), dtype=np.float32),
@@ -74,11 +74,10 @@ def minimal_feedforward_result(n=2, h=8, w=8):
     )
 
 
-def minimal_pose_result(n=2):
+def stub_creator_cls(result):
     """
-    The PointcloudResult stand-in _run_tsdf_mesh reads poses and original-res K from.
+    Creator class stand-in for a patched get_creator: records its kwargs, returns `result`.
     """
-    return SimpleNamespace(
-        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
-        intrinsics=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], np.float32), (n, 1, 1)),
-    )
+    creator_cls = MagicMock()
+    creator_cls.return_value.create_pointcloud.return_value = result
+    return creator_cls

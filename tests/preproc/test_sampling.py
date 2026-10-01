@@ -440,7 +440,6 @@ def test_public_api_surface():
         "iter_frames",
         "load_video_quality",
         "read_frames",
-        "read_manifest",
         "sample_fps",
         "sample_optical_flow",
         "sample_uniform",

@@ -1,6 +1,6 @@
-"""overwrite=True on the localization DB must drop the stale zarr cache group.
+"""Building the localization DB must drop the stale zarr cache group.
 
-Regression tests for the silent no-op: build_localization_db(overwrite=True) called
+Regression tests for the silent no-op: the localize stage's overwrite called
 _build_localization_db with no overwrite notion, and from_feedforward always
 cache-hits on an existing local_features/<extractor>/reconstruction group — so the
 stale (payload-less) cache was reloaded untouched and verify()'s rebuild-once
@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import zarr
 
-from collab_splats.wrapper import reconstructor as R
-from collab_splats.wrapper.reconstructor import Reconstructor, _build_localization_db
+from collab_splats import reconstructor as R
+from collab_splats.reconstructor import Reconstructor, _build_localization_db
 
 REC_KEY = "local_features/loma/reconstruction"
 
@@ -49,7 +49,7 @@ def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
             return_value=MagicMock(),
         )
     )
-    stack.enter_context(patch("collab_splats.wrapper.reconstructor.LocalMatcher", return_value=MagicMock()))
+    stack.enter_context(patch("collab_splats.reconstructor.LocalMatcher", return_value=MagicMock()))
 
 
 def _images_dir(tmp_path: Path) -> Path:
@@ -66,30 +66,19 @@ def _images_dir(tmp_path: Path) -> Path:
     return images_dir
 
 
-def test_overwrite_true_drops_stale_group_before_rebuild(tmp_path):
+def test_build_drops_stale_group_before_rebuild(tmp_path):
     pc_zarr = _make_stale_store(tmp_path)
     images_dir = _images_dir(tmp_path)
     seen = {}
     with ExitStack() as stack:
         _patch_heavy_deps(stack, pc_zarr, seen)
-        out = _build_localization_db(pc_zarr, "loma", images_dir, top_k=8, overwrite=True)
+        _build_localization_db(pc_zarr, "loma", images_dir, top_k=8)
     # The stale group must be gone when from_feedforward runs, so its cache check misses
     assert seen["rec_group_present"] is False
-    assert out == pc_zarr
 
 
-def test_overwrite_false_keeps_existing_group(tmp_path):
-    pc_zarr = _make_stale_store(tmp_path)
-    images_dir = _images_dir(tmp_path)
-    seen = {}
-    with ExitStack() as stack:
-        _patch_heavy_deps(stack, pc_zarr, seen)
-        _build_localization_db(pc_zarr, "loma", images_dir, top_k=8, overwrite=False)
-    # Default path is untouched: the existing group is still there for the cache hit
-    assert seen["rec_group_present"] is True
-
-
-def test_reconstructor_passes_overwrite_through(tmp_path):
+def test_localize_stage_always_rebuilds(tmp_path):
+    """run() only calls localize() to (re)build, so the stale group is always dropped."""
     # Minimal config; base.yaml fills the rest (matcher=loma, top_k=8 defaults)
     config = {
         "input_path": str(tmp_path / "video.mp4"),
@@ -100,5 +89,5 @@ def test_reconstructor_passes_overwrite_through(tmp_path):
     pc_zarr = rec.backend_dir / "pointcloud.zarr"
     pc_zarr.mkdir(parents=True)
     with patch.object(R, "_build_localization_db") as build:
-        rec.build_localization_db(overwrite=True)
-    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, top_k=8, overwrite=True)
+        rec.localize()
+    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, top_k=8)

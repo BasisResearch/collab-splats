@@ -4,7 +4,7 @@ API Reference
 .. toctree::
    :maxdepth: 1
 
-   wrapper
+   reconstructor
    preproc
    semantics
    pointcloud

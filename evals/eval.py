@@ -29,8 +29,8 @@ from mergedeep import merge
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc.frames import frame_idx_from_path
+from collab_splats.reconstructor import Reconstructor
 from collab_splats.utils.io import write_json
-from collab_splats.wrapper.reconstructor import Reconstructor
 from evals.datasets import get_dataset, load_gt_depth
 from evals.gt_metrics import ate, auc_at_threshold, depth_error, rpe
 
@@ -251,7 +251,7 @@ def run_cell(cell: EvalCell) -> dict[str, Any]:
     paths = {"input_path": str(input_dir), "output_path": str(run_dir)}
     recon = Reconstructor(merge({}, copy.deepcopy(cell.config), paths))
     t0 = time.perf_counter()
-    recon.run_pipeline()
+    recon.run()
     elapsed = time.perf_counter() - t0
 
     # Poses matched to GT by frame name; both sides camera-to-world for the metrics

@@ -193,7 +193,7 @@ def _scene(tmp_path, monkeypatch, prob, frame_idxs=(0, 5, 7)):
     An images/ dir plus a registry whose "skywater" entry is the fake-session backend.
     """
     images = [np.full((16, 16, 3), idx, np.uint8) for idx in frame_idxs]
-    fr.write_frames(tmp_path / "images", images, [{"frame_idx": i} for i in frame_idxs], {})
+    fr.write_frames(tmp_path / "images", images, frame_idxs)
 
     backend, session = _backend(monkeypatch, prob)
     monkeypatch.setattr(sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: backend))
@@ -275,7 +275,7 @@ def test_sky_masks_rethresholds_cache_without_model(tmp_path, monkeypatch):
 def test_sky_masks_reads_old_binary_cache(tmp_path, monkeypatch):
     """A 0/255 PNG from the old format thresholds to the same mask."""
     images_dir = tmp_path / "images"
-    fr.write_frames(images_dir, [np.zeros((16, 16, 3), np.uint8)], [{"frame_idx": 0}], {})
+    fr.write_frames(images_dir, [np.zeros((16, 16, 3), np.uint8)], [0])
 
     cache_dir = tmp_path / "sky"
     cache_dir.mkdir()

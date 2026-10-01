@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -8,6 +9,7 @@ from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.utils import (
     clean_pointcloud,
     cross_frame_attention_ratio,
+    frame_depths,
     outlier_mask,
 )
 
@@ -90,18 +92,20 @@ def test_clean_pointcloud_row_aligned(remove_outliers, max_points, n_kept):
 
 def test_cross_frame_attention_ratio_returns_per_token_array():
     B, heads, N, hd = 1, 2, 20, 4
-    k = torch.randn(B, heads, N, hd)
-    q = torch.randn(B, heads, N, hd)
+    g = torch.Generator().manual_seed(0)
+    k = torch.randn(B, heads, N, hd, generator=g)
+    q = torch.randn(B, heads, N, hd, generator=g)
     result = cross_frame_attention_ratio(k, q, token_offset=0)
     assert isinstance(result, np.ndarray)
 
 
 def test_cross_frame_attention_ratio_similar_frames_high():
     """Identical content in both frame halves → ratio close to 1.0."""
-    torch.manual_seed(0)
     B, heads, hd = 1, 2, 4
+    g = torch.Generator().manual_seed(0)
+
     # N=20: 10 tokens per frame, both frames have identical feature vectors
-    half = torch.randn(B, heads, 10, hd) * 10.0
+    half = torch.randn(B, heads, 10, hd, generator=g) * 10.0
     k = torch.cat([half, half], dim=2)
     q = torch.cat([half, half], dim=2)
     ratios = cross_frame_attention_ratio(k, q, token_offset=0)
@@ -132,8 +136,55 @@ def test_cross_frame_attention_ratio_empty_raises():
     """If token_offset >= tokens_per_img, k_first is empty → raises ValueError."""
     B, heads, N, hd = 1, 2, 20, 4
     tokens_per_img = N // 2
-    k = torch.randn(B, heads, N, hd)
-    q = torch.randn(B, heads, N, hd)
+    g = torch.Generator().manual_seed(0)
+    k = torch.randn(B, heads, N, hd, generator=g)
+    q = torch.randn(B, heads, N, hd, generator=g)
     # token_offset=10 means k_first = k[:, :, 10:10, :] which is empty
     with pytest.raises(ValueError, match="no patch tokens"):
         cross_frame_attention_ratio(k, q, token_offset=tokens_per_img)
+
+
+########################################################
+########## frame_depths ################################
+########################################################
+
+
+def _depth_result(depth, confidence, frame_hw=(8, 8)):
+    """Stand-in result carrying depth, confidence and full-frame original_coords."""
+    n = len(depth)
+    h, w = frame_hw
+
+    return SimpleNamespace(
+        depth=depth,
+        confidence=confidence,
+        original_coords=np.tile(np.array([0, 0, w, h, w, h]), (n, 1)),
+    )
+
+
+def test_frame_depths_masks_low_confidence_then_lifts_to_the_frame_grid():
+    depth = np.full((1, 4, 4), 2.0, dtype=np.float32)
+    confidence = np.arange(16, dtype=np.float32).reshape(1, 4, 4)
+    rgbs = np.zeros((1, 8, 8, 3), dtype=np.uint8)
+
+    out = frame_depths(_depth_result(depth, confidence), rgbs, conf_percentile=50)
+
+    assert out.shape == (1, 8, 8)
+    assert (out == 0).mean() == 0.5
+    assert (out[0, :4] == 0).all()
+    assert np.isclose(out[0, 4:], 2.0).all()
+
+
+def test_frame_depths_without_confidence_keeps_every_pixel():
+    depth = np.full((1, 4, 4), 2.0, dtype=np.float32)
+    rgbs = np.zeros((1, 8, 8, 3), dtype=np.uint8)
+
+    out = frame_depths(_depth_result(depth, None), rgbs, conf_percentile=50)
+
+    assert (out > 0).all()
+
+
+def test_frame_depths_refuses_a_result_without_depth():
+    result = SimpleNamespace(depth=None, confidence=None, original_coords=None)
+
+    with pytest.raises(ValueError, match="no depth"):
+        frame_depths(result, np.zeros((1, 8, 8, 3), np.uint8), conf_percentile=None)

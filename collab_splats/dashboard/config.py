@@ -8,6 +8,20 @@ from pathlib import Path
 import yaml
 
 ########
+# Pull excludes
+########
+
+# Dense per-frame arrays a viewer does not need — pulled on demand instead.
+PULL_EXCLUDES = (
+    "pointcloud.zarr/depth/**",
+    "pointcloud.zarr/world_points/**",
+    "pointcloud.zarr/confidence/**",
+    "pointcloud.zarr/features/**",
+    "pointcloud.zarr/pixel_indices/**",
+    "pointcloud.zarr/images/**",
+)
+
+########
 # Config
 ########
 

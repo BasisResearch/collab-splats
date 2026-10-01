@@ -36,11 +36,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **reconstructor-release** (2026-10-01)
 - **evals-release** (2026-09-29)
 - **pointcloud-release** (2026-09-29)
 - **mesh-release** (2026-09-29)
 - **splats-release** (2026-09-28)
-- **geometry-round3** (2026-09-27)
 
 Known test failures: `docs/known-test-failures.md`
 

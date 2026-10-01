@@ -46,6 +46,11 @@ Scratch scripts in the session scratchpad; A40, torch CUDA.
 - Report values: exact by default; one approximation behind a knob, default off.
 - Keep our `multiview_depth_confidence`; do not swap it for the mapanything upstream.
 - Histogram via `torch.bucketize` + `bincount`, not `histc`.
+- `utils/image.py` gains torch + kornia; only its docstring promised torch-free. The enforced
+  torch-free surface is `import collab_splats.utils` and `collab_splats.utils.io`, both untouched;
+  every importer of `utils.image` already imports torch. Import paths unchanged.
+- Target-view batching reuses `transform_points` / `project` / `depth_residual`, generalized to a
+  leading pose batch; the 2-D call path stays bit-identical.
 - Guided filter via `kornia.filters.guided_blur`, replacing our CPU filter; the 2r border band
   follows kornia's `BORDER_REFLECT_101`. Accepted border-band change (option a), pinned by a parity
   test against a cv2 oracle.
@@ -64,18 +69,22 @@ parity gate.
    reads it instead of calling `transform_points`. `multiview_depth_confidence` ignores the extra
    output; its behavior is unchanged.
 4. **Batched targets.** For a source frame i, the kept j's run through `depth_residual` in chunks of
-   B views x P points; B from `utils/torch_utils.infer_batch_size`. Same numbers, fewer launches.
+   B views x P points; B from `utils/torch_utils.infer_batch_size`. Gate: integer columns and
+   histogram bit-identical; if batched matmul rounding breaks that, the item is dropped and the
+   measured cost recorded here.
 5. **O(pairs) per-frame medians.** One pass buckets `|median_rel_depth_error|` under idx1 and idx2,
    then takes each frame's median. Output identical to the O(N x pairs) scan.
 6. **Photometric memory and speed.**
    - stage passes uint8 images (no float32 cast); `compute_photometric_ncc` takes uint8
-   - `utils/image.upsample_depths` filters with `kornia.filters.guided_blur` on GPU in batches;
+   - `utils/image.upsample_depths` filters with `kornia.filters.guided_blur` on GPU, one call per frame
+     with depth and validity as two channels;
      `_box` and `_guided_filter` are deleted (reuse/retire rule); the parity test carries its own
      cv2 `boxFilter` oracle with `BORDER_REFLECT_101`
-   - streaming: depth upsampled lazily over a sliding window of `max_separation + 1` frames, never
-     the full N-stack; the float64 full-stack torch copy is removed
-   - projection in float32 on GPU through `depth_residual`'s nearest sampler, replacing the
-     hand-rolled round + bounds check
+   - streaming: only frame i's depth is ever lifted (frame j contributes color only), so it is
+     upsampled one frame at a time, and only when frame i has a partner; the float64 full-stack
+     torch copy is removed
+   - projection in float32 on GPU; the round + bounds semantics are kept as is (depth_residual's
+     continuous [0, W-1] bound differs at the edge column, so it is not reused here)
    - side effect: mesh stage and splats depth targets share `upsample_depths`, so they speed up and
      take the same border-band change
 

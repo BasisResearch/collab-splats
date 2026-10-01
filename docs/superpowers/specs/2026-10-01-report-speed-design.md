@@ -110,10 +110,9 @@ after the table.
 
 ## Section 3 — verification
 
-**Measurement scene.** No local zarr has >= 1k frames (largest: `GH010229`, 294 frames at
-384x688). First choice: pull a >= 1k-frame processed scene via `collab_splats.remote`. Fallback:
-`/workspace/outputs/ocr_viewer/GH010229/vggt_omega/pointcloud.zarr`, with N^2 extrapolation to 1k
-stated as such.
+**Measurement scene.** `/workspace/outputs/ocr_viewer/GH010229/vggt_omega/pointcloud.zarr`
+(294 frames, 384x688 model grid; user choice 2026-10-01). No bucket pull. 1k-frame figures are N^2
+extrapolations from it and are labeled as such.
 
 **Baseline first.** Profile the current stage before any change; wall time per phase
 (`_collect_pairs`, per-frame medians, image load, upsample, photometric) and peak RSS. Run in tmux,

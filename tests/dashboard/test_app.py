@@ -906,7 +906,6 @@ def test_warm_heavy_stack_imports_localizer_and_pipeline(monkeypatch):
 def test_pull_excludes_cover_the_dense_per_pixel_arrays():
     assert PULL_EXCLUDES == (
         "pointcloud.zarr/depth/**",
-        "pointcloud.zarr/world_points/**",
         "pointcloud.zarr/confidence/**",
         "pointcloud.zarr/features/**",
         "pointcloud.zarr/pixel_indices/**",

@@ -31,9 +31,37 @@ from collab_splats.pointcloud.utils import clean_pointcloud
 from collab_splats.preproc import frames
 from collab_splats.utils.colmap import write_colmap_reconstruction
 from collab_splats.utils.io import LZ4
-from collab_splats.utils.torch_utils import to_numpy
+from collab_splats.utils.torch_utils import get_device, to_numpy
 
 logger = logging.getLogger(__name__)
+
+
+########################################################################
+# Helpers
+########################################################################
+
+
+def _unproject_frames(
+    depth: np.ndarray, extrinsics: np.ndarray, intrinsics: np.ndarray, batch_size: int = 100
+) -> np.ndarray:
+    """
+    World point of every depth pixel, unprojected on the GPU when one is present.
+
+    - frames go through in batches of batch_size, bounding device memory
+    - returns (N, H, W, 3) float32
+    """
+    device = get_device()
+    world_points = np.empty((*depth.shape, 3), dtype=np.float32)
+
+    # Unproject each batch on device, copy it back into the host array
+    for start in range(0, len(depth), batch_size):
+        stop = start + batch_size
+        batch_depth = torch.as_tensor(depth[start:stop], dtype=torch.float32, device=device)
+        world_to_cam = torch.as_tensor(extrinsics[start:stop], dtype=torch.float32, device=device)
+        K = torch.as_tensor(intrinsics[start:stop], dtype=torch.float32, device=device)
+        world_points[start:stop] = unproject(batch_depth, world_to_cam, K).cpu().numpy()
+
+    return world_points
 
 
 ########################################################################
@@ -117,6 +145,7 @@ class PointcloudResult:
 
         - dense arrays are chunked by frame
         - images are written, but load_zarr skips them by default
+        - world_points are not written: load_zarr unprojects them from depth
 
         Args:
             path: directory for the zarr store, created if absent.
@@ -154,7 +183,6 @@ class PointcloudResult:
         # Write the optional per-pixel arrays as numpy, one chunk per frame
         for name, arr in (
             ("depth", self.depth),
-            ("world_points", self.world_points),
             ("confidence", self.confidence),
             ("images", self.images),
         ):
@@ -178,13 +206,14 @@ class PointcloudResult:
         Load from a zarr v3 store written by save_zarr().
 
         - dense arrays load by default; skip the ones you do not read, they are large
+        - world_points are unprojected from depth under the stored extrinsics and model-grid K
         - confidence and images come back as torch tensors
 
         Args:
             path: directory of the zarr store.
             load_images: restore the (N, 3, H, W) images, needed to lift features after a load.
             load_depth: decode the depth maps.
-            load_world_points: decode the per-pixel world points.
+            load_world_points: unproject the per-pixel world points; needs depth in the store.
             load_confidence: decode the confidence maps.
             load_pixel_indices: decode the per-point source pixels.
 
@@ -207,9 +236,16 @@ class PointcloudResult:
 
         # Read the optional arrays, or None when missing or not requested
         pixel_indices = store["pixel_indices"][:] if (load_pixel_indices and "pixel_indices" in store) else None
-        world_points = store["world_points"][:] if (load_world_points and "world_points" in store) else None
-        depth = store["depth"][:] if (load_depth and "depth" in store) else None
+        depth = store["depth"][:] if ((load_depth or load_world_points) and "depth" in store) else None
         confidence = torch.from_numpy(store["confidence"][:]) if (load_confidence and "confidence" in store) else None
+
+        # Rebuild world points from depth, then drop depth if it was read only for them
+        world_points = None
+        if load_world_points and depth is not None:
+            world_points = _unproject_frames(depth, extrinsics, model_intrinsics)
+
+        if not load_depth:
+            depth = None
 
         # Load images only when asked, since they are large
         images = torch.from_numpy(store["images"][:]) if load_images and "images" in store else None
@@ -257,14 +293,11 @@ class PointcloudResult:
             raise ValueError(f"depth must be (N, H, W), got {self.depth.shape}")
 
         # Unproject every frame under the current poses, then read each point's source pixel
-        depth = torch.as_tensor(self.depth, dtype=torch.float32)
-        world_to_cam = torch.as_tensor(self.extrinsics, dtype=torch.float32)
-        intrinsics = torch.as_tensor(self.model_intrinsics, dtype=torch.float32)
-        world_points = unproject(depth, world_to_cam, intrinsics)
+        world_points = _unproject_frames(self.depth, self.extrinsics, self.model_intrinsics)
         frame, row, col = self.pixel_indices.T
         points = world_points[frame, row, col]
 
-        return replace(self, points=points.numpy(), world_points=world_points.numpy())
+        return replace(self, points=points, world_points=world_points)
 
     def select_points(self, mask: np.ndarray) -> PointcloudResult:
         """

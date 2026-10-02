@@ -2,7 +2,7 @@
 
 Covers:
 - Roundtrip of all core required fields
-- world_points optional field included and chunked by frame
+- world_points never written; load_zarr unprojects them from depth
 - Missing optional fields load as None
 """
 from __future__ import annotations
@@ -11,7 +11,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
+import zarr
 
+from collab_splats.geometry.projection import project, unproject
 from collab_splats.pointcloud.base import PointcloudResult
 
 
@@ -61,35 +64,76 @@ def test_zarr_roundtrip_core_fields(tmp_path):
     assert loaded.image_paths == result.image_paths
 
 
-def test_zarr_includes_world_points(tmp_path):
-    """world_points is saved and loaded correctly when present."""
-    result = _make_result(n_frames=4, h=16, w=16, with_world_points=True)
-    store_path = tmp_path / "result_wp.zarr"
-
-    result.save_zarr(store_path)
-    loaded = PointcloudResult.load_zarr(store_path)
-
-    assert loaded.world_points is not None
-    np.testing.assert_array_equal(loaded.world_points, result.world_points)
-
-
-def test_zarr_world_points_chunked_by_frame(tmp_path):
-    """world_points array is chunked with chunk size 1 along the frame axis."""
-    import zarr
-
-    n_frames = 5
-    h, w = 12, 10
+def _posed_result_with_depth(n_frames: int = 3, h: int = 12, w: int = 16) -> PointcloudResult:
+    """Result with random depth, distinct w2c poses and a pinhole model-grid K."""
+    rng = np.random.default_rng(0)
     result = _make_result(n_frames=n_frames, h=h, w=w, with_world_points=True)
-    store_path = tmp_path / "result_chunks.zarr"
+    extrinsics = np.tile(np.eye(4, dtype=np.float32), (n_frames, 1, 1))
+    extrinsics[:, :3, 3] = rng.normal(size=(n_frames, 3))
+    angle = np.linspace(0.0, 0.5, n_frames)
+    extrinsics[:, 0, 0] = extrinsics[:, 2, 2] = np.cos(angle)
+    extrinsics[:, 0, 2] = np.sin(angle)
+    extrinsics[:, 2, 0] = -np.sin(angle)
+    K = np.array([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1]], dtype=np.float32)
+    result.extrinsics = extrinsics
+    result.model_intrinsics = np.tile(K, (n_frames, 1, 1))
+    result.depth = rng.uniform(1.0, 5.0, (n_frames, h, w)).astype(np.float32)
+    return result
+
+
+def test_zarr_does_not_write_world_points(tmp_path):
+    """save_zarr leaves world_points out of the store even when the result holds them."""
+    result = _posed_result_with_depth()
+    store_path = tmp_path / "result.zarr"
 
     result.save_zarr(store_path)
 
-    store = zarr.open(str(store_path), mode="r")
-    arr = store["world_points"]
-    # chunk dim 0 should be 1 (one chunk per frame)
-    assert arr.chunks[0] == 1
-    assert arr.chunks[1] == h
-    assert arr.chunks[2] == w
+    assert "world_points" not in zarr.open(str(store_path), mode="r")
+
+
+def test_zarr_world_points_unprojected_from_depth(tmp_path):
+    """Loaded world_points equal depth unprojected under the stored extrinsics and model-grid K."""
+    result = _posed_result_with_depth()
+    store_path = tmp_path / "result.zarr"
+    result.save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path)
+    expected = unproject(
+        torch.from_numpy(result.depth), torch.from_numpy(result.extrinsics), torch.from_numpy(result.model_intrinsics)
+    )
+
+    np.testing.assert_allclose(loaded.world_points, expected.numpy(), atol=1e-4)
+
+
+def test_zarr_world_points_reproject_to_their_pixels(tmp_path):
+    """Each loaded world point projects back onto its own pixel in its own camera."""
+    result = _posed_result_with_depth(n_frames=2, h=6, w=8)
+    store_path = tmp_path / "result.zarr"
+    result.save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path)
+    grid_v, grid_u = np.meshgrid(np.arange(6), np.arange(8), indexing="ij")
+
+    for i in range(2):
+        pixels, _ = project(
+            torch.from_numpy(loaded.world_points[i]),
+            torch.from_numpy(loaded.extrinsics[i]),
+            torch.from_numpy(loaded.model_intrinsics[i]),
+        )
+        np.testing.assert_allclose(pixels[..., 0].numpy(), grid_u, atol=1e-3)
+        np.testing.assert_allclose(pixels[..., 1].numpy(), grid_v, atol=1e-3)
+
+
+def test_zarr_world_points_without_depth(tmp_path):
+    """load_depth=False still unprojects world_points but returns no depth."""
+    result = _posed_result_with_depth()
+    store_path = tmp_path / "result.zarr"
+    result.save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path, load_depth=False)
+
+    assert loaded.depth is None
+    assert loaded.world_points.shape == (*result.depth.shape, 3)
 
 
 def test_zarr_missing_optional_fields_load_as_none(tmp_path):

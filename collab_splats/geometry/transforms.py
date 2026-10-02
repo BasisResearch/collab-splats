@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import open3d as o3d
+import torch
 from scipy.linalg import rq
 from torch import Tensor
 
@@ -78,15 +79,41 @@ def transform_points(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.
     - reads only the 3x4 block, so a (4, 4) bottom row must be [0, 0, 0, 1]
     - numpy or torch, not mixed; dtype follows the library's promotion of the inputs
     - torch: differentiable in both arguments
+    - a (B, 4, 4) batch maps (P, 3) or (B, P, 3) points to (B, P, 3)
+    - computes forward in full fp32 whatever the matmul precision: TF32 would round R @ p
+    - TF32 is forced off only for torch inputs; the setting is process-wide, so the restore is not thread-safe
 
     Args:
-        points: (..., 3) points.
-        T: (4, 4) or (3, 4) rigid transform, e.g. world-to-cam or cam-to-world.
+        points: (..., 3) points, or (P, 3) / (B, P, 3) with a pose batch.
+        T: (4, 4) or (3, 4) rigid transform, or a (B, 4, 4) / (B, 3, 4) batch of them.
 
     Returns:
-        (..., 3) transformed points.
+        (..., 3) transformed points; (B, P, 3) for a pose batch.
     """
-    return points @ T[:3, :3].T + T[:3, 3]
+    # numpy ignores torch's matmul precision, so skip the toggle
+    if isinstance(points, np.ndarray):
+        return _rigid_transform(points, T)
+
+    # Full fp32 precision: TF32, which a mapanything import enables, rounds the matmul
+    precision = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+
+    try:
+        return _rigid_transform(points, T)
+    finally:
+        torch.set_float32_matmul_precision(precision)
+
+
+def _rigid_transform(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.ndarray | Tensor:
+    """
+    R @ p + t for one pose or a pose batch, at the caller's matmul precision.
+    """
+    # One pose: the original expression, bit-identical for existing callers
+    if T.ndim == 2:
+        return points @ T[:3, :3].T + T[:3, 3]
+
+    # Pose batch: one matmul per pose, translation broadcast over the points
+    return points @ T[..., :3, :3].swapaxes(-1, -2) + T[..., None, :3, 3]
 
 
 def extract_intrinsics(K: np.ndarray) -> tuple[float, float, float, float]:

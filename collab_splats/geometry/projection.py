@@ -25,7 +25,7 @@ def unproject(depth: Tensor, world_to_cam: Tensor, intrinsics: Tensor) -> Tensor
 
     - camera ray `((u - cx)/fx, (v - cy)/fy, 1)`, scaled by depth
     - `x_world = R^T (d * ray - t)`, written as `(p - t) @ R`
-    - inverse written out: transform_points takes one 2-D T, not a batch of poses
+    - inverse written out: transform_points applies T, not its inverse, and batches only (B, P, 3) points
 
     Args:
         depth: (..., H, W) z-depth.
@@ -66,24 +66,35 @@ def project(
     points_world: Tensor, world_to_cam: Tensor, intrinsics: Tensor, *, min_depth: float = 1e-6
 ) -> tuple[Tensor, Tensor]:
     """
-    Pixel coordinates of world points in one camera.
+    Pixel coordinates of world points in one camera, or in each camera of a batch.
+
+    - one (3, 3) K: 0-dim scalar terms, so a (3,) point returns (2,) and (P, 3) points keep their dtype
+    - a (B, 3, 3) batch must share the points' dtype and device: focal terms broadcast as (B, 1)
 
     Args:
-        points_world: (..., 3) world points.
-        world_to_cam: (4, 4) or (3, 4) w2c.
-        intrinsics: (3, 3) camera matrix.
+        points_world: (..., 3) world points; (P, 3) or (B, P, 3) with a pose batch.
+        world_to_cam: (4, 4) or (3, 4) w2c, or a (B, 4, 4) batch.
+        intrinsics: (3, 3) camera matrix, or a (B, 3, 3) batch.
         min_depth: perspective-divide floor; a point at or behind the camera divides by it.
 
     Returns:
-        (pixels (..., 2), camera-frame points (..., 3)).
+        (pixels (..., 2), camera-frame points (..., 3)); (B, P, 2) and (B, P, 3) for a batch.
     """
     # World -> camera
     points_cam = transform_points(points_world, world_to_cam)
 
+    # One K: 0-dim scalars, as before the pose batch; a batch broadcasts (B, 1) over the points
+    if intrinsics.ndim == 2:
+        fx, fy = intrinsics[0, 0], intrinsics[1, 1]
+        cx, cy = intrinsics[0, 2], intrinsics[1, 2]
+    else:
+        fx, fy = intrinsics[..., 0, 0, None], intrinsics[..., 1, 1, None]
+        cx, cy = intrinsics[..., 0, 2, None], intrinsics[..., 1, 2, None]
+
     # Clamped divide: unclamped, a mask's 0 * inf poisons the backward
     depth = points_cam[..., 2].clamp(min=min_depth)
-    u = points_cam[..., 0] * intrinsics[0, 0] / depth + intrinsics[0, 2]
-    v = points_cam[..., 1] * intrinsics[1, 1] / depth + intrinsics[1, 2]
+    u = points_cam[..., 0] * fx / depth + cx
+    v = points_cam[..., 1] * fy / depth + cy
     return torch.stack([u, v], dim=-1), points_cam
 
 
@@ -102,64 +113,69 @@ def depth_residual(
     - in bounds means inside the pixel-center span [0, W-1] x [0, H-1]
     - pixels returned, so callers need no second project
     - no tolerance here: each caller applies its own to the returned depths
+    - a batch of B views returns each output with a leading B
 
     Args:
         points_world: (P, 3) world points.
-        world_to_cam: (4, 4) w2c of the view whose depth is read.
-        intrinsics: (3, 3) camera matrix on the depth map's pixel grid.
-        depth: (H, W) z-depth of that view; 0 marks no depth.
+        world_to_cam: (4, 4) w2c of the view whose depth is read, or a (B, 4, 4) batch.
+        intrinsics: (3, 3) camera matrix on the depth map's pixel grid, or a (B, 3, 3) batch.
+        depth: (H, W) z-depth of that view, or a (B, H, W) batch; 0 marks no depth.
 
     Returns:
-        (residual, expected, sampled, valid, pixels), each (P,) but pixels (P, 2)
+        (residual, expected, sampled, valid, pixels), each (P,) but pixels (P, 2); (B, P) and (B, P, 2) for a batch
         - residual: expected minus sampled
         - expected: the point's z in the camera
         - sampled: the depth map at the projected pixel, 0 outside the grid
         - valid: in front of the camera and projected in bounds
         - pixels: project's (u, v) of each point
     """
-    height, width = depth.shape
+    # Depth grid size; a batch shares one H, W
+    height, width = depth.shape[-2:]
 
     # World -> pixel; project's clamped divide keeps points behind the camera finite
     pixels, points_cam = project(points_world, world_to_cam, intrinsics)
-    expected = points_cam[:, 2]
+    expected = points_cam[..., 2]
     in_front = expected > 0
 
     # Pixels -> grid_sample's [-1, 1] frame, corners on the outer pixel centers
-    grid_u = pixels[:, 0] / (width - 1) * 2 - 1
-    grid_v = pixels[:, 1] / (height - 1) * 2 - 1
+    grid_u = pixels[..., 0] / (width - 1) * 2 - 1
+    grid_v = pixels[..., 1] / (height - 1) * 2 - 1
     grid = torch.stack([grid_u, grid_v], dim=-1)
-    in_bounds = (grid[:, 0] >= -1) & (grid[:, 0] <= 1) & (grid[:, 1] >= -1) & (grid[:, 1] <= 1)
+    in_bounds = (grid[..., 0] >= -1) & (grid[..., 0] <= 1) & (grid[..., 1] >= -1) & (grid[..., 1] <= 1)
 
-    # Nearest read of the depth map at every projected pixel
-    depth_map = depth[None, None]
-    grid = grid.reshape(1, 1, -1, 2)
+    # Nearest read of each view's depth map at its projected pixels
+    depth_map = depth.reshape(-1, 1, height, width)
+    grid = grid.reshape(depth_map.shape[0], 1, -1, 2)
     sampled = F.grid_sample(depth_map, grid, mode="nearest", padding_mode="zeros", align_corners=True)
-    sampled = sampled.reshape(-1)
+    sampled = sampled.reshape(expected.shape)
 
+    # Signed residual: positive when the point lies behind the observed surface
     residual = expected - sampled
     return residual, expected, sampled, in_front & in_bounds, pixels
 
 
 def depth_agreement(
     points_world: Tensor, world_to_cam: Tensor, intrinsics: Tensor, depth: Tensor, rel_thresh: float
-) -> tuple[Tensor, Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """
     Whether world points agree with another view's depth map, within a relative tolerance.
 
     - occluded (the view sees a nearer surface) is no evidence: not seen
     - a hole in the view's depth map is seen but cannot agree
     - scale-free: tolerance is rel_thresh times the point's own depth
+    - a batch of B views returns each output with a leading B
 
     Args:
         points_world: (P, 3) world points.
-        world_to_cam: (4, 4) w2c of the view whose depth is read.
-        intrinsics: (3, 3) camera matrix on the depth map's pixel grid.
-        depth: (H, W) z-depth of that view; 0 marks no depth.
+        world_to_cam: (4, 4) w2c of the view whose depth is read, or a (B, 4, 4) batch.
+        intrinsics: (3, 3) camera matrix on the depth map's pixel grid, or a (B, 3, 3) batch.
+        depth: (H, W) z-depth of that view, or a (B, H, W) batch; 0 marks no depth.
         rel_thresh: tolerance as a fraction of the point's depth.
 
     Returns:
-        (agree, seen, rel_residual), each (P,)
+        (agree, seen, rel_residual, expected), each (P,); (B, P) for a batch
         - rel_residual: (sampled - expected) / expected; exactly -1 where sampled is 0
+        - expected: the point's z in the camera
     """
     residual, expected, sampled, valid, _ = depth_residual(points_world, world_to_cam, intrinsics, depth)
 
@@ -170,7 +186,7 @@ def depth_agreement(
     seen = valid & ~occluded
     agree = seen & has_depth & (residual.abs() < tol)
 
-    return agree, seen, (sampled - expected) / expected
+    return agree, seen, (sampled - expected) / expected, expected
 
 
 ########################################################################
@@ -232,7 +248,7 @@ def multiview_depth_confidence(
             if i == j:
                 continue
 
-            agree_ij, seen_ij, _ = depth_agreement(points, extrinsics_t[j], intrinsics_t[j], depth_t[j], rel_thresh)
+            agree_ij, seen_ij, _, _ = depth_agreement(points, extrinsics_t[j], intrinsics_t[j], depth_t[j], rel_thresh)
             seen_ij &= has_source
             seen[i] += seen_ij
             agree[i] += agree_ij & seen_ij

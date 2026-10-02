@@ -71,7 +71,7 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
     # Model-res depth is lifted onto the 8x8 frames through each row's crop box
     assert depth_targets.shape == (3, 8, 8)
     # Depth rows pair with the frames read for them: row 0 is frame 2, row 2 is frame 0
-    assert depth_targets[0, 0, 0] == pytest.approx(3) and depth_targets[2, 0, 0] == pytest.approx(1)
+    assert depth_targets[0, 0, 0] == pytest.approx(3, rel=1e-5) and depth_targets[2, 0, 0] == pytest.approx(1, rel=1e-5)
 
 
 def test_splats_stage_requires_pointcloud_zarr_for_depth_loss(tmp_path):
@@ -182,7 +182,7 @@ def test_splats_sfm_uses_zarr_depth(tmp_path):
     depth_targets = train.call_args.kwargs["depth_targets"]
     assert depth_targets.shape == (3, 8, 8)
     # Row 0 is frame 2, row 2 is frame 0
-    assert depth_targets[0, 0, 0] == pytest.approx(3) and depth_targets[2, 0, 0] == pytest.approx(1)
+    assert depth_targets[0, 0, 0] == pytest.approx(3, rel=1e-5) and depth_targets[2, 0, 0] == pytest.approx(1, rel=1e-5)
 
 
 def test_mesh_sfm_zarr_fuses(tmp_path):

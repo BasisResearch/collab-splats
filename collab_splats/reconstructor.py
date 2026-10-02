@@ -870,10 +870,13 @@ class Reconstructor:
         if frames.frame_paths(self.images_dir):
             image_ids = [frames.frame_idx_from_path(p) for p in ff.image_paths]
             images = frames.read_frames(self.images_dir, image_ids)
-            images = images.astype(np.float32)
 
         # Every table from arrays, keyed by frame name
         names = [Path(str(p)).name for p in ff.image_paths]
+
+        # Optional pair pruning; 0.0 (base.yaml) keeps every ordered pair
+        min_pair_overlap = self.config["reconstruction_quality_report"]["min_pair_overlap"]
+
         tables = compute_reconstruction_quality(
             ff.depth,
             ff.model_intrinsics,
@@ -883,6 +886,7 @@ class Reconstructor:
             names,
             ff.confidence,
             images,
+            min_pair_overlap=min_pair_overlap,
         )
 
         # Atomic write beside the zarr: reuse-by-existence never sees a half file
@@ -892,6 +896,7 @@ class Reconstructor:
             "model_resolution": f"{ff.model_width}x{ff.model_height}",
             "image_width": int(ff.original_coords[0][4]),
             "zarr": str(self.pointcloud_zarr),
+            "min_pair_overlap": min_pair_overlap,
         }
         write_json(self.outputs["reconstruction_quality_report"], {"scene": scene, **tables})
         logger.info("Reconstruction quality report written to %s", self.outputs["reconstruction_quality_report"])

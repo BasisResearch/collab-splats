@@ -45,7 +45,7 @@ Scratch scripts in the session scratchpad; A40, torch CUDA.
 - Scope: the `reconstruction_quality_report` stage only.
 - Report values: exact by default; one approximation behind a knob, default off.
 - Keep our `multiview_depth_confidence`; do not swap it for the mapanything upstream.
-- Histogram via `torch.bucketize` + `bincount`, not `histc`.
+- Histogram via `torch.bucketize` + `index_add_` (CUDA `bincount` syncs), not `histc`.
 - `utils/image.py` gains torch + kornia; only its docstring promised torch-free. The enforced
   torch-free surface is `import collab_splats.utils` and `collab_splats.utils.io`, both untouched;
   every importer of `utils.image` already imports torch. Import paths unchanged.
@@ -54,6 +54,9 @@ Scratch scripts in the session scratchpad; A40, torch CUDA.
 - Guided filter via `kornia.filters.guided_blur`, replacing our CPU filter; the 2r border band
   follows kornia's `BORDER_REFLECT_101`. Accepted border-band change (option a), pinned by a parity
   test against a cv2 oracle.
+- kornia float32 box sums (dense conv, not double-accumulated like cv2): interior |Δ| ≲ 7e-5 ×
+  max depth after guide centering (max rel 1.5e-4 at 1080p / 100 m, 1.2e-3 at 4K); accepted, far
+  below feedforward depth error. float64 on GPU costs ~7x (66.5 vs 9.2 ms/frame at 1080p) — rejected.
 
 ## Section 1 — exact speed-ups (default path)
 
@@ -61,17 +64,20 @@ All in `collab_splats/geometry/metrics.py` unless noted. Each item is its own co
 parity gate.
 
 1. **GPU histogram.** `bounded_residual` in torch float64 -> `torch.bucketize(u, edges, right=True) - 1`
-   -> `bincount(minlength=k)` into one device int64 accumulator; one `.cpu()` at the end.
-   Values at u == 1.0 clamp into the last bin, as `np.histogram` does.
-2. **Fewer syncs.** Per kept pair, stack (n_pixels, q25, q50, q75, parallax median, depth median)
-   into one device row; empty pairs masked, not branched on. Rows transfer once per source frame i.
+   -> `index_add_` into one device int64 accumulator of k + 1 bins (CUDA `bincount` syncs); one
+   `.cpu()` at the end. Values at u == 1.0 clamp into the last bin, as `np.histogram` does; NaN
+   (an inf depth's residual) parks in overflow bin k, sliced off as `np.histogram` drops it.
+2. **Fewer syncs.** One sync per pair: `sel.nonzero()`, whose host count decides the empty-pair
+   branch and whose indices replace every boolean-mask read. Per kept pair, stack (q50, IQR,
+   parallax median, depth median) into one device row; rows transfer once per source frame i.
 3. **No redundant transform.** `depth_agreement` also returns `expected` (camera z); `_collect_pairs`
    reads it instead of calling `transform_points`. `multiview_depth_confidence` ignores the extra
    output; its behavior is unchanged.
 4. **Batched targets.** For a source frame i, the kept j's run through `depth_residual` in chunks of
    B views x P points; B from `utils/torch_utils.infer_batch_size`. Gate: integer columns and
-   histogram bit-identical; if batched matmul rounding breaks that, the item is dropped and the
-   measured cost recorded here.
+   histogram bit-identical. Deviation: batched matmul DID break it (mapanything sets TF32 at
+   import; batched bmm rounds, n_pixels 240 -> 210 on one pair), so instead of dropping the item
+   `transform_points` forces `"highest"` matmul precision on both branches; bit-identity restored.
 5. **O(pairs) per-frame medians.** One pass buckets `|median_rel_depth_error|` under idx1 and idx2,
    then takes each frame's median. Output identical to the O(N x pairs) scan.
 6. **Photometric memory and speed.**
@@ -147,6 +153,56 @@ no side processes.
 **Done.** Before/after wall time on the measurement scene; the Section 2 A/B table; full
 `tests/` gate in the worktree (`cd <wt> && PYTHONPATH=<wt>`, print `collab_splats.__file__`);
 CHANGELOG entry; In-Flight entry removed from CLAUDE.md.
+
+## Measured (GH010229, 294 frames, A40)
+
+Harness `scratch/report_speed/` (gitignored): `run_report.py` times each phase of the stage,
+`compare_reports.py` applies the parity contract. GPU shared with other sessions: wall times move
+±10% run to run (T10 default: 96.9 s and 102.3 s on the same code).
+
+**Before / after.** Baseline full run (294 frames, with images) OOMs past the 46.6 GB cap, so the
+baseline is split: depth tables alone, and the first 100 frames with images.
+
+| Run | `_collect_pairs` | upsample | photometric NCC | total | peak RSS |
+|---|---|---|---|---|---|
+| baseline, depth only, 294 | 244 s | — | — | 274 s | 13.3 GB |
+| after, depth only, 294 | 79 s | — | — | 110 s | 13.3 GB |
+| baseline, 100 frames + images | 55 s | 13.2 s | 92.9 s | 180 s | 16.7 GB |
+| after, 100 frames + images | 11.6 s | 3.6 s | 4.6 s | 39.9 s | 7.1 GB |
+| after, full 294 + images | 62 s | 9.7 s | 12.7 s | 102 s | 7.2 GB |
+
+- 1k-frame extrapolation (N² on the depth pass): about 47 min before, about 12 min after
+- `_scene_frames` (zarr + image load, ~22 s) is now the second-largest phase; untouched
+
+**Parity.**
+- depth tables + histogram: bit-identical to baseline on 294 frames
+- photometric, 100 frames: 197/197 pairs, `photometric_ncc` max |Δ| 4.6e-5, `n_pixels` Δ ±10
+- full run: 585 photometric pairs; the 197 shared with the 100-frame run are identical
+- T10 at default 0.0: whole report identical to T9's, photometric included
+
+**Section 2 A/B** (deltas against the 0.0 report; two timing runs each):
+
+| min_pair_overlap | depth pairs kept | agreement max \|Δ\| | frame median max \|Δ\| | hist TVD | `_collect_pairs` s | total s |
+|---|---|---|---|---|---|---|
+| 0 | 76,421 | 0 | 0 | 0 | 61.9 / 60.5 | 96.9 / 102.3 |
+| 0.01 | 71,514 | 8.9e-5 | 2.7e-2 | 1.8e-4 | 53.5 / 64.4 | 90.7 / 102.9 |
+| 0.05 | 61,203 | 8.1e-4 | 3.8e-2 | 1.9e-3 | 52.9 / 49.1 | 88.6 / 87.7 |
+| 0.1 | 52,229 | 3.3e-3 | 4.0e-2 | 4.9e-3 | 42.9 / 41.1 | 77.4 / 78.0 |
+
+- no frame's agreement or median flips between None and a value at any setting
+- photometric pairs unchanged (585) at every setting
+- 0.01 already drops 4,907 pairs that had valid pixels: frustum overlap below 1% still yields rows
+- per-frame medians move up to 0.04 (absolute rel-depth error) from 0.01 upward
+- best case 0.1: depth pass −32%, total −22%; default stays 0.0, user picks
+
+### Known limitations
+
+- The depth pass `unproject` (`projection.py`, `(points_cam - translation) @ rotation`) still runs float32 world-frame matmuls outside the TF32 guard.
+  - Under TF32 (mapanything sets it at import) it rounds at ~1e-3 and can flip nearest pixels at depth discontinuities.
+  - It is also sensitive to a far world origin.
+  - Baseline and branch share this behavior, which is why parity holds.
+  - The fix would mirror photometric: camera-local K-ray points plus float64 relative poses. It changes report values, so it is not done here.
+- `transform_points` forcing fp32 changes TF32-era results in its other callers (`splats/rendering.py`, `semantics/lifting.py` via `depth_residual`, loop closure). They become more accurate, not bit-equal to before under TF32.
 
 ## Out of scope
 

@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from collab_splats.geometry.projection import (
+    depth_agreement,
     depth_residual,
     multiview_depth_confidence,
     project,
@@ -79,6 +80,21 @@ def test_project_divides_by_the_camera_depth_and_floors_it_at_min_depth():
     assert torch.allclose(pixels, torch.tensor([[300.0 / 4 + 31.0, 2 * 280.0 / 4 + 22.0]], dtype=torch.float64))
     # A floor above z takes over the divide, collapsing the point towards the principal point
     assert torch.allclose(floored, torch.tensor([[300.0 / 1e3 + 31.0, 2 * 280.0 / 1e3 + 22.0]], dtype=torch.float64))
+
+
+
+def test_project_one_camera_keeps_point_shape_and_points_dtype():
+    _, K = _pose()
+    identity = torch.eye(4, dtype=torch.float32)
+    points = torch.tensor([[1.0, 2.0, 4.0], [0.5, -1.0, 3.0]], dtype=torch.float32)
+
+    single, _ = project(points[0], identity, K)
+    pixels, _ = project(points, identity, K)
+
+    # A (3,) point gives (2,) pixels; float64 K does not promote float32 (P, 3) points
+    assert K.dtype == torch.float64
+    assert single.shape == (2,)
+    assert pixels.shape == (2, 2) and pixels.dtype == torch.float32
 
 
 def test_depth_residual_reads_the_other_views_depth_at_the_projected_pixel():
@@ -268,3 +284,73 @@ def test_multiview_depth_confidence_is_scale_invariant():
 
     np.testing.assert_array_equal(base[0], scaled[0])
     np.testing.assert_array_equal(base[1], scaled[1])
+
+
+def test_depth_agreement_returns_the_camera_depth_project_computes():
+    """expected is project's camera z, so callers need no second transform."""
+    rng = np.random.default_rng(3)
+    points = torch.as_tensor(rng.uniform(-1, 1, (500, 3)) + [0, 0, 4], dtype=torch.float32)
+    w2c = torch.eye(4)
+    w2c[0, 3] = 0.3
+    K = torch.tensor([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]])
+    depth = torch.full((16, 16), 4.0)
+
+    *_, expected = depth_agreement(points, w2c, K, depth, 0.05)
+    _, points_cam = project(points, w2c, K)
+    assert torch.equal(expected, points_cam[:, 2])
+
+
+def _views(hw=(12, 16), seed=0):
+    """Four distinct cameras around a noisy depth field with holes, and points incl. some behind."""
+    rng = np.random.default_rng(seed)
+    b, (h, w) = 4, hw
+    K = torch.tensor([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1.0]]).repeat(b, 1, 1)
+    K[:, 0, 0] = torch.tensor([18.0, 20, 22, 24])
+    w2c = torch.eye(4).repeat(b, 1, 1)
+    w2c[1, :3, :3] = torch.tensor([[0.0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    c, sn = np.cos(0.1), np.sin(0.1)
+    w2c[2, :3, :3] = torch.tensor([[1.0, 0, 0], [0, c, -sn], [0, sn, c]], dtype=torch.float32)
+    w2c[:, :3, 3] = torch.as_tensor(rng.uniform(-0.3, 0.3, (b, 3)), dtype=torch.float32)
+    depth = torch.as_tensor(rng.uniform(3, 5, (b, h, w)), dtype=torch.float32)
+    depth[:, 0, :3] = 0.0
+    depth[:, h // 2 - 2 : h // 2 + 2, w // 2 - 2 : w // 2 + 2] = 0.0
+    points = torch.as_tensor(rng.uniform(-1, 1, (400, 3)) + [0, 0, 4], dtype=torch.float32)
+    points = torch.cat([points, torch.tensor([[0.0, 0, -2], [0.5, 0, -3]])])
+    return points, w2c, K, depth
+
+
+def test_project_over_a_pose_batch_matches_one_camera_at_a_time():
+    points, w2c, K, _ = _views()
+    pixels, cam = project(points, w2c, K)
+    assert pixels.shape == (4, 402, 2) and cam.shape == (4, 402, 3)
+    for b in range(4):
+        p1, c1 = project(points, w2c[b], K[b])
+        torch.testing.assert_close(pixels[b], p1, rtol=0, atol=1e-5)
+        torch.testing.assert_close(cam[b], c1, rtol=0, atol=1e-6)
+
+
+def test_depth_residual_over_a_pose_batch_matches_one_view_at_a_time():
+    points, w2c, K, depth = _views()
+    residual, expected, sampled, valid, pixels = depth_residual(points, w2c, K, depth)
+    assert residual.shape == (4, 402) and pixels.shape == (4, 402, 2)
+    assert (valid & (sampled == 0)).any()
+    assert (expected <= 0).any()
+    for b in range(4):
+        r1, e1, s1, v1, p1 = depth_residual(points, w2c[b], K[b], depth[b])
+        torch.testing.assert_close(residual[b], r1, rtol=0, atol=1e-5)
+        torch.testing.assert_close(expected[b], e1, rtol=0, atol=1e-6)
+        torch.testing.assert_close(sampled[b], s1, rtol=0, atol=0)
+        torch.testing.assert_close(pixels[b], p1, rtol=0, atol=1e-5)
+        assert torch.equal(valid[b], v1)
+
+
+def test_depth_agreement_over_a_pose_batch_matches_one_view_at_a_time():
+    points, w2c, K, depth = _views()
+    agree, seen, rel, expected = depth_agreement(points, w2c, K, depth, 0.05)
+    assert agree.shape == seen.shape == rel.shape == expected.shape == (4, 402)
+    assert agree.any() and (seen & ~agree).any()
+    for b in range(4):
+        a1, s1, r1, e1 = depth_agreement(points, w2c[b], K[b], depth[b], 0.05)
+        assert torch.equal(agree[b], a1) and torch.equal(seen[b], s1)
+        torch.testing.assert_close(rel[b], r1, rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(expected[b], e1, rtol=0, atol=1e-6)

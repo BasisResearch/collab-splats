@@ -1,9 +1,9 @@
 # collab_splats/utils/image.py
 """
-Image helpers that stay torch-free.
+Image helpers: PIL coercion, guided depth upsampling, hole filling.
 
 - open_image, resize_image: PIL coercion and aspect-preserving resize
-- upsample_depths: model-res depth onto the original-res RGB grid (guided filter)
+- upsample_depths: model-res depth onto the original-res RGB grid (kornia guided filter)
 - fill_missing_pixels: push-pull fill of unknown pixels (texture atlas, hull ground heights)
 """
 
@@ -12,7 +12,11 @@ from typing import Union
 
 import cv2
 import numpy as np
+import torch
+from kornia.filters import guided_blur
 from PIL import Image
+
+from collab_splats.utils.torch_utils import get_device
 
 ########################################################
 ########## Normalization constants #####################
@@ -70,39 +74,20 @@ def resize_image(image: Image.Image, longest_edge: int) -> Image.Image:
 ########################################################
 
 
-def _box(x: np.ndarray, radius: int) -> np.ndarray:
-    """
-    Normalized box filter, the O(1) primitive of the guided filter.
-
-    - kernel is 2 × radius + 1, reflect border
-    """
-    k = 2 * radius + 1
-    return cv2.boxFilter(x, -1, (k, k), normalize=True, borderType=cv2.BORDER_REFLECT)
-
-
-def _guided_filter(guide: np.ndarray, src: np.ndarray, radius: int, eps: float) -> np.ndarray:
-    """
-    He et al. gray-guide guided filter: edge-preserving smoothing of src steered by guide.
-
-    - guide (H, W) float32 in [0, 1]; eps regularizes the guide variance
-    """
-    mean_g = _box(guide, radius)
-    mean_s = _box(src, radius)
-    var_g = _box(guide * guide, radius) - mean_g * mean_g
-    cov_gs = _box(guide * src, radius) - mean_g * mean_s
-    a = cov_gs / (var_g + eps)
-    b = mean_s - a * mean_g
-    return _box(a, radius) * guide + _box(b, radius)
-
-
 def _guided_upsample_depth(
-    depth: np.ndarray, rgb_full: np.ndarray, crop_box: np.ndarray, radius: int | None = None, eps: float = 1e-3
+    depth: np.ndarray,
+    rgb_full: np.ndarray,
+    crop_box: np.ndarray,
+    device: torch.device,
+    radius: int | None = None,
+    eps: float = 1e-3,
 ) -> np.ndarray:
     """
     Upsample one model-res depth map into its crop region of the original-res RGB canvas.
 
     - crop_box (tl_x, tl_y, cr_x, cr_y) in original pixels; radius None = ~2 × the upsample factor
     - masked pixels stay 0, canvas outside the crop is 0
+    - kornia guided_blur on device: He et al., gray guide, reflect-101 border
     """
     H, W = rgb_full.shape[:2]
     tl_x, tl_y, cr_x, cr_y = (int(round(v)) for v in crop_box)
@@ -118,17 +103,22 @@ def _guided_upsample_depth(
 
     # Gray guide in [0, 1] from the original-res crop; radius spans ~2x the upsample factor
     guide = cv2.cvtColor(rgb_full[tl_y:cr_y, tl_x:cr_x], cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+
+    # Zero-mean guide: offset-invariant filter, less float32 cancellation in a and b
+    guide = guide - 0.5
+
     if radius is None:
         radius = max(1, int(np.ceil(2 * cw / depth.shape[1])))
 
-    # Validity-weighted filtering: masked pixels contribute nothing to their neighbors
-    num = _guided_filter(guide, depth_nn * valid_nn, radius, eps)
-    den = _guided_filter(guide, valid_nn, radius, eps)
-    filtered = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
+    # Validity-weighted filtering: depth and validity as two channels of one guided filter
+    guide_t = torch.as_tensor(guide, device=device)[None, None]
+    src_t = torch.as_tensor(np.stack([depth_nn * valid_nn, valid_nn]), device=device)[None]
+    num, den = guided_blur(guide_t, src_t, 2 * radius + 1, eps)[0]
+    filtered = torch.where(den > 1e-6, num / den.clamp(min=1e-6), 0.0)
 
     # The guide must never resurrect deleted depth, and depth must stay non-negative
-    filtered[valid_nn == 0] = 0.0
-    np.maximum(filtered, 0.0, out=filtered)
+    filtered[src_t[0, 1] == 0] = 0.0
+    filtered = filtered.clamp(min=0.0).cpu().numpy()
 
     canvas = np.zeros((H, W), dtype=np.float32)
     canvas[tl_y:cr_y, tl_x:cr_x] = filtered
@@ -138,6 +128,8 @@ def _guided_upsample_depth(
 def upsample_depths(depths: np.ndarray, rgbs: np.ndarray, crop_boxes: np.ndarray) -> np.ndarray:
     """
     Guided-filter upsample model-res depth maps onto their original-res RGB frames.
+
+    - filters on get_device(), one frame at a time
 
     Args:
         depths: (N, h, w) model-res depth, 0 = no observation.
@@ -155,10 +147,13 @@ def upsample_depths(depths: np.ndarray, rgbs: np.ndarray, crop_boxes: np.ndarray
         raise ValueError(f"{len(depths)} depths, {len(rgbs)} rgbs, {len(crop_boxes)} crop boxes")
 
     # One guided upsample per frame into a preallocated stack
+    device = torch.device(get_device())
     n, H, W = len(depths), rgbs.shape[1], rgbs.shape[2]
     out = np.zeros((n, H, W), dtype=np.float32)
+
     for i in range(n):
-        out[i] = _guided_upsample_depth(np.asarray(depths[i], dtype=np.float32), rgbs[i], crop_boxes[i])
+        out[i] = _guided_upsample_depth(np.asarray(depths[i], dtype=np.float32), rgbs[i], crop_boxes[i], device)
+
     return out
 
 

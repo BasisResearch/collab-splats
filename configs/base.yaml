@@ -180,3 +180,6 @@ localization:
   # (license/deps) — see _VISMATCH_*_BLOCKLIST in localization/extractors.py.
   matcher: loma
   top_k: 8  # refs matched per query
+
+reconstruction_quality_report:
+  min_pair_overlap: 0.0   # 0 = every ordered pair; >0 skips pairs whose frustum overlap is below it

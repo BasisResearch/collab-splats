@@ -116,3 +116,25 @@ def test_frame_paths_raises_on_an_index_the_directory_lacks(tmp_path):
 def test_write_frames_names_an_empty_selection(tmp_path):
     with pytest.raises(ValueError, match="no frames selected"):
         fr.write_frames(tmp_path / "images", [], [])
+
+
+def test_read_frames_on_threads_matches_one_thread_in_idxs_order(tmp_path):
+    images = tmp_path / "images"
+    frames = list(np.random.default_rng(0).integers(0, 256, (12, 8, 12, 3), dtype=np.uint8))
+    fr.write_frames(images, frames, list(range(12)))
+    idxs = [7, 0, 11, 3, 5, 1, 10, 2, 9, 4, 8, 6]
+
+    one = fr.read_frames(images, idxs=idxs, workers=1)
+    many = fr.read_frames(images, idxs=idxs, workers=8)
+
+    np.testing.assert_array_equal(one, many)
+    np.testing.assert_array_equal(many, np.stack([frames[i] for i in idxs]))
+
+
+def test_read_frames_raises_on_an_undecodable_frame_from_a_worker_thread(tmp_path):
+    images = tmp_path / "images"
+    fr.write_frames(images, _frames(3), [0, 5, 11])
+    (images / "frame_000099.png").write_bytes(b"not a png")
+
+    with pytest.raises(FileNotFoundError, match="frame_000099"):
+        fr.read_frames(images, workers=4)

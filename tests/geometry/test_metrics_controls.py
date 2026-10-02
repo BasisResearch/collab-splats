@@ -353,7 +353,16 @@ def test_control_depth_measurement_never_sees_appearance():
     someone gives the depth measurement an appearance channel, which is the event worth catching.
     """
     params = set(inspect.signature(_collect_pairs).parameters)
-    assert params == {"depth", "intrinsics", "extrinsics", "rel_thresh"}
+    assert params == {
+        "depth",
+        "intrinsics",
+        "extrinsics",
+        "rel_thresh",
+        "min_pair_overlap",
+        "overlap_stride",
+        "target_batch",
+        "bytes_per_point",
+    }
     assert not [p for p in params if any(w in p for w in ("image", "rgb", "color", "colour"))]
 
 

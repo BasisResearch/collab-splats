@@ -1,10 +1,15 @@
 """Unit tests for reference-free scene error metrics."""
 
+import ast
+import inspect
+import textwrap
+import traceback
 import warnings
 from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 from scipy import stats
 
 from collab_splats.geometry import metrics
@@ -15,7 +20,12 @@ from collab_splats.geometry.metrics import (
     compute_photometric_ncc,
     residual_bin_edges,
 )
-from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
+from collab_splats.geometry.projection import depth_agreement, unproject
+from collab_splats.geometry.transforms import (
+    invert_poses,
+    rescale_intrinsics,
+    shift_intrinsics,
+)
 from collab_splats.pointcloud.feedforward import base as ff_base
 from collab_splats.preproc import frames as fr
 from collab_splats.reconstructor import LEAF_STAGES, STAGES
@@ -65,6 +75,39 @@ def test_bounded_residual_preserves_quantiles_through_the_histogram():
     assert counts.sum() == r.size  # nothing dropped, unlike a clipped fixed range
     u = stats.rv_histogram((counts, edges)).ppf(0.99)
     assert u / (1.0 - abs(u)) == pytest.approx(np.quantile(r, 0.99), abs=1e-4)
+
+
+def test_bounded_residual_on_a_tensor_is_bit_identical_to_numpy():
+    """The GPU histogram's map must match the numpy map bit for bit, so float64 in torch too."""
+    rng = np.random.default_rng(0)
+    rel = rng.standard_normal(10_000).astype(np.float32) * 3
+    u_np = bounded_residual(rel)
+    u_t = bounded_residual(torch.as_tensor(rel))
+    assert u_t.dtype == torch.float64
+    np.testing.assert_array_equal(u_t.numpy(), u_np)
+
+
+@pytest.mark.parametrize(
+    "device", ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))]
+)
+def test_histogram_counts_match_np_histogram_including_the_edges(device):
+    """Bins exactly as np.histogram, both closed ends included; NaN parks in the overflow bin."""
+    edges = residual_bin_edges(_n_samples(300, 518))
+    rng = np.random.default_rng(1)
+    u = bounded_residual(rng.standard_normal(200_000) * 2)
+
+    # Every edge value, plus both ends, which np.histogram closes into the outer bins
+    u = np.concatenate([u, edges, [-1.0, 1.0, 1.0]])
+
+    # An inf depth gives rel = +-inf, which maps to NaN; np.histogram drops NaN
+    with np.errstate(invalid="ignore"):
+        u = np.concatenate([u, bounded_residual(np.array([np.inf, -np.inf])), [np.nan]])
+
+    got = metrics._histogram_counts(torch.as_tensor(u, device=device), torch.as_tensor(edges, device=device))
+    got = got.cpu().numpy()
+    assert len(got) == len(edges)
+    np.testing.assert_array_equal(got[:-1], np.histogram(u, bins=edges)[0])
+    assert got[-1] == 3
 
 
 def test_bin_edges_are_derived_from_the_sample_count_not_declared():
@@ -476,9 +519,9 @@ def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(mon
     compute_photometric_ncc(img, model_d, K, e, original_coords=coords, max_separation=1)
     compute_photometric_ncc(img / 255.0, model_d, K, e, original_coords=coords,
                             max_separation=1)
-    # One call per compute, each lifting the whole stack
+    # One call per compute, lifting only frame 0: frame 1 has no partner at max_separation=1
     assert len(lifted) == 2
-    assert lifted[0].shape == (2, 64, 64) and lifted[1].shape == (2, 64, 64)
+    assert lifted[0].shape == (1, 64, 64) and lifted[1].shape == (1, 64, 64)
     np.testing.assert_array_equal(lifted[0], lifted[1])
     # Anchor: the guide really is load-bearing on this fixture, so the equality above is not
     # two runs of a filter that ignores its guide.
@@ -879,6 +922,141 @@ def test_frame_columns_keep_their_order(tmp_path):
     ]
 
 
+def _pair_loop_lines() -> range:
+    """Source lines of _collect_pairs' inner `for start` loop over target-view batches."""
+    src = textwrap.dedent(inspect.getsource(metrics._collect_pairs))
+    first = metrics._collect_pairs.__code__.co_firstlineno
+    loop = next(
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.For) and getattr(node.target, "id", "") == "start"
+    )
+    return range(first + loop.lineno - 1, first + loop.end_lineno)
+
+
+def _prune_block_lines() -> range:
+    """
+    Source lines of _collect_pairs' `if min_pair_overlap > 0` pruning block.
+    """
+    src = textwrap.dedent(inspect.getsource(metrics._collect_pairs))
+    first = metrics._collect_pairs.__code__.co_firstlineno
+    block = next(
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.If) and "min_pair_overlap" in ast.unparse(node.test)
+    )
+    return range(first + block.lineno - 1, first + block.end_lineno)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA")
+@pytest.mark.parametrize("min_pair_overlap", [0.0, 0.01])
+@pytest.mark.parametrize("target_batch", [1, 2, None])
+def test_collect_pairs_syncs_the_gpu_twice_per_target_batch(monkeypatch, target_batch, min_pair_overlap):
+    """
+    Each target batch syncs only at its counts and its nonzero; pruning adds three per source frame.
+    """
+    monkeypatch.setattr(metrics, "get_device", lambda: "cuda")
+    n, h, w = 4, 20, 24
+    rng = np.random.default_rng(0)
+    depth = (3 + rng.uniform(-0.5, 0.5, (n, h, w))).astype(np.float32)
+    K = np.tile(np.array([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1]]), (n, 1, 1))
+    E = np.tile(np.eye(4), (n, 1, 1))
+    E[:, 0, 3] = np.linspace(0, 0.3, n)
+
+    # Warm up lazy CUDA init, which syncs once on first use
+    metrics._collect_pairs(depth, K, E, 0.05, target_batch=target_batch)
+
+    # Attribute every sync warning to its _collect_pairs line
+    lines = []
+
+    def record(message, *args, **kwargs):
+        if "synchroniz" in str(message):
+            frames = [f for f in traceback.extract_stack() if f.name == "_collect_pairs"]
+            lines.append(frames[-1].lineno if frames else None)
+
+    torch.cuda.set_sync_debug_mode("warn")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            warnings.showwarning = record
+            collected, _ = metrics._collect_pairs(
+                depth, K, E, 0.05, target_batch=target_batch, min_pair_overlap=min_pair_overlap
+            )
+    finally:
+        torch.cuda.set_sync_debug_mode(0)
+
+    # None sizes the batch from VRAM, capped at the n - 1 other frames
+    per_batch = min(target_batch or n - 1, n - 1)
+    n_batches = n * -(-(n - 1) // per_batch)
+    loop = _pair_loop_lines()
+    assert len(collected["pairs"]) == n * (n - 1)
+    assert sum(line in loop for line in lines) == 2 * n_batches
+
+    # Pruning syncs three times per source frame: the has_source mask, the overlap list, the index upload
+    assert sum(line in _prune_block_lines() for line in lines) == (3 * n if min_pair_overlap else 0)
+
+
+@pytest.mark.parametrize(
+    "device",
+    ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))],
+)
+def test_collect_pairs_is_identical_whatever_the_target_batch(monkeypatch, device):
+    """Chunking target views changes the kernel shapes, never a pair row or a histogram count."""
+    monkeypatch.setattr(metrics, "get_device", lambda: device)
+    depth, K, extr = _two_view(scale_j=1.03)
+    depth = np.concatenate([depth, depth[:1] * 1.01, depth[:1] * 0.99, depth[1:] * 1.02])
+    K = np.concatenate([K, K[:1], K[:1], K[:1]])
+    extr = np.concatenate([extr, extr[1:], extr[1:], extr[1:]])
+    extr[2, 1, 3] = 0.1
+    extr[4, 0, 3] = 0.1
+
+    # Frame 2 faces away: an empty target mid-batch at 3, last in a batch at 2
+    extr[2, :3, :3] = np.diag([-1.0, 1.0, -1.0])
+
+    # TF32 on, as a mapanything import leaves it: a batched matmul would round differently
+    precision = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("high")
+
+    try:
+        runs = [metrics._collect_pairs(depth, K, extr, 0.05, target_batch=b) for b in (1, 2, 3)]
+        assert torch.get_float32_matmul_precision() == "high"
+    finally:
+        torch.set_float32_matmul_precision(precision)
+
+    # Frame 2 forms no pair; source 0's batches hold it between seen targets 1 and 3
+    one, agree_one = runs[0]
+    keys = {(p.idx1, p.idx2) for p in one["pairs"]}
+    assert not [k for k in keys if 2 in k]
+    assert {(0, 1), (0, 3), (0, 4)} <= keys
+    assert all(p.n_pixels > 0 and np.isfinite(p.median_rel_depth_error) for p in one["pairs"])
+
+    for many, agree_many in runs[1:]:
+        assert agree_one == agree_many
+        np.testing.assert_array_equal(one["rel_depth_error_counts"], many["rel_depth_error_counts"])
+        assert one["pairs"] == many["pairs"]
+
+
+def test_frame_medians_equal_the_per_frame_scan():
+    """One bucketing pass gives exactly what scanning every pair per frame gave."""
+    rng = np.random.default_rng(2)
+    n = 12
+    pairs = [
+        _pair(int(i), int(j), float(rng.normal(0, 0.05)), 5.0)
+        for i, j in rng.integers(0, n, size=(80, 2))
+        if i != j
+    ]
+
+    # The pre-change O(N * pairs) scan, frame 11 may well be untouched
+    scan = []
+    for k in range(n):
+        v = [abs(p.median_rel_depth_error) for p in pairs if k in (p.idx1, p.idx2)]
+        scan.append(float(np.median(v)) if v else None)
+
+    assert metrics._frame_medians(pairs, n) == scan
+    assert metrics._frame_medians([], 3) == [None, None, None]
+
+
 def test_median_abs_rel_depth_error_is_the_median_magnitude_over_pairs_touching_the_frame(monkeypatch):
     """Both directions count for a frame, by magnitude: frame 1 sees |-0.02|, |0.04| and |0.10|."""
     collected = _collected([_pair(0, 1, -0.02, 2.0), _pair(1, 0, 0.04, 2.0), _pair(1, 2, 0.10, 2.0)])
@@ -921,3 +1099,274 @@ def test_negative_sampled_depth_is_no_measurement():
     depth, K, extr = _two_view()
     depth[1] *= -1
     assert all((r.idx1, r.idx2) != (0, 1) for r in _collect(depth, K, extr)["pairs"])
+
+
+def test_photometric_ncc_on_uint8_frames_is_the_float64_ncc_of_the_exact_warp():
+    """The warp is exactly 4 px, so the NCC is np.corrcoef over known slices, to float64 precision."""
+    img, depth, K, e = _translated_pair(shift_px=4, hw=32)
+    img = img.copy()
+    img[1] = 0.6 * img[1] + 0.4 * np.random.default_rng(3).uniform(0, 255, img[1].shape)
+    img = img.round().astype(np.uint8)
+    m = compute_photometric_ncc(img, depth, K, e, max_separation=1)
+
+    # Frame 0's column u lands on frame 1's u - 4: columns 4.. against columns ..28
+    a = img[0][:, 4:].astype(np.float64).ravel()
+    b = img[1][:, :-4].astype(np.float64).ravel()
+    assert m["n_pixels"] == [32 * 28]
+    assert abs(m["photometric_ncc"][0] - np.corrcoef(a, b)[0, 1]) < 1e-12
+
+
+def test_photometric_ncc_on_lifted_depth_matches_uint8_and_float_frames_exactly():
+    """Model-grid depth lifted under a uint8 guide as-is or a float32 one cast down: same result."""
+    img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
+    img = img.round()
+    model_d = np.stack([np.concatenate(
+        [np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)], axis=1)] * 2)
+    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
+    K = rescale_intrinsics(model_K, (16, 16), (32, 32))
+    K = shift_intrinsics(K, coords[:, :2])
+
+    as_float = compute_photometric_ncc(img.astype(np.float32), model_d, K, e, original_coords=coords,
+                                       max_separation=1)
+    as_uint8 = compute_photometric_ncc(img.astype(np.uint8), model_d, K, e, original_coords=coords,
+                                       max_separation=1)
+    assert as_uint8["n_pixels"] == as_float["n_pixels"] and as_uint8["n_pixels"][0] > 0
+    assert as_uint8["photometric_ncc"] == as_float["photometric_ncc"]
+
+
+def test_photometric_ncc_is_invariant_to_a_far_world_origin():
+    """Georeferenced poses sit ~10 km from the origin; float32 world points there lose the warp."""
+    img, depth, K, e = _translated_pair(shift_px=4, hw=32)
+    img = np.stack([img[0], 0.7 * img[1] + 0.3 * np.random.default_rng(3).uniform(0, 255, img[1].shape)])
+    near = compute_photometric_ncc(img, depth, K, e, max_separation=1)
+
+    # Same rig with the world origin moved 10 km away: t' = t - R @ offset for every camera
+    offset = np.array([1e4, -1e4, 5e3])
+    far_e = e.astype(np.float64)
+    far_e[:, :3, 3] -= far_e[:, :3, :3] @ offset
+    far = compute_photometric_ncc(img, depth, K, far_e, max_separation=1)
+
+    assert far["n_pixels"] == near["n_pixels"]
+    np.testing.assert_allclose(far["photometric_ncc"], near["photometric_ncc"], rtol=0, atol=1e-4)
+
+
+def _rotated_pose(yaw, pitch, t):
+    """World-to-cam pose: yaw about y, then pitch about x, then translation t."""
+    cy, sy, cp, sp = np.cos(yaw), np.sin(yaw), np.cos(pitch), np.sin(pitch)
+    e = np.eye(4)
+    e[:3, :3] = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]]) @ np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    e[:3, 3] = t
+    return e
+
+
+def _reference_ncc(img, depth, K, e):
+    """Frame 0 warped into frame 1 in float64 numpy through world coordinates: (n_pixels, NCC)."""
+    h, w = depth.shape[1:]
+    v, u = np.meshgrid(np.arange(h, dtype=np.float64), np.arange(w, dtype=np.float64), indexing="ij")
+    d = depth[0].astype(np.float64)
+    pc0 = np.stack([(u - K[0, 0, 2]) / K[0, 0, 0] * d, (v - K[0, 1, 2]) / K[0, 1, 1] * d, d], -1).reshape(-1, 3)
+    world = (pc0 - e[0, :3, 3]) @ e[0, :3, :3]
+    pc1 = world @ e[1, :3, :3].T + e[1, :3, 3]
+    z = np.maximum(pc1[:, 2], 1e-6)
+    ui = np.round(pc1[:, 0] * K[1, 0, 0] / z + K[1, 0, 2]).astype(np.int64)
+    vi = np.round(pc1[:, 1] * K[1, 1, 1] / z + K[1, 1, 2]).astype(np.int64)
+    ok = (pc1[:, 2] > 0) & (d.ravel() > 0) & (ui >= 0) & (ui < w) & (vi >= 0) & (vi < h)
+    a = img[0].reshape(-1, 3)[ok].astype(np.float64).ravel()
+    b = img[1][vi[ok], ui[ok]].astype(np.float64).ravel()
+    return int(ok.sum()), float(np.corrcoef(a, b)[0, 1])
+
+
+def _rotated_rig(h, w, seed=11):
+    """Two rotated cameras with their own K (fx != fy), plus the same rig 100 km from the origin."""
+    rng = np.random.default_rng(seed)
+    img = rng.uniform(0, 255, size=(2, h, w, 3)).round().astype(np.uint8)
+    depth = rng.uniform(3.0, 5.0, size=(2, h, w)).astype(np.float32)
+
+    # Per-frame K on a 48x48 base, scaled to the image size
+    sx, sy = w / 48, h / 48
+    K = np.stack([
+        np.array([[40.0 * sx, 0, 24.0 * sx], [0, 44.0 * sy, 22.0 * sy], [0, 0, 1.0]]),
+        np.array([[38.0 * sx, 0, 25.0 * sx], [0, 41.0 * sy, 24.0 * sy], [0, 0, 1.0]]),
+    ])
+    e = np.stack([_rotated_pose(0.1, 0.02, [0.1, 0.0, 0.05]), _rotated_pose(-0.05, -0.04, [-0.2, 0.05, 0.0])])
+
+    # Same rig with the world origin moved 100 km away: t' = t - R @ offset for every camera
+    far_e = e.copy()
+    far_e[:, :3, 3] -= far_e[:, :3, :3] @ np.array([1e5, -1e5, 5e4])
+    return img, depth, K, e, far_e
+
+
+def test_photometric_ncc_composes_rotated_poses_at_a_far_origin():
+    """Both cameras rotated, own K each, origin 100 km away: the warp matches a float64 reference."""
+    img, depth, K, e, far_e = _rotated_rig(48, 48)
+    n_ref, ncc_ref = _reference_ncc(img, depth, K, e)
+
+    for poses in (e, far_e):
+        m = compute_photometric_ncc(img, depth, K, poses, max_separation=1)
+        assert m["n_pixels"] == [n_ref] and n_ref > 1000
+        assert abs(m["photometric_ncc"][0] - ncc_ref) < 1e-4
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="TF32 is a CUDA matmul mode")
+def test_photometric_ncc_warp_is_exact_under_global_tf32(monkeypatch):
+    """mapanything turns TF32 on at import; a float32 CUDA matmul in the warp would then flip pixels."""
+    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", True)
+    img, depth, K, _, far_e = _rotated_rig(192, 256)
+    n_ref, ncc_ref = _reference_ncc(img, depth, K, far_e)
+
+    m = compute_photometric_ncc(img, depth, K, far_e, max_separation=1)
+    assert m["n_pixels"] == [n_ref] and n_ref > 20000
+    assert abs(m["photometric_ncc"][0] - ncc_ref) < 1e-4
+
+
+def _three_views_one_facing_away():
+    """Frames 0 and 1 share a view of a plane; frame 2 sits at the origin facing -z."""
+    depth, K, extr = _two_view(scale_j=1.02)
+    away = np.diag([-1.0, 1.0, -1.0, 1.0]).astype(np.float32)
+    return (np.concatenate([depth, depth[:1]]), np.concatenate([K, K[:1]]), np.concatenate([extr, away[None]]))
+
+
+def test_frustum_overlap_is_one_for_the_same_camera_and_zero_facing_away():
+    depth, K, extr = _three_views_one_facing_away()
+    d, k, e = (torch.as_tensor(x) for x in (depth, K, extr))
+    points = metrics.unproject(d[0], e[0], k[0]).reshape(-1, 3)
+    overlap = metrics._frustum_overlap(points, e, k, *depth.shape[1:])
+    assert overlap[0] == 1.0
+    assert 0.0 < overlap[1] <= 1.0
+    assert overlap[2] == 0.0
+
+
+def test_frustum_overlap_of_no_points_is_zero():
+    depth, K, extr = _three_views_one_facing_away()
+    overlap = metrics._frustum_overlap(torch.zeros(0, 3), torch.as_tensor(extr), torch.as_tensor(K), 16, 16)
+    assert overlap.tolist() == [0.0, 0.0, 0.0]
+
+
+def _spy_pair_pass(monkeypatch):
+    """
+    Count target views handed to depth_agreement and calls to _frustum_overlap.
+    """
+    counts = {"views": 0, "overlap_calls": 0}
+    agreement, overlap = metrics.depth_agreement, metrics._frustum_overlap
+
+    def spy_agreement(points, extrinsics, *args, **kwargs):
+        counts["views"] += len(extrinsics)
+        return agreement(points, extrinsics, *args, **kwargs)
+
+    def spy_overlap(*args, **kwargs):
+        counts["overlap_calls"] += 1
+        return overlap(*args, **kwargs)
+
+    monkeypatch.setattr(metrics, "depth_agreement", spy_agreement)
+    monkeypatch.setattr(metrics, "_frustum_overlap", spy_overlap)
+    return counts
+
+
+def test_min_pair_overlap_zero_is_the_unpruned_pass(monkeypatch):
+    """
+    At 0.0 the pre-pass never runs and every ordered pair reaches the depth pass.
+    """
+    depth, K, extr = _three_views_one_facing_away()
+    counts = _spy_pair_pass(monkeypatch)
+    metrics._collect_pairs(depth, K, extr, 0.05, min_pair_overlap=0.0)
+    assert counts == {"views": 6, "overlap_calls": 0}
+
+
+@pytest.mark.parametrize("target_batch", [1, 2])
+def test_min_pair_overlap_drops_only_pairs_that_share_no_view(monkeypatch, target_batch):
+    """
+    Frame 2 sees nothing of 0 or 1, so pruning it changes no row, count or agreement.
+    """
+    depth, K, extr = _three_views_one_facing_away()
+    full, agree_full = metrics._collect_pairs(depth, K, extr, 0.05, target_batch=target_batch)
+
+    # Pruning skips the four pairs touching frame 2; one overlap pre-pass per source frame
+    counts = _spy_pair_pass(monkeypatch)
+    pruned, agree_pruned = metrics._collect_pairs(
+        depth, K, extr, 0.05, min_pair_overlap=0.01, target_batch=target_batch
+    )
+    assert counts == {"views": 2, "overlap_calls": 3}
+
+    assert pruned["pairs"] == full["pairs"] and agree_pruned == agree_full
+    np.testing.assert_array_equal(pruned["rel_depth_error_counts"], full["rel_depth_error_counts"])
+    assert {(p.idx1, p.idx2) for p in full["pairs"]} == {(0, 1), (1, 0)}
+
+
+@pytest.mark.parametrize("target_batch", [1, 2])
+def test_min_pair_overlap_prunes_a_middle_frame_without_shifting_the_rest(target_batch):
+    """
+    A pruned target ahead of a kept one must not shift which depth map the kept one reads.
+    """
+    depth, K, extr = _three_views_one_facing_away()
+    order = [0, 2, 1]
+    pruned, agree = metrics._collect_pairs(
+        depth[order], K[order], extr[order], 0.05, min_pair_overlap=0.01, target_batch=target_batch
+    )
+    assert {(p.idx1, p.idx2) for p in pruned["pairs"]} == {(0, 2), (2, 0)}
+    assert agree == [1.0, None, 1.0]
+
+
+def test_min_pair_overlap_above_a_pairs_overlap_drops_that_pair():
+    depth, K, extr = _three_views_one_facing_away()
+    pruned, agree = metrics._collect_pairs(depth, K, extr, 0.05, min_pair_overlap=1.01)
+    assert pruned["pairs"] == []
+    assert agree == [None, None, None]
+    assert pruned["rel_depth_error_counts"].sum() == 0
+
+
+@pytest.mark.parametrize(
+    "device",
+    ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))],
+)
+def test_pair_rows_are_the_per_pair_quantiles_and_medians(monkeypatch, device):
+    """
+    Batched pair rows equal torch.quantile and torch.median over each pair's own pixels, exactly.
+    """
+    monkeypatch.setattr(metrics, "get_device", lambda: device)
+    n, h, w = 5, 20, 24
+    rng = np.random.default_rng(1)
+
+    # Depth rounded to 0.1 so residuals tie; holes in frame 1; frame 3 faces away, an empty pair mid-batch
+    depth = np.round(3 + rng.uniform(-0.5, 0.5, (n, h, w)), 1).astype(np.float32)
+    depth[1, :5] = 0
+    K = np.tile(np.array([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1]], np.float32), (n, 1, 1))
+    E = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    E[:, 0, 3] = np.linspace(0, 0.3, n)
+    E[3, :3, :3] = np.diag([-1.0, 1.0, -1.0])
+
+    collected, _ = metrics._collect_pairs(depth, K, E, 0.05, target_batch=3)
+    rows = {(p.idx1, p.idx2): p for p in collected["pairs"]}
+
+    # Reference: one pair at a time, each reduced by torch.quantile and torch.median
+    depth_t, K_t, E_t = (torch.as_tensor(a, dtype=torch.float32, device=device) for a in (depth, K, E))
+    centers = torch.as_tensor(invert_poses(E)[:, :3, 3], dtype=torch.float32, device=device)
+    quantiles = torch.tensor([0.25, 0.5, 0.75], device=device)
+    expected = {}
+
+    for i in range(n):
+        points = unproject(depth_t[i], E_t[i], K_t[i]).reshape(-1, 3)
+
+        for j in range(n):
+            if j == i:
+                continue
+
+            _, seen, rel, z = depth_agreement(points, E_t[j : j + 1], K_t[j : j + 1], depth_t[j : j + 1], 0.05)
+            sel = seen[0] & (depth_t[i].reshape(-1) > 0) & (rel[0] > -1) & (z[0] > 1e-6)
+            if not sel.any():
+                continue
+
+            ray_i = points[sel] - centers[i]
+            ray_j = points[sel] - centers[j]
+            cos_a = (ray_i * ray_j).sum(-1) / (ray_i.norm(dim=-1) * ray_j.norm(dim=-1)).clamp(min=1e-12)
+            parallax = torch.rad2deg(torch.arccos(cos_a.clamp(-1.0, 1.0)))
+            q = torch.quantile(rel[0][sel], quantiles)
+            expected[(i, j)] = (int(sel.sum()), q[1].item(), (q[2] - q[0]).item(), parallax.median().item(), z[0][sel].median().item())
+
+    assert not [k for k in expected if 3 in k]
+    assert len({v[0] for v in expected.values()}) > 1
+    assert set(rows) == set(expected)
+
+    for key, want in expected.items():
+        p = rows[key]
+        assert (p.n_pixels, p.median_rel_depth_error, p.iqr_rel_depth_error, p.median_parallax_deg, p.median_depth) == want

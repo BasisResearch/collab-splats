@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -129,14 +130,17 @@ def write_frames(
     return paths
 
 
-def read_frames(dir: Path | str, idxs: Sequence[int] | None = None) -> np.ndarray:
+def read_frames(dir: Path | str, idxs: Sequence[int] | None = None, *, workers: int = 8) -> np.ndarray:
     """
     Read frames from an images directory as one RGB stack.
+
+    - decoded on a thread pool straight into one preallocated stack; cv2 releases the GIL
 
     Args:
         dir: images directory holding frame_NNNNNN.<ext>.
         idxs: SOURCE frame indices to read, in the order given; None reads every
             frame in filename order.
+        workers: decode threads.
 
     Returns:
         (N, H, W, 3) uint8 RGB.
@@ -150,4 +154,19 @@ def read_frames(dir: Path | str, idxs: Sequence[int] | None = None) -> np.ndarra
     if not paths:
         raise FileNotFoundError(f"read_frames: no frame images in {dir}")
 
-    return np.stack([read_image(p) for p in paths])
+    # First frame sets the stack's shape and dtype
+    first = read_image(paths[0])
+    stack = np.empty((len(paths), *first.shape), first.dtype)
+    stack[0] = first
+
+    def _load(i: int) -> None:
+        """
+        Decode frame i into its slot of the stack.
+        """
+        stack[i] = read_image(paths[i])
+
+    # Remaining frames decode on the pool; a worker's exception re-raises here
+    with ThreadPoolExecutor(workers) as pool:
+        list(pool.map(_load, range(1, len(paths))))
+
+    return stack

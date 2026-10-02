@@ -1309,6 +1309,26 @@ def test_report_json_is_the_columnar_contract(tmp_path):
     assert not out.with_suffix(".json.tmp").exists()
 
 
+def test_report_scene_block_records_min_pair_overlap(tmp_path):
+    """The pruning knob is part of how the numbers were made, so the report carries it."""
+    rec = Reconstructor(_make_config(tmp_path, {"reconstruction_quality_report": {"min_pair_overlap": 0.05}}))
+    _save_tiny_zarr(rec, with_confidence=False)
+
+    rec.reconstruction_quality_report()
+    report = json.loads(rec.outputs["reconstruction_quality_report"].read_text())
+    assert report["scene"]["min_pair_overlap"] == 0.05
+
+
+def test_report_scene_block_defaults_min_pair_overlap_to_zero(tmp_path):
+    """A config without the block still runs: base.yaml supplies 0.0, every pair kept."""
+    rec = Reconstructor(_make_config(tmp_path))
+    _save_tiny_zarr(rec, with_confidence=False)
+
+    rec.reconstruction_quality_report()
+    report = json.loads(rec.outputs["reconstruction_quality_report"].read_text())
+    assert report["scene"]["min_pair_overlap"] == 0.0
+
+
 def test_report_writes_nan_as_null(tmp_path):
     """An all-nan confidence frame has a nan median; the file must carry null, never a bare NaN."""
     rec = Reconstructor(_make_config(tmp_path))
@@ -1333,6 +1353,24 @@ def test_report_runs_photometric_when_images_exist(tmp_path, monkeypatch):
     rec.reconstruction_quality_report()
     report = json.loads(rec.outputs["reconstruction_quality_report"].read_text())
     assert report["photometric_pairs"]["idx1"]
+
+
+def test_report_hands_photometric_the_uint8_frames_uncast(tmp_path, monkeypatch):
+    """A float32 cast of every 1080p frame quadruples the stack; the stage passes uint8 as read."""
+    rec = Reconstructor(_make_config(tmp_path))
+    _save_tiny_zarr(rec)
+    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(fr, "read_frames", lambda d, idxs: _texture_frames())
+    real = metrics.compute_photometric_ncc
+    seen = []
+
+    def spy(images, *args, **kwargs):
+        seen.append(images.dtype)
+        return real(images, *args, **kwargs)
+
+    monkeypatch.setattr(metrics, "compute_photometric_ncc", spy)
+    rec.reconstruction_quality_report()
+    assert seen == [np.uint8]
 
 
 def test_report_raises_when_photometric_raises(tmp_path, monkeypatch):

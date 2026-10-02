@@ -1,5 +1,6 @@
 """Tests for collab_splats.utils.image — pure PIL image utilities."""
 
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -153,3 +154,47 @@ def test_fill_missing_pixels_single_channel_and_nothing_known():
 
     np.testing.assert_allclose(fill_missing_pixels(heights, known), 2.0, atol=1e-4)
     assert not fill_missing_pixels(heights, np.zeros_like(known)).any()
+
+
+def _oracle_guided_filter(guide: np.ndarray, src: np.ndarray, radius: int, eps: float) -> np.ndarray:
+    """
+    He et al. gray-guide guided filter on cv2 box means, BORDER_REFLECT_101 like torch reflect.
+    """
+
+    def box(x: np.ndarray) -> np.ndarray:
+        return cv2.boxFilter(x, -1, (2 * radius + 1,) * 2, normalize=True, borderType=cv2.BORDER_REFLECT_101)
+
+    mean_g, mean_s = box(guide), box(src)
+    a = (box(guide * src) - mean_g * mean_s) / (box(guide * guide) - mean_g * mean_g + eps)
+    b = mean_s - a * mean_g
+    return box(a) * guide + box(b)
+
+
+def test_upsample_depths_matches_a_cv2_guided_filter_oracle():
+    """
+    The kornia filter is the He et al. filter; a kornia upgrade that changes it fails here.
+    """
+
+    # Random RGB frame and a two-plane depth map with a masked hole
+    rng = np.random.default_rng(0)
+    H, W, h, w = 48, 64, 12, 16
+    rgb = rng.integers(0, 256, (1, H, W, 3), dtype=np.uint8)
+    depth = np.where(np.arange(w)[None, :] < w // 2, 3.0, 5.0).astype(np.float32)[None].repeat(h, 1)
+    depth[0, 2:4, 2:5] = 0.0
+    box = np.array([[0, 0, W, H]])
+
+    # Full-frame crop upsampled by the module under test
+    got = upsample_depths(depth, rgb, box)[0]
+
+    # Same validity-weighted recipe as the module, with the cv2 oracle as the filter
+    depth_nn = cv2.resize(depth[0], (W, H), interpolation=cv2.INTER_NEAREST)
+    valid = (depth_nn > 0).astype(np.float32)
+    guide = cv2.cvtColor(rgb[0], cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    radius = int(np.ceil(2 * W / w))
+    num = _oracle_guided_filter(guide, depth_nn * valid, radius, 1e-3)
+    den = _oracle_guided_filter(guide, valid, radius, 1e-3)
+    want = np.where(den > 1e-6, num / np.maximum(den, 1e-6), 0.0)
+    want[valid == 0] = 0.0
+    np.maximum(want, 0.0, out=want)
+
+    np.testing.assert_allclose(got, want, rtol=0, atol=1e-3)

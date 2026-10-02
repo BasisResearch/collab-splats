@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import torch
 
 from collab_splats.geometry.transforms import (
     OPENGL_TO_OPENCV,
@@ -600,3 +601,41 @@ def test_fit_dominant_plane_returns_valid_rotation():
     R, t = fit_dominant_plane(pts)
     assert abs(np.linalg.det(R) - 1.0) < 1e-6
     np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-6)
+
+
+def test_transform_points_maps_one_point_set_through_a_pose_batch():
+    """(B, 4, 4) poses over (P, 3) points give (B, P, 3), each slice the 2-D result."""
+    rng = np.random.default_rng(0)
+    points = torch.as_tensor(rng.standard_normal((50, 3)), dtype=torch.float32)
+    poses = torch.eye(4).repeat(3, 1, 1)
+    poses[:, :3, 3] = torch.as_tensor(rng.standard_normal((3, 3)), dtype=torch.float32)
+    poses[1, :3, :3] = torch.tensor([[0.0, -1, 0], [1, 0, 0], [0, 0, 1]])
+
+    out = transform_points(points, poses)
+    assert out.shape == (3, 50, 3)
+    for b in range(3):
+        torch.testing.assert_close(out[b], transform_points(points, poses[b]), rtol=0, atol=1e-6)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA")
+def test_transform_points_pose_batch_is_exact_fp32_under_tf32():
+    """Under "high" precision a pose batch still equals each one-pose result bit for bit."""
+    gen = torch.Generator().manual_seed(0)
+    points = (torch.rand(200_000, 3, generator=gen) * 10 - 5).cuda()
+    poses = torch.eye(4).repeat(4, 1, 1)
+    poses[:, :3, :3] = torch.linalg.qr(torch.randn(4, 3, 3, generator=gen))[0]
+    poses[:, :3, 3] = torch.randn(4, 3, generator=gen)
+    poses = poses.cuda()
+
+    # TF32 on, as a mapanything import leaves it
+    precision = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("high")
+
+    try:
+        out = transform_points(points, poses)
+        per_pose = torch.stack([transform_points(points, poses[b]) for b in range(4)])
+        assert torch.get_float32_matmul_precision() == "high"
+    finally:
+        torch.set_float32_matmul_precision(precision)
+
+    assert torch.equal(out, per_pose)

@@ -137,10 +137,11 @@ class LocalMatcher:
 
     def _to_tensor(self, image: np.ndarray) -> torch.Tensor:
         """HxWx3 uint8 RGB -> (3,H,W) float [0,1] on device (vismatch input contract)."""
-        t = torch.from_numpy(np.ascontiguousarray(image)).permute(2, 0, 1).float()
+        # Convert on device: a CPU float pass leaves torch threads contending with the matcher (~3x slower extract)
+        t = torch.from_numpy(np.ascontiguousarray(image)).to(self._device).permute(2, 0, 1).float()
         if t.max() > 1.5:  # uint8-scale input
             t = t / 255.0
-        return t.to(self._device)
+        return t
 
     @staticmethod
     def _check_pixel_frame(kpts: np.ndarray, hw: tuple[int, int], what: str) -> None:

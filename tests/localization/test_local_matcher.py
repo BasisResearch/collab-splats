@@ -94,6 +94,26 @@ def test_extract_passes_chw_unit_range_tensor(mock_get):
     assert float(img.max()) <= 1.0 and float(img.min()) >= 0.0
 
 
+@pytest.mark.parametrize("dtype", [np.uint8, np.float32])
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))])
+@patch("vismatch.get_matcher")
+def test_to_tensor_matches_cpu_conversion(mock_get, device, dtype):
+    # On-device conversion must reproduce the old CPU float-then-move path
+    mock_get.return_value = _fake_vismatch_matcher()
+    lm = LocalMatcher("disk-lightglue", device=device, probe=False)
+    rgb = np.random.default_rng(0).integers(0, 256, (37, 53, 3)).astype(np.uint8)
+    image = rgb if dtype == np.uint8 else rgb.astype(np.float32) / 255.0
+
+    # Reference: the pre-fix CPU path
+    ref = torch.from_numpy(image).permute(2, 0, 1).float()
+    ref = ref / 255.0 if ref.max() > 1.5 else ref
+
+    out = lm._to_tensor(image)
+
+    assert out.device.type == device and out.dtype == torch.float32 and out.shape == (3, 37, 53)
+    torch.testing.assert_close(out.cpu(), ref, atol=1e-6, rtol=0)
+
+
 def test_blocked_models_raise_without_importing_vismatch():
     # Blocklist check happens before the vismatch import — a None sys.modules entry
     # would make any import attempt raise ImportError, so ValueError proves the order.

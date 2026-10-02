@@ -199,22 +199,22 @@ def test_score_query_blank_positive_does_not_lift(tmp_path, monkeypatch):
     assert lifted_called["n"] == 0  # blank query must not pay the 6-min lift
 
 
-def test_load_mesh_vertex_features_normalizes(tmp_path):
-    from collab_splats.dashboard.viewer import load_mesh_vertex_features
+def test_read_mesh_vertex_features_normalizes(tmp_path):
+    from collab_splats.dashboard.viewer import read_mesh_vertex_features
 
     # vertex_features.npy sits beside mesh.ply, which is now the scene dir itself
     feats = np.array([[3.0, 4.0], [0.0, 2.0]], dtype=np.float32)
     np.save(tmp_path / "vertex_features.npy", feats)
 
-    out = load_mesh_vertex_features(tmp_path)
+    out = read_mesh_vertex_features(tmp_path)
     norms = np.linalg.norm(out, axis=1)
     np.testing.assert_allclose(norms, [1.0, 1.0], rtol=1e-5)
 
 
-def test_load_mesh_vertex_features_missing_returns_none(tmp_path):
-    from collab_splats.dashboard.viewer import load_mesh_vertex_features
+def test_read_mesh_vertex_features_missing_returns_none(tmp_path):
+    from collab_splats.dashboard.viewer import read_mesh_vertex_features
 
-    assert load_mesh_vertex_features(tmp_path / "nope") is None
+    assert read_mesh_vertex_features(tmp_path / "nope") is None
 
 
 def test_score_query_uses_mesh_features_in_mesh_mode(monkeypatch):
@@ -477,7 +477,7 @@ def test_ensure_lifted_uses_cached_lifted_store_fast_path(tmp_path):
     The cached artifact is LATENT codes, so the fast path must hand back DECODED full-dim
     features — score_queries compares them against full-dim text embeddings.
     """
-    from collab_splats.semantics.utils import ae_path, load_point_features
+    from collab_splats.semantics.utils import ae_path, read_point_features
 
     sem_dir = tmp_path / "semantics"
     sem_dir.mkdir()
@@ -491,8 +491,8 @@ def test_ensure_lifted_uses_cached_lifted_store_fast_path(tmp_path):
     v.ensure_lifted()
     # Decoded to the autoencoder's input_dim, not the 8-D latent width it was stored at
     assert v._point_features.shape == (20, 32)
-    np.testing.assert_allclose(v._point_features, load_point_features(sem_dir), rtol=1e-6)
+    np.testing.assert_allclose(v._point_features, read_point_features(sem_dir), rtol=1e-6)
     # Rows must be unit-norm: score_queries takes raw dot products against L2-normalized text
     # embeddings, so an un-normalized row silently scales its own similarity. Asserted here
-    # rather than only against load_point_features, where a dropped normalize cancels out.
+    # rather than only against read_point_features, where a dropped normalize cancels out.
     np.testing.assert_allclose(np.linalg.norm(v._point_features, axis=1), 1.0, rtol=1e-5)

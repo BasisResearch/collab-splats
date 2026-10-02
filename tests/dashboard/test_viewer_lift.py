@@ -29,7 +29,7 @@ def test_lift_point_features_normalises():
     def fake_lift(feature_maps, result):
         # Proves the load_feature_maps patch is still intercepting: a patch that stopped
         # biting would hand the real (globbing) loader an object() and never reach here.
-        assert feature_maps == ["sentinel-map"]
+        assert feature_maps(0) == "sentinel-map"
         return fake_lifted
 
     with (

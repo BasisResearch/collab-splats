@@ -7,6 +7,7 @@ import trimesh
 pytest.importorskip("warp")
 pytest.importorskip("meshoptimizer")
 
+from collab_splats.mesh.clean import prepare_mesh  # noqa: E402
 from collab_splats.mesh.texture import (  # noqa: E402
     create_texture_mesh,
     project_images_to_texture,
@@ -139,11 +140,13 @@ def test_project_images_to_texture_back_faces_get_nothing():
 
 
 def test_create_texture_mesh_writes_obj_mtl_and_albedo(tmp_path):
-    mesh_path = tmp_path / "mesh.ply"
-    o3d.io.write_triangle_mesh(str(mesh_path), _dense_plane(30))
+    plane = _dense_plane(30)
     c2w, K = _camera()
     # The plane's rim is 2.8 × its scene scale, under the 3.9 gate; it stays open as the outer rim
-    out = create_texture_mesh(mesh_path, tmp_path / "texture", _constant_image(), c2w, K, voxel_size=0.01, tex_size=64)
+    prepared = prepare_mesh(plane, voxel_size=0.01)
+    out = create_texture_mesh(
+        prepared, plane, tmp_path / "texture", _constant_image(), c2w, K, voxel_size=0.01, tex_size=64
+    )
     assert out == tmp_path / "texture" / "mesh.obj"
     assert sorted(p.name for p in out.parent.iterdir()) == ["albedo.png", "mesh.mtl", "mesh.obj"]
     assert "Kd 1.00000000 1.00000000 1.00000000" in (out.parent / "mesh.mtl").read_text()
@@ -152,4 +155,4 @@ def test_create_texture_mesh_writes_obj_mtl_and_albedo(tmp_path):
     assert loaded.visual.uv.shape == (len(loaded.vertices), 2)
     albedo = np.asarray(loaded.visual.material.image)
     assert albedo.shape[:2] == (64, 64) and np.abs(albedo[..., :3].astype(int) - [51, 128, 204]).max() <= 2
-    assert mesh_path.exists()  # the fused mesh is never modified
+    assert len(plane.triangles) == 2 * 29 * 29  # the cleaned mesh is never modified

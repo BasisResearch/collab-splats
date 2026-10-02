@@ -111,6 +111,10 @@ fi
 /root/.local/bin/uv sync --locked --all-extras \
     || { [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help; exit 1; }
 
+# WordNet corpus for the ocr_lens vocabulary; best-effort like the weight pre-fetches
+"$PYTHON" -m nltk.downloader wordnet \
+    || echo "WARN: WordNet download failed — run: python -m nltk.downloader wordnet"
+
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
 # Best-effort: a build stage without network/system libs skips it and
 # the weights download lazily on first use instead.

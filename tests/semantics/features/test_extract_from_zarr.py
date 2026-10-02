@@ -1,4 +1,4 @@
-"""Tests for BaseFeatureExtractor.features_to_rgb and semantics.utils.extract_feature_cache."""
+"""Tests for BaseFeatureExtractor.features_to_rgb and semantics.store.extract_feature_cache."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import zarr
 
 from collab_splats.preproc import frames as fr
 from collab_splats.semantics.features.base import BaseFeatureExtractor
-from collab_splats.semantics.utils import extract_feature_cache
+from collab_splats.semantics.store import extract_feature_cache
 
 ########################################################################
 # Minimal concrete extractor for tests — no model weights needed
@@ -138,7 +138,7 @@ def test_extract_feature_cache_marks_validity_only_after_every_frame_is_written(
     calls = []
 
     def dying_forward(images):
-        # Probe + frame 0 + frame 1 succeed; frame 2 of 4 blows up
+        # One frame per call (batch_size=1): frames 0 and 1 succeed, frame 2 of 4 blows up
         calls.append(1)
         if len(calls) > 2:
             raise RuntimeError("GPU fell over at frame 2")
@@ -149,7 +149,7 @@ def test_extract_feature_cache_marks_validity_only_after_every_frame_is_written(
         images_dir = _make_images_dir(n=4, H=64, W=64, tmp_dir=tmp)
         cache_dir = Path(tmp) / "cache"
         with pytest.raises(RuntimeError):
-            extract_feature_cache(extractor, images_dir, cache_dir)
+            extract_feature_cache(extractor, images_dir, cache_dir, batch_size=1)
 
         # The half-written store must not advertise itself as complete
         store = zarr.open(str(cache_dir / "_test_extractor.zarr"), mode="r")

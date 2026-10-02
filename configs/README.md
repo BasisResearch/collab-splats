@@ -66,7 +66,7 @@ folder name:
     texture/                   ← mesh.obj + mesh.mtl + albedo.png (only if mesh.texture=true)
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × latent_dim)
-      <extractor>_ae.pt        ← autoencoder weights (if semantics.n_components set)
+                                 (+ autoencoder.pt inside if semantics.n_components set)
 ```
 
 ---
@@ -397,8 +397,9 @@ parameter and raises.
 | `mesh.sdf_trunc_mult` | float | `4.0` | Truncation band as a multiple of `voxel_size`. This, not `voxel_size`, sets the thin-structure floor: a TSDF cannot resolve anything thinner than `2 × sdf_trunc`, and where a structure's front and back surface both fall inside one band they cancel and it disappears entirely. A bar seen only from the front does not cancel — it is fattened to the floor width instead, which is how a railing survives fusion as a slab and then dies as a floater. At the default the floor is `8 × voxel_size`, four times coarser than the voxel grid itself. `4.0` is Open3D's default for noisy sensor RGBD; rendered splat depth is much cleaner, so `1.5`–`2.0` recovers fence posts and railings at the same voxel size and the same memory. Must be `>= 1.0` — a band narrower than a voxel punctures the surface |
 | `mesh.depth_trunc` | float | `1.5` | Ignore depth beyond this, world units. Feedforward depth is not metric, so this is in the reconstruction's own scale, not meters. |
 | `mesh.conf_percentile` | float\|null | `20` | Drop depth below this global confidence percentile before fusing (`null` = off). `source: feedforward` only; a reconstruction that carries no confidence (sfm) fuses unmasked and logs that it did |
+| `mesh.smooth_iterations` | int | `0` | Taubin smoothing passes on the prepared mesh, after decimation and repair, before texturing (`0` = off). Moves vertices only, never removes faces; a final `make_manifold` drops the few faces it folds. `10` measured on GH010229: face-to-face angle median 22° -> 8.5°, vertices move 0.26 mm mean |
 | `mesh.texture` | bool | `false` | Also decimate, UV-unwrap and project the fused views into `<backend>/texture/` (`mesh.obj` + `mesh.mtl` + `albedo.png`). Needs a GPU |
-| `mesh.use_convex_hull` | bool | `false` | Trim the ragged outer edge and patch the ground out to a rounded convex hull before hole filling (`make_convex_hull`). Ground-dominated outdoor scenes only; a mesh without a dominant ground raises. See `docs/mesh.md` |
+| `mesh.use_convex_hull` | bool | `true` | Trim the ragged outer edge and patch the ground out to a rounded convex hull before hole filling (`make_convex_hull`). Ground-dominated outdoor scenes only; a mesh without a dominant ground raises, so set it `false` indoors and for objects. See `docs/mesh.md` |
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the `pointcloud.zarr` poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.max_steps` | int | `30000` | Training iterations |
@@ -724,14 +725,13 @@ the mapper database is rebuilt every run.
     texture/                   ← mesh.obj + mesh.mtl + albedo.png (only if mesh.texture=true)
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × n_components)
-      <extractor>_ae.pt        ← autoencoder weights, needed to decode them (if n_components set)
+                                 (+ autoencoder.pt inside, needed to decode them, if n_components set)
 ```
 
 The 2D patch cache sits at the scene root because it depends only on the frames; the lift is
-what depends on the backend, so `<extractor>_lifted.zarr` sits under `<backend>/`. The
-`_lifted` suffix is what separates the two in the dashboard's flat layout, where both live in
-one `semantics/` dir. Naming both halves after the extractor also lets two extractors coexist
-in the same scene instead of overwriting each other.
+what depends on the backend, so `<extractor>_lifted.zarr` sits under `<backend>/`. Naming both
+halves after the extractor lets two extractors coexist in the same scene instead of
+overwriting each other.
 
 ### Processed scene layout
 
@@ -743,7 +743,7 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/mesh.ply` | any pipeline |
 | `<backend>/texture/mesh.obj` + `mesh.mtl` + `albedo.png` | any pipeline — textured mesh (only if `mesh.texture: true`) |
 | `<backend>/semantics/<extractor>_lifted.zarr` | per-point latent codes (`semantics.n_components`-D) |
-| `<backend>/semantics/<extractor>_ae.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
+| `<backend>/semantics/<extractor>_lifted.zarr/autoencoder.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |
 | `<backend>/splats/ckpt.pt` | trainer checkpoint: Gaussian params + pose-opt state, for resuming or re-rendering |
 | `<backend>/splats/splats_quality_report.json` | per-view + mean train-view PSNR/SSIM, final Gaussian count, report-only |
@@ -843,7 +843,7 @@ The TSDF output is now `<backend>/mesh.ply` (was `mesh/mesh_tsdf.ply`, then `mes
 so older scenes make the mesh readers raise `FileNotFoundError` and the dashboard show no
 mesh. Semantics moved the same way: the 2D cache is `<scene>/semantics/<extractor>.zarr` (was
 `features/<extractor>/<extractor>.zarr`) and the lifted pair is
-`<backend>/semantics/<extractor>_lifted.zarr` + `_ae.pt` (was
+`<backend>/semantics/<extractor>_lifted.zarr` with `autoencoder.pt` inside (was
 `<backend>/semantics/<extractor>/features.zarr` + `autoencoder.pt`). There are deliberately no
 legacy fallbacks — they would restore exactly the two-name ambiguity the rename removed. Such
 scenes need `--stages mesh,semantics --overwrite` run once; the 2D

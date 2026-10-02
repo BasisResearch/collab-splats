@@ -530,9 +530,9 @@ def test_load_index_after_clear_has_only_reconstruction(tmp_path):
 # ── Task 2 (localization module) tests: shared cache reader ──────────────────
 
 
-def test_load_localization_db_roundtrip(tmp_path):
+def test_read_localization_db_roundtrip(tmp_path):
     """Module-level cache reader returns exactly what save_index wrote."""
-    from collab_splats.localization.localizer import load_localization_db
+    from collab_splats.localization.localizer import read_localization_db
 
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=2)
     image_paths = _make_image_files(tmp_path / "imgs", n=2)
@@ -553,20 +553,20 @@ def test_load_localization_db_roundtrip(tmp_path):
     zarr_path = _empty_zarr(tmp_path)
     localizer.save_index(zarr_path, "xfeat")
 
-    out_feats, out_ids, hw = load_localization_db(zarr_path, "xfeat")
+    out_feats, out_ids, hw = read_localization_db(zarr_path, "xfeat")
     assert out_ids == ids and hw == (64, 64)
     assert [len(f.keypoints) for f in out_feats] == [5, 8]
     np.testing.assert_allclose(out_feats[1].keypoints.numpy(), feats[1].keypoints.numpy())
     np.testing.assert_allclose(out_feats[0].descriptors.numpy(), feats[0].descriptors.numpy())
 
 
-def test_load_localization_db_missing_raises(tmp_path):
+def test_read_localization_db_missing_raises(tmp_path):
     """Missing cache raises KeyError naming the extractor."""
-    from collab_splats.localization.localizer import load_localization_db
+    from collab_splats.localization.localizer import read_localization_db
 
     zarr_path = _empty_zarr(tmp_path)
     with pytest.raises(KeyError, match="disk"):
-        load_localization_db(zarr_path, "disk")
+        read_localization_db(zarr_path, "disk")
 
 
 # ── Task 9 test ──────────────────────────────────────────────────────────────

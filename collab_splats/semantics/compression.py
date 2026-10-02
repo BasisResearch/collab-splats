@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from tqdm.auto import tqdm
+
+from collab_splats.utils.torch_utils import batch_iterator
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,26 @@ class FeatureAutoencoder(nn.Module):
             (P, input_dim).
         """
         return self.decoder_out(self.decoder_hidden(codes))
+
+    @torch.no_grad()
+    def iter_decode(self, codes: Tensor, batch_size: int = 65_536) -> Iterator[Tensor]:
+        """
+        Decode flat point codes one chunk at a time, on this autoencoder's device and dtype.
+
+        - peak memory is one (batch_size, input_dim) chunk, never the full (P, input_dim)
+
+        Args:
+            codes: (P, latent_dim), on any device.
+            batch_size: codes per chunk.
+
+        Yields:
+            (c, input_dim) decoded chunks, in order.
+        """
+        param = next(self.parameters())
+
+        for (chunk,) in batch_iterator(batch_size, codes):
+            chunk = chunk.to(device=param.device, dtype=param.dtype)
+            yield self.per_point_decode(chunk)
 
     ####################################################################
     # Training

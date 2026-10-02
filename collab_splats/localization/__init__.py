@@ -23,7 +23,7 @@ from collab_splats.localization.extractors import (
 from collab_splats.localization.localizer import (
     CameraLocalizer,
     LocalizationResult,
-    load_localization_db,
+    read_localization_db,
     sample_world_points,
 )
 from collab_splats.localization.retrieval import (
@@ -47,7 +47,7 @@ __all__ = [
     "MatchResult",
     "PECLIPExtractor",
     "correspondences_for_ref",
-    "load_localization_db",
+    "read_localization_db",
     "plot_correspondences",
     "plot_inlier_distribution",
     "sample_world_points",

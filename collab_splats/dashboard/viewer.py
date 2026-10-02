@@ -17,10 +17,9 @@ from collab_splats.dashboard.viz_utils import (
     compute_view_transform,
     pointcloud_to_polydata,
 )
-from collab_splats.mesh.features import features2vertex
 
 # Heavy semantics imports deferred to load/query methods
-# - lift_features (semantics.lifting), BaseQueryableExtractor (semantics.features)
+# - lift_features, transfer_features (semantics.lifting), BaseQueryableExtractor (semantics.features)
 # - both run semantics/__init__: pulls the extractors and SAM
 # - lazy import keeps viewer pane construction instant at launch
 
@@ -52,7 +51,7 @@ def lift_point_features(result, semantics_dir) -> np.ndarray:
         result = PointcloudResult.load_zarr(result._zarr_path, load_world_points=False)
 
     feature_maps = load_feature_maps(cache_store_path(semantics_dir))
-    lifted = lift_features(feature_maps, result)
+    lifted = lift_features(feature_maps.__getitem__, result)
     lifted = lifted.detach().cpu().numpy().astype(np.float32)
     norms = np.linalg.norm(lifted, axis=1, keepdims=True)
     return lifted / (norms + 1e-8)
@@ -100,7 +99,7 @@ def _save_point_features(semantics_dir: Path, features: np.ndarray, op_log=None)
         op_log.append_line(f"query: {msg}")
 
 
-def load_mesh_vertex_features(mesh_dir) -> "np.ndarray | None":
+def read_mesh_vertex_features(mesh_dir) -> "np.ndarray | None":
     """Load cached mesh vertex features and L2-normalise -> (M, D) float32, or None if absent.
 
     Matches lift_point_features's normalization so mesh features share the point feature
@@ -226,7 +225,7 @@ class SplitViewer:
         else:
             return False
         # Per-vertex mesh features (if the pipeline persisted them) — same space as point features.
-        self._mesh_vertex_features = load_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
+        self._mesh_vertex_features = read_mesh_vertex_features(self._mesh_path.parent) if self._mesh_path else None
         return True
 
     def mesh_polydata(self) -> "pv.PolyData | None":
@@ -245,14 +244,14 @@ class SplitViewer:
         # instead of leaving the scene permanently stuck on an unusable cache.
         # Lazy: semantics.utils runs semantics/__init__, which pulls the extractors and SAM.
         from collab_splats.semantics.utils import (
-            load_point_features,
             point_features_cached,
+            read_point_features,
         )
 
         if point_features_cached(self._semantics_dir):
             if op_log is not None:
                 op_log.append_line("query: loading cached point features")
-            self._point_features = load_point_features(self._semantics_dir)
+            self._point_features = read_point_features(self._semantics_dir)
             return
         if op_log is not None:
             op_log.append_line("query: lifting features to points (first query — may take minutes)")
@@ -280,7 +279,7 @@ class SplitViewer:
 
         Older runs have no persisted vertex_features.npy; compute it on demand from the
         already-lifted point features + the mesh so mesh-mode queries work without a re-run.
-        L2-normalises to match load_mesh_vertex_features / point-feature scoring.
+        L2-normalises to match read_mesh_vertex_features / point-feature scoring.
         """
         if self._mesh_vertex_features is not None:
             return
@@ -288,9 +287,11 @@ class SplitViewer:
             return
         if op_log is not None:
             op_log.append_line("query: transferring features to mesh vertices (first mesh query)")
+        from collab_splats.semantics.lifting import transfer_features
+
         # Vertices come straight from the cached PolyData — no second disk read of the .ply.
         vertices = np.asarray(self._mesh_polydata.points)
-        vf = features2vertex(vertices, self._result.points, self._point_features)
+        vf = transfer_features(vertices, self._result.points, self._point_features)
         norms = np.linalg.norm(vf, axis=1, keepdims=True)
         self._mesh_vertex_features = (vf / (norms + 1e-8)).astype(np.float32)
 

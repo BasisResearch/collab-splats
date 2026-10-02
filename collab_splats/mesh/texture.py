@@ -1,7 +1,7 @@
 """
 Texture a fused mesh: one albedo atlas baked from the source views.
 
-- fill_holes, decimate_mesh, make_manifold (clean.py): a mesh UVAtlas accepts
+- input: prepare_mesh output (clean.py)
 - unwrap_mesh_uvs: UV atlas (Open3D UVAtlas)
 - _rasterize_atlas: per-texel world position + normal (nvdiffrast)
 - project_images_to_texture: per-texel color, two Warp kernel passes then fill_missing_pixels
@@ -21,7 +21,6 @@ import nvdiffrast.torch as dr
 import warp as wp
 
 from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
-from collab_splats.mesh.clean import decimate_mesh, fill_holes, make_manifold
 from collab_splats.mesh.tsdf import _validate_views
 from collab_splats.utils.image import fill_missing_pixels
 from collab_splats.utils.io import to_uint8_hwc, write_textured_obj
@@ -35,51 +34,39 @@ logger = logging.getLogger(__name__)
 
 
 def create_texture_mesh(
-    mesh_path: Path | str,
+    mesh: o3d.geometry.TriangleMesh,
+    occluder: o3d.geometry.TriangleMesh,
     out_dir: Path | str,
     rgbs: np.ndarray,
     c2w: np.ndarray,
     K: np.ndarray,
     *,
     voxel_size: float,
-    max_hole_perimeter_ratio: float = 3.9,
-    decimate_max_error: float = 0.5,
     tex_size: int = 8192,
 ) -> Path:
     """
-    Fill, decimate, repair, unwrap and texture a fused mesh; the input file is never modified.
+    Unwrap and texture a prepared mesh.
 
-    - fill at full density, decimate, make_manifold; lid the pinholes that opens, repair again
-    - the unfilled input is the occluder, so invented patches never hide a real surface
-    - voxel_size sets both the decimation bound and the occlusion tolerance
-    - outer rims stay open whatever max_hole_perimeter_ratio (see fill_holes)
+    - the unfilled occluder hides surfaces, so invented patches never hide a real surface
+    - voxel_size is the occlusion tolerance
     - writes out_dir/mesh.obj + mesh.mtl + albedo.png via write_textured_obj
 
     Args:
-        mesh_path: fused mesh.ply (from create_tsdf_mesh + clean_repair_mesh).
+        mesh: prepare_mesh output.
+        occluder: the cleaned mesh before prepare_mesh.
         out_dir: directory to create.
         rgbs: (N, H, W, 3) uint8 views that were fused.
         c2w: (N, 4, 4) camera-to-world poses.
         K: (N, 3, 3) intrinsics at image resolution.
         voxel_size: TSDF voxel the mesh was fused at, world units.
-        max_hole_perimeter_ratio: patch holes with a perimeter under this × scene_scale.
-        decimate_max_error: decimation bound as a multiple of voxel_size.
         tex_size: atlas edge in texels.
 
     Returns:
         Path to out_dir/mesh.obj.
     """
     rgbs, c2w, K, _ = _validate_views(rgbs, c2w, K)
-    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
-    filled = fill_holes(mesh, max_hole_perimeter_ratio=max_hole_perimeter_ratio)
-    decimated, err = decimate_mesh(filled, max_error=decimate_max_error * voxel_size)
-    manifold = make_manifold(decimated)
-
-    # Decimation and repair open pinholes; flat lids close them, then repair what the lids fold
-    lidded = fill_holes(manifold, max_hole_perimeter_ratio=max_hole_perimeter_ratio, subdivide_fill=False)
-    manifold = make_manifold(lidded)
-    tm = unwrap_mesh_uvs(manifold, tex_size)
-    albedo = project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps=voxel_size, occluder=mesh)
+    tm = unwrap_mesh_uvs(mesh, tex_size)
+    albedo = project_images_to_texture(tm, rgbs, c2w, K, tex_size, occlusion_eps=voxel_size, occluder=occluder)
 
     # Smooth per-vertex normals for the OBJ; without them viewers shade split corners flat
     tm.compute_vertex_normals()
@@ -91,13 +78,7 @@ def create_texture_mesh(
         tm.triangle.texture_uvs.numpy(),
         albedo,
     )
-    logger.info(
-        "create_texture_mesh: %d -> %d faces (decimation error %.4f) -> %s",
-        len(mesh.triangles),
-        len(tm.triangle.indices),
-        err,
-        out,
-    )
+    logger.info("create_texture_mesh: %d faces -> %s", len(tm.triangle.indices), out)
     return out
 
 

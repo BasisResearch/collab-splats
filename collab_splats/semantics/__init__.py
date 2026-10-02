@@ -4,7 +4,8 @@ Semantic features for reconstructed scenes: extract, compress, store, query, seg
 - features: patch-feature extractors (dinov2, maskclip, talk2dino) behind one registry
 - segmentation: mask backends (insid3, mobilesamv2, sam3, skywater) behind one registry
 - compression: FeatureAutoencoder, per-point codes for the lifted store
-- utils: on-disk layout of the 2D cache and the lifted per-point store
+- store: the 2D cache and the lifted per-point store
+- utils: contrastive scoring and point clustering
 """
 
 from collab_splats.semantics.compression import FeatureAutoencoder
@@ -28,18 +29,13 @@ from collab_splats.semantics.segmentation import (
     mask_id_to_binary_mask,
     sky_masks,
 )
-from collab_splats.semantics.utils import (
-    ae_path,
-    cache_store_path,
-    compute_semantic_contrast,
+from collab_splats.semantics.store import (
     extract_feature_cache,
-    find_lifted_extractor,
-    lifted_store_path,
-    load_feature_maps,
-    load_point_features,
-    point_features_cached,
+    read_point_features,
+    valid_feature_cache,
     write_point_features,
 )
+from collab_splats.semantics.utils import cluster_points, compute_semantic_contrast
 
 __all__ = [
     # compression
@@ -50,17 +46,14 @@ __all__ = [
     "MaskCLIPExtractor",
     "DINOFeatureExtractor",
     "Talk2DinoExtractor",
-    # semantic helpers + artifact layout
+    # feature math
     "compute_semantic_contrast",
-    "cache_store_path",
+    "cluster_points",
+    # stores
     "extract_feature_cache",
-    "load_feature_maps",
+    "valid_feature_cache",
     "write_point_features",
-    "load_point_features",
-    "point_features_cached",
-    "lifted_store_path",
-    "ae_path",
-    "find_lifted_extractor",
+    "read_point_features",
     # segmentation
     "BaseSegmentation",
     "MobileSAMSegmentation",

@@ -187,7 +187,7 @@ def test_transfer_mesh_features_writes_decoded_features(tmp_path):
     """vertex_features.npy must hold DECODED features, not the latent codes on disk.
 
     Widths differ (2-D codes, 5-D decoded) and the values are checked, so reading latent
-    instead of decoded fails on both counts — its only reader (viewer.load_mesh_vertex_features)
+    instead of decoded fails on both counts — its only reader (viewer.read_mesh_vertex_features)
     scores against full-dim text embeddings and cannot decode.
     """
     import open3d as o3d
@@ -211,11 +211,11 @@ def test_transfer_mesh_features_writes_decoded_features(tmp_path):
 
     out = np.load(tmp_path / "vertex_features.npy")
     assert out.shape == (3, 5)  # decoded input_dim, NOT the 2-D latent width
-    np.testing.assert_allclose(out, pipeline.load_point_features(sem_dir), rtol=1e-5, atol=1e-6)
+    np.testing.assert_allclose(out, pipeline.read_point_features(sem_dir), rtol=1e-5, atol=1e-6)
 
 
 ########
-# Per-point artifact pair: what _lift_and_compress writes, what load_point_features accepts
+# Per-point artifact pair: what _lift_and_compress writes, what read_point_features accepts
 ########
 
 
@@ -235,7 +235,7 @@ def test_lift_and_compress_caches_latent_codes_not_decoded(tmp_path):
     # Fake lift returns the maps it was handed, flattened to points — so the stored width
     # is exactly the width of whatever _lift_and_compress chose to lift.
     def fake_lift(feature_maps, result):
-        return torch.cat([m.flatten(1).T for m in feature_maps])
+        return torch.cat([feature_maps(i).flatten(1).T for i in range(len(maps))])
 
     with (
         patch.object(pl, "load_feature_maps", return_value=maps),
@@ -249,7 +249,7 @@ def test_lift_and_compress_caches_latent_codes_not_decoded(tmp_path):
     assert dict(store.attrs) == {"input_dim": 80, "latent_dim": latent}
     assert (sem_dir / "talk2dino_ae.pt").is_file()
     # Round-trip: the cached pair decodes back to the full input width
-    assert pl.load_point_features(sem_dir).shape == (8, 80)
+    assert pl.read_point_features(sem_dir).shape == (8, 80)
 
 
 ########
@@ -291,7 +291,7 @@ def test_lift_and_compress_fit_uses_the_shared_policy(tmp_path):
         return real_fit(self, features, **{k: v for k, v in kwargs.items() if k != "on_epoch"})
 
     def fake_lift(feature_maps, result):
-        return torch.cat([m.flatten(1).T for m in feature_maps])
+        return torch.cat([feature_maps(i).flatten(1).T for i in range(len(maps))])
 
     policy = pl.semantics_ae_policy()
     with (

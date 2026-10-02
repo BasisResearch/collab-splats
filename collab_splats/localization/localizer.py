@@ -109,7 +109,7 @@ class LocalizationResult:
         return [int(i) for i in order if counts[i] > 0]
 
 
-def load_localization_db(
+def read_localization_db(
     zarr_path: "str | Path", extractor_name: str
 ) -> tuple[list[LocalFeatures], list[str], tuple[int, int]]:
     """Read the localization DB (per-frame feature cache) for one extractor.
@@ -414,9 +414,9 @@ class CameraLocalizer:
         cannot localize and raises.
         """
         zarr_path = pathlib.Path(zarr_path)
-        rec_features, rec_image_paths, hw = load_localization_db(zarr_path, extractor_name)
+        rec_features, rec_image_paths, hw = read_localization_db(zarr_path, extractor_name)
 
-        # load_index also needs the localized/ group, which load_localization_db
+        # load_index also needs the localized/ group, which read_localization_db
         # doesn't touch — keep a store handle open for that.
         store = zarr.open(str(zarr_path), mode="r")
 

@@ -13,6 +13,7 @@ from collab_splats.mesh.clean import (
     get_scene_scale,
     make_convex_hull,
     make_manifold,
+    prepare_mesh,
     remove_floaters,
     trim_mesh_edges,
 )
@@ -431,3 +432,20 @@ def test_decimate_mesh_never_moves_vertices():
     # meshlib holds float32 coordinates; a kept vertex lands within float32 rounding of its source
     dist, _ = cKDTree(np.asarray(m.vertices)).query(np.asarray(out.vertices))
     assert dist.max() < 1e-6
+
+
+def test_prepare_mesh_smoothing_flattens_noise_and_keeps_faces():
+    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=40)
+    vertices = np.asarray(sphere.vertices)
+    noise = np.random.default_rng(0).normal(0.0, 0.01, len(vertices))
+    sphere.vertices = o3d.utility.Vector3dVector(vertices * (1.0 + noise)[:, None])
+
+    # A tiny voxel keeps decimation from collapsing the noise away first
+    rough = prepare_mesh(sphere, voxel_size=1e-5)
+    smooth = prepare_mesh(sphere, voxel_size=1e-5, smooth_iterations=10)
+
+    radial_rough = np.linalg.norm(np.asarray(rough.vertices), axis=1)
+    radial_smooth = np.linalg.norm(np.asarray(smooth.vertices), axis=1)
+    assert radial_smooth.std() < 0.5 * radial_rough.std()
+    assert abs(radial_smooth.mean() - radial_rough.mean()) < 0.01
+    assert len(smooth.triangles) == len(rough.triangles)

@@ -1,6 +1,8 @@
 """General-purpose PyTorch and model-loading utilities."""
 
 import gc
+import logging
+import math
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -8,7 +10,11 @@ from typing import Any, Generator, Iterator, List
 
 import numpy as np
 import torch
+import zarr
 from huggingface_hub import hf_hub_download
+from torch import Tensor
+
+logger = logging.getLogger(__name__)
 
 ########################################################
 ########## Device helpers ##############################
@@ -100,6 +106,68 @@ def infer_batch_size(mem_per_image_gb: float, headroom: float = 0.3) -> int:
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
         return max(1, int(vram_gb * headroom / mem_per_image_gb))
     return 1
+
+
+def load_features(
+    features: Tensor | np.ndarray | zarr.Array,
+    device: str | torch.device,
+    max_gb: float = 8.0,
+    read_gb: float = 1.0,
+) -> Tensor:
+    """
+    Any (N, D, ...) feature array as (M, D) float32 samples on device, within max_gb.
+
+    - axis 1 = features; axis 0 + trailing axes = samples (e.g. (N, D) points, (N, D, H, W) patch maps)
+    - row k * S + s is kept item k at flattened trailing index s, S = prod(trailing axes)
+    - over budget: an evenly spaced subset of axis-0 items, logged
+    - reads axis-0 slices of about read_gb; each moves as-is, then casts and permutes on device
+
+    Args:
+        features: tensor, ndarray or zarr array, feature width on axis 1.
+        device: where the samples are allocated.
+        max_gb: ceiling on the float32 samples, in GiB.
+        read_gb: host-side read size per slice, in float32 GiB.
+
+    Returns:
+        (M, D) float32 samples on device.
+
+    Raises:
+        ValueError: when `features` has no samples, or one item alone exceeds max_gb.
+    """
+    n_items, dim = features.shape[:2]
+    per_item = math.prod(features.shape[2:])
+
+    if n_items * per_item * dim == 0:
+        raise ValueError(f"load_features() requires at least one sample; got shape {tuple(features.shape)}")
+
+    # Items that fit the float32 budget; over it, keep every stride-th item
+    item_gb = per_item * dim * 4 / 2**30
+    items_per_budget = math.floor(max_gb / item_gb)
+
+    if items_per_budget == 0:
+        raise ValueError(f"one item is {item_gb:.2f} GiB, over max_gb={max_gb}")
+
+    stride = math.ceil(n_items / items_per_budget)
+    n_kept = math.ceil(n_items / stride)
+
+    if stride > 1:
+        logger.info("load_features: kept %d of %d items (every %d-th) within %.1f GiB", n_kept, n_items, stride, max_gb)
+
+    out = torch.empty((n_kept * per_item, dim), dtype=torch.float32, device=device)
+    items_per_read = max(1, math.floor(read_gb / item_gb))
+
+    for k0 in range(0, n_kept, items_per_read):
+        # Read kept items k0..k1 as one strided basic slice, moved to device in the source dtype
+        k1 = min(k0 + items_per_read, n_kept)
+        chunk = torch.as_tensor(features[k0 * stride : k1 * stride : stride])
+        chunk = chunk.to(device)
+
+        # Cast and permute on device: (B, D, S) -> (B, S, D) rows of the output
+        chunk = chunk.reshape(k1 - k0, dim, per_item)
+        rows = out[k0 * per_item : k1 * per_item]
+        rows.view(k1 - k0, per_item, dim).copy_(chunk.transpose(1, 2))
+
+    return out
 
 
 def batch_iterator(batch_size: int, *args) -> Generator[List[Any], None, None]:

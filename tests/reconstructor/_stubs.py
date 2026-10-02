@@ -37,6 +37,7 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "mask_sky": False,
             "texture": False,
             "use_convex_hull": False,
+            "smooth_iterations": 0,
         },
         "semantics": {"extractor": "dinov2"},
         "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},

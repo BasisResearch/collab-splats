@@ -90,8 +90,9 @@ pointcloud:
 
 semantics:
   enabled: true
-  extractor: talk2dino        # talk2dino | dinov2 | maskclip
-  n_components: 64            # autoencoder latent dim; null = no compression
+  extractor: talk2dino        # talk2dino | dinov2 | maskclip | ocr_lens
+  extractor_kwargs: {}        # constructor kwargs, e.g. {layer: 20} for ocr_lens; keys the 2D cache
+  n_components: 64            # autoencoder latent dim; null = no compression; 128 for ocr_lens
   # Stop training once mean reconstruction cosine hits this, with max_epochs as the
   # ceiling. Cross-scene comparison happens in decoded 768-D space, so fidelity is the
   # right stop signal — more epochs cannot align two scenes' 64-D bases.
@@ -119,9 +120,10 @@ mesh:
   mask_sky: false          # zero depth where the `skywater` segmenter fires, before fusion; both
                            # mesh sources. Unlike conf_percentile it does NOT mask the splats
                            # stage's depth targets — see docs/mesh.md.
-  texture: false           # decimate + UV atlas + project the fused views; writes mesh/texture/
-  use_convex_hull: false   # trim the ragged outer edge, patch the ground out to a rounded hull;
-                           # ground-dominated height-field scenes only; leave off indoors and for objects
+  smooth_iterations: 0     # Taubin smoothing passes on mesh.ply after repair, before texturing; 0 = off
+  texture: false           # UV atlas + project the fused views onto mesh.ply; writes texture/
+  use_convex_hull: true    # trim the ragged outer edge, patch the ground out to a rounded hull;
+                           # ground-dominated height-field scenes only; set false indoors and for objects (raises)
 
 # Gaussian splats from the pointcloud stage (leaf stage `splats`, upstream gsplat)
 # - photometric 0.8 L1 + 0.2 (1 - SSIM) always on; a loss is active iff weight > 0 and step >= start

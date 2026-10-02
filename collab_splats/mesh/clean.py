@@ -5,7 +5,7 @@ Mesh cleanup at full density, then preparation for UV unwrapping.
 - remove_floaters: drop components that are small or far from the main body
 - fill_holes: patch interior loops under a perimeter bound; the outer rim stays open
 - make_convex_hull: trim_mesh_edges, patch the ground out to a rounded hull, bridge_mesh_edges
-- decimate_mesh, make_manifold: error-bounded QEM decimation, repair to what UVAtlas accepts
+- prepare_mesh: fill_holes, decimate_mesh (error-bounded QEM), make_manifold into a mesh UVAtlas accepts
 - thresholds are scene-relative: fractions of get_scene_scale, or cells of the median edge
 """
 
@@ -685,6 +685,50 @@ def make_manifold(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
         len(new_ids),
     )
     return out
+
+
+def prepare_mesh(
+    mesh: o3d.geometry.TriangleMesh,
+    *,
+    voxel_size: float,
+    max_hole_perimeter_ratio: float = 3.9,
+    decimate_max_error: float = 0.5,
+    smooth_iterations: int = 0,
+) -> o3d.geometry.TriangleMesh:
+    """
+    Fill, decimate and repair a cleaned mesh into one UVAtlas accepts; the input is not modified.
+
+    - fill at full density, decimate, make_manifold; lid the pinholes that opens, repair again
+    - smoothing runs last so decimation never sees it; a final repair drops the faces it folds
+    - outer rims stay open whatever max_hole_perimeter_ratio (see fill_holes)
+
+    Args:
+        mesh: cleaned mesh (clean_repair_mesh output).
+        voxel_size: TSDF voxel the mesh was fused at; sets the decimation bound.
+        max_hole_perimeter_ratio: patch holes with a perimeter under this × scene_scale.
+        decimate_max_error: decimation bound as a multiple of voxel_size.
+        smooth_iterations: Taubin smoothing passes; 0 skips smoothing.
+
+    Returns:
+        The filled, decimated, manifold mesh.
+    """
+    filled = fill_holes(mesh, max_hole_perimeter_ratio=max_hole_perimeter_ratio)
+    decimated, err = decimate_mesh(filled, max_error=decimate_max_error * voxel_size)
+    manifold = make_manifold(decimated)
+
+    # Decimation and repair open pinholes; flat lids close them, then repair what the lids fold
+    lidded = fill_holes(manifold, max_hole_perimeter_ratio=max_hole_perimeter_ratio, subdivide_fill=False)
+    manifold = make_manifold(lidded)
+
+    # Taubin smoothing moves vertices only; repair the few faces it folds
+    if smooth_iterations > 0:
+        smoothed = manifold.filter_smooth_taubin(number_of_iterations=smooth_iterations)
+        manifold = make_manifold(smoothed)
+
+    logger.info(
+        "prepare_mesh: %d -> %d faces (decimation error %.4f)", len(mesh.triangles), len(manifold.triangles), err
+    )
+    return manifold
 
 
 ########################

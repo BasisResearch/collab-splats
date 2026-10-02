@@ -1,26 +1,13 @@
-"""Tests for collab_splats.semantics.utils — contrastive scoring and the on-disk artifact pair."""
-
-from pathlib import Path
-from unittest.mock import MagicMock
+"""Tests for collab_splats.semantics.utils — contrastive scoring, point clustering, package surface."""
 
 import numpy as np
 import pytest
 import torch
-import zarr
-from PIL import Image
 
 import collab_splats.semantics as semantics
+import collab_splats.semantics.store as store
 import collab_splats.semantics.utils as su
-from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.utils import (
-    ae_path,
-    cache_store_path,
-    compute_semantic_contrast,
-    load_feature_maps,
-    load_point_features,
-    point_features_cached,
-    write_point_features,
-)
+from collab_splats.semantics.utils import cluster_points, compute_semantic_contrast
 
 
 def test_max_contrast_shape():
@@ -109,11 +96,10 @@ def test_pool_single_pos_matches_max():
 
 
 def test_utils_no_longer_re_exports_torch_helpers():
-    """The back-compat shim is gone — torch helpers come from collab_splats.utils.torch_utils.
+    """
+    The back-compat shim is gone — torch helpers come from collab_splats.utils.torch_utils.
 
-    `batch_iterator` is deliberately absent from this list: load_point_features streams its
-    decode through it, so a top-level import legitimately binds the name. What must not come
-    back is the RE-EXPORT — hence the __all__ check below, which is the actual public surface.
+    - `batch_iterator` is checked against __all__ only: the re-export must not come back
     """
     for name in (
         "get_device",
@@ -137,7 +123,7 @@ def test_tokens_to_feature_map_is_private():
 
 def test_package_re_exports_every_utils_public_name():
     """
-    Every name in utils.__all__ is reachable as `from collab_splats.semantics import <name>`.
+    Every name in utils/store __all__ is reachable as `from collab_splats.semantics import <name>`.
 
     - utils.__all__ is the module surface; this is the package surface, and they drifted once.
     - The two halves of a re-export fail independently: a name dropped from the `.utils` import
@@ -145,265 +131,13 @@ def test_package_re_exports_every_utils_public_name():
     - The second sweep covers the rest of the package the same way, so `import *` cannot
       raise AttributeError on a name __all__ promises.
     """
-    missing = [n for n in su.__all__ if n not in semantics.__all__ or not hasattr(semantics, n)]
+    missing = [
+        n for module in (su, store) for n in module.__all__ if n not in semantics.__all__ or not hasattr(semantics, n)
+    ]
     assert not missing, f"semantics package does not re-export: {missing}"
 
     unbound = [n for n in semantics.__all__ if not hasattr(semantics, n)]
     assert not unbound, f"semantics.__all__ lists names the package never binds: {unbound}"
-
-
-########################################################################
-# On-disk layout: the 2D patch cache vs the lifted per-point store
-########################################################################
-
-
-def _write_both_stores(tmp_path):
-    """Write a `talk2dino.zarr` 2D cache and a `talk2dino_lifted.zarr` per-point store side by side."""
-    cache = zarr.open(str(tmp_path / "talk2dino.zarr"), mode="w")
-    cache["features"] = np.zeros((2, 4, 3, 3), dtype=np.float32)
-    cache.attrs.update({"extractor": "talk2dino", "patch_size": 14, "n_frames": 2})
-
-    lifted = zarr.open(str(tmp_path / "talk2dino_lifted.zarr"), mode="w")
-    lifted["features"] = np.zeros((6, 4), dtype=np.float32)
-    lifted.attrs.update({"input_dim": 4, "latent_dim": 4})
-
-
-def _force_lifted_first(monkeypatch, tmp_path):
-    """Make `Path.glob` yield the lifted store first, so suffix filtering is what does the work."""
-    real_glob = Path.glob
-
-    def ordered(self, pattern):
-        return sorted(real_glob(self, pattern), key=lambda p: "_lifted" not in p.name)
-
-    monkeypatch.setattr(Path, "glob", ordered)
-
-
-def test_cache_store_path_ignores_the_lifted_store(tmp_path, monkeypatch):
-    _write_both_stores(tmp_path)
-    _force_lifted_first(monkeypatch, tmp_path)
-    assert cache_store_path(tmp_path).name == "talk2dino.zarr"
-    # Callers read the extractor name off `.stem`; "talk2dino_lifted" would be the answer
-    # if the lifted store were picked up
-    assert cache_store_path(tmp_path).stem == "talk2dino"
-
-
-def test_cache_store_path_raises_when_there_is_no_2d_cache(tmp_path):
-    with pytest.raises(FileNotFoundError, match="no 2D feature cache"):
-        cache_store_path(tmp_path)
-
-
-def test_cache_store_path_raises_on_two_stores(tmp_path):
-    """Two 2D stores leave the extractor ambiguous; picking one silently is wrong."""
-    for name in ("dinov2.zarr", "talk2dino.zarr", "talk2dino_lifted.zarr"):
-        (tmp_path / name).mkdir()
-    with pytest.raises(ValueError, match="dinov2.zarr.*talk2dino.zarr"):
-        cache_store_path(tmp_path)
-
-
-def test_load_feature_maps_takes_a_store_path(tmp_path):
-    _write_both_stores(tmp_path)
-    maps = load_feature_maps(cache_store_path(tmp_path))
-    assert len(maps) == 2
-    assert maps[0].shape == (4, 3, 3)
-
-
-########################################################################
-# Per-point pair: what load_point_features accepts and what it refuses
-########################################################################
-
-
-def _write_semantics(semantics_dir, n_points=32, latent=8, input_dim=32, extractor="talk2dino"):
-    """Write the semantics artifact pair a scene dir is expected to carry.
-
-    latent MUST stay != input_dim: with equal widths latent codes and decoded features have
-    the same shape and a reader that skips the decode is indistinguishable from a correct one.
-    """
-    assert latent != input_dim, "fixture must not hide a latent/decoded mixup behind equal widths"
-    torch.manual_seed(0)
-    codes = np.random.default_rng(0).random((n_points, latent), dtype=np.float32)
-    write_point_features(semantics_dir, extractor, codes, FeatureAutoencoder(input_dim=input_dim, latent_dim=latent))
-
-
-def test_load_point_features_full_dim_pair_needs_no_weights(tmp_path):
-    """semantics.n_components: null writes full-dim codes and no autoencoder — still readable."""
-    feats = np.random.default_rng(0).random((6, 5), dtype=np.float32)
-    write_point_features(tmp_path, "talk2dino", feats)  # ae=None -> uncompressed
-
-    assert not (tmp_path / "talk2dino_ae.pt").exists()
-    assert point_features_cached(tmp_path)
-    out = load_point_features(tmp_path)
-    # Returned as-is apart from the L2 normalization every consumer expects
-    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-6)
-
-
-def test_write_point_features_uncompressed_drops_stale_autoencoder(tmp_path):
-    """An uncompressed rewrite must not leave an earlier run's `_ae.pt` to decode its codes."""
-    _write_semantics(tmp_path, n_points=6, latent=2, input_dim=5)
-    feats = np.random.default_rng(1).random((6, 5), dtype=np.float32)
-    write_point_features(tmp_path, "talk2dino", feats)  # ae=None -> uncompressed
-
-    assert not ae_path(tmp_path, "talk2dino").exists()
-    out = load_point_features(tmp_path)
-    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-6)
-
-
-def test_load_point_features_rejects_latent_codes_without_weights(tmp_path):
-    """Half-written pair (codes, no weights): raise, never hand back undecoded codes."""
-    _write_semantics(tmp_path, n_points=4, latent=2, input_dim=5)
-    (tmp_path / "talk2dino_ae.pt").unlink()  # crash between the two writes
-
-    assert not point_features_cached(tmp_path)  # -> caller re-lifts instead of getting stuck
-    with pytest.raises(FileNotFoundError, match="re-lift"):
-        load_point_features(tmp_path)
-
-
-def test_load_point_features_rejects_legacy_codes_without_weights(tmp_path):
-    """Pre-attrs scenes with no weights are indistinguishable from orphans — raise, don't guess."""
-    store = zarr.open(str(tmp_path / "talk2dino_lifted.zarr"), mode="w")
-    store["features"] = np.zeros((4, 2), dtype=np.float32)  # no dim attrs
-
-    assert not point_features_cached(tmp_path)
-    with pytest.raises(FileNotFoundError, match="re-lift"):
-        load_point_features(tmp_path)
-
-
-def test_point_features_cached_reports_not_cached_on_a_null_latent_dim(tmp_path):
-    """A non-int latent_dim is an unusable store, not a half-readable one — report NOT cached.
-
-    `int(None)` raises inside the width comparison; the predicate must swallow that and say
-    False so the caller re-lifts, rather than propagating into the dashboard's UI-state check.
-    """
-    store = zarr.open(str(tmp_path / "talk2dino_lifted.zarr"), mode="w")
-    store["features"] = np.zeros((4, 8), dtype=np.float32)
-    store.attrs.update({"input_dim": 8, "latent_dim": None})
-
-    assert not (tmp_path / "talk2dino_ae.pt").exists()
-    assert not point_features_cached(tmp_path)
-
-
-def test_load_point_features_decodes_in_batches_matching_the_unbatched_result(tmp_path, monkeypatch):
-    """Batched decode must be numerically identical to the one-shot decode it replaces."""
-    sem_dir = tmp_path / "semantics"
-    _write_semantics(sem_dir, n_points=37, latent=8, input_dim=32)
-
-    # Reference: decode every code in ONE call through the same weights.
-    codes = torch.from_numpy(np.asarray(zarr.open(str(sem_dir / "talk2dino_lifted.zarr"), mode="r")["features"]))
-    ae = FeatureAutoencoder.load(ae_path(sem_dir, "talk2dino"))
-    with torch.no_grad():
-        expected = torch.nn.functional.normalize(ae.per_point_decode(codes), dim=1).numpy()
-
-    # Shrink the batch so 37 points genuinely span several calls, and count them.
-    sizes = []
-    real_decode = FeatureAutoencoder.per_point_decode
-
-    def counting_decode(self, x):
-        sizes.append(len(x))
-        return real_decode(self, x)
-
-    monkeypatch.setattr(FeatureAutoencoder, "per_point_decode", counting_decode)
-    out = load_point_features(sem_dir, batch_size=5)
-
-    np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
-    assert len(sizes) == 8 and max(sizes) <= 5  # 37 = 7*5 + 2; never the whole array at once
-
-
-########################################################################
-# Store checks: an unreadable store re-extracts, a bug propagates
-########################################################################
-
-
-def test_extract_feature_cache_propagates_unexpected_errors(tmp_path, monkeypatch):
-    """A bug inside the validity check must surface, not trigger a silent re-extract."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / "frame_000000.png")
-    (tmp_path / "fake.zarr").mkdir()
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("not a store error")
-
-    monkeypatch.setattr(su.zarr, "open", boom)
-    extractor = MagicMock()
-    extractor.name = "fake"
-    with pytest.raises(RuntimeError, match="not a store error"):
-        su.extract_feature_cache(extractor, images, tmp_path)
-
-
-def test_extract_feature_cache_reextracts_corrupt_store(tmp_path):
-    """A store with unreadable metadata is an expected stale cache: re-extract."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / "frame_000000.png")
-    store = tmp_path / "fake.zarr"
-    store.mkdir()
-    (store / "zarr.json").write_text("{not json")
-
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
-    su.extract_feature_cache(extractor, images, tmp_path)
-    assert zarr.open(str(store), mode="r").attrs["n_frames"] == 1
-
-
-def test_extract_feature_cache_hands_the_extractor_rgb_arrays(tmp_path):
-    """Frames reach forward() as decoded RGB ndarrays, not lazily-decoded PIL handles."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.full((4, 4, 3), (200, 10, 10), dtype=np.uint8)).save(images / "frame_000000.png")
-
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
-    su.extract_feature_cache(extractor, images, tmp_path)
-
-    [frame] = extractor.forward.call_args.args[0]
-    assert isinstance(frame, np.ndarray)
-    np.testing.assert_array_equal(frame[0, 0], [200, 10, 10])
-
-
-def test_extract_feature_cache_reextracts_on_frame_count_mismatch(tmp_path):
-    """A store whose n_frames disagrees with the directory is stale: re-extract."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / "frame_000000.png")
-    stale = zarr.open(str(tmp_path / "fake.zarr"), mode="w")
-    stale.attrs.update({"extractor": "fake", "n_frames": 7})
-
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
-    su.extract_feature_cache(extractor, images, tmp_path)
-
-    assert extractor.forward.called
-    assert zarr.open(str(tmp_path / "fake.zarr"), mode="r").attrs["n_frames"] == 1
-
-
-def test_point_features_cached_propagates_unexpected_errors(tmp_path, monkeypatch):
-    """The predicate answers False for an unreadable store, but a bug still raises."""
-    monkeypatch.setattr(su, "find_lifted_extractor", lambda d: "fake")
-    monkeypatch.setattr(su, "lifted_store_path", lambda d, e: tmp_path / "fake_lifted.zarr")
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("not a store error")
-
-    monkeypatch.setattr(su.zarr, "open", boom)
-    with pytest.raises(RuntimeError, match="not a store error"):
-        su.point_features_cached(tmp_path)
-
-
-def test_point_features_cached_treats_permission_error_as_unreadable(tmp_path, monkeypatch):
-    """An OS-level read failure is an unreadable store: the predicate answers False."""
-    monkeypatch.setattr(su, "find_lifted_extractor", lambda d: "fake")
-    monkeypatch.setattr(su, "lifted_store_path", lambda d, e: tmp_path / "fake_lifted.zarr")
-
-    def denied(*args, **kwargs):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(su.zarr, "open", denied)
-    assert su.point_features_cached(tmp_path) is False
 
 
 def test_package_exports_segmentation_backends():
@@ -411,3 +145,36 @@ def test_package_exports_segmentation_backends():
         assert name in semantics.__all__ and hasattr(semantics, name), name
     for name in ("load_mobile_sam", "tokens_to_feature_map"):
         assert name not in semantics.__all__ and not hasattr(semantics, name), name
+
+
+########################################################################
+# cluster_points
+########################################################################
+
+
+def _two_blobs():
+    """60 points in two tight blobs 1 unit apart plus 10 scattered low-similarity points."""
+    rng = np.random.default_rng(0)
+    a = rng.normal(0.0, 0.005, (30, 3))
+    b = rng.normal(0.0, 0.005, (30, 3)) + [1.0, 0.0, 0.0]
+    stray = rng.random((10, 3)) * [0.5, 1.0, 1.0] + [0.25, 0.0, 0.0]
+    points = np.vstack([a, b, stray])
+    similarity = np.r_[np.ones(60), np.zeros(10)]
+    return points, similarity
+
+
+def test_cluster_points_groups_nearby_high_similarity_points():
+    points, similarity = _two_blobs()
+    clusters = cluster_points(points, similarity, similarity_threshold=0.5, spatial_radius=0.05, min_cluster_size=10)
+    assert len(clusters) == 2
+    assert {frozenset(c.tolist()) for c in clusters} == {frozenset(range(30)), frozenset(range(30, 60))}
+
+
+def test_cluster_points_min_cluster_size_drops_small_clusters():
+    points, similarity = _two_blobs()
+    assert cluster_points(points, similarity, similarity_threshold=0.5, spatial_radius=0.05, min_cluster_size=31) == []
+
+
+def test_cluster_points_no_valid_points_returns_empty_list():
+    points, similarity = _two_blobs()
+    assert cluster_points(points, np.zeros_like(similarity)) == []

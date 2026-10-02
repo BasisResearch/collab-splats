@@ -980,6 +980,7 @@ dependencies = [
     { name = "meshoptimizer" },
     { name = "mobile-sam" },
     { name = "ninja" },
+    { name = "nltk" },
     { name = "numcodecs" },
     { name = "numpy" },
     { name = "nvdiffrast" },
@@ -989,6 +990,7 @@ dependencies = [
     { name = "open-clip-torch" },
     { name = "opencv-python" },
     { name = "pillow" },
+    { name = "pyarrow" },
     { name = "pycolmap-cuda12" },
     { name = "pydantic" },
     { name = "pypose" },
@@ -1127,6 +1129,7 @@ requires-dist = [
     { name = "nbsphinx", marker = "extra == 'docs'" },
     { name = "nbval", marker = "extra == 'dev'" },
     { name = "ninja" },
+    { name = "nltk", specifier = ">=3.8" },
     { name = "numcodecs" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvdiffrast", git = "https://github.com/NVlabs/nvdiffrast?rev=253ac4fcea7de5f396371124af597e6cc957bfae" },
@@ -1141,6 +1144,7 @@ requires-dist = [
     { name = "param", marker = "extra == 'dashboard'", specifier = ">=2.0.0" },
     { name = "pillow" },
     { name = "pillow-heif", marker = "extra == 'feedforward'" },
+    { name = "pyarrow" },
     { name = "pycolmap-cuda12", specifier = "==4.1.1" },
     { name = "pydantic", specifier = "==2.10.6" },
     { name = "pydata-sphinx-theme", marker = "extra == 'dev'" },
@@ -4187,6 +4191,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/95/97/51359c77527d45943fe7a94d00a3843b81162e6c4244b3579fe8fc54cb9c/ninja-1.13.0-py3-none-win32.whl", hash = "sha256:8cfbb80b4a53456ae8a39f90ae3d7a2129f45ea164f43fadfa15dc38c4aef1c9", size = 267201, upload-time = "2025-08-11T15:10:15.158Z" },
     { url = "https://files.pythonhosted.org/packages/29/45/c0adfbfb0b5895aa18cec400c535b4f7ff3e52536e0403602fc1a23f7de9/ninja-1.13.0-py3-none-win_amd64.whl", hash = "sha256:fb8ee8719f8af47fed145cced4a85f0755dd55d45b2bddaf7431fa89803c5f3e", size = 309975, upload-time = "2025-08-11T15:10:16.697Z" },
     { url = "https://files.pythonhosted.org/packages/df/93/a7b983643d1253bb223234b5b226e69de6cda02b76cdca7770f684b795f5/ninja-1.13.0-py3-none-win_arm64.whl", hash = "sha256:3c0b40b1f0bba764644385319028650087b4c1b18cdfa6f45cb39a3669b81aa9", size = 290806, upload-time = "2025-08-11T15:10:18.018Z" },
+]
+
+[[package]]
+name = "nltk"
+version = "3.10.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "defusedxml" },
+    { name = "joblib" },
+    { name = "regex" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/e6/fe51d2bb1a3b446f59c5c8165999a9fee208bc346af90a7cbf7657bc0d75/nltk-3.10.3.tar.gz", hash = "sha256:bb9327a461c3811c2fa4900e03840401f2126adfb30c0072827c433bd2444ea4", size = 5137152, upload-time = "2026-08-12T23:46:37.258Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/6d/ebd2af4640b12168fdf0cb74b6118df2f32a2f62ec7e0c06fbfd80706639/nltk-3.10.3-py3-none-any.whl", hash = "sha256:ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c", size = 1798643, upload-time = "2026-08-12T23:44:13.478Z" },
 ]
 
 [[package]]

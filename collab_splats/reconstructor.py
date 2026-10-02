@@ -12,10 +12,13 @@ import logging
 import shutil
 import warnings
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import open3d as o3d
+import torch
 import yaml
 import zarr
 from mergedeep import merge
@@ -33,6 +36,7 @@ from collab_splats.mesh import (
     clean_repair_mesh,
     create_texture_mesh,
     create_tsdf_mesh,
+    prepare_mesh,
 )
 from collab_splats.pointcloud import BaseFeedforwardCreator, get_creator
 from collab_splats.pointcloud.base import PointcloudResult
@@ -51,15 +55,19 @@ from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.semantics.lifting import lift_features
 from collab_splats.semantics.segmentation import sky_masks
-from collab_splats.semantics.utils import (
+from collab_splats.semantics.store import (
     extract_feature_cache,
-    lifted_store_path,
-    load_feature_maps,
+    valid_feature_cache,
     write_point_features,
 )
 from collab_splats.utils.colmap import write_colmap_reconstruction
 from collab_splats.utils.io import read_image, write_json
-from collab_splats.utils.torch_utils import get_device, pytorch_gc, to_numpy
+from collab_splats.utils.torch_utils import (
+    get_device,
+    load_features,
+    pytorch_gc,
+    to_numpy,
+)
 
 if TYPE_CHECKING:
     from collab_splats.viewer import Viewer
@@ -91,15 +99,23 @@ LEAF_STAGES = frozenset(s for s in STAGES if not any(s in deps for deps in STAGE
 ########################################
 
 
-def _store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
+def store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
     """
     Rows of the images/ store holding each named frame, in the order named.
 
     - pointcloud.zarr may hold fewer frames than images/: incremental sfm drops unregistered ones
     - joined on the source frame index in each name, never on row position or extension
-    - names: frame_NNNNNN with any extension or none, e.g. a result's image_paths
-    - returns indices into `frames.frame_paths(images_dir)`, one per name
-    - KeyError when a named frame is not in images/
+    - the 2D feature cache shares these rows: it is extracted over `frames.frame_paths(images_dir)`
+
+    Args:
+        images_dir: the scene's images/ keyframe store.
+        names: frame_NNNNNN with any extension or none, e.g. a result's image_paths.
+
+    Returns:
+        Indices into `frames.frame_paths(images_dir)`, one per name.
+
+    Raises:
+        KeyError: when a named frame is not in images/.
     """
     # Map each stored frame's source index to its row
     store_paths = frames.frame_paths(images_dir)
@@ -116,6 +132,29 @@ def _store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
         )
 
     return [rows_by_frame_idx[fi] for fi in frame_indices]
+
+
+def _load_frame(
+    features: zarr.Array,
+    rows: list[int],
+    ae: FeatureAutoencoder | None,
+    i: int,
+) -> torch.Tensor:
+    """
+    Pointcloud frame i's patch map from the scene-level cache, AE-encoded when given.
+
+    - pointcloud frame i is store row rows[i]
+    - returns (D, H_p, W_p) raw fp16 CPU, or (latent_dim, H_p, W_p) float32 codes on the AE's device
+    """
+    fmap = torch.from_numpy(features[rows[i]])
+    if ae is None:
+        return fmap
+
+    # Encode on the AE's device; lift_features moves it on as float32
+    device = next(ae.parameters()).device
+    fmap = fmap.to(device=device, dtype=torch.float32)
+    with torch.no_grad():
+        return ae.encode(fmap)
 
 
 def _localization_db_exists(pointcloud_zarr: Path, extractor_name: str) -> bool:
@@ -164,7 +203,7 @@ def _build_localization_db(
 
     # Lazily read the store's frames in the zarr's image_paths order
     all_paths = frames.frame_paths(images_dir)
-    rows = _store_rows(images_dir, ff.image_paths)
+    rows = store_rows(images_dir, ff.image_paths)
     paths = [all_paths[row] for row in rows]
     images = (read_image(p) for p in paths)
 
@@ -388,13 +427,12 @@ class Reconstructor:
         Returns:
             Stage name to its marker path.
         """
-        lifted = lifted_store_path(self.backend_dir / "semantics", self.config["semantics"]["extractor"])
-
+        extractor = self.config["semantics"]["extractor"]
         return {
             "preproc": self.images_dir,
             "pointcloud": self.pointcloud_zarr,
             "refine": self.backend_dir / "colmap" / "refine.json",
-            "semantics": lifted,
+            "semantics": self.backend_dir / "semantics" / f"{extractor}_lifted.zarr",
             "splats": self.backend_dir / "splats" / "ckpt.pt",
             "mesh": self.backend_dir / "mesh.ply",
             "reconstruction_quality_report": self.backend_dir / "reconstruction_quality_report.json",
@@ -689,48 +727,74 @@ class Reconstructor:
 
     def semantics(self) -> None:
         """
-        Extract 2D features into the scene cache, lift them onto the points, optionally compress.
+        Extract 2D features into the scene cache, compress them per frame, lift the codes onto the points.
 
-        - the 2D cache is reused when valid; extract_feature_cache owns that check
+        - the 2D cache is reused when valid (name, frame count, extractor_kwargs); a hit skips the model load
+        - AE stored as `<extractor>.zarr/autoencoder.pt`; re-extraction wipes it, a new n_components refits
+        - lift reads one frame at a time; no all-frames RAM or full-width (P, D)
         - lifted rows follow the zarr's own frames, which may be a subset of images/
+        - lifted store written atomically with its own autoencoder.pt (pushed; the 2D cache is not)
         """
         cfg = self.config["semantics"]
+        extractor_kwargs = cfg["extractor_kwargs"]
 
-        # 2D features for every images/ frame
+        # 2D features for every images/ frame; the model loads only when the cache is invalid
         self.semantics_cache_dir.mkdir(parents=True, exist_ok=True)
-        extractor_cls = BaseFeatureExtractor.get(cfg["extractor"])
-        extractor = extractor_cls()
-        cache = extract_feature_cache(extractor, self.images_dir, self.semantics_cache_dir)
-        maps = load_feature_maps(cache)
+        cache = valid_feature_cache(self.semantics_cache_dir, cfg["extractor"], self.images_dir, extractor_kwargs)
 
-        # Pick the zarr's frames out of the scene cache, in the zarr's order
-        ff = PointcloudResult.load_zarr(self.pointcloud_zarr)
-        rows = _store_rows(self.images_dir, ff.image_paths)
-        maps = [maps[row] for row in rows]
-        lifted = lift_features(maps, ff)
+        if cache is None:
+            extractor_cls = BaseFeatureExtractor.get(cfg["extractor"])
+            extractor = extractor_cls(**extractor_kwargs)
+            cache = extract_feature_cache(extractor, self.images_dir, self.semantics_cache_dir, extractor_kwargs)
 
-        # Optional autoencoder compression, trained on the GPU
+            # Free the extractor's GPU memory now; a forward hook can hold it in a reference cycle
+            del extractor
+            pytorch_gc()
+
+        # Scene cache read lazily; pick the zarr's frames, in the zarr's order
+        features = zarr.open(str(cache), mode="r")["features"]
+        ff = PointcloudResult.load_zarr(self.pointcloud_zarr, load_world_points=False)
+        rows = store_rows(self.images_dir, ff.image_paths)
+
+        # Reuse the AE stored with the 2D cache when its width matches, else fit and store it
         ae = None
 
         if cfg["n_components"] is not None:
-            device = get_device()
-            lifted = lifted.to(device)
-            ae = FeatureAutoencoder(input_dim=lifted.shape[-1], latent_dim=cfg["n_components"])
-            ae.fit(lifted, epochs=cfg["max_epochs"], target_cosine=cfg["target_cosine"])
-            lifted = ae.per_point_encode(lifted)
+            ae_path = cache / "autoencoder.pt"
+
+            if ae_path.exists():
+                ae = FeatureAutoencoder.load(ae_path)
+
+            if ae is not None and ae.latent_dim == cfg["n_components"]:
+                logger.info("autoencoder cache hit: %s", ae_path)
+            else:
+                samples = load_features(features, get_device())
+                ae = FeatureAutoencoder(input_dim=samples.shape[1], latent_dim=cfg["n_components"])
+                ae.fit(samples, epochs=cfg["max_epochs"], target_cosine=cfg["target_cosine"])
+                ae.save(ae_path)
+
+                # Free the samples before the lift
+                del samples
+                pytorch_gc()
+
+            ae.to(get_device())
+
+        # Lift per-frame codes (or full-width maps when uncompressed) to points
+        frame_features = partial(_load_frame, features, rows, ae)
+        lifted = lift_features(frame_features, ff)
 
         # Write the per-point codes beside the lifted-store marker
         codes = to_numpy(lifted)
-        semantics_dir = self.outputs["semantics"].parent
-        write_point_features(semantics_dir, cfg["extractor"], codes, ae)
+        write_point_features(self.outputs["semantics"], codes, ae)
 
     def mesh(self) -> None:
         """
-        Fuse depth and RGB into a TSDF mesh.ply, clean it, and optionally texture it.
+        Fuse depth and RGB into a TSDF mesh.ply, clean and prepare it, and optionally texture it.
 
         - feedforward source: pointcloud.zarr depth, confidence-masked and lifted to the frame grid
         - splats source: the checkpoint's own renders and poses; the splats stage is never auto-run
         - mask_sky zeroes sky depth on either source before fusion
+        - mesh.ply is the prepared mesh (filled, decimated, manifold); texture/ is its UV bake
 
         Raises:
             FileNotFoundError: the splats source has no ckpt.pt on disk.
@@ -782,7 +846,7 @@ class Reconstructor:
             depths = np.where(sky, 0.0, depths)
             logger.info("mesh.mask_sky: dropped %.2f%% of valid depth pixels as sky", 100 * dropped)
 
-        # Fuse, clean, then optionally texture
+        # Fuse, then clean in place
         mesh_path = create_tsdf_mesh(
             depths,
             rgbs,
@@ -795,9 +859,16 @@ class Reconstructor:
         )
         clean_repair_mesh(mesh_path, use_convex_hull=cfg["use_convex_hull"])
 
+        # Prepare mesh.ply; keep the cleaned mesh as the texture occluder
+        mesh_file = str(mesh_path)
+        cleaned = o3d.io.read_triangle_mesh(mesh_file)
+        prepared = prepare_mesh(cleaned, voxel_size=cfg["voxel_size"], smooth_iterations=cfg["smooth_iterations"])
+        o3d.io.write_triangle_mesh(mesh_file, prepared)
+
+        # Optionally UV-unwrap mesh.ply and project the fused views onto it
         if cfg["texture"]:
             texture_dir = self.backend_dir / "texture"
-            create_texture_mesh(mesh_path, texture_dir, rgbs, c2w, intrinsics, voxel_size=cfg["voxel_size"])
+            create_texture_mesh(prepared, cleaned, texture_dir, rgbs, c2w, intrinsics, voxel_size=cfg["voxel_size"])
 
         logger.info("Mesh saved to %s", mesh_path)
 

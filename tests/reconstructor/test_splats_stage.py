@@ -142,6 +142,7 @@ def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path):
             "collab_splats.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply"
         ) as fuse,
         patch("collab_splats.reconstructor.clean_repair_mesh") as clean,
+        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
     ):
         recon.mesh()
 
@@ -196,6 +197,7 @@ def test_mesh_sfm_zarr_fuses(tmp_path):
         patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=sfm),
         patch("collab_splats.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply") as fuse,
         patch("collab_splats.reconstructor.clean_repair_mesh"),
+        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
     ):
         recon.mesh()
 

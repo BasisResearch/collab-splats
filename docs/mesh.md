@@ -7,9 +7,8 @@ them, because only the caller knows which resolution grid it is on.
 | File | Responsibility |
 | --- | --- |
 | `tsdf.py` | `create_tsdf_mesh` — integrate views into a TSDF volume, write `mesh.ply` |
-| `clean.py` | `get_scene_scale`, `remove_floaters`, `make_convex_hull` (+ `trim_mesh_edges`, `bridge_mesh_edges`), `fill_holes`, `clean_repair_mesh`; unwrap prep `decimate_mesh`, `make_manifold` |
+| `clean.py` | `get_scene_scale`, `remove_floaters`, `make_convex_hull` (+ `trim_mesh_edges`, `bridge_mesh_edges`), `fill_holes`, `clean_repair_mesh`; `prepare_mesh` (+ `decimate_mesh`, `make_manifold`) |
 | `texture.py` | `unwrap_mesh_uvs`, `project_images_to_texture`, `create_texture_mesh` |
-| `features.py` | `features2vertex`, `mesh_clustering` |
 
 ---
 
@@ -20,7 +19,9 @@ The pipeline runs this stage for you (`mesh:` in the yaml, `--stages mesh`). Dir
 ```python
 from pathlib import Path
 
-from collab_splats.mesh import clean_repair_mesh, create_tsdf_mesh
+import open3d as o3d
+
+from collab_splats.mesh import clean_repair_mesh, create_tsdf_mesh, prepare_mesh
 
 mesh_path = create_tsdf_mesh(
     depths,       # (n, h, w) float32, 0 = no observation
@@ -32,6 +33,8 @@ mesh_path = create_tsdf_mesh(
     depth_trunc=1.5,
 )
 clean_repair_mesh(mesh_path)   # rewrites mesh.ply in place
+cleaned = o3d.io.read_triangle_mesh(str(mesh_path))
+prepared = prepare_mesh(cleaned, voxel_size=0.0025)   # the mesh.ply the stage ships
 ```
 
 `voxel_size` and `depth_trunc` are in **world units, and the world has no fixed scale**. The
@@ -163,7 +166,7 @@ Cleaning is not optional in the pipeline. `remove_floaters`, `make_convex_hull` 
 `fill_holes` are public for callers who want one without the others, as are the hull's
 `trim_mesh_edges` and `bridge_mesh_edges`.
 
-### Convex hull (`mesh.use_convex_hull`, off by default)
+### Convex hull (`mesh.use_convex_hull`, on by default in `configs/base.yaml`; set `false` indoors and for objects)
 
 `clean_repair_mesh(mesh_path, use_convex_hull=True)` runs `make_convex_hull` between
 `remove_floaters` and `fill_holes`. It trims the ragged outer edge of a fused scene and patches
@@ -189,34 +192,52 @@ dominant ground raises `ValueError` rather than inventing one.
 
 ---
 
-## Texturing
+## Preparing mesh.ply
 
-`texture.py` bakes per-view color into a single albedo atlas, opt-in via `mesh.texture: true`:
+The mesh stage always ships the prepared mesh: `prepare_mesh` fills, decimates and repairs the
+cleaned mesh, whether or not `mesh.texture` is on. With `use_convex_hull: true` the ground is
+patched out to the hull and rim necks are bridged first, so more inlets become interior holes
+this fill closes; the outermost edge is never lidded.
 
 1. `fill_holes` at full density with `max_hole_perimeter_ratio` (`3.9`) — the outer rims stay
    open by rule, so the bound only stops the largest interior openings (on GH010229, one hole
    at 4.0 × scene scale)
-2. `decimate_mesh` — `meshoptimizer` simplification to an error bound expressed in voxels, so
-   the budget follows the fusion resolution rather than a triangle count
+2. `decimate_mesh` — `meshoptimizer` simplification to an error bound expressed in voxels
+   (`decimate_max_error`, `0.5` × `voxel_size`), so the budget follows the fusion resolution
+   rather than a triangle count
 3. `make_manifold` — split non-manifold vertices, drop degenerate, duplicate and fold-over
    faces. UVAtlas rejects a mesh that fails any of these
-4. `unwrap_mesh_uvs` — Open3D UVAtlas, partitioned for parallelism
-5. `_rasterize_atlas` — rasterize the atlas with nvdiffrast into per-texel world position
+4. `fill_holes` again with `subdivide_fill=False`, then `make_manifold` — flat lids over the
+   pinholes decimation and repair open, and a repair of what the lids fold
+5. `mesh.smooth_iterations` > 0 only: Taubin smoothing, then `make_manifold` again. Last, so
+   decimation never sees it; vertices move, faces stay (GH010229, 10 passes: 4 of 1.1M faces folded)
+
+`prepare_mesh(mesh, voxel_size=...)` returns a new mesh and leaves its input unmodified.
+Filling only after decimation instead leaves fold-over faces UVAtlas rejects (`0x80004005`),
+and the order was measured against the alternatives on GH010229 (16.73 dB reprojection PSNR,
+the best of four).
+
+---
+
+## Texturing
+
+`texture.py` bakes per-view color into a single albedo atlas, opt-in via `mesh.texture: true`:
+
+1. `unwrap_mesh_uvs` — Open3D UVAtlas, partitioned for parallelism
+2. `_rasterize_atlas` — rasterize the atlas with nvdiffrast into per-texel world position
    and normal
-6. `project_images_to_texture` — an NVIDIA Warp kernel per texel: ray-cast for occlusion
-   (`wp.mesh_query_ray`) against the unfilled input, accumulate bilinear samples weighted by pixel size at the texel,
+3. `project_images_to_texture` — an NVIDIA Warp kernel per texel: ray-cast for occlusion
+   (`wp.mesh_query_ray`) against the unfilled `occluder`, accumulate bilinear samples weighted by pixel size at the texel,
    from the views that resolve it nearly as finely as its best view, then `fill_missing_pixels` (push-pull)
    fill every texel no view reached
-7. `write_textured_obj` (`utils/io.py`, trimesh) — `mesh.obj` + `mesh.mtl` + `albedo.png`, smooth vertex normals (`vn`),
+4. `write_textured_obj` (`utils/io.py`, trimesh) — `mesh.obj` + `mesh.mtl` + `albedo.png`, smooth vertex normals (`vn`),
    and a white diffuse (`Kd 1 1 1`); trimesh's `Kd 0.4` default darkens the texture in every
    viewer
 
-Each step runs once. Filling after decimation instead leaves fold-over faces UVAtlas rejects
-(`0x80004005`), and the order was measured against the alternatives on GH010229 (16.73 dB
-reprojection PSNR, the best of four).
-
-`create_texture_mesh(mesh_path, out_dir, ...)` writes `out_dir/mesh.obj` + `mesh.mtl` +
-`albedo.png` and never modifies the fused mesh it reads; the pipeline passes `<backend>/texture/`.
+`create_texture_mesh(mesh, occluder, out_dir, ...)` unwraps the prepared mesh as is and writes
+`out_dir/mesh.obj` + `mesh.mtl` + `albedo.png`; `occluder` is the cleaned mesh before the fill.
+The pipeline passes `<backend>/texture/`. The OBJ's vertex arrays differ from `mesh.ply` (UV
+seams duplicate vertices); the surface is the same.
 
 Open3D's own projection path was tried first and does not work here: it is CPU-only (24 s per
 view, OOM-killed at 8 views) and its image-resolution depth test lets occluded texels through.
@@ -227,8 +248,11 @@ nvdiffrast's.
 
 ## Vertex features
 
-`features2vertex(mesh_vertices, points, features, k=5, sdf_trunc=0.03)` transfers per-point
-semantic features onto mesh vertices by Gaussian-weighted k-NN, zeroing vertices with
-no neighbor inside `sdf_trunc`. `mesh_clustering` then groups high-scoring vertices into
-spatially connected clusters. Both are used by the dashboard's semantic query view and by
-`06_mesh/splats_mesh.ipynb`.
+Vertex features are lifted from the 2D cache straight onto the vertices with
+`collab_splats.semantics.lifting.lift_features`, passing a result whose `points` are the
+vertices and `pixel_indices=None` (decision 021): each vertex projects into every frame and
+averages the depth-consistent samples; a vertex no frame sees stays zero (unobserved).
+`transfer_features(targets, points, features, k=5, max_dist=0.03)` smooths features over k
+neighbors by Gaussian-weighted k-NN. `collab_splats.semantics.utils.cluster_points`, given the
+vertex positions, then groups high-scoring vertices into spatially connected clusters.
+`docs/examples/ocr_lens_viewer.py` shows the lift on `mesh.ply`.

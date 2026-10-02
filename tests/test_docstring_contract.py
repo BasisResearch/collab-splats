@@ -22,7 +22,7 @@ import pytest
 PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh")
 
 # Single modules held to the contract, release checks included, before their whole package is
-MODULES = ("utils/io.py", "reconstructor.py", "remote.py", "__main__.py")
+MODULES = ("utils/io.py", "reconstructor.py", "remote.py", "__main__.py", "viewer.py")
 
 # Repo-root dirs outside collab_splats/ held to the contract; their top-level *.py only
 TOP_LEVEL = ("evals",)

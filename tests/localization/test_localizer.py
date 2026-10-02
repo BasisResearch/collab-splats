@@ -15,7 +15,7 @@ from collab_splats.localization import (
 from collab_splats.localization.extractors import MatchResult
 from collab_splats.localization.localizer import (
     CameraLocalizer,
-    load_localization_db,
+    read_localization_db,
     sample_world_points,
 )
 
@@ -333,7 +333,7 @@ def _localizer_replaying(feats):
 def test_save_load_roundtrips_keypoints_normalized(tmp_path):
     feats = [_norm_feats() for _ in range(3)]
     _localizer_replaying(feats).save_index(tmp_path / "ff.zarr", "loma")
-    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
+    loaded, _, _ = read_localization_db(tmp_path / "ff.zarr", "loma")
     for orig, got in zip(feats, loaded):
         assert got.keypoints_normalized is not None
         np.testing.assert_array_equal(got.keypoints_normalized.numpy(), orig.keypoints_normalized.numpy())
@@ -344,7 +344,7 @@ def test_save_omits_keypoints_normalized_when_any_frame_lacks_it(tmp_path):
     # is written only when every frame carries it; otherwise absent, never zeros.
     feats = [_norm_feats(), _norm_feats(with_norm=False), _norm_feats()]
     _localizer_replaying(feats).save_index(tmp_path / "ff.zarr", "loma")
-    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
+    loaded, _, _ = read_localization_db(tmp_path / "ff.zarr", "loma")
     assert all(f.keypoints_normalized is None for f in loaded)
 
 

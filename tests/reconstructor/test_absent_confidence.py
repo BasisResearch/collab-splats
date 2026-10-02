@@ -43,6 +43,7 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
         patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
         patch("collab_splats.reconstructor.clean_repair_mesh"),
+        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
         caplog.at_level("INFO"),
     ):
         rec.mesh()
@@ -71,7 +72,7 @@ def test_lift_features_uniform_weights_when_confidence_absent():
     fmaps[0][:, 4, 4] = 1.0
     fmaps[1][:, 4, 4] = 3.0
 
-    feats = lift_features(fmaps, result)
+    feats = lift_features(fmaps.__getitem__, result)
     assert feats.shape == (5, 4)
     expected = torch.full((4,), 2.0)  # uniform-weight mean of 1.0 and 3.0
     torch.testing.assert_close(feats[0], expected, atol=1e-4, rtol=0)

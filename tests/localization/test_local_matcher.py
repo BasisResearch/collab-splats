@@ -13,7 +13,7 @@ from collab_splats.localization.extractors import (
     LocalMatcher,
     MatchResult,
 )
-from collab_splats.localization.localizer import CameraLocalizer, load_localization_db
+from collab_splats.localization.localizer import CameraLocalizer, read_localization_db
 
 
 def _fake_vismatch_matcher(n_kpts=8, d=64, stable_indices=True):
@@ -360,7 +360,7 @@ def test_real_loma_split_match_parity_after_zarr_roundtrip(tmp_path, strict_fp32
         extractor=extractor,
     )
     loc.save_index(tmp_path / "ff.zarr", "loma")
-    loaded, _, _ = load_localization_db(tmp_path / "ff.zarr", "loma")
+    loaded, _, _ = read_localization_db(tmp_path / "ff.zarr", "loma")
     assert all(f.keypoints_normalized is not None for f in loaded)
     m = lm.match(loaded[0], loaded[1])
     np.testing.assert_array_equal(m.query_px, ref.query_px)

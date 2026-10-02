@@ -37,6 +37,21 @@ def test_per_point_decode_shape():
     assert out.shape == (N, INPUT_DIM)
 
 
+def test_iter_decode_chunks_match_one_decode_and_cast_to_the_ae_dtype():
+    torch.manual_seed(0)
+    ae = _make_ae()
+    codes = torch.randn(N, LATENT_DIM)
+    expected = ae.per_point_decode(codes).detach()
+
+    # Odd chunk size leaves a short last chunk; half codes are cast up to the AE's float32
+    chunks = list(ae.iter_decode(codes.half(), batch_size=7))
+
+    assert [len(c) for c in chunks][:-1] == [7] * (len(chunks) - 1)
+    assert all(c.dtype == torch.float32 for c in chunks)
+    torch.testing.assert_close(torch.cat(chunks), ae.per_point_decode(codes.half().float()).detach())
+    torch.testing.assert_close(torch.cat(chunks), expected, atol=1e-2, rtol=1e-2)
+
+
 ########################################################################
 # Shape — image branch
 ########################################################################

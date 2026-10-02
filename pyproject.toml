@@ -69,6 +69,10 @@ dependencies = [
     # - not 4.2: shared-focal two-view estimator, ~14x verification CPU for single-camera scenes
     "pycolmap-cuda12==4.1.1",
     "transformers>=4.30,<5.0",
+    # WordNet lemmas for the ocr_lens decode vocabulary
+    "nltk>=3.8",
+    # Parquet reader for score_ocr_heads' mini-imagenet backgrounds (was transitive)
+    "pyarrow",
     "timm>=0.9,<2.0",
     "opencv-python",
     "torchcodec",
@@ -197,6 +201,9 @@ reconstruct = "collab_splats.__main__:main"
 
 [tool.setuptools.packages]
 find = { include = ["collab_splats", "collab_splats.*"] }
+
+[tool.setuptools.package-data]
+"collab_splats.semantics.features" = ["assets/*.pt"]
 
 [build-system]
 # setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,

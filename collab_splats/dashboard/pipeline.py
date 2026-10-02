@@ -20,7 +20,6 @@ from collab_splats.dashboard.config import PULL_EXCLUDES, LocalizationConfig, Ru
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.mesh.clean import clean_repair_mesh
-from collab_splats.mesh.features import features2vertex
 from collab_splats.mesh.tsdf import create_tsdf_mesh
 from collab_splats.pointcloud.feedforward import (
     MapAnythingCreator,
@@ -38,13 +37,13 @@ from collab_splats.preproc.sampling import (
 from collab_splats.remote import SceneSource
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.features.base import BaseFeatureExtractor
-from collab_splats.semantics.lifting import lift_features
+from collab_splats.semantics.lifting import lift_features, transfer_features
 from collab_splats.semantics.utils import (
     cache_store_path,
     extract_feature_cache,
     load_feature_maps,
-    load_point_features,
     point_features_cached,
+    read_point_features,
     write_point_features,
 )
 from collab_splats.utils.io import read_image, to_uint8_hwc
@@ -162,7 +161,7 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     2D patch features, encode each map (D→latent) on GPU, then lift the small latent maps to
     points — lift_features cost scales with channel count, so lifting `latent` (e.g. 64) instead
     of the full D (e.g. 768) is ~D/latent× cheaper. The latent codes are cached as they are; the
-    decode to D happens on read (load_point_features). Everything except the lift runs on the GPU.
+    decode to D happens on read (read_point_features). Everything except the lift runs on the GPU.
     """
     device = get_device()
     feature_maps = load_feature_maps(cache_store_path(semantics_dir))  # list of (D, H_p, W_p) on CPU
@@ -188,7 +187,7 @@ def _lift_and_compress(result, semantics_dir: Path, op_log: OperationLog) -> Non
     t = time.perf_counter()
     with torch.no_grad():
         compressed_maps = [ae.encode(fm.to(device)).detach().cpu() for fm in feature_maps]
-    compressed_pts = lift_features(compressed_maps, result)  # (P, latent) — fast
+    compressed_pts = lift_features(compressed_maps.__getitem__, result)  # (P, latent) — fast
     op_log.update_progress(94, "semantics: caching lifted features")
     # Persist LATENT codes + weights (not decoded 768-D): same artifact pair the
     # Reconstructor path writes, ~12x smaller, and decodable on read.
@@ -214,13 +213,13 @@ def _transfer_mesh_features(result, out_dir: Path, *, k: int = 5, sdf_trunc: flo
         logger.warning("mesh feature transfer skipped: mesh=%s features=%s", mesh_path.exists(), has_features)
         return
     # DECODED features, not latent codes: the only reader of vertex_features.npy
-    # (viewer.load_mesh_vertex_features) does no decode and feeds score_queries, which
+    # (viewer.read_mesh_vertex_features) does no decode and feeds score_queries, which
     # compares against full-dim text embeddings. Matches viewer.ensure_mesh_features,
     # which derives the same array from decoded point features on legacy scenes.
-    point_features = load_point_features(sem_dir)
+    point_features = read_point_features(sem_dir)
     mesh = o3d.io.read_triangle_mesh(str(mesh_path))
-    vertex_features = features2vertex(
-        np.asarray(mesh.vertices), result.points, point_features, k=k, sdf_trunc=sdf_trunc
+    vertex_features = transfer_features(
+        np.asarray(mesh.vertices), result.points, point_features, k=k, max_dist=sdf_trunc
     )
     np.save(Path(out_dir) / "vertex_features.npy", vertex_features)
 

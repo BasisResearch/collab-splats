@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, create_autospec, patch
 
 import cv2
 import numpy as np
+import open3d as o3d
 import pycolmap
 import pytest
 import torch
@@ -22,7 +23,7 @@ from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.reconstructor import STAGES, Reconstructor
-from collab_splats.semantics.utils import lifted_store_path
+from collab_splats.semantics.compression import FeatureAutoencoder
 from tests.reconstructor._stubs import minimal_feedforward_result, stub_creator_cls
 
 
@@ -403,33 +404,59 @@ def _touch_frames(rec, frame_idxs):
         (rec.images_dir / f"frame_{fi:06d}.png").touch()
 
 
-def test_semantics_leaves_cache_reuse_to_the_feature_cache(tmp_path):
+def test_semantics_valid_cache_skips_the_extractor(tmp_path):
     """
-    An existing 2D cache still goes through extraction, which revalidates or reuses it.
+    A 2D cache valid for this extractor + kwargs is lifted without building the extractor.
 
-    - a stale cache after a re-preproc must not be lifted as-is
+    - validity (name, frame count, kwargs) is valid_feature_cache's; a stale cache fails it
     """
     config = _make_config(tmp_path, {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}})
     rec = Reconstructor(config)
     cache_path = rec.semantics_cache_dir / "dinov2.zarr"
-    cache_path.mkdir(parents=True)
+    cache = zarr.open(str(cache_path), mode="w")
+    cache["features"] = np.zeros((2, 4, 2, 2), dtype=np.float16)
     _touch_frames(rec, [0, 1])
     _seed_disk_reconstruction(rec, [0, 1])
 
     with (
+        patch.object(R, "valid_feature_cache", return_value=cache_path) as valid,
         patch.object(R, "BaseFeatureExtractor") as extractor_base,
-        patch.object(R, "extract_feature_cache", return_value=cache_path) as extract,
-        patch.object(R, "load_feature_maps", return_value=[torch.zeros(4, 2, 2)] * 2) as load_maps,
+        patch.object(R, "extract_feature_cache") as extract,
         patch.object(R, "lift_features", return_value=torch.zeros(1, 4)),
         patch.object(R, "write_point_features"),
     ):
         rec.semantics()
 
-    # Extraction owns the cache check; the lift reads whatever store it returns
-    extractor_base.get.assert_called_once_with("dinov2")
+    valid.assert_called_once_with(rec.semantics_cache_dir, "dinov2", rec.images_dir, {})
+    extractor_base.get.assert_not_called()
+    extract.assert_not_called()
+
+
+def test_semantics_invalid_cache_extracts_with_extractor_kwargs(tmp_path):
+    """semantics.extractor_kwargs reaches the validity check, the extractor build and the cache key."""
+    semantics = {"enabled": True, "extractor": "ocr_lens", "extractor_kwargs": {"layer": 20}, "n_components": None}
+    config = _make_config(tmp_path, {"semantics": semantics})
+    rec = Reconstructor(config)
+    cache_path = rec.semantics_cache_dir / "ocr_lens.zarr"
+    cache = zarr.open(str(cache_path), mode="w")
+    cache["features"] = np.zeros((2, 4, 2, 2), dtype=np.float16)
+    _touch_frames(rec, [0, 1])
+    _seed_disk_reconstruction(rec, [0, 1])
+
+    with (
+        patch.object(R, "valid_feature_cache", return_value=None) as valid,
+        patch.object(R, "BaseFeatureExtractor") as extractor_base,
+        patch.object(R, "extract_feature_cache", return_value=cache_path) as extract,
+        patch.object(R, "lift_features", return_value=torch.zeros(1, 4)),
+        patch.object(R, "write_point_features"),
+    ):
+        rec.semantics()
+
+    assert valid.call_args.args[-1] == {"layer": 20}
+    extractor_base.get.assert_called_once_with("ocr_lens")
+    extractor_base.get.return_value.assert_called_once_with(layer=20)
     extractor = extractor_base.get.return_value.return_value
-    extract.assert_called_once_with(extractor, rec.images_dir, rec.semantics_cache_dir)
-    load_maps.assert_called_once_with(cache_path)
+    extract.assert_called_once_with(extractor, rec.images_dir, rec.semantics_cache_dir, {"layer": 20})
 
 
 def test_run_refuses_semantics_if_lifted_exists(tmp_path):
@@ -460,23 +487,29 @@ def _run_semantics(tmp_path, n_components, dim=32, n_points=6):
     _touch_frames(rec, [0, 1])
     _seed_disk_reconstruction(rec, [0, 1])
 
-    # 2D feature cache the stage reads back: (N, D, H_p, W_p)
-    cache = zarr.open(str(tmp_path / "dinov2.zarr"), mode="w")
-    cache["features"] = np.zeros((2, dim, 2, 2), dtype=np.float32)
+    # 2D feature cache the stage reads back: (N, D, H_p, W_p); kept across runs so its AE copy survives
+    if not (tmp_path / "dinov2.zarr").exists():
+        cache = zarr.open(str(tmp_path / "dinov2.zarr"), mode="w")
+        cache["features"] = np.random.default_rng(0).random((2, dim, 2, 2)).astype(np.float16)
 
+    # Stub lift: one row per point from frame 0's first cell, so the width is the loader's
     with (
         patch.object(R, "BaseFeatureExtractor"),
         patch.object(R, "extract_feature_cache", return_value=tmp_path / "dinov2.zarr"),
-        patch.object(R, "lift_features", return_value=torch.rand(n_points, dim)),
+        patch.object(
+            R,
+            "lift_features",
+            side_effect=lambda frame_features, result: frame_features(0)[:, 0, 0].repeat(n_points, 1),
+        ),
     ):
         rec.semantics()
 
     return rec
 
 
-def test_semantics_writes_weights_beside_codes(tmp_path):
+def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
     """
-    The real writer lands semantics/<extractor>_ae.pt — not a compressor.pt directory.
+    The real writer lands <extractor>_lifted.zarr/autoencoder.pt — not a compressor.pt directory.
 
     - FeatureAutoencoder.save() takes the weights FILE path and mkdirs its parent
     """
@@ -484,11 +517,58 @@ def test_semantics_writes_weights_beside_codes(tmp_path):
     out_dir = rec.backend_dir / "semantics"
 
     assert rec.done("semantics")
-    assert (out_dir / "dinov2_ae.pt").is_file()
+    assert (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").is_file()
     assert not (out_dir / "compressor.pt").exists()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert np.asarray(store["features"]).shape == (6, 8)
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8}
+
+
+def test_semantics_reuses_the_ae_stored_with_the_cache(tmp_path):
+    """A second lift over the same 2D cache loads its stored AE instead of refitting."""
+    rec = _run_semantics(tmp_path, n_components=8)
+    lifted = rec.backend_dir / "semantics" / "dinov2_lifted.zarr"
+    first = zarr.open(str(lifted), mode="r")["features"][:]
+
+    with patch.object(FeatureAutoencoder, "fit") as fit:
+        _run_semantics(tmp_path, n_components=8)
+
+    second = zarr.open(str(lifted), mode="r")["features"][:]
+    assert not fit.called
+    np.testing.assert_array_equal(second, first)
+
+
+def test_semantics_refits_when_n_components_changes(tmp_path):
+    """A stored AE of another width is replaced by a fresh fit."""
+    _run_semantics(tmp_path, n_components=8)
+    rec = _run_semantics(tmp_path, n_components=4)
+
+    stored = FeatureAutoencoder.load(tmp_path / "dinov2.zarr" / "autoencoder.pt")
+    codes = zarr.open(str(rec.backend_dir / "semantics" / "dinov2_lifted.zarr"), mode="r")["features"]
+    assert stored.latent_dim == 4
+    assert codes.shape == (6, 4)
+
+
+def test_load_frame_maps_pointcloud_frame_to_store_row(tmp_path):
+    """_load_frame reads store row rows[i]; with an AE it returns (r, H_p, W_p) codes."""
+    data = np.stack([np.full((4, 2, 2), i, np.float16) for i in range(3)])
+    cache = zarr.open(str(tmp_path / "c.zarr"), mode="w")
+    cache["features"] = data
+    features = cache["features"]
+
+    raw = R._load_frame(features, [2, 0], None, 0)
+    assert raw.dtype == torch.float16 and float(raw[0, 0, 0]) == 2.0
+
+    ae = FeatureAutoencoder(input_dim=4, latent_dim=2)
+    codes = R._load_frame(features, [2, 0], ae, 0)
+    assert codes.shape == (2, 2, 2) and not codes.requires_grad
+
+    # Frame 0 is store row 2 (all 2s), not row 0 (all 0s)
+    with torch.no_grad():
+        from_row2 = ae.encode(torch.full((4, 2, 2), 2.0))
+        from_row0 = ae.encode(torch.zeros(4, 2, 2))
+    assert torch.allclose(codes, from_row2)
+    assert not torch.allclose(from_row2, from_row0)
 
 
 def test_semantics_uncompressed_writes_full_dim_and_no_weights(tmp_path):
@@ -496,7 +576,7 @@ def test_semantics_uncompressed_writes_full_dim_and_no_weights(tmp_path):
     rec = _run_semantics(tmp_path, n_components=None)
     out_dir = rec.backend_dir / "semantics"
 
-    assert not (out_dir / "dinov2_ae.pt").exists()
+    assert not (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").exists()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert np.asarray(store["features"]).shape == (6, 32)
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 32}
@@ -615,6 +695,7 @@ def _mesh_fuse(tmp_path, monkeypatch, ff, upsample=_unit_upsample, **mesh_overri
     fuse = MagicMock(return_value=tmp_path / "mesh.ply")
     monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
     monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+    monkeypatch.setattr(R, "prepare_mesh", lambda mesh, **kw: mesh)
 
     rec.mesh()
 
@@ -637,10 +718,10 @@ def test_mesh_fuses_full_res_intrinsics(tmp_path, monkeypatch):
 
 def test_mesh_passes_use_convex_hull_to_cleaning(tmp_path, monkeypatch):
     """
-    mesh.use_convex_hull reaches clean_repair_mesh, and is off unless asked for.
+    mesh.use_convex_hull reaches clean_repair_mesh, and is on unless turned off.
     """
     for flag in (False, True):
-        overrides = {"use_convex_hull": True} if flag else {}
+        overrides = {} if flag else {"use_convex_hull": False}
         _mesh_fuse(tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), **overrides)
         assert R.clean_repair_mesh.call_args.kwargs == {"use_convex_hull": flag}
 
@@ -691,6 +772,63 @@ def test_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
     masked = seen["depths"]
     assert (masked == 0).mean() == pytest.approx(0.2, abs=0.02)
     assert masked.max() == ff.depth.max()
+
+
+def _run_prepared_mesh(tmp_path, monkeypatch, texture):
+    """
+    Run rec.mesh() with fusion writing a real mesh; return (rec, cleaned, prepared, prepare, texture mocks).
+    """
+    mesh_cfg = {"enabled": True, "source": "feedforward", "voxel_size": 0.01, "texture": texture}
+    rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
+    ff = _tsdf_mesh_ff(model_hw=(16, 16))
+    monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
+    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    monkeypatch.setattr(pointcloud_utils, "upsample_depths", _unit_upsample)
+
+    # Fusion writes a real sphere to mesh.ply; cleaning is a no-op on it
+    cleaned = o3d.geometry.TriangleMesh.create_sphere(radius=0.5, resolution=10)
+    mesh_path = rec.backend_dir / "mesh.ply"
+
+    def fuse(*args, **kwargs):
+        mesh_path.parent.mkdir(parents=True, exist_ok=True)
+        o3d.io.write_triangle_mesh(str(mesh_path), cleaned)
+        return mesh_path
+
+    monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+
+    # prepare_mesh returns a box, so mesh.ply's triangle count tells which mesh was written
+    prepared = o3d.geometry.TriangleMesh.create_box()
+    prepare = MagicMock(return_value=prepared)
+    monkeypatch.setattr(R, "prepare_mesh", prepare)
+    texture_mesh = MagicMock()
+    monkeypatch.setattr(R, "create_texture_mesh", texture_mesh)
+
+    rec.mesh()
+
+    return rec, cleaned, prepared, prepare, texture_mesh
+
+
+def test_mesh_writes_the_prepared_mesh_without_texture(tmp_path, monkeypatch):
+    """mesh.ply is prepare_mesh's output even with texture off, prepared from the cleaned mesh."""
+    rec, cleaned, prepared, prepare, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=False)
+
+    assert len(prepare.call_args.args[0].triangles) == len(cleaned.triangles)
+    assert prepare.call_args.kwargs == {"voxel_size": 0.01, "smooth_iterations": 0}
+    written = o3d.io.read_triangle_mesh(str(rec.backend_dir / "mesh.ply"))
+    assert len(written.triangles) == len(prepared.triangles)
+    texture_mesh.assert_not_called()
+
+
+def test_mesh_textures_the_prepared_mesh_behind_the_cleaned_occluder(tmp_path, monkeypatch):
+    """Texturing unwraps the same mesh.ply geometry; the unfilled cleaned mesh is the occluder."""
+    rec, cleaned, prepared, _, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=True)
+
+    mesh, occluder, out_dir = texture_mesh.call_args.args[:3]
+    assert mesh is prepared
+    assert len(occluder.triangles) == len(cleaned.triangles)
+    assert out_dir == rec.backend_dir / "texture"
+    assert texture_mesh.call_args.kwargs == {"voxel_size": 0.01}
 
 
 def test_run_calls_stages_in_order(tmp_path):
@@ -768,9 +906,7 @@ def test_run_default_uses_config_enabled(tmp_path):
     rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.semantics = lambda: calls.append("semantics") or tmp_path
     # report is always on and has no config flag, so a config-derived run always includes it
-    rec.reconstruction_quality_report = (
-        lambda: calls.append("reconstruction_quality_report") or tmp_path
-    )
+    rec.reconstruction_quality_report = lambda: calls.append("reconstruction_quality_report") or tmp_path
 
     rec.run()  # no stages arg — uses config
     assert "semantics" in calls
@@ -1058,9 +1194,9 @@ def test_done_semantics_is_per_extractor(tmp_path):
     rec = Reconstructor(config)
     sem_dir = rec.backend_dir / "semantics"
     sem_dir.mkdir(parents=True)
-    lifted_store_path(sem_dir, "talk2dino").mkdir()
+    (sem_dir / "talk2dino_lifted.zarr").mkdir()
     assert rec.done("semantics") is False
-    lifted_store_path(sem_dir, "dinov2").mkdir()
+    (sem_dir / "dinov2_lifted.zarr").mkdir()
     assert rec.done("semantics") is True
 
 
@@ -1098,6 +1234,7 @@ def test_mesh_reads_frames_and_poses_from_the_zarr_on_disk(tmp_path):
     with (
         patch.object(R, "create_tsdf_mesh", return_value=rec.backend_dir / "mesh.ply") as fuse,
         patch.object(R, "clean_repair_mesh"),
+        patch.object(R, "prepare_mesh", side_effect=lambda mesh, **kw: mesh),
     ):
         rec.mesh()
 
@@ -1123,20 +1260,21 @@ def test_semantics_reads_pointcloud_zarr_from_disk(tmp_path):
     _seed_disk_reconstruction(rec, [2, 0])
 
     # Scene cache row r is constant r; extraction and the writer stubbed so only the pick runs
-    maps = [torch.full((4, 2, 2), float(r)) for r in range(3)]
+    cache_path = rec.semantics_cache_dir / "dinov2.zarr"
+    cache = zarr.open(str(cache_path), mode="w")
+    cache["features"] = np.stack([np.full((4, 2, 2), r, np.float16) for r in range(3)])
 
     with (
         patch.object(R, "BaseFeatureExtractor"),
-        patch.object(R, "extract_feature_cache", return_value=rec.semantics_cache_dir / "dinov2.zarr"),
-        patch.object(R, "load_feature_maps", return_value=maps),
+        patch.object(R, "extract_feature_cache", return_value=cache_path),
         patch.object(R, "lift_features", return_value=torch.zeros(1, 4)) as lift,
         patch.object(R, "write_point_features"),
     ):
         rec.semantics()
 
     # The lift gets the zarr's frames, in the zarr's order, and the result read off disk
-    lifted_maps, ff = lift.call_args.args
-    assert [float(m[0, 0, 0]) for m in lifted_maps] == [2.0, 0.0]
+    frame_features, ff = lift.call_args.args
+    assert [float(frame_features(i)[0, 0, 0]) for i in range(2)] == [2.0, 0.0]
     assert [p.name for p in ff.image_paths] == ["frame_000002", "frame_000000"]
 
 
@@ -1185,6 +1323,7 @@ def test_base_yaml_mesh_has_fidelity_keys():
         "mask_sky",
         "texture",
         "use_convex_hull",
+        "smooth_iterations",
     }
     assert cfg["mesh"]["source"] == "feedforward"
     assert cfg["mesh"]["texture"] is False
@@ -1276,9 +1415,14 @@ def _texture_frames(n=3, width=32, height=24):
     out = []
     for k in range(n):
         x = xx + 1.5 * k
-        rgb = np.stack([127 + 100 * np.sin(0.7 * x) * np.cos(0.5 * yy),
-                        127 + 90 * np.cos(0.45 * x + 0.3 * yy),
-                        127 + 80 * np.sin(0.25 * x - 0.6 * yy)], axis=-1)
+        rgb = np.stack(
+            [
+                127 + 100 * np.sin(0.7 * x) * np.cos(0.5 * yy),
+                127 + 90 * np.cos(0.45 * x + 0.3 * yy),
+                127 + 80 * np.sin(0.25 * x - 0.6 * yy),
+            ],
+            axis=-1,
+        )
         out.append(np.clip(rgb, 0, 255).astype(np.uint8))
     return np.stack(out)
 

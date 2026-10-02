@@ -29,18 +29,17 @@ These tasks are started but not complete — do not assume their targets are don
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
 - **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
-- **report-speed** — speed up the reconstruction quality report (40 min at 1k frames); implementation on worktree `.worktrees/report-speed` ([spec](docs/superpowers/specs/2026-10-01-report-speed-design.md))
 
 ## Recently Completed
 
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **report-speed** (2026-10-02)
 - **reconstructor-release** (2026-10-01)
 - **evals-release** (2026-09-29)
 - **pointcloud-release** (2026-09-29)
 - **mesh-release** (2026-09-29)
-- **splats-release** (2026-09-28)
 
 Known test failures: `docs/known-test-failures.md`
 

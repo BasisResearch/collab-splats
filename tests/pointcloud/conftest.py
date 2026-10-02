@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+import torch
 from PIL import Image
 
 from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
@@ -59,7 +60,10 @@ def _omega_boxes(sizes: list[tuple[int, int]]) -> np.ndarray:
     paths, image = _sized_paths(sizes)
     with (
         patch("collab_splats.pointcloud.feedforward.vggt_omega.Image", image),
-        patch("collab_splats.pointcloud.feedforward.vggt_omega.load_and_preprocess_images"),
+        patch(
+            "collab_splats.pointcloud.feedforward.vggt_omega.load_and_preprocess_images",
+            side_effect=lambda chunk, **kw: torch.zeros(len(chunk), 3, 16, 16),
+        ),
     ):
         _, coords = VGGTOmegaCreator()._preprocess(paths)
     return coords

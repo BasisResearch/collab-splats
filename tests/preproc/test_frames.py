@@ -138,3 +138,21 @@ def test_read_frames_raises_on_an_undecodable_frame_from_a_worker_thread(tmp_pat
 
     with pytest.raises(FileNotFoundError, match="frame_000099"):
         fr.read_frames(images, workers=4)
+
+
+def test_write_frames_on_threads_matches_one_thread_byte_for_byte(tmp_path):
+    frames = list(np.random.default_rng(0).integers(0, 256, (12, 8, 12, 3), dtype=np.uint8))
+    idxs = [7, 0, 11, 3, 5, 1, 10, 2, 9, 4, 8, 6]
+
+    one = fr.write_frames(tmp_path / "one", frames, idxs, workers=1)
+    many = fr.write_frames(tmp_path / "many", frames, idxs, workers=8)
+
+    assert [p.name for p in many] == [f"frame_{i:06d}.png" for i in idxs]
+    assert [p.read_bytes() for p in many] == [p.read_bytes() for p in one]
+
+
+def test_write_frames_raises_when_cv2_cannot_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(fr.cv2, "imwrite", lambda *args: False)
+
+    with pytest.raises(OSError, match="frame_000005.png"):
+        fr.write_frames(tmp_path / "images", _frames(1), [5])

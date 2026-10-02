@@ -85,21 +85,26 @@ def write_frames(
     idxs: Sequence[int],
     *,
     png_compression: int = 1,
+    workers: int = 8,
 ) -> list[Path]:
     """
     Write frames as PNGs named by their source frame index.
+
+    - encoded and written on a thread pool; cv2 releases the GIL
 
     Args:
         dir: images directory to create; stale frame images in it are removed first.
         frames: RGB uint8 (H, W, 3) frames, one per index.
         idxs: source video frame index of each frame.
         png_compression: cv2 PNG level 0-9; higher is smaller and slower.
+        workers: encode threads.
 
     Returns:
         Written image paths, in idxs order.
 
     Raises:
         ValueError: frames and idxs differ in length, or idxs is empty.
+        OSError: cv2 failed to write a frame.
     """
     dir = Path(dir)
 
@@ -115,16 +120,21 @@ def write_frames(
     for stale in frame_paths(dir):
         stale.unlink()
 
-    # Store is RGB at the boundary; cv2 writes BGR
-    paths: list[Path] = []
-    for frame, idx in zip(frames, idxs):
-        path = dir / f"frame_{int(idx):06d}.png"
-        cv2.imwrite(
-            str(path),
-            cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
-            [cv2.IMWRITE_PNG_COMPRESSION, png_compression],
-        )
-        paths.append(path)
+    paths = [dir / f"frame_{int(idx):06d}.png" for idx in idxs]
+
+    def _write(i: int) -> None:
+        """
+        Encode frame i to its path; the store is RGB at the boundary, cv2 writes BGR.
+        """
+        bgr = cv2.cvtColor(frames[i], cv2.COLOR_RGB2BGR)
+        ok = cv2.imwrite(str(paths[i]), bgr, [cv2.IMWRITE_PNG_COMPRESSION, png_compression])
+
+        if not ok:
+            raise OSError(f"write_frames: cv2 failed to write {paths[i]}")
+
+    # Frames encode on the pool; a worker's exception re-raises here
+    with ThreadPoolExecutor(workers) as pool:
+        list(pool.map(_write, range(len(paths))))
 
     logger.info("frames: wrote %d PNGs to %s", len(paths), dir)
     return paths

@@ -12,9 +12,14 @@ import pytest
 import torch
 import torch.nn as nn
 
+from vggt_omega.utils.load_fn import load_and_preprocess_images
+
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
-from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
+from collab_splats.pointcloud.feedforward.vggt_omega import (
+    VGGTOmegaCreator,
+    _load_chunked,
+)
 from tests.pointcloud.conftest import _frame_files, _omega_boxes
 
 ########################################################################
@@ -165,13 +170,26 @@ def test_preprocess_returns_correct_shapes(tmp_path):
     creator = VGGTOmegaCreator(resolution=64)
     with patch(
         "collab_splats.pointcloud.feedforward.vggt_omega.load_and_preprocess_images",
-        return_value=torch.zeros(3, 3, 64, 64),
+        side_effect=lambda chunk, **kw: torch.zeros(len(chunk), 3, 64, 64),
     ):
         views, original_coords = creator._preprocess(paths)
 
     assert views.shape == (3, 3, 64, 64)
     assert original_coords.shape == (3, 6)
     assert original_coords.dtype == np.float32
+
+
+@pytest.mark.parametrize("sizes", [[(96, 48)] * 7, [(96, 48)] * 4 + [(48, 96)] * 3])
+def test_load_chunked_matches_one_upstream_call(tmp_path, sizes):
+    """Chunked threads equal upstream's single call, including its mixed-shape padding."""
+    rng = np.random.default_rng(0)
+    frames = [rng.integers(0, 256, (h, w, 3), dtype=np.uint8) for w, h in sizes]
+    paths = [str(p) for p in _frame_files(frames, tmp_path)]
+
+    one = load_and_preprocess_images(paths, image_resolution=64, mode="balanced")
+    chunked = _load_chunked(paths, 64, "balanced", workers=3)
+
+    assert torch.equal(chunked, one)
 
 
 ########################################################################

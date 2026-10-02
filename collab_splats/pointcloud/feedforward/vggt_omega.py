@@ -7,6 +7,7 @@ VGGT-Omega feedforward backend: pose and depth from Omega checkpoints.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -35,6 +36,39 @@ from collab_splats.utils.torch_utils import load_hf_weights
 
 VGGT_OMEGA_HF_REPO = "facebook/VGGT-Omega"
 VGGT_OMEGA_DEFAULT_FILENAME = "vggt_omega_1b_512.pt"
+
+########################################################################
+# Helpers
+########################################################################
+
+
+def _load_chunked(paths: list[str], resolution: int, mode: str, *, workers: int = 8) -> torch.Tensor:
+    """
+    Upstream load_and_preprocess_images over contiguous path chunks on a thread pool.
+
+    - PIL releases the GIL in decode and resize, so threads scale
+    - upstream pads mixed-shape frames to one size across the whole list; chunks of differing
+      shapes fall back to one upstream call so the output always matches upstream exactly
+    """
+    size = -(-len(paths) // workers)
+    chunks = [paths[i : i + size] for i in range(0, len(paths), size)]
+
+    # Each chunk through upstream's own crop and resize
+    def _load(chunk: list[str]) -> torch.Tensor:
+        """
+        One chunk through upstream preprocessing.
+        """
+        return load_and_preprocess_images(chunk, image_resolution=resolution, mode=mode)
+
+    with ThreadPoolExecutor(workers) as pool:
+        parts = list(pool.map(_load, chunks))
+
+    # Mixed shapes need upstream's list-wide padding
+    if len({part.shape[1:] for part in parts}) > 1:
+        return _load(paths)
+
+    return torch.cat(parts)
+
 
 ########################################################################
 # Creator
@@ -114,9 +148,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         original_coords = np.array(rows, dtype=np.float32)
 
         # Crop and resize the images with upstream's own preprocessing
-        images = load_and_preprocess_images(
-            [str(p) for p in paths], image_resolution=self.resolution, mode=self.resize_mode
-        )
+        images = _load_chunked([str(p) for p in paths], self.resolution, self.resize_mode)
 
         return images, original_coords
 

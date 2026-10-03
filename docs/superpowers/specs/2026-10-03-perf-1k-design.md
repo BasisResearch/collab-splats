@@ -1,6 +1,6 @@
 # perf-1k — one performance pass over the 1k windowed pipeline
 
-Date: 2026-10-03 · Status: approved design, plan pending
+Date: 2026-10-03 · Status: approved design, plan `docs/superpowers/plans/2026-10-03-perf-1k.md`
 
 ## Goal
 
@@ -75,8 +75,9 @@ without changing its output.
 - world grid per submap computed once (float64 on GPU), reused for cloud and per-frame depth;
   today `get_world_grid` runs in `map.get_world_pointcloud` and again in `_assemble_result`
 - cap first: `subsample_points` draws from an all-True mask, so the draw depends only on the
-  total count; compute the count from shapes + skip/conf masks, draw indices with the same seed,
-  transform only drawn points
+  total count; compute the count from skip/conf masks, draw the same mask with the same seed,
+  gather only drawn points from each submap's grid (grid still needed whole for depth); no dense
+  cloud stack; `GraphMap.get_world_pointcloud` deleted (no caller left)
 - drop the dense `world_points` array `_assemble_result` builds; the lean store does not keep it
 - test: selected indices bit-exact; points, depth ≤ 1e-5 vs the current path
 
@@ -86,7 +87,8 @@ without changing its output.
   them to the creator beside `image_paths`
 - `VGGTOmegaCreator._preprocess` crops/resizes from arrays: no size probe, no PNG re-read
 - PNGs are still written; leaf re-runs stay file-based
-- no handoff when: `preproc.undistort` is on (PNGs rewritten), leaf-only run, other backends
+- handoff holds the final arrays (post-undistort), i.e. the same pixels the PNGs hold
+- no handoff when: leaf-only run, other backends
 - frames released once the pointcloud stage returns
 - test: preprocess tensor and `original_coords` bit-exact vs the file path
 
@@ -119,7 +121,7 @@ without changing its output.
 1. `perf(preproc): 16 quality-report workers`
 2. `perf(preproc): parallel range-seek decode for selection`
 3. `perf(geometry): GPU float64 unproject in LC submaps`
-4. `perf(geometry): world grid once on GPU, cap before transform`
+4. `perf(geometry): world grid once on GPU, cap before stacking`
 5. `perf(pointcloud): in-memory frame handoff to Omega`
 6. `perf(pointcloud): device-init Omega load from mmap`
 

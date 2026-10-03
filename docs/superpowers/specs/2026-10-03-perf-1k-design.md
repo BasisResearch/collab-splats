@@ -38,13 +38,26 @@ without changing its output.
 | 8 sparse/GPU BA observation filter | B | rgbd-ba `bundle_adjustment.py` |
 | 9 `match_batch` + vectorized depth filter | B | rgbd-ba `extractors.py` |
 | 10 single process for imgs + tracks + BA | B | rgbd-ba driver / `Reconstructor` |
-| 11 BA float32 vs float64 | B | rgbd-ba |
+| 11 BA in float32, chess GT check | B | rgbd-ba |
 
 - Phase A: branch `perf/1k` off `clean/final`, worktree `.worktrees/perf-1k`, starts now
 - Phase B: rgbd-ba, starts only after the user commits their uncommitted edits there
   (`bundle_adjustment.py`, `submap.py`, `graph.py`, `extractors.py`); rebase rgbd-ba onto
   `clean/final` + `perf/1k` first
 - one commit per item, sequential; items 6+7 share `vggt_omega.py`, 3a+4 share LC files
+
+## Precision policy: float32 everywhere it costs time
+
+- every large-array compute runs float32: dense grids, unprojection, BA, observation filtering
+- float32 matmuls force full fp32 (`set_float32_matmul_precision("highest")`, restored after);
+  TF32, which a mapanything import enables process-wide, would round them
+- float64 stays only where it buys nothing to drop it, or a library demands it:
+  - library boundaries that take double only: gtsam SL4 (`loop_closure/graph.py`), pycolmap,
+    open3d `Vector3dVector` (SOR, TSDF integrate, ply)
+  - per-pose 4x4 / 3x3 algebra (N x 16 numbers): no measurable time; homography chains compose
+    over ~1000 frames
+  - `metrics.py` histogram edges and NCC sums: documented float32 misbinning
+- Phase A: items 3a and 4 (LC); Phase B: BA (items 3b, 8, 11)
 
 ## Phase A mechanics
 
@@ -131,8 +144,10 @@ without changing its output.
 - 8: `_filter_observations` projects only observed (frame, point) pairs on GPU instead of dense N x P CPU float64
 - 9: tracks matching via `LocalMatcher.match_batch`; vectorized depth filter
 - 10: imgs + tracks + BA in one process (saves ~2 x 25–30 s of imports)
-- 11: BA `dtype` float32 vs float64 on chess 1000 — ATE vs GT and refine wall time; float32 ships
-  only if ATE is within noise of float64
+- 8 runs float32 on GPU (TF32 forced off)
+- 11: BA in float32 (rgbd-ba `BundleAdjustmentConfig.dtype` already defaults to it; drivers stop
+  forcing float64). Check on chess 1000: ATE vs GT and refine wall time, float32 vs float64;
+  an ATE regression beyond noise is reported, not silently reverted
 
 ## Out of scope
 

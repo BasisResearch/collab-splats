@@ -1018,7 +1018,6 @@ dependencies = [
     { name = "ultralytics" },
     { name = "viser" },
     { name = "vismatch" },
-    { name = "warp-lang" },
     { name = "wheel" },
     { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "zarr", version = "3.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1196,7 +1195,6 @@ requires-dist = [
     { name = "viser", specifier = ">=1.0" },
     { name = "viser", marker = "extra == 'feedforward'", specifier = ">=0.2.23" },
     { name = "vismatch", specifier = "==1.3.1" },
-    { name = "warp-lang", specifier = "==1.14.0" },
     { name = "wheel" },
     { name = "zarr", specifier = ">=2.16" },
 ]

@@ -15,7 +15,6 @@ from typing import Any
 
 import cv2
 import numpy as np
-import trimesh
 import zarr
 from PIL import Image
 from zarr.codecs import BloscCodec
@@ -212,9 +211,11 @@ def write_textured_obj(
     """
     Textured mesh as out_dir/mesh.obj + mesh.mtl + albedo.png.
 
-    - one vertex per face corner: a seam vertex carries a different UV in each face
-    - normals are written per corner (vn), so shading stays smooth across UV seams
-    - diffuse is white (Kd 1 1 1): trimesh's 0.4 default darkens the texture in every viewer
+    - each position and normal is written once; faces index v, vt and vn separately
+    - a seam vertex keeps one position and takes a different vt in each face
+    - 6 decimals: 1 µm on positions, 1/1000 texel on an 8192 atlas
+    - UVs are deduplicated after rounding, so faces of one chart share their corners' vt
+    - diffuse is white (Kd 1 1 1): a grey Kd darkens the texture in every viewer
 
     Args:
         out_dir: directory to create.
@@ -227,24 +228,38 @@ def write_textured_obj(
     Returns:
         Path to out_dir/mesh.obj.
     """
-    # Split every face corner into its own vertex so each carries its own UV
-    faces = np.asarray(faces)
-    corners = np.asarray(vertices)[faces].reshape(-1, 3)
-    corner_normals = np.asarray(vertex_normals)[faces].reshape(-1, 3)
-    material = trimesh.visual.material.SimpleMaterial(
-        image=Image.fromarray(albedo), name="albedo", diffuse=[255, 255, 255, 255]
-    )
-    textured = trimesh.Trimesh(
-        corners,
-        np.arange(len(corners)).reshape(-1, 3),
-        vertex_normals=corner_normals,
-        visual=trimesh.visual.TextureVisuals(uv=np.asarray(uvs).reshape(-1, 2), material=material),
-        process=False,
-    )
-
-    # trimesh names the texture after the material: albedo.png beside mesh.obj + mesh.mtl
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # One vt per distinct rounded UV; each face corner points at its own
+    flat_uvs = np.asarray(uvs).reshape(-1, 2)
+    flat_uvs = np.round(flat_uvs, 6)
+    unique_uvs, uv_index = np.unique(flat_uvs, axis=0, return_inverse=True)
+
+    # Face corners as 1-based v/vt/vn triples; vn shares the vertex index
+    faces = np.asarray(faces)
+    vert_index = faces.reshape(-1) + 1
+    corners = np.stack([vert_index, uv_index.reshape(-1) + 1, vert_index], 1).reshape(-1, 9)
+
+    # Text body: positions, UVs, normals, faces
+    text = [
+        "mtllib mesh.mtl\nusemtl albedo\n",
+        _obj_rows("v {:.6f} {:.6f} {:.6f}\n", vertices),
+        _obj_rows("vt {:.6f} {:.6f}\n", unique_uvs),
+        _obj_rows("vn {:.6f} {:.6f} {:.6f}\n", vertex_normals),
+        _obj_rows("f {}/{}/{} {}/{}/{} {}/{}/{}\n", corners),
+    ]
+
+    # Material, texture and mesh side by side
+    (out_dir / "mesh.mtl").write_text("newmtl albedo\nKd 1.0 1.0 1.0\nmap_Kd albedo.png\n")
+    Image.fromarray(albedo).save(out_dir / "albedo.png")
     out = out_dir / "mesh.obj"
-    textured.export(out, mtl_name="mesh.mtl")
+    out.write_text("".join(text))
     return out
+
+
+def _obj_rows(fmt: str, rows: np.ndarray) -> str:
+    """
+    One formatted OBJ line per array row.
+    """
+    return "".join(fmt.format(*row) for row in np.asarray(rows).tolist())

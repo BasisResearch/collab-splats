@@ -35,11 +35,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **texture-unwrap-color** (2026-10-03)
 - **ocr-lens** (2026-10-02)
 - **report-speed** (2026-10-02)
 - **reconstructor-release** (2026-10-01)
 - **evals-release** (2026-09-29)
-- **pointcloud-release** (2026-09-29)
 
 Known test failures: `docs/known-test-failures.md`
 

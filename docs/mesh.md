@@ -8,7 +8,7 @@ them, because only the caller knows which resolution grid it is on.
 | --- | --- |
 | `tsdf.py` | `create_tsdf_mesh` — integrate views into a TSDF volume, write `mesh.ply` |
 | `clean.py` | `get_scene_scale`, `remove_floaters`, `make_convex_hull` (+ `trim_mesh_edges`, `bridge_mesh_edges`), `fill_holes`, `clean_repair_mesh`; `prepare_mesh` (+ `decimate_mesh`, `make_manifold`) |
-| `texture.py` | `unwrap_mesh_uvs`, `project_images_to_texture`, `create_texture_mesh` |
+| `texture.py` | `unwrap_view_charts`, `project_images_to_texture`, `create_texture_mesh` |
 
 ---
 
@@ -206,15 +206,14 @@ this fill closes; the outermost edge is never lidded.
    (`decimate_max_error`, `0.5` × `voxel_size`), so the budget follows the fusion resolution
    rather than a triangle count
 3. `make_manifold` — split non-manifold vertices, drop degenerate, duplicate and fold-over
-   faces. UVAtlas rejects a mesh that fails any of these
+   faces
 4. `fill_holes` again with `subdivide_fill=False`, then `make_manifold` — flat lids over the
    pinholes decimation and repair open, and a repair of what the lids fold
 5. `mesh.smooth_iterations` > 0 only: Taubin smoothing, then `make_manifold` again. Last, so
    decimation never sees it; vertices move, faces stay (GH010229, 10 passes: 4 of 1.1M faces folded)
 
 `prepare_mesh(mesh, voxel_size=...)` returns a new mesh and leaves its input unmodified.
-Filling only after decimation instead leaves fold-over faces UVAtlas rejects (`0x80004005`),
-and the order was measured against the alternatives on GH010229 (16.73 dB reprojection PSNR,
+Filling only after decimation instead leaves fold-over faces, and the order was measured against the alternatives on GH010229 (16.73 dB reprojection PSNR,
 the best of four).
 
 ---
@@ -223,26 +222,38 @@ the best of four).
 
 `texture.py` bakes per-view color into a single albedo atlas, opt-in via `mesh.texture: true`:
 
-1. `unwrap_mesh_uvs` — Open3D UVAtlas, partitioned for parallelism
-2. `_rasterize_atlas` — rasterize the atlas with nvdiffrast into per-texel world position
-   and normal
-3. `project_images_to_texture` — an NVIDIA Warp kernel per texel: ray-cast for occlusion
-   (`wp.mesh_query_ray`) against the unfilled `occluder`, accumulate bilinear samples weighted by pixel size at the texel,
-   from the views that resolve it nearly as finely as its best view, then `fill_missing_pixels` (push-pull)
-   fill every texel no view reached
-4. `write_textured_obj` (`utils/io.py`, trimesh) — `mesh.obj` + `mesh.mtl` + `albedo.png`, smooth vertex normals (`vn`),
-   and a white diffuse (`Kd 1 1 1`); trimesh's `Kd 0.4` default darkens the texture in every
-   viewer
+1. Color gains (`color_correct=True`) — one gain per view and channel, solved in log space
+   from depth-tested samples on the occluder, with a smoothness term between consecutive
+   frames; each view is divided by its gain, highlights rolling off above 200 instead of
+   clipping. Removes the exposure seams the weighted blend leaves (~7 s on 264 views)
+2. `unwrap_view_charts` — the source images are the charts. Each face takes the view in which
+   it owns at least 75% of its projected pixels in that view's nvdiffrast face-id buffer,
+   smoothed toward its neighbors' views; its UVs are its pixel coordinates there. The z-buffer
+   gives each pixel to one face, so faces in one camera chart cannot overlap. Faces no view
+   sees get one flat patch per connected group. Charts are tiled, scaled to one texel
+   density, shelf-packed; one atlas check turns flipped or overwritten faces into single flat
+   charts and repacks once (~23 s on 1.1M faces, against ~30 min for the UVAtlas it replaced)
+3. `project_images_to_texture` — nvdiffrast rasterizes the atlas into per-texel world
+   position and normal, then two torch passes run over the covered texels. Occlusion is a
+   per-view nvdiffrast depth render of the unfilled `occluder`: a texel is hidden when its
+   nearest raster pixel (`_nearest_depth`; the render centers pixel j on u = j, like `unproject`) holds a surface nearer by more than a voxel. Bilinear samples (`grid_sample`) are weighted by pixel
+   size at the texel, from the views that resolve it nearly as finely as its best view, then
+   `fill_missing_pixels` (push-pull) fills every texel no view reached
+4. `_dilate_chart_gutters` — each chart's edge texels grow into its own padding, so bilinear
+   lookups never pull in a neighboring chart
+5. `write_textured_obj` (`utils/io.py`) — `mesh.obj` + `mesh.mtl` + `albedo.png`. Each
+   position and smooth normal (`vn`) is written once and faces index `v`/`vt`/`vn` separately,
+   at 6 decimals (~2.8× smaller on GH010229: 409 → 146 MB). White diffuse (`Kd 1 1 1`):
+   a grey `Kd` darkens the texture in every viewer
 
 `create_texture_mesh(mesh, occluder, out_dir, ...)` unwraps the prepared mesh as is and writes
 `out_dir/mesh.obj` + `mesh.mtl` + `albedo.png`; `occluder` is the cleaned mesh before the fill.
-The pipeline passes `<backend>/texture/`. The OBJ's vertex arrays differ from `mesh.ply` (UV
-seams duplicate vertices); the surface is the same.
+The pipeline passes `<backend>/texture/`. UV seams add `vt` entries, never positions: the OBJ's
+`v` lines are the prepared mesh's vertices.
 
 Open3D's own projection path was tried first and does not work here: it is CPU-only (24 s per
-view, OOM-killed at 8 views) and its image-resolution depth test lets occluded texels through.
-Occlusion is Warp's BVH with a per-view depth buffer; only the atlas rasterization is
-nvdiffrast's.
+view, OOM-killed at 8 views). An NVIDIA Warp ray-cast projection replaced it, then gave way to
+the depth-render test above: same held-out scores on GH010229, one dependency fewer.
 
 ---
 

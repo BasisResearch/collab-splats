@@ -365,7 +365,7 @@ def test_make_manifold_noop_on_manifold():
 
 
 def test_make_manifold_drops_opposite_winding_duplicates_and_fold_overs():
-    # A reversed duplicate face and a fold-over: manifold to Open3D, non-manifold to UVAtlas
+    # A reversed duplicate face and a fold-over: manifold to Open3D, still repaired
     m = _dense_plane(n=4)
     f = np.asarray(m.triangles)
     dup = f[0][[0, 2, 1]]
@@ -383,7 +383,6 @@ def test_make_manifold_drops_opposite_winding_duplicates_and_fold_overs():
     de = np.concatenate([fo[:, [0, 1]], fo[:, [1, 2]], fo[:, [2, 0]]])
     assert np.unique(de, axis=0).shape[0] == len(de)  # every directed edge used once
     assert len(fo) == 18  # dup dropped, fold dropped, f3 (first owner) kept
-    o3d.t.geometry.TriangleMesh.from_legacy(out).compute_uvatlas(size=64)
 
 
 def test_make_manifold_removes_degenerate_before_fold_over_check():
@@ -395,15 +394,13 @@ def test_make_manifold_removes_degenerate_before_fold_over_check():
     assert len(fo) == 2 and [0, 1, 2] in fo.tolist()
 
 
-def test_make_manifold_after_decimate_yields_uvatlas_ready_mesh():
+def test_make_manifold_after_decimate_yields_manifold_mesh():
     m = make_manifold(_dense_plane(n=80, noise=0.003))
     out, _ = decimate_mesh(m, max_error=0.01)
     out = make_manifold(out)
     assert len(out.get_non_manifold_edges()) == 0
     assert len(out.get_non_manifold_vertices()) == 0
-    tm = o3d.t.geometry.TriangleMesh.from_legacy(out)
-    tm.compute_uvatlas(size=256)
-    assert tm.triangle.texture_uvs.shape[0] == len(out.triangles)
+    assert out.is_orientable()
 
 
 ######## decimate_mesh

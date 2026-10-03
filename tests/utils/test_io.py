@@ -215,8 +215,8 @@ def test_io_imports_without_torch():
     assert proc.returncode == 0, proc.stderr
 
 
-def test_write_textured_obj_splits_corners_with_white_kd_and_normals(tmp_path):
-    """A shared vertex becomes one corner per face, so each face keeps its own UV."""
+def test_write_textured_obj_shares_positions_with_white_kd_and_normals(tmp_path):
+    """A shared vertex is written once; each face still keeps its own UV through vt indices."""
     vertices = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=np.float64)
     faces = np.array([[0, 1, 2], [0, 2, 3]])
     normals = np.tile([0.0, 0.0, 1.0], (4, 1))
@@ -226,8 +226,10 @@ def test_write_textured_obj_splits_corners_with_white_kd_and_normals(tmp_path):
     out = write_textured_obj(tmp_path / "tex", vertices, faces, normals, uvs, albedo)
 
     assert sorted(p.name for p in out.parent.iterdir()) == ["albedo.png", "mesh.mtl", "mesh.obj"]
-    assert "Kd 1.00000000 1.00000000 1.00000000" in (out.parent / "mesh.mtl").read_text()
-    assert "\nvn " in out.read_text()
+    assert "Kd 1.0 1.0 1.0" in (out.parent / "mesh.mtl").read_text()
+    lines = out.read_text().splitlines()
+    assert sum(line.startswith("v ") for line in lines) == 4
+    assert sum(line.startswith("vn ") for line in lines) == 4
     loaded = trimesh.load(out, process=False)
-    assert len(loaded.vertices) == 6
-    np.testing.assert_allclose(loaded.visual.uv, uvs.reshape(-1, 2), atol=1e-6)
+    np.testing.assert_allclose(loaded.visual.uv[loaded.faces], uvs, atol=1e-6)
+    np.testing.assert_allclose(loaded.vertices[loaded.faces], vertices[faces], atol=1e-6)

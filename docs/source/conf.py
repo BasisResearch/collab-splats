@@ -39,7 +39,6 @@ autodoc_mock_imports = [
     "torchvision",
     "gsplat",
     "open3d",
-    "warp",
     "meshoptimizer",
     "nvdiffrast",
     "mobile_sam",

@@ -5,7 +5,7 @@ Mesh cleanup at full density, then preparation for UV unwrapping.
 - remove_floaters: drop components that are small or far from the main body
 - fill_holes: patch interior loops under a perimeter bound; the outer rim stays open
 - make_convex_hull: trim_mesh_edges, patch the ground out to a rounded hull, bridge_mesh_edges
-- prepare_mesh: fill_holes, decimate_mesh (error-bounded QEM), make_manifold into a mesh UVAtlas accepts
+- prepare_mesh: fill_holes, decimate_mesh (error-bounded QEM), make_manifold into a clean manifold mesh
 - thresholds are scene-relative: fractions of get_scene_scale, or cells of the median edge
 """
 
@@ -620,9 +620,9 @@ def decimate_mesh(mesh: o3d.geometry.TriangleMesh, *, max_error: float) -> tuple
 
 def make_manifold(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
     """
-    Repair a mesh to one UVAtlas accepts; the input is left untouched.
+    Repair a mesh to a clean manifold; the input is left untouched.
 
-    - UVAtlas rejects duplicate and fold-over faces Open3D calls manifold
+    - duplicate and fold-over faces pass Open3D's manifold check
     - Open3D's remove_duplicated_triangles misses a duplicate with reversed winding
 
     Args:
@@ -696,7 +696,7 @@ def prepare_mesh(
     smooth_iterations: int = 0,
 ) -> o3d.geometry.TriangleMesh:
     """
-    Fill, decimate and repair a cleaned mesh into one UVAtlas accepts; the input is not modified.
+    Fill, decimate and repair a cleaned mesh into a clean manifold mesh; the input is not modified.
 
     - fill at full density, decimate, make_manifold; lid the pinholes that opens, repair again
     - smoothing runs last so decimation never sees it; a final repair drops the faces it folds

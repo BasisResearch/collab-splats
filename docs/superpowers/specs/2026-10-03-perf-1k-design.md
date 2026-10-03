@@ -66,20 +66,20 @@ without changing its output.
 ### 3a. LC GPU unproject
 
 - `wrapper.py:287`: `unproject_depth_map_to_point_map` → `collab_splats.geometry.projection.unproject`,
-  float64 on GPU, chunks of 64 frames, result float32 on CPU
+  float32 on GPU (TF32 forced off, as `transform_points` does), chunks of 64 frames
 - measured on 984 x 384 x 688: 49.8 s → 10.1 s, maxdiff 3.8e-6
-- test: maxdiff ≤ 1e-5 vs the vggt numpy path
+- test: rtol/atol 1e-5 vs the vggt numpy path; bit-identical with global TF32 on
 
 ### 4. LC assemble once, on GPU, cap first
 
-- world grid per submap computed once (float64 on GPU), reused for cloud and per-frame depth;
+- world grid per submap computed once (float32 on GPU, TF32 forced off), reused for cloud and per-frame depth;
   today `get_world_grid` runs in `map.get_world_pointcloud` and again in `_assemble_result`
 - cap first: `subsample_points` draws from an all-True mask, so the draw depends only on the
   total count; compute the count from skip/conf masks, draw the same mask with the same seed,
   gather only drawn points from each submap's grid (grid still needed whole for depth); no dense
   cloud stack; `GraphMap.get_world_pointcloud` deleted (no caller left)
 - drop the dense `world_points` array `_assemble_result` builds; the lean store does not keep it
-- test: selected indices bit-exact; points, depth ≤ 1e-5 vs the current path
+- test: selected indices bit-exact; points, depth rtol/atol 1e-5 vs the current float64 path
 
 ### 6. In-memory frame handoff
 
@@ -120,7 +120,7 @@ without changing its output.
    as a patch, main-checkout copies reverted only after the commit lands
 1. `perf(preproc): 16 quality-report workers`
 2. `perf(preproc): parallel range-seek decode for selection`
-3. `perf(geometry): GPU float64 unproject in LC submaps`
+3. `perf(geometry): GPU float32 unproject in LC submaps`
 4. `perf(geometry): world grid once on GPU, cap before stacking`
 5. `perf(pointcloud): in-memory frame handoff to Omega`
 6. `perf(pointcloud): device-init Omega load from mmap`

@@ -215,11 +215,14 @@ LC loop 272 s on the 1k leaf run, GPU idle 126 s of it; forward 130 s at 98% GPU
 
 - 15a skip dead retrieval: `lc_retrieval_threshold <= 0` admits no candidate, so skip the
   DINO-SALAD load, the per-window descriptors and `find_loop_closures`; ~78 s
-- 15b GPU gather: confidence mask and subsample selection run on the GPU per window, only kept
-  points cross to host; selection only, depth math stays where it is; ~15 s
-- 15c pipelined window loop: window k+1's forward runs while window k's CPU tail (alignment,
-  assemble) runs; `full_fp32_matmul` made thread-safe (it sets matmul precision process-wide);
-  per-window `empty_cache` dropped; pinned H2D; ~30–35 s
+- 15b one-gather selection: a flat pixel index (confidence mask, then the subsample draw) picks
+  the kept points in one copy; same points, same order; CPU, since depth needs the whole grid
+  on the host and depth on the GPU is not bit-exact; up to ~15 s
+- 15c pipelined window loop: window k+1's forward runs on a worker while window k's CPU post
+  (colors, conf percentile, graph solve) runs; the forward holds a precision lock that
+  `full_fp32_matmul` also takes, so unproject stays serial; per-window `empty_cache` dropped;
+  views pinned once; ~20 s
+- QA `n_workers` stays 16 (A2 item 12 dropped; 4 workers gave no gain on the 7.65-CPU quota)
 - every item bit-exact vs the same-code ref; out: `set_num_threads` cap, batched cdist (not exact)
 - order: 15a, 15b, 15c, each its own commit; gate once after 15c, plus a quick exact check per item
 

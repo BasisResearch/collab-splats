@@ -221,7 +221,7 @@ LC loop 272 s on the 1k leaf run, GPU idle 126 s of it; forward 130 s at 98% GPU
 - 15c pipelined window loop: window k+1's forward runs on a worker while window k's CPU post
   (colors, conf percentile, graph solve) runs; the forward holds a precision lock that
   `full_fp32_matmul` also takes, so unproject stays serial; per-window `empty_cache` dropped;
-  views pinned once; ~20 s
+  ~17 s; view pinning dropped 2026-10-04 (second ~3.2 GB page-locked host copy for ~3 s)
 - QA `n_workers` stays 16 (A2 item 12 dropped; 4 workers gave no gain on the 7.65-CPU quota)
 - every item bit-exact vs the same-code ref; out: `set_num_threads` cap, batched cdist (not exact)
 - order: 15a, 15b, 15c, each its own commit; gate once after 15c, plus a quick exact check per item

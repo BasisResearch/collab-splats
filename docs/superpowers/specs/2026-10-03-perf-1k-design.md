@@ -1,6 +1,6 @@
 # perf-1k — one performance pass over the 1k windowed pipeline
 
-Date: 2026-10-03 · Status: approved design (A2 added 2026-10-04), plan `docs/superpowers/plans/2026-10-03-perf-1k.md`
+Date: 2026-10-03 · Status: approved design (A2 + A3 added 2026-10-04), plan `docs/superpowers/plans/2026-10-03-perf-1k.md`
 
 ## Goal
 
@@ -35,6 +35,8 @@ without changing its output.
 | 7 device-init Omega load | A | `vggt_omega.py` |
 | 12 one decode thread per QA worker | A2 | `preproc/qa.py` |
 | 13 frame handoff for vggtx + mapanything | A2 | `feedforward/base.py`, `vggtx.py`, `mapanything.py`, `reconstructor.py` |
+| 14 PNG write overlaps the pointcloud stage | A3 | `reconstructor.py` |
+| 15 Omega forward + LC profile, then overlap | A3 | `geometry/loop_closure/wrapper.py`, `vggt_omega.py` |
 | 2 batched xfeat extract | vismatch-fork | `basis` branch of `/workspace/vismatch` |
 | 3b BA load GPU unproject, drop dead re-lift | B | rgbd-ba |
 | 8 sparse/GPU BA observation filter | B | rgbd-ba `bundle_adjustment.py` |
@@ -161,6 +163,38 @@ Two leftovers:
   the file path, plus a test that the array path is taken
 - gate: 1k run per backend, A2 tip vs a same-code ref at the Phase A tip `7b2f1f1f`
   (keyframes equal, pose maxdiff ≤ 1e-4, equal point count), preprocess wall reported
+
+## Phase A3 (added 2026-10-04, Omega priority)
+
+Omega after A: 456 s = QA ~150, decode + PNG 80, load 17, preprocess 11.5, forwards + LC 182,
+save 10. A3 targets the PNG write and the forwards + LC.
+
+### 14. PNG write overlaps the pointcloud stage
+
+- today `preproc` writes PNGs synchronously (`write_frames`, already compression 1, 8 threads):
+  35–50 s, twice when `undistort` is on
+- change: in-process runs submit the final `write_frames` to a background thread; `preproc`
+  returns once frames are selected (and undistorted); the pointcloud stage consumes the in-memory
+  frames; the write is joined before the pointcloud stage returns, and before any stage that
+  reads `images/`
+- undistort keeps its first synchronous write (`calibrate_camera` reads files)
+- a write error re-raises at the join; leaf-only runs unchanged (no handoff, nothing to overlap)
+- vggtx / mapanything get the overlap only once item 13 lands; loger keeps the synchronous write
+- test: `images/` byte-identical to the synchronous write; a failing write raises from the run;
+  the join happens before the pointcloud stage returns
+- gate: Omega 1k vs a same-code ref, as A2; report the decode + PNG and pointcloud walls
+
+### 15. Omega forward + LC: profile, then overlap
+
+- step 1, measure only: per-window timeline on the 1k Omega run (GPU busy %, forward, retrieval,
+  alignment, unproject/assemble, host<->device copies), py-spy + CUDA events, quiet box
+- step 2, only where the profile shows GPU idle between windows: prepare window k+1 (slice,
+  pin, H2D copy) and run window k's CPU alignment while window k+1's forward runs
+- no dtype change: the Omega aggregator already autocasts internally; params stay fp32
+- outputs bit-identical, same order of ops per window; any change that cannot be bit-exact is
+  dropped, not loosened
+- step 2 scope is set by step 1's findings and comes back for approval before implementation
+- gate: Omega 1k vs same-code ref, as A2; forwards + LC wall reported
 
 ## Phase B outline (not implemented now)
 

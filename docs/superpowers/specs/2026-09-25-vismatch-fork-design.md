@@ -2,6 +2,7 @@
 
 **Date:** 2026-09-25
 **Status:** approved design (umbrella), pre-implementation
+**Amended 2026-10-03:** steps 1b, 4, 5 superseded by [2026-10-03-vismatch-feature-matching-design.md](2026-10-03-vismatch-feature-matching-design.md) — 1a gains instance attr `self.supports_batches = False` (B mismatch stays `assert`); split lands as `feat/feature-matching` stacked on 1a; step 5 and LightGlue 1b dropped
 **Upstream issue:** https://github.com/gmberton/vismatch/issues/74
 **Upstream base:** `gmberton/vismatch` main @ `9d49b89` (v1.3.2); collab-splats pins `vismatch==1.3.1`
 

@@ -35,6 +35,10 @@
 5. **xfeat batching stacks only when every image has the same size, otherwise it runs per image.** This matches the spec. The uncommitted group-by-size `_extract_batch` in the 1a worktree is backed up (Task 0) and not reused.
 6. **The LoMa "rebuild" guard is dropped.** The guard is `test_loma_match_without_payload_names_the_rebuild` plus its `ValueError`. A cache without `keypoints_normalized` now fails with vismatch's `KeyError: 'kpts_normalized'`. `save_index` writes the payload all-or-none.
 
+7. **The `available_models` `test_forward_batch` structure test is dropped.**
+   - Upstream CI is CPU-only; one batched forward over ~60 models adds model downloads + minutes per run for a loop that never changes per model.
+   - The loop is covered by 1a's `_CornerMatcher` tests; the native path by `_GridMatcher` mocks + `test_forward_batch_native_model[xfeat|loma]`.
+
 ## Ground rules (every task)
 
 - **Do not touch** `/workspace/collab-splats/.worktrees/rgbd-ba`. It belongs to the user and holds an uncommitted `match_batch`.
@@ -61,7 +65,7 @@
 | vismatch `vismatch/im_models/xfeat.py` | `supports_batches = mode == "sparse"`, `_extract_features`, `_match_features` |
 | vismatch `vismatch/im_models/loma.py` | `supports_batches = True`, `_extract_features`, `_match_features` |
 | vismatch `tests/test_matchers.py` | `_GridMatcher` mock tests + xfeat/loma real-model tests |
-| vismatch `README.md` | batched extract + `match()` paragraph |
+| vismatch `README.md`, `docs/source/quickstart.md` | batched extract + `match()` (README code comments, quickstart prose) |
 | collab-splats `pyproject.toml`, `uv.lock` | git pin on basis SHA, drop `lomatch` |
 | collab-splats `collab_splats/localization/extractors.py` | `LocalFeatures.image_size`, `skip_ransac`, uint8 `_to_tensor`, list `extract`, vismatch `match` |
 | collab-splats `collab_splats/localization/localizer.py` | `read_localization_db` fills `image_size` from `hw` |
@@ -82,18 +86,20 @@
 
 ```bash
 SP=/tmp/claude-0/-workspace-collab-splats/24ab2370-1ed5-4d10-9685-ecbfed2a1b04/scratchpad
-cd /workspace/vismatch-batch-forward && rtk proxy git diff -- tests vismatch/base_matcher.py vismatch/im_models > $SP/backup_1a_uncommitted.patch
-cd /workspace/vismatch-batch-loma && rtk proxy git diff -- tests vismatch > $SP/backup_batch_loma.patch
-wc -l $SP/backup_*.patch
+cd /workspace/vismatch-batch-forward && rtk proxy git diff --ignore-submodules > $SP/backup_1a_uncommitted.patch
+cd /workspace/vismatch-batch-loma && rtk proxy git diff --ignore-submodules > $SP/backup_batch_loma.patch
+wc -l $SP/backup_*.patch && grep '^diff --git' $SP/backup_*.patch
 ```
-Expected: both files non-empty. The 1a patch contains `_extract_batch`.
+Expected:
+- Both files non-empty. The 1a patch contains `_extract_batch`.
+- No pathspec on purpose: batch-loma also modified `docs/source/quickstart.md`, and a `-- tests vismatch` pathspec would silently drop it.
 
 - [ ] **Step 2: Reset the 1a worktree's tracked files to `ceb0022`**
 
   Leave the submodule `m` markers alone; they are pre-existing.
 
 ```bash
-cd /workspace/vismatch-batch-forward && git checkout -- tests/test_matchers.py vismatch/base_matcher.py vismatch/im_models/xfeat.py && git status --short
+cd /workspace/vismatch-batch-forward && git diff --ignore-submodules --name-only | xargs -r git checkout -- && git status --short
 ```
 Expected: only `m vismatch/third_party/...` lines remain.
 
@@ -204,6 +210,7 @@ with torch.inference_mode():
 
     # loma match() vs the old LocalMatcher loma split (CPU-held features both sides), same run
     from vismatch.im_models import loma as loma_mod
+    from vismatch.import_sandbox import ImportSandbox
 
     lm = get_matcher("loma", device="cuda")
     lm.skip_ransac = True
@@ -211,14 +218,17 @@ with torch.inference_mode():
     lpairs = [(lfeats[i], lfeats[(i + 1) % 8]) for i in range(8)]
 
     def old_split():
+        # Like-for-like with clean/final LocalMatcher.match: per-pair sandbox entry, matcher, filter, gather
         for a, b in lpairs:
             k0 = torch.as_tensor(a["kpts_normalized"]).cuda()[None]
             k1 = torch.as_tensor(b["kpts_normalized"]).cuda()[None]
             d0 = torch.as_tensor(a["all_desc0"]).cuda()[None]
             d1 = torch.as_tensor(b["all_desc0"]).cuda()[None]
-            m0 = loma_mod.filter_matches(lm.matcher(k0, k1, d0, d1)["scores"], lm.matcher.cfg.filter_threshold)[0]
-            valid = m0[0] > -1
-            torch.where(valid)[0].cpu().numpy(), m0[0][valid].cpu().numpy()
+            with ImportSandbox.get(type(lm).__module__):
+                m0 = loma_mod.filter_matches(lm.matcher(k0, k1, d0, d1)["scores"], lm.matcher.cfg.filter_threshold)[0]
+                valid = m0[0] > -1
+                iq, idb = torch.where(valid)[0].cpu().numpy(), m0[0][valid].cpu().numpy()
+                a["all_kpts0"][iq], b["all_kpts0"][idb]
 
     t_new = timed(lambda: [lm.match(a, b) for a, b in lpairs], 3) / 8
     t_ref = timed(old_split, 3) / 8
@@ -249,7 +259,7 @@ Worktree: reuse `/workspace/vismatch-batch-loma`. Its batching work is supersede
 - [ ] **Step 1: Cut the branch from `upstream/main`**
 
 ```bash
-cd /workspace/vismatch-batch-loma && git checkout -- tests vismatch && git fetch upstream && git switch -c feat/fast-input upstream/main && git log --oneline -1
+cd /workspace/vismatch-batch-loma && git diff --ignore-submodules --name-only | xargs -r git checkout -- && git fetch upstream && git switch -c feat/fast-input upstream/main && git log --oneline -1
 ```
 Expected: `9d49b89 Add upal matcher (#75)`. If upstream has moved, use the new tip and note it in the PR.
 
@@ -954,33 +964,55 @@ EOF
 
 ---
 
-### Task 8: README for batched extract + `match()`
+### Task 8: Docs for batched extract + `match()`
+
+1a's `ceb0022` documents batching in two places, so both get the follow-up:
+- `README.md` ~:137: code comments inside the usage block (no prose there)
+- `docs/source/quickstart.md`: `## Batch Matching` section, prose + code
 
 **Files:**
-- Modify: `/workspace/vismatch-batch-forward/README.md` (the section 1a added for batched matching)
+- Modify: `/workspace/vismatch-batch-forward/README.md` (1a's batch lines in the usage code block)
+- Modify: `/workspace/vismatch-batch-forward/docs/source/quickstart.md` (`## Batch Matching`)
 
-- [ ] **Step 1: Find 1a's batch paragraph**
+- [ ] **Step 1: Find 1a's batch lines**
 
 ```bash
-cd /workspace/vismatch-batch-forward && git show ceb0022 --stat && grep -n -i "batch" README.md
+cd /workspace/vismatch-batch-forward && grep -n "results\[0\] matches" README.md docs/source/quickstart.md
+```
+Expected: one hit in each file.
+
+- [ ] **Step 2: README — append inside the code block, right after `# results[0] matches img0 -> img1, ...`**
+
+  Same comment style as 1a's lines; no new fence.
+
+```python
+
+# xfeat and loma (matcher.supports_batches): detect once per image, then match the cached features
+feats = matcher.extract([img0, img1])
+result = matcher.match(feats[0], feats[1])
+# result.keys() = forward()'s keys without all_* + ["matched_idxs0", "matched_idxs1"]
 ```
 
-- [ ] **Step 2: Append directly after that paragraph**
+- [ ] **Step 3: quickstart — append to `## Batch Matching`, after its code block, before `## Ensemble Matching`**
 
-```markdown
-Matchers that detect each image independently (currently `xfeat` and `loma`) set `matcher.supports_batches = True`.
-For them, `extract()` runs one batched detection, and `match()` reuses its outputs without detecting again:
+````markdown
+Matchers that detect each image independently (currently `xfeat` and `loma`) set
+`matcher.supports_batches = True`. For them, `extract()` runs one batched detection, and `match()` matches
+two `extract()` results without detecting again; it also returns the matched rows of `all_kpts0`:
 
 ```python
 feats = matcher.extract([img0, img1, img2])  # one detection pass
-result = matcher.match(feats[0], feats[2])  # forward()'s match keys + matched_idxs0/1
-```
+result = matcher.match(feats[0], feats[2])
+# result["matched_kpts0"] == feats[0]["all_kpts0"][result["matched_idxs0"]]
 ```
 
-- [ ] **Step 3: Commit**
+Other matchers raise `NotImplementedError` from `match()`.
+````
+
+- [ ] **Step 4: Commit**
 
 ```bash
-cd /workspace/vismatch-batch-forward && git add README.md && git commit -m "$(cat <<'EOF'
+cd /workspace/vismatch-batch-forward && git add README.md docs/source/quickstart.md && git commit -m "$(cat <<'EOF'
 Document batched extract() and match()
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
@@ -988,7 +1020,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 4: 🔒 Push both branches (ask the user first)**
+- [ ] **Step 5: 🔒 Push both branches (ask the user first)**
 
 ```bash
 cd /workspace/vismatch-batch-loma && git push -u origin feat/fast-input
@@ -1368,6 +1400,11 @@ Expected: failures in the rewritten tests: `TypeError ... image_size`, `skip_ran
 
 (e) `_to_tensor`:
 
+  Dropping the float 0..255 `t.max() > 1.5` heuristic is safe: every caller passes uint8.
+  - localizer `:264`, `:506`, `:896` → `read_image` / `to_uint8_hwc` output
+  - `_probe_index_stability` → the same uint8 image it was handed
+  - a float 0..1 image still works: `to_tensor_image` keeps its float path
+
 ```python
     def _to_tensor(self, image: np.ndarray) -> torch.Tensor:
         """HxWx3 RGB (uint8, or float in [0, 1]) -> (3,H,W) on device, dtype kept; vismatch scales uint8."""
@@ -1517,7 +1554,7 @@ EOF
   - §2 table: delete the "Base `_extract_features` / `_match_features` raising NotImplementedError" row. Change the `extract(list)` row to "uses the hooks when `supports_batches`".
   - §2 notes: replace the bf16 bullet with `LoMa kpts/desc are fp32 (forward's to_numpy would raise otherwise); only confidences get .float(), as in _forward`.
   - §3 table: in the `extract` row, append `; image_size at load from the zarr hw attr`.
-  - Gates table: remove the `test_forward_batch_matches_loop | sift-nn` row. Add `mock _GridMatcher tests: extract/match/native forward/out-of-bounds | — | exact`. Change `test_match_not_implemented | sift-nn` to `| _CornerMatcher mock |`.
+  - Gates table: remove the `test_forward_batch | available_models` row (delta 7) and the `test_forward_batch_matches_loop | sift-nn` row. Add `mock _GridMatcher tests: extract/match/native forward/out-of-bounds | — | exact`. Change `test_match_not_implemented | sift-nn` to `| _CornerMatcher mock |`.
   - Status line: `approved design; plan 2026-10-03-vismatch-feature-matching.md`.
 
 - [ ] **Step 2: Commit**
@@ -1527,7 +1564,8 @@ cd /workspace/collab-splats && git add -f docs/superpowers/specs/2026-10-03-vism
 docs(specs): vismatch feature matching — planning deltas
 
 No base hook defs (supports_batches is the gate), image_size from zarr
-hw, mock tests replace sift-nn, no LoMa bf16 casts.
+hw, mock tests replace sift-nn and the available_models batch test, no
+LoMa bf16 casts.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 EOF

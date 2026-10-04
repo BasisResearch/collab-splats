@@ -196,6 +196,33 @@ save 10. A3 targets the PNG write and the forwards + LC.
 - step 2 scope is set by step 1's findings and comes back for approval before implementation
 - gate: Omega 1k vs same-code ref, as A2; forwards + LC wall reported
 
+#### 15 step 1 findings (2026-10-04)
+
+LC loop 272 s on the 1k leaf run, GPU idle 126 s of it; forward 130 s at 98% GPU is the floor.
+
+| phase | s |
+|---|---|
+| forward | 130.2 |
+| `find_loop_closures` (CPU cdist, ~4000 calls) | 57.8 |
+| assemble (numpy mask / gather) | 18.2 |
+| DINO-SALAD load | 14.4 |
+| unproject + `get_world_grid` | 14.2 |
+| retrieval forward | 5.4 |
+| colors + D2H + H2D | 13.2 |
+| `empty_cache` | 1.8 |
+
+#### 15 step 2 scope (approved 2026-10-04)
+
+- 15a skip dead retrieval: `lc_retrieval_threshold <= 0` admits no candidate, so skip the
+  DINO-SALAD load, the per-window descriptors and `find_loop_closures`; ~78 s
+- 15b GPU gather: confidence mask and subsample selection run on the GPU per window, only kept
+  points cross to host; selection only, depth math stays where it is; ~15 s
+- 15c pipelined window loop: window k+1's forward runs while window k's CPU tail (alignment,
+  assemble) runs; `full_fp32_matmul` made thread-safe (it sets matmul precision process-wide);
+  per-window `empty_cache` dropped; pinned H2D; ~30–35 s
+- every item bit-exact vs the same-code ref; out: `set_num_threads` cap, batched cdist (not exact)
+- order: 15a, 15b, 15c, each its own commit; gate once after 15c, plus a quick exact check per item
+
 ## Phase B outline (not implemented now)
 
 - 3b: BA load uses GPU `unproject`; delete the dead re-unproject in the driver

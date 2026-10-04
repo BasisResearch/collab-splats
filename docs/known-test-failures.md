@@ -99,10 +99,10 @@ the remote driver's scene-id rejection test ×2, in a test file since deleted (t
 concurrent session's **uncommitted** edit to that test + the remote re-run module on the base
 checkout; committed HEAD failed).
 
-## 2026-08-21 — RESOLVED: xfeat GPU parity test failed under TF32 import pollution
+## 2026-08-21 — RESOLVED: xfeat GPU parity test failed under TF32 import pollution (test renamed 2026-10-03: test_real_xfeat_match_matches_pairwise)
 
 `tests/localization/test_local_matcher.py::test_real_xfeat_general_path_matches_pairwise`
-(CUDA-gated; licenses `xfeat`'s membership in `FEATURE_MATCH_MODELS`) failed in any pytest
+(CUDA-gated; gates xfeat's vismatch match() parity) failed in any pytest
 process that ALSO collected a module importing `collab_splats.pointcloud.feedforward.base`
 (e.g. `tests/geometry/test_verification.py`): **mapanything sets
 `torch.backends.cuda.matmul.allow_tf32 = True` and float32 matmul precision `high` at
@@ -348,6 +348,8 @@ test_split_flag_off_for_unknown_wrappers       test_loma_match_without_payload_n
 test_real_loma_split_extract_parity            test_real_loma_split_match_parity_after_zarr_roundtrip
 test_real_xfeat_general_path_matches_pairwise
 ```
+
+Names as of that entry; the 2026-10-03 vismatch feature-matching refactor renamed or removed the split/allowlist tests.
 
 (17 names — `test_real_xfeat_general_path_matches_pairwise` is one of the 16 plus the
 separately-listed TF32 entry above, which is a different, already-fixed failure mode.)

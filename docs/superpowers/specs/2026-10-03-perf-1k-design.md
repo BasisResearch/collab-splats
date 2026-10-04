@@ -1,6 +1,6 @@
 # perf-1k — one performance pass over the 1k windowed pipeline
 
-Date: 2026-10-03 · Status: approved design, plan `docs/superpowers/plans/2026-10-03-perf-1k.md`
+Date: 2026-10-03 · Status: approved design (A2 added 2026-10-04), plan `docs/superpowers/plans/2026-10-03-perf-1k.md`
 
 ## Goal
 
@@ -33,6 +33,8 @@ without changing its output.
 | 5 parallel seek-decode for sampling | A | `preproc/sampling.py` |
 | 6 in-memory frame handoff | A | `reconstructor.py`, `vggt_omega.py` |
 | 7 device-init Omega load | A | `vggt_omega.py` |
+| 12 one decode thread per QA worker | A2 | `preproc/qa.py` |
+| 13 frame handoff for vggtx + mapanything | A2 | `feedforward/base.py`, `vggtx.py`, `mapanything.py`, `reconstructor.py` |
 | 2 batched xfeat extract | vismatch-fork | `basis` branch of `/workspace/vismatch` |
 | 3b BA load GPU unproject, drop dead re-lift | B | rgbd-ba |
 | 8 sparse/GPU BA observation filter | B | rgbd-ba `bundle_adjustment.py` |
@@ -124,6 +126,41 @@ without changing its output.
 4. `perf(geometry): world grid once on GPU, cap before stacking`
 5. `perf(pointcloud): in-memory frame handoff to Omega`
 6. `perf(pointcloud): device-init Omega load from mmap`
+
+## Phase A2 (added 2026-10-04, after the Phase A gate)
+
+The Phase A gate measured preproc + pointcloud at ~530 s plain, not the profile's ~1200 s
+(py-spy + load inflated it). Omega 533 → 456 s, vggtx 613 → 575 s, mapanything 599 → 579 s.
+Two leftovers:
+
+### 12. One decode thread per QA worker
+
+- measured: QA 16 workers 151 s vs 4 workers 143 s, i.e. no gain
+- cause (hypothesis): each worker's `iter_frames` runs PyAV `thread_type="AUTO"`, so 16
+  processes x all-core decode threads oversubscribe; the selection-decode sweep showed the same
+  (AUTO 74 s vs `threads=1` 49 s at 16 workers)
+- change: QA worker passes `threads=1` to `iter_frames`
+- gate: sweep workers 4/8/16/32 x AUTO/`threads=1` on GH010229, quiet box; ship `threads=1`
+  only if faster, and `preproc.n_workers` follows the sweep's best; report bit-identical
+  (`test_video_quality_workers_produce_an_identical_report` + a real-video report compare)
+- if `threads=1` gives no gain either: revert `n_workers` to 4 and report the real bottleneck
+
+### 13. Frame handoff for vggtx + mapanything
+
+- measured: preprocess vggtx 134 s, mapanything 160 s on the file path (serial PNG read +
+  resize), vs Omega 11.5 s with handoff + 8 threads
+- `frames: dict[str, np.ndarray] | None` moves from `VGGTOmegaCreator` to
+  `BaseFeedforwardCreator`; same contract: every `p.name` present → array path, otherwise a
+  warning and the file path
+- vggtx: array path mirrors `vggt.utils.load_fn.load_and_preprocess_images(mode="crop")`
+  step for step, minus the file open, thread pool of 8
+- mapanything: array path mirrors `mapanything.utils.image.load_images` for the creator's
+  resize modes, minus the file open, thread pool of 8
+- `Reconstructor` hands frames to vggt_omega, vggtx and mapanything; loger stays file-based
+- test per backend: preprocess output (tensor / view dicts) and `original_coords` bit-exact vs
+  the file path, plus a test that the array path is taken
+- gate: 1k run per backend, A2 tip vs a same-code ref at the Phase A tip `7b2f1f1f`
+  (keyframes equal, pose maxdiff ≤ 1e-4, equal point count), preprocess wall reported
 
 ## Phase B outline (not implemented now)
 

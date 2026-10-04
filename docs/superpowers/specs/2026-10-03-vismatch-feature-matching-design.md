@@ -80,14 +80,17 @@ basis  ◄── merge-only: all of the above; collab-splats pins a basis SHA
 
 | Change | Original code touched? | ~Lines |
 |---|---|---|
-| `self.supports_batches = False` in `BaseMatcher.__init__`; batched `forward` (loop, or native via hooks building the same 7-tuples); postprocess moved into a helper | moves the postprocess only | +20 |
+| `self.supports_batches = False` in `BaseMatcher.__init__`; batched `forward`: `supports_batches` → `extract(list)` ×2 + per-pair `match()` with `all_*` merged back in, else 1a per-pair loop | no (postprocess not moved) | +11 |
 | uint8 branch in `to_tensor_image` | no | +2 |
 | Base `_extract_features` / `_match_features` raising `NotImplementedError`; both added to the sandbox-wrapped tuple | no | +8 |
 | `extract(list)` uses `_extract_features` when implemented; keys bit-exact with today's `extract`; adds `image_size` (W, H) and model extras | one branch | +8 |
-| Lean `match(feats0, feats1)`: gather, valid mask, `compute_ransac`, `matched_idxs0/1`; same keys as `forward` minus `all_*`; single or equal-length lists (`assert`); inputs via `torch.as_tensor(..., device=self.device)` | no | +25 |
+| Lean `match(feats0, feats1)`: gather, valid mask, `compute_ransac`, `matched_idxs0/1`; same keys as `forward` minus `all_*`; single pair only; inputs via `torch.as_tensor(..., device=self.device)` | no | +18 |
 | xfeat hooks: stack + one `detectAndCompute` when sizes match, else per image; per-pair `self.model.match(min_cossim=-1)`; `supports_batches = mode == "sparse"` | no | +12 |
 | loma hooks: per-image `detect_and_describe`, model-grid kpts kept as an extra; per-pair matcher + `filter_matches`; `supports_batches = True` | no | +25 |
 
+- Native batched `forward` reuses `match()` for valid mask + RANSAC → no original code moves; batched forward gets the batched-extract gain.
+- 1a PR carries the attribute + loop only; the `supports_batches` branch lands in `feat/feature-matching` with `extract(list)` / `match()`.
+- `match()` stays single-pair: batched matching measured no faster (see above).
 - Model `_forward` stays untouched → single-pair contract kept for `EnsembleMatcher` (`base_matcher.py:280`) and `keypt2subpx.py:65`.
 - Hook names avoid `rdd.py:201` `RDD_ThirdPartyMatcher._extract` (different contract).
 - Audit (AST over `vismatch/`, 61 `BaseMatcher` subclasses): none defines `forward` / `extract` / `match` / `supports_batches` / the hook names; all call `super().__init__`.

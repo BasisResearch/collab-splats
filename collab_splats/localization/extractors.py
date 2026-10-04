@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-import sys
 from dataclasses import dataclass
 
 import numpy as np
 import torch
-from kornia.feature import match_mnn
 
 from collab_splats.utils.torch_utils import get_device
 
@@ -28,7 +26,8 @@ class LocalFeatures:
     descriptors: torch.Tensor  # (N, D) float32
     scores: torch.Tensor | None = None  # (N,) float32 — optional saliency
     scales: torch.Tensor | None = None  # (N,) — optional extraction scale
-    keypoints_normalized: torch.Tensor | None = None  # (N, 2) pre-transform coords for the loma split
+    keypoints_normalized: torch.Tensor | None = None  # (N, 2) loma model-grid coords its matcher consumes
+    image_size: tuple[int, int] | None = None  # (W, H) of the image the keypoints were detected in
 
 
 @dataclass
@@ -60,12 +59,6 @@ def _empty_match() -> MatchResult:
 ########################################
 # VisMatch-backed matcher
 ########################################
-
-# Models match() can serve from precomputed features. "xfeat": its own match stage IS
-# descriptor mutual-NN. "loma" (added with its split): pair forward split into per-image /
-# per-pair halves. Membership is licensed by GPU parity tests in the suite — extending this
-# set requires a new passing parity test. Never silently substitute NN for a learned matcher.
-FEATURE_MATCH_MODELS = {"xfeat", "loma"}
 
 # Models whose base deps we override away — vismatch would crash at model load.
 _VISMATCH_DEP_BLOCKLIST = {
@@ -109,7 +102,8 @@ class LocalMatcher:
     """Stage-2 local matcher backed by the vismatch model zoo.
 
     One class for every vismatch model; the model name is data, not a subclass.
-    extract() fills the zarr feature cache; match_images() is the pairwise path.
+    extract() fills the zarr feature cache; match() matches cached features (xfeat, loma);
+    match_images() is the pairwise path.
     """
 
     def __init__(self, model_name: str, device: str | None = None, probe: bool = True):
@@ -123,9 +117,8 @@ class LocalMatcher:
         self._model_name = model_name
         self._device = device or get_device()
         self._matcher = vismatch.get_matcher(model_name, device=self._device)
-        # Loma split: extract-once/match-from-features fast path (spec §2). One wrapper
-        # class, one boolean — byte-parity with the plain forward is enforced by GPU suite tests.
-        self._split_loma_forward = type(self._matcher).__name__ == "LoMaMatcher"
+        # Callers verify geometry with pycolmap; vismatch's homography RANSAC is wasted work
+        self._matcher.skip_ransac = True
         # Set by _probe_index_stability(); None until probed.
         self.has_stable_indices: bool | None = None
         if probe:
@@ -136,12 +129,9 @@ class LocalMatcher:
         return self._model_name
 
     def _to_tensor(self, image: np.ndarray) -> torch.Tensor:
-        """HxWx3 uint8 RGB -> (3,H,W) float [0,1] on device (vismatch input contract)."""
-        # Convert on device: a CPU float pass leaves torch threads contending with the matcher (~3x slower extract)
-        t = torch.from_numpy(np.ascontiguousarray(image)).to(self._device).permute(2, 0, 1).float()
-        if t.max() > 1.5:  # uint8-scale input
-            t = t / 255.0
-        return t
+        """HxWx3 RGB (uint8, or float in [0, 1]) -> (3,H,W) on device, dtype kept; vismatch scales uint8."""
+        # Upload as-is and convert on device: uint8 is 4x fewer bytes, and no max() sync
+        return torch.from_numpy(np.ascontiguousarray(image)).to(self._device).permute(2, 0, 1)
 
     @staticmethod
     def _check_pixel_frame(kpts: np.ndarray, hw: tuple[int, int], what: str) -> None:
@@ -154,104 +144,58 @@ class LocalMatcher:
                 "model likely returns coords at its internal resolution"
             )
 
-    def extract(self, image: np.ndarray) -> LocalFeatures:
-        """Extract keypoints+descriptors (vismatch runs a self-pair forward internally)."""
-        hw = image.shape[:2]
-        # Loma split: per-image half of LoMaMatcher._forward — detect_and_describe once,
-        # replay the wrapper's coord chain (to_pixel_coords -> rescale_coords -> the -0.5
-        # COLMAP offset) over the FULL table, and keep the pre-transform coords the learned
-        # matcher consumes. Indexing a chained table equals chaining an indexed table
-        # (elementwise ops), so match-time pixel coords stay byte-identical. Also skips the
-        # wrapper's self-pair match stage. Sandbox entered explicitly — vismatch only wraps
-        # __init__/_forward.
-        if self._split_loma_forward:
-            from vismatch.import_sandbox import ImportSandbox
-
-            m = self._matcher
-            mod = sys.modules[type(m).__module__]  # wrapper module: to_pixel_coords
-            with ImportSandbox.get(type(m).__module__), torch.inference_mode():
-                img, orig_shape = m.preprocess(self._to_tensor(image))
-                H, W = img.shape[-2:]
-                kpts, desc, _, _ = m.matcher.detect_and_describe(img, m.max_num_keypoints)
-                px = m.rescale_coords(mod.to_pixel_coords(kpts[0], H, W), *orig_shape, H, W) - 0.5
-            feats = LocalFeatures(
-                keypoints=torch.from_numpy(_to_numpy(px)),
-                descriptors=torch.from_numpy(_to_numpy(desc[0])),
-                keypoints_normalized=torch.from_numpy(_to_numpy(kpts[0])),
-            )
-            self._check_pixel_frame(feats.keypoints.numpy(), hw, self._model_name)
-            return feats
+    def extract(self, images: np.ndarray | list[np.ndarray]) -> LocalFeatures | list[LocalFeatures]:
+        """Keypoints+descriptors for one HxWx3 RGB image, or for each image of a list in one vismatch call."""
+        batch = isinstance(images, list)
+        images = images if batch else [images]
         with torch.inference_mode():
-            out = self._matcher.extract(self._to_tensor(image))
-        # vismatch may hand back numpy or on-device tensors depending on the model.
-        kpts = _to_numpy(out["all_kpts0"])
-        descs = _to_numpy(out["all_desc0"])
-        self._check_pixel_frame(kpts, hw, self._model_name)
-        return LocalFeatures(keypoints=torch.from_numpy(kpts), descriptors=torch.from_numpy(descs))
+            outs = self._matcher.extract([self._to_tensor(image) for image in images])
+
+        # vismatch may hand back numpy or on-device tensors depending on the model
+        feats = []
+        for image, out in zip(images, outs):
+            kpts = _to_numpy(out["all_kpts0"])
+            self._check_pixel_frame(kpts, image.shape[:2], self._model_name)
+            norm = out.get("kpts_normalized")
+            feats.append(
+                LocalFeatures(
+                    keypoints=torch.from_numpy(kpts),
+                    descriptors=torch.from_numpy(_to_numpy(out["all_desc0"])),
+                    keypoints_normalized=None if norm is None else torch.from_numpy(_to_numpy(norm)),
+                    image_size=(image.shape[1], image.shape[0]),
+                )
+            )
+        return feats if batch else feats[0]
 
     def match(self, query: LocalFeatures, db: LocalFeatures) -> MatchResult:
-        """Feature-level match over precomputed features (FEATURE_MATCH_MODELS only).
+        """Match precomputed features via vismatch match(); rows are native keypoint-table indices.
 
-        Match rows ARE keypoint-table indices by construction — no _recover_indices.
+        Only for models with vismatch supports_batches (xfeat, loma) — no _recover_indices.
         """
-        if self._model_name not in FEATURE_MATCH_MODELS:
+        if not self._matcher.supports_batches:
             raise NotImplementedError(
-                f"LocalMatcher('{self._model_name}') has no feature-level matching "
-                "(not in FEATURE_MATCH_MODELS — its match stage is not parity-proven "
-                "on precomputed features). Use match_images()."
+                f"LocalMatcher('{self._model_name}') cannot match precomputed features "
+                "(vismatch supports_batches is False). Use match_images()."
             )
         if len(query.descriptors) == 0 or len(db.descriptors) == 0:
             return _empty_match()
-        if self._split_loma_forward:
-            # Per-pair half of LoMaMatcher._forward: learned matcher on the stored
-            # pre-transform coords + descriptors, wrapper's filter, native indices.
-            # float32 in is fine — the matcher's autocast recasts at op boundaries
-            # either way (parity-gated).
-            if query.keypoints_normalized is None or db.keypoints_normalized is None:
-                raise ValueError(
-                    "loma feature-level match needs keypoints_normalized. If this cache "
-                    "predates the payload, rebuild the localization DB "
-                    "(the localize stage with overwrite=True); if a rebuild already ran, "
-                    "the payload was not persisted — check save_index's all-or-none "
-                    "keypoints_normalized write."
-                )
-            from vismatch.import_sandbox import ImportSandbox
-
-            m = self._matcher
-            mod = sys.modules[type(m).__module__]  # wrapper module: filter_matches
-            k0 = query.keypoints_normalized.to(self._device).unsqueeze(0)
-            k1 = db.keypoints_normalized.to(self._device).unsqueeze(0)
-            d0 = query.descriptors.to(self._device).unsqueeze(0)
-            d1 = db.descriptors.to(self._device).unsqueeze(0)
-            with ImportSandbox.get(type(m).__module__), torch.inference_mode():
-                scores = m.matcher(k0, k1, d0, d1)["scores"]
-                m0, _, _, _ = mod.filter_matches(scores, m.matcher.cfg.filter_threshold)
-                valid = m0[0] > -1
-                if not bool(valid.any()):
-                    return _empty_match()
-                idx_q = torch.where(valid)[0].cpu().numpy().astype(np.int64)
-                idx_db = m0[0][valid].cpu().numpy().astype(np.int64)
-            return MatchResult(
-                query_px=query.keypoints.numpy()[idx_q],
-                ref_px=db.keypoints.numpy()[idx_db],
-                idx_q=idx_q,
-                idx_db=idx_db,
-            )
-        # L2 mutual-NN on unit vectors == cosine mutual-NN; match_mnn admits every mutual pair
-        d0 = torch.nn.functional.normalize(query.descriptors.to(self._device), dim=1)
-        d1 = torch.nn.functional.normalize(db.descriptors.to(self._device), dim=1)
-        _, idxs = match_mnn(d0, d1)
-        if len(idxs) == 0:
+        out = self._matcher.match(self._vismatch_features(query), self._vismatch_features(db))
+        if len(out["matched_idxs0"]) == 0:
             return _empty_match()
-        # idxs[:, 0] indexes query (desc1), idxs[:, 1] indexes db (desc2) — kornia match_mnn contract
-        idx_q = idxs[:, 0].cpu().numpy().astype(np.int64)
-        idx_db = idxs[:, 1].cpu().numpy().astype(np.int64)
         return MatchResult(
-            query_px=query.keypoints.numpy()[idx_q],
-            ref_px=db.keypoints.numpy()[idx_db],
-            idx_q=idx_q,
-            idx_db=idx_db,
+            query_px=_to_numpy(out["matched_kpts0"]),
+            ref_px=_to_numpy(out["matched_kpts1"]),
+            idx_q=out["matched_idxs0"].astype(np.int64),
+            idx_db=out["matched_idxs1"].astype(np.int64),
         )
+
+    @staticmethod
+    def _vismatch_features(feats: LocalFeatures) -> dict:
+        """LocalFeatures -> vismatch extract() dict; keypoints_normalized feeds loma's matcher."""
+        out = {"all_kpts0": feats.keypoints, "all_desc0": feats.descriptors, "image_size": feats.image_size}
+        if feats.keypoints_normalized is not None:
+            out["kpts_normalized"] = feats.keypoints_normalized
+        return out
 
     @staticmethod
     def _recover_indices(matched: np.ndarray, table: np.ndarray) -> np.ndarray | None:

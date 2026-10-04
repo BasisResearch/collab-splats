@@ -8,7 +8,6 @@ import pytest
 import torch
 
 from collab_splats.localization.extractors import (
-    FEATURE_MATCH_MODELS,
     LocalFeatures,
     LocalMatcher,
     MatchResult,
@@ -36,7 +35,10 @@ def _fake_vismatch_matcher(n_kpts=8, d=64, stable_indices=True):
     }
     m = MagicMock()
     m.side_effect = lambda i0, i1: dict(result)  # __call__(img0, img1)
-    m.extract.return_value = {"all_kpts0": all_kpts0, "all_desc0": result["all_desc0"]}
+    m.supports_batches = False  # a MagicMock attribute would be truthy
+    feats = {"all_kpts0": all_kpts0, "all_desc0": result["all_desc0"]}
+    # vismatch extract: a list in -> one dict per image; a single image in -> one dict
+    m.extract.side_effect = lambda imgs: [dict(feats) for _ in imgs] if isinstance(imgs, list) else dict(feats)
     return m
 
 
@@ -55,11 +57,9 @@ def test_extract_returns_local_features(mock_get):
 def test_extract_handles_tensor_outputs(mock_get):
     # Real matchers may return torch tensors (check_types allows tensor or ndarray).
     m = _fake_vismatch_matcher()
-    prev = m.extract.return_value
-    m.extract.return_value = {
-        "all_kpts0": torch.from_numpy(prev["all_kpts0"]),
-        "all_desc0": torch.from_numpy(prev["all_desc0"]),
-    }
+    prev = m.extract([None])[0]
+    tensor_feats = {"all_kpts0": torch.from_numpy(prev["all_kpts0"]), "all_desc0": torch.from_numpy(prev["all_desc0"])}
+    m.extract.side_effect = lambda imgs: [dict(tensor_feats)]
     mock_get.return_value = m
     lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
     feats = lm.extract(np.zeros((100, 100, 3), dtype=np.uint8))
@@ -71,10 +71,8 @@ def test_extract_handles_tensor_outputs(mock_get):
 def test_extract_asserts_pixel_frame(mock_get):
     # Keypoints outside the input image bounds = coordinate-frame violation (92f2e4a class)
     m = _fake_vismatch_matcher()
-    bad = dict(m.extract.return_value)
-    bad["all_kpts0"] = np.array([[500.0, 500.0]], dtype=np.float32)
-    bad["all_desc0"] = np.zeros((1, 64), dtype=np.float32)
-    m.extract.return_value = bad
+    bad = {"all_kpts0": np.array([[500.0, 500.0]], dtype=np.float32), "all_desc0": np.zeros((1, 64), dtype=np.float32)}
+    m.extract.side_effect = lambda imgs: [dict(bad)]
     mock_get.return_value = m
     lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
     with pytest.raises(ValueError, match="pixel frame"):
@@ -82,36 +80,41 @@ def test_extract_asserts_pixel_frame(mock_get):
 
 
 @patch("vismatch.get_matcher")
-def test_extract_passes_chw_unit_range_tensor(mock_get):
-    # vismatch input contract: (3, H, W) float in [0, 1].
+def test_extract_passes_chw_uint8_list(mock_get):
+    # vismatch input: a list of (3, H, W) uint8 tensors; vismatch scales uint8 on device itself
     m = _fake_vismatch_matcher()
     mock_get.return_value = m
     lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
-    lm.extract(np.full((100, 100, 3), 255, dtype=np.uint8))
-    (img,), _ = m.extract.call_args
-    assert isinstance(img, torch.Tensor)
-    assert img.shape == (3, 100, 100)
-    assert float(img.max()) <= 1.0 and float(img.min()) >= 0.0
+    lm.extract(np.full((100, 120, 3), 255, dtype=np.uint8))
+    (imgs,), _ = m.extract.call_args
+    assert isinstance(imgs, list) and len(imgs) == 1
+    assert imgs[0].shape == (3, 100, 120) and imgs[0].dtype == torch.uint8
+
+
+@patch("vismatch.get_matcher")
+def test_extract_list_returns_one_feature_set_per_image(mock_get):
+    m = _fake_vismatch_matcher()
+    mock_get.return_value = m
+    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
+    feats = lm.extract([np.zeros((100, 120, 3), np.uint8), np.zeros((100, 110, 3), np.uint8)])
+    assert m.extract.call_count == 1  # one batched vismatch call
+    assert [f.image_size for f in feats] == [(120, 100), (110, 100)]
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.float32])
 @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))])
 @patch("vismatch.get_matcher")
-def test_to_tensor_matches_cpu_conversion(mock_get, device, dtype):
-    # On-device conversion must reproduce the old CPU float-then-move path
+def test_to_tensor_keeps_dtype_on_device(mock_get, device, dtype):
+    # Upload as-is (uint8 is 4x fewer bytes); vismatch's to_tensor_image scales uint8 to [0, 1]
     mock_get.return_value = _fake_vismatch_matcher()
     lm = LocalMatcher("disk-lightglue", device=device, probe=False)
     rgb = np.random.default_rng(0).integers(0, 256, (37, 53, 3)).astype(np.uint8)
     image = rgb if dtype == np.uint8 else rgb.astype(np.float32) / 255.0
 
-    # Reference: the pre-fix CPU path
-    ref = torch.from_numpy(image).permute(2, 0, 1).float()
-    ref = ref / 255.0 if ref.max() > 1.5 else ref
-
     out = lm._to_tensor(image)
 
-    assert out.device.type == device and out.dtype == torch.float32 and out.shape == (3, 37, 53)
-    torch.testing.assert_close(out.cpu(), ref, atol=1e-6, rtol=0)
+    assert out.device.type == device and out.shape == (3, 37, 53)
+    torch.testing.assert_close(out.cpu(), torch.from_numpy(image).permute(2, 0, 1), atol=0, rtol=0)
 
 
 def test_blocked_models_raise_without_importing_vismatch():
@@ -122,15 +125,6 @@ def test_blocked_models_raise_without_importing_vismatch():
             LocalMatcher("ufm", device="cpu", probe=False)
         with pytest.raises(ValueError, match="license"):
             LocalMatcher("superglue", device="cpu", probe=False)
-
-
-@patch("vismatch.get_matcher")
-def test_descriptor_level_match_unsupported(mock_get):
-    mock_get.return_value = _fake_vismatch_matcher()
-    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
-    feats = lm.extract(np.zeros((100, 100, 3), dtype=np.uint8))
-    with pytest.raises(NotImplementedError, match="match_images"):
-        lm.match(feats, feats)
 
 
 @patch("vismatch.get_matcher")
@@ -242,45 +236,19 @@ def test_pairwise_skips_localized_frames_and_clamps_topk():
     assert lm.match_images.call_count == 3
 
 
-def _one_hot_features(rows, d=8):
+def _one_hot_features(rows, d=8, keypoints_normalized=False):
     """LocalFeatures whose descriptors are one-hot rows — mutual-NN is exactly identity."""
     kpts = np.stack([np.arange(len(rows)), np.arange(len(rows))], axis=1).astype(np.float32) * 10
     desc = np.eye(d, dtype=np.float32)[rows]
-    return LocalFeatures(keypoints=torch.from_numpy(kpts), descriptors=torch.from_numpy(desc))
+    norm = torch.from_numpy(kpts / 100) if keypoints_normalized else None
+    return LocalFeatures(
+        keypoints=torch.from_numpy(kpts), descriptors=torch.from_numpy(desc), keypoints_normalized=norm, image_size=(100, 80)
+    )
 
 
 @patch("vismatch.get_matcher")
-def test_match_mutual_nn_for_allowlisted_model(mock_get):
-    mock_get.return_value = _fake_vismatch_matcher()
-    assert "xfeat" in FEATURE_MATCH_MODELS
-    lm = LocalMatcher("xfeat", device="cpu", probe=False)
-    q = _one_hot_features([0, 1, 2, 3])
-    db = _one_hot_features([3, 2, 1, 0])  # same one-hot basis, permuted rows
-    m = lm.match(q, db)
-    assert isinstance(m, MatchResult)
-    assert len(m) == 4
-    # mutual NN of a permuted one-hot basis is that permutation, with native table indices
-    order = np.argsort(m.idx_q)
-    np.testing.assert_array_equal(m.idx_q[order], [0, 1, 2, 3])
-    np.testing.assert_array_equal(m.idx_db[order], [3, 2, 1, 0])
-    # pixel coords are the table rows the indices point at
-    np.testing.assert_array_equal(m.query_px, q.keypoints.numpy()[m.idx_q])
-    np.testing.assert_array_equal(m.ref_px, db.keypoints.numpy()[m.idx_db])
-
-
-@patch("vismatch.get_matcher")
-def test_match_empty_descriptors_returns_empty(mock_get):
-    mock_get.return_value = _fake_vismatch_matcher()
-    lm = LocalMatcher("xfeat", device="cpu", probe=False)
-    empty = LocalFeatures(keypoints=torch.zeros((0, 2)), descriptors=torch.zeros((0, 8)))
-    m = lm.match(empty, _one_hot_features([0, 1]))
-    assert len(m) == 0 and m.idx_q is not None  # empty but indexable
-
-
-@patch("vismatch.get_matcher")
-def test_match_still_raises_for_non_listed_model(mock_get):
-    # Not in FEATURE_MATCH_MODELS — the NotImplementedError contract survives.
-    mock_get.return_value = _fake_vismatch_matcher()
+def test_match_unsupported_without_vismatch_batching(mock_get):
+    mock_get.return_value = _fake_vismatch_matcher()  # supports_batches False
     lm = LocalMatcher("roma", device="cpu", probe=False)
     q = _one_hot_features([0, 1])
     with pytest.raises(NotImplementedError, match="match_images"):
@@ -288,32 +256,50 @@ def test_match_still_raises_for_non_listed_model(mock_get):
 
 
 @patch("vismatch.get_matcher")
-def test_split_flag_off_for_unknown_wrappers(mock_get):
-    # _fake_vismatch_matcher is a MagicMock — class name "MagicMock" != "LoMaMatcher",
-    # so the split never activates and match_images runs the plain path untouched.
-    mock_get.return_value = _fake_vismatch_matcher(stable_indices=True)
-    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
-    assert lm._split_loma_forward is False
-    lm.has_stable_indices = True
-    q = np.zeros((100, 100, 3), dtype=np.uint8)
-    m = lm.match_images(q, q)
-    assert len(m) == 4  # plain-path behavior byte-identical to before
+def test_match_passes_features_and_maps_indices(mock_get):
+    m = _fake_vismatch_matcher()
+    m.supports_batches = True
+    m.match.return_value = {
+        "matched_kpts0": np.array([[0.0, 0.0], [20.0, 20.0]], np.float32),
+        "matched_kpts1": np.array([[30.0, 30.0], [10.0, 10.0]], np.float32),
+        "matched_idxs0": np.array([0, 2]),
+        "matched_idxs1": np.array([3, 1]),
+    }
+    mock_get.return_value = m
+    lm = LocalMatcher("xfeat", device="cpu", probe=False)
+    q = _one_hot_features([0, 1, 2, 3])
+    db = _one_hot_features([3, 2, 1, 0], keypoints_normalized=True)
+    res = lm.match(q, db)
+
+    (f0, f1), _ = m.match.call_args
+    assert f0["image_size"] == (100, 80) and "kpts_normalized" not in f0
+    assert torch.equal(f1["kpts_normalized"], db.keypoints_normalized)
+    np.testing.assert_array_equal(res.idx_q, [0, 2])
+    np.testing.assert_array_equal(res.idx_db, [3, 1])
+    np.testing.assert_array_equal(res.ref_px, [[30.0, 30.0], [10.0, 10.0]])
+    assert res.idx_q.dtype == np.int64 and res.query_px.dtype == np.float32
 
 
 @patch("vismatch.get_matcher")
-def test_loma_match_without_payload_names_the_rebuild(mock_get):
-    # "loma" is in FEATURE_MATCH_MODELS, so the list guard passes; the split branch then
-    # refuses payload-less features with the rebuild hint (defensive — verify() pre-rebuilds).
+def test_init_skips_vismatch_ransac(mock_get):
+    # Callers verify geometry with pycolmap; vismatch's homography RANSAC is wasted work
     mock_get.return_value = _fake_vismatch_matcher()
-    lm = LocalMatcher("loma", device="cpu", probe=False)
-    lm._split_loma_forward = True  # real activation needs the real wrapper; forced here
-    bare = LocalFeatures(keypoints=torch.ones((2, 2)), descriptors=torch.ones((2, 8)))
-    with pytest.raises(ValueError, match="rebuild"):
-        lm.match(bare, bare)
+    lm = LocalMatcher("disk-lightglue", device="cpu", probe=False)
+    assert lm._matcher.skip_ransac is True
+
+
+@patch("vismatch.get_matcher")
+def test_match_empty_descriptors_returns_empty(mock_get):
+    mock_get.return_value = _fake_vismatch_matcher()
+    mock_get.return_value.supports_batches = True
+    lm = LocalMatcher("xfeat", device="cpu", probe=False)
+    empty = LocalFeatures(keypoints=torch.zeros((0, 2)), descriptors=torch.zeros((0, 8)))
+    m = lm.match(empty, _one_hot_features([0, 1]))
+    assert len(m) == 0 and m.idx_q is not None  # empty but indexable
 
 
 ########################################
-# GPU parity gates (real models) — these license FEATURE_MATCH_MODELS membership
+# GPU parity gates (real models) — vismatch match() vs the pair forward
 ########################################
 
 requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="real-model parity needs CUDA")
@@ -343,29 +329,21 @@ def _real_pair(seed=3):
 
 
 @requires_cuda
-def test_real_loma_split_extract_parity(strict_fp32):
-    """Split extract() byte-identical to the plain self-pair extract it replaces."""
+def test_real_loma_extract_keeps_normalized_payload(strict_fp32):
+    """loma extract() fills keypoints_normalized (the payload match() needs) and image_size."""
     lm = LocalMatcher("loma")
-    assert lm._split_loma_forward, "LoMaMatcher wrapper class no longer detected"
     a, _ = _real_pair()
-    fast = lm.extract(a)
-    lm._split_loma_forward = False
-    ref = lm.extract(a)
-    lm._split_loma_forward = True
-    np.testing.assert_array_equal(fast.keypoints.numpy(), ref.keypoints.numpy())
-    np.testing.assert_array_equal(fast.descriptors.numpy(), ref.descriptors.numpy())
-    assert fast.keypoints_normalized is not None and ref.keypoints_normalized is None
+    feats = lm.extract(a)
+    assert feats.keypoints_normalized is not None and len(feats.keypoints_normalized) == len(feats.keypoints)
+    assert feats.image_size == (320, 240)
 
 
 @requires_cuda
-def test_real_loma_split_match_parity_after_zarr_roundtrip(tmp_path, strict_fp32):
-    """match() on zarr-roundtripped split features == the plain pair forward, byte-identical."""
+def test_real_loma_match_parity_after_zarr_roundtrip(tmp_path, strict_fp32):
+    """match() on zarr-roundtripped features == the plain pair forward, byte-identical."""
     lm = LocalMatcher("loma")
     a, b = _real_pair(seed=4)
-    # reference: plain wrapper forward
-    lm._split_loma_forward = False
     ref = lm.match_images(a, b)
-    lm._split_loma_forward = True
     assert len(ref) > 0
 
     # extract -> save via CameraLocalizer -> load -> match()
@@ -381,7 +359,7 @@ def test_real_loma_split_match_parity_after_zarr_roundtrip(tmp_path, strict_fp32
     )
     loc.save_index(tmp_path / "ff.zarr", "loma")
     loaded, _, _ = read_localization_db(tmp_path / "ff.zarr", "loma")
-    assert all(f.keypoints_normalized is not None for f in loaded)
+    assert all(f.keypoints_normalized is not None and f.image_size == (320, 240) for f in loaded)
     m = lm.match(loaded[0], loaded[1])
     np.testing.assert_array_equal(m.query_px, ref.query_px)
     np.testing.assert_array_equal(m.ref_px, ref.ref_px)
@@ -390,8 +368,8 @@ def test_real_loma_split_match_parity_after_zarr_roundtrip(tmp_path, strict_fp32
 
 
 @requires_cuda
-def test_real_xfeat_general_path_matches_pairwise(strict_fp32):
-    """Parity gate for the FEATURE_MATCH_MODELS entry 'xfeat' — match() == match_images()."""
+def test_real_xfeat_match_matches_pairwise(strict_fp32):
+    """xfeat match() over extract() features == match_images() on the pair."""
     lm = LocalMatcher("xfeat")
     a, b = _real_pair(seed=5)
     m = lm.match(lm.extract(a), lm.extract(b))

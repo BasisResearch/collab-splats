@@ -170,6 +170,7 @@ def read_localization_db(
                 scores=f_scores,
                 scales=f_scales,
                 keypoints_normalized=f_norm,
+                image_size=(hw[1], hw[0]),
             )
         )
 

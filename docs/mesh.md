@@ -6,9 +6,10 @@ them, because only the caller knows which resolution grid it is on.
 
 | File | Responsibility |
 | --- | --- |
-| `tsdf.py` | `create_tsdf_mesh` — integrate views into a TSDF volume, write `mesh.ply` |
+| `tsdf.py` | `create_tsdf_mesh` — integrate views into a TSDF voxel-block grid (CUDA when available), write `mesh.ply` |
 | `clean.py` | `get_scene_scale`, `remove_floaters`, `make_convex_hull` (+ `trim_mesh_edges`, `bridge_mesh_edges`), `fill_holes`, `clean_repair_mesh`; `prepare_mesh` (+ `decimate_mesh`, `make_manifold`) |
 | `texture.py` | `unwrap_view_charts`, `project_images_to_texture`, `create_texture_mesh` |
+| `utils.py` | `to_meshlib` / `from_meshlib`, `face_edge_ids`, `adjacent_face_pairs`, `face_components`, `face_areas`, `validate_views` |
 
 ---
 
@@ -143,8 +144,12 @@ Masking applies to depth only, never to the splats stage's depth targets — tha
 ## Cleaning
 
 `clean_repair_mesh(mesh_path)` rewrites `mesh.ply` in place: drop floating components, then
-patch small holes with meshlib's `fillHoleNicely` (subdivided to the mesh's edge length and
-smoothed to the hole boundary's curvature, so a patch does not read as a flat fan). **Every threshold is
+patch small holes with meshlib: every patch is triangulated, then one `subdivideMesh` over all the
+patches (to the mesh's edge length) and one cotan `positionVertsSmoothly` of their new vertices, so a
+patch does not read as a flat fan. Batching matters: per-hole `fillHoleNicely` costs ~40 ms a call on a
+0.0025 m mesh, because each call scales with the whole mesh; on GH010229 the batched fill took the clean
+stage's fill from 159 s to 18 s at sub-millimeter p99 difference. Loops of at most `max_plain_edges` (`8`)
+edges take a plain flat lid: indistinguishable on a loop that small. **Every threshold is
 relative to the mesh's own extent**, never a world distance, so one default works on a metric
 scan and on a scale-free feedforward reconstruction alike. `get_scene_scale` is that extent: the 1st-to-99th-percentile diagonal of the vertex
 cloud, which ignores the stray far component that would otherwise set the scale.
@@ -155,8 +160,10 @@ cloud, which ignores the stray far component that would otherwise set the scale.
 - `max_hole_perimeter_ratio` (`0.014`) — holes whose perimeter is shorter than this × scene
   scale are filled; anything bigger is a real opening (a doorway, the missing back of the
   scene) and is left alone. On GH010229 (scene scale 181.4) that is a 2.5-unit perimeter
-- `subdivide_fill` (`True`) — subdivide and smooth each patch. `False` triangulates the hole's
-  boundary only: a flat lid, 8 s instead of 183 s on GH010229, barely visible on holes this small
+- `subdivide_fill` (`True`) — subdivide and smooth the patches. `False` triangulates the hole's
+  boundary only: a flat lid, barely visible on holes this small
+- `max_plain_edges` (`8`) — loops with at most this many edges get a flat lid even when
+  `subdivide_fill` is on; `0` subdivides every patch
 
 Whatever the bound, a component's outer rim is never filled: its longest loop, when that loop
 spans at least half the component's bounding box. A sheet's rim spans all of it; a hole in a
@@ -189,6 +196,11 @@ the ground out to a rounded convex hull, so the outline is smooth and the edge h
 Every length is in pixels of the top-down image, one pixel per median edge length (about one TSDF voxel). It assumes a
 ground-dominated height field: leave it off indoors and for single objects. A mesh without a
 dominant ground raises `ValueError` rather than inventing one.
+
+The hull stage is vectorized throughout and its output is bit-identical to the per-vertex loops it
+replaced. The rim median is one k-nearest query. The coverage mask is filled in 4 threads. The join
+counts only the mesh edges between rim vertices, and `make_manifold` splits all bowtie fans in one
+corner-graph pass. On GH010229 at 0.0025 m, `make_convex_hull` went from about 200 s to about 70 s.
 
 ---
 

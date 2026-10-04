@@ -12,6 +12,7 @@ Mesh cleanup at full density, then preparation for UV unwrapping.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -25,14 +26,21 @@ from scipy.sparse.linalg import splu
 from scipy.spatial import Delaunay, cKDTree
 
 from collab_splats.geometry.transforms import fit_dominant_plane
+from collab_splats.mesh.utils import (
+    face_areas,
+    face_components,
+    face_edge_ids,
+    from_meshlib,
+    to_meshlib,
+)
 from collab_splats.utils.image import fill_missing_pixels
 
 logger = logging.getLogger(__name__)
 
 
-########################
+########################################################################
 # Entry point
-########################
+########################################################################
 
 
 def clean_repair_mesh(
@@ -69,9 +77,9 @@ def clean_repair_mesh(
     return mesh_path
 
 
-########################
+########################################################################
 # Cleanup (full density)
-########################
+########################################################################
 
 
 def remove_floaters(
@@ -92,16 +100,14 @@ def remove_floaters(
     Returns:
         The same mesh.
     """
-    cluster_ids, cluster_sizes, comp_area = mesh.cluster_connected_triangles()
-    cluster_ids = np.asarray(cluster_ids)
-    cluster_sizes = np.asarray(cluster_sizes)
-    comp_area = np.asarray(comp_area)
+    # Edge-connected components with their face counts and areas
+    verts = np.asarray(mesh.vertices)
+    tris = np.asarray(mesh.triangles)
+    cluster_ids, cluster_sizes, comp_area = face_components(verts, tris)
 
     if len(cluster_sizes) == 0:
         return mesh
 
-    verts = np.asarray(mesh.vertices)
-    tris = np.asarray(mesh.triangles)
     n_comp = len(cluster_sizes)
 
     # Scale comes from the largest component alone so strays cannot inflate it
@@ -138,14 +144,15 @@ def fill_holes(
     max_hole_perimeter_ratio: float = 0.014,
     subdivide_fill: bool = True,
     max_edge_splits: int = 20_000,
+    max_plain_edges: int = 8,
 ) -> o3d.geometry.TriangleMesh:
     """
-    Fill interior boundary loops under a perimeter bound with meshlib's fillHoleNicely.
+    Fill interior boundary loops under a perimeter bound: small loops plain, the rest smooth patches.
 
     - outer rim: a component's longest loop spanning half its extent; never filled, whatever the bound
     - scene_scale: diagonal of the 1st-99th percentile bounding box (get_scene_scale)
-    - subdivide_fill: patch split to the mesh's mean edge length, then smoothed to the rim's curvature
-    - otherwise the hole's boundary is triangulated only: a flat lid with no new vertices
+    - patches: all triangulated, then one subdivide + cotan smooth; fillHoleNicely per hole scales with the mesh
+    - loops of at most max_plain_edges edges take meshlib's plain fillHole: a flat lid
     - vertex colors carry over; patch vertices take their nearest source vertex's color
     - a hole meshlib cannot fill stays open and is counted in the log
 
@@ -153,35 +160,29 @@ def fill_holes(
         mesh: input mesh; not modified.
         max_hole_perimeter_ratio: fill an interior hole iff its perimeter < this × scene_scale.
         subdivide_fill: subdivide and smooth each patch; off leaves a flat lid, far cheaper.
-        max_edge_splits: cap on the subdivisions one patch may take.
+        max_edge_splits: subdivision budget per patch; the batched subdivide gets this × patch count.
+        max_plain_edges: loops with at most this many edges get a plain flat lid; 0 = all subdivided.
 
     Returns:
         New mesh with those loops closed.
     """
     verts = np.asarray(mesh.vertices)
     gate = max_hole_perimeter_ratio * get_scene_scale(verts)
-    mmesh = _to_meshlib(mesh)
+    mmesh = to_meshlib(mesh)
 
     # Weld near-duplicate boundary vertices: a sliver edge between them crashes cotan smoothing natively
     mm.uniteCloseVertices(mmesh, 0.01 * mmesh.averageEdgeLength(), True)
 
-    # Patch settings: subdivide to the mesh's own edge length, cotan-smooth to the hole's boundary
-    settings = mm.FillHoleNicelySettings()
-    settings.triangulateOnly = not subdivide_fill
-    settings.smoothCurvature = True
-    settings.subdivideSettings.maxEdgeLen = mmesh.averageEdgeLength()
-    settings.subdivideSettings.maxEdgeSplits = max_edge_splits
-    settings.smoothSettings.edgeWeights = mm.EdgeWeights.Cotan
-
     # Component of each hole: the face across its representative edge
-    cluster_ids = np.asarray(mesh.cluster_connected_triangles()[0])
+    tris = np.asarray(mesh.triangles)
+    cluster_ids, cluster_sizes, _ = face_components(verts, tris)
     holes = mmesh.topology.findHoleRepresentiveEdges()
     perimeters = np.array([mmesh.holePerimeter(hole) for hole in holes])
     hole_comp = np.array([cluster_ids[mmesh.topology.right(hole).get()] for hole in holes], dtype=np.int64)
 
     # Per-component bounding boxes, the yardstick for what counts as an outer rim
-    tri_pts = verts[np.asarray(mesh.triangles)]
-    n_comp = int(cluster_ids.max()) + 1 if len(cluster_ids) else 0
+    tri_pts = verts[tris]
+    n_comp = len(cluster_sizes)
     comp_lo = np.full((n_comp, 3), np.inf)
     comp_hi = np.full((n_comp, 3), -np.inf)
     np.minimum.at(comp_lo, cluster_ids, tri_pts.min(axis=1))
@@ -200,30 +201,54 @@ def fill_holes(
         if loop_extent >= 0.5 * comp_extent:
             rims.add(i)
 
-    # Fill every interior loop under the gate; one degenerate hole must not cost the rest
-    n_filled, n_failed = 0, 0
+    # Split the interior loops under the gate into plain lids and nice patches
+    plain, nice = [], []
 
     for i, hole in enumerate(holes):
         if i in rims or perimeters[i] >= gate:
             continue
 
-        try:
-            mm.fillHoleNicely(mmesh, hole, settings)
-            n_filled += 1
-        except RuntimeError:
-            n_failed += 1
+        loop = mm.trackRightBoundaryLoop(mmesh.topology, hole)
+        (plain if len(loop) <= max_plain_edges else nice).append(hole)
+
+    # Triangulate every nice patch; one degenerate hole must not cost the rest
+    edge_len = mmesh.averageEdgeLength()
+    first_new_face = mmesh.topology.faceSize()
+    triangulate = mm.FillHoleNicelySettings().triangulateParams
+    n_failed = _fill_each(mmesh, nice, triangulate)
+
+    # One subdivide over all the new patches, then one cotan smooth of their new vertices to the rims
+    if subdivide_fill and nice:
+        patch = np.zeros(mmesh.topology.faceSize(), dtype=bool)
+        patch[first_new_face:] = True
+        new_verts = mm.VertBitSet()
+        subdivide = mm.SubdivideSettings()
+        subdivide.maxEdgeLen = edge_len
+        subdivide.maxEdgeSplits = max_edge_splits * len(nice)
+        subdivide.maxAngleChangeAfterFlip = np.pi / 6
+        subdivide.region = mn.faceBitSetFromBools(patch)
+        subdivide.newVerts = new_verts
+        mm.subdivideMesh(mmesh, subdivide)
+        mm.positionVertsSmoothly(mmesh, new_verts, mm.EdgeWeights.Cotan)
+
+    # Plain lids last, so the subdivide region holds only the nice patches
+    n_plain_failed = _fill_each(mmesh, plain, mm.FillHoleParams())
+    n_plain = len(plain) - n_plain_failed
+    n_failed += n_plain_failed
+    n_filled = len(plain) + len(nice) - n_failed
 
     # Back to Open3D; normals are recomputed over the patched surface
-    filled = _from_meshlib(mmesh, mesh)
+    filled = from_meshlib(mmesh, mesh)
 
     if mesh.has_vertex_normals():
         filled.compute_vertex_normals()
 
     logger.info(
-        "fill_holes: filled %d of %d holes (%d outer rims kept) under perimeter %.4f (%.4f × scene_scale, %d failed), "
-        "triangles %d -> %d",
+        "fill_holes: filled %d of %d holes (%d plain, %d outer rims kept) under perimeter %.4f "
+        "(%.4f × scene_scale, %d failed), triangles %d -> %d",
         n_filled,
         len(holes),
+        n_plain,
         len(rims),
         gate,
         max_hole_perimeter_ratio,
@@ -273,7 +298,7 @@ def trim_mesh_edges(
     outline = _keep_largest_region_fill_holes(cv2.morphologyEx(outline, cv2.MORPH_OPEN, _filled_circle(outline_open)))
     center_px = _ground_xy_to_pixel(xy[faces].mean(axis=1), lo, res)
     outside = outline[center_px[:, 1], center_px[:, 0]] == 0
-    mmesh = _to_meshlib(mesh)
+    mmesh = to_meshlib(mesh)
     loop = _outer_rim_loop(mmesh)
 
     if not outside.any() or not loop:
@@ -286,10 +311,7 @@ def trim_mesh_edges(
     outside_ids = np.flatnonzero(outside)
     pos = np.full(len(faces), -1)
     pos[outside_ids] = np.arange(len(outside_ids))
-    outside_mesh = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces[outside_ids])
-    )
-    region = np.asarray(outside_mesh.cluster_connected_triangles()[0])
+    region = face_components(verts, faces[outside_ids])[0]
 
     # Drop the regions that touch the outer rim
     seeds = np.unique(region[pos[rim_faces[outside[rim_faces]]]])
@@ -321,7 +343,7 @@ def bridge_mesh_edges(
         New mesh with the bridges added.
     """
     gap = radius * _median_edge(np.asarray(mesh.vertices), np.asarray(mesh.triangles))
-    mmesh = _to_meshlib(mesh)
+    mmesh = to_meshlib(mesh)
     topology = mmesh.topology
     points = mn.getNumpyVerts(mmesh)
 
@@ -357,12 +379,12 @@ def bridge_mesh_edges(
             refused.add(key)
 
     logger.info("bridge_mesh_edges: %d bridges", n_bridges)
-    return _from_meshlib(mmesh, mesh)
+    return from_meshlib(mmesh, mesh)
 
 
-########################
+########################################################################
 # Convex hull
-########################
+########################################################################
 
 
 def make_convex_hull(
@@ -502,7 +524,7 @@ def _connect_mesh_hull(
     prior = cv2.GaussianBlur(filled, (0, 0), 5)
 
     # Rim vertices: on open edges, bordering the gap
-    edge_ids, per_edge = np.unique(_face_edge_ids(faces, len(local), directed=False), return_counts=True)
+    edge_ids, per_edge = np.unique(face_edge_ids(faces, len(local), directed=False), return_counts=True)
     open_edges = edge_ids[per_edge == 1]
     rim = np.unique(np.concatenate([open_edges // len(local), open_edges % len(local)]))
     near_gap = cv2.dilate(gap.astype(np.uint8), _filled_circle(2)).astype(bool)
@@ -531,7 +553,7 @@ def _connect_mesh_hull(
     tris = tris[keep]
 
     # Build a smooth height + color system on the grid, pinned to the rim and pulled to the ground prior
-    tri_edges = np.unique(_face_edge_ids(tris, len(points), directed=False))
+    tri_edges = np.unique(face_edge_ids(tris, len(points), directed=False))
     ends = np.stack([tri_edges // len(points), tri_edges % len(points)], axis=1)
     src = np.concatenate([ends[:, 0], ends[:, 1]])
     dst = np.concatenate([ends[:, 1], ends[:, 0]])
@@ -564,24 +586,31 @@ def _connect_mesh_hull(
     patch = np.concatenate([rim, len(local) + np.arange(n_grid)])[tris]
     n_verts = len(local) + n_grid
 
+    # Patch faces meet the mesh only at rim vertices: keep the mesh edges joining two of them
+    on_rim = np.zeros(n_verts, dtype=bool)
+    on_rim[rim] = True
+    mesh_dir = face_edge_ids(faces, n_verts, directed=True).ravel()
+    mesh_dir = mesh_dir[on_rim[mesh_dir // n_verts] & on_rim[mesh_dir % n_verts]]
+    start, end = mesh_dir // n_verts, mesh_dir % n_verts
+    mesh_und = np.minimum(start, end) * n_verts + np.maximum(start, end)
+    mesh_ids = np.unique(mesh_dir)
+
     # Flip a face that repeats a mesh directed edge, if the flip repeats none
-    mesh_ids = np.unique(_face_edge_ids(faces, n_verts, directed=True))
-    repeats = np.isin(_face_edge_ids(patch, n_verts, directed=True), mesh_ids).any(axis=1)
+    repeats = np.isin(face_edge_ids(patch, n_verts, directed=True), mesh_ids).any(axis=1)
     flipped = patch[repeats][:, [0, 2, 1]]
-    ok = ~np.isin(_face_edge_ids(flipped, n_verts, directed=True), mesh_ids).any(axis=1)
+    ok = ~np.isin(face_edge_ids(flipped, n_verts, directed=True), mesh_ids).any(axis=1)
     patch[np.flatnonzero(repeats)[ok]] = flipped[ok]
 
     # Drop faces on an edge of >2 faces or a repeated direction; each pass shrinks the patch
     while True:
-        all_faces = np.concatenate([faces, patch])
-        _, edge_of, per_edge = np.unique(
-            _face_edge_ids(all_faces, n_verts, directed=False), return_inverse=True, return_counts=True
-        )
-        _, dir_of, per_dir = np.unique(
-            _face_edge_ids(all_faces, n_verts, directed=True), return_inverse=True, return_counts=True
-        )
-        bad = (per_edge[edge_of.reshape(-1, 3)[len(faces) :]] > 2).any(axis=1)
-        bad |= (per_dir[dir_of.reshape(-1, 3)[len(faces) :]] > 1).any(axis=1)
+        patch_und = face_edge_ids(patch, n_verts, directed=False).ravel()
+        patch_dir = face_edge_ids(patch, n_verts, directed=True).ravel()
+        all_und = np.concatenate([mesh_und, patch_und])
+        all_dir = np.concatenate([mesh_dir, patch_dir])
+        _, edge_of, per_edge = np.unique(all_und, return_inverse=True, return_counts=True)
+        _, dir_of, per_dir = np.unique(all_dir, return_inverse=True, return_counts=True)
+        bad = (per_edge[edge_of[len(mesh_und) :].reshape(-1, 3)] > 2).any(axis=1)
+        bad |= (per_dir[dir_of[len(mesh_dir) :].reshape(-1, 3)] > 1).any(axis=1)
 
         if not bad.any():
             break
@@ -591,9 +620,9 @@ def _connect_mesh_hull(
     return grid_local, grid_colors, patch
 
 
-########################
+########################################################################
 # Prepare for UV unwrap
-########################
+########################################################################
 
 
 def decimate_mesh(mesh: o3d.geometry.TriangleMesh, *, max_error: float) -> tuple[o3d.geometry.TriangleMesh, float]:
@@ -608,14 +637,14 @@ def decimate_mesh(mesh: o3d.geometry.TriangleMesh, *, max_error: float) -> tuple
         The decimated mesh and the result error in world units.
     """
     # Collapse edges with meshlib QEM under an absolute error bound, keeping vertex positions
-    mmesh = _to_meshlib(mesh)
+    mmesh = to_meshlib(mesh)
     settings = mm.DecimateSettings()
     settings.maxError = float(max_error)
     settings.optimizeVertexPos = False
     settings.packMesh = True
     settings.subdivideParts = 64
     result = mm.decimateMesh(mmesh, settings)
-    return _from_meshlib(mmesh, mesh), float(result.errorIntroduced)
+    return from_meshlib(mmesh, mesh), float(result.errorIntroduced)
 
 
 def make_manifold(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
@@ -624,6 +653,8 @@ def make_manifold(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
 
     - duplicate and fold-over faces pass Open3D's manifold check
     - Open3D's remove_duplicated_triangles misses a duplicate with reversed winding
+    - zero-area faces (distinct ids at one position) are dropped; remove_degenerate_triangles misses them
+    - bowtie vertices: one copy per extra fan, all fans found in one corner-graph pass
 
     Args:
         mesh: input mesh.
@@ -639,37 +670,36 @@ def make_manifold(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
 
     # Duplicate faces in any winding: keep the first of each sorted vertex triple
     n_in = len(f)
-    _, first = np.unique(np.sort(f, axis=1), axis=0, return_index=True)
-    f = f[np.sort(first)]
+    tri = np.sort(f, axis=1)
+    order = np.lexsort((tri[:, 2], tri[:, 1], tri[:, 0]))
+    tri = tri[order]
+    first = np.ones(len(f), dtype=bool)
+    first[1:] = (tri[1:] != tri[:-1]).any(axis=1)
+    keep = np.zeros(len(f), dtype=bool)
+    keep[order[first]] = True
+    f = f[keep]
     n_dup = n_in - len(f)
 
     # Drop fold-over faces: keep the first face using each directed edge, drop later ones
-    _, first_edge = np.unique(_face_edge_ids(f, len(v), directed=True).T.reshape(-1), return_index=True)
+    _, first_edge = np.unique(face_edge_ids(f, len(v), directed=True).T.reshape(-1), return_index=True)
     later = np.ones(3 * len(f), dtype=bool)
     later[first_edge] = False
     fold = later.reshape(3, -1).any(axis=0)
     f = f[~fold]
 
-    # Non-manifold edges: Open3D drops faces until each edge has at most two
-    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
-    mesh.remove_non_manifold_edges()
-    f = np.asarray(mesh.triangles).copy()
+    # Drop zero-area faces: two corners at one position under distinct ids
+    f = f[face_areas(v, f) > 0]
 
-    # Split bowtie vertices: each extra fan of faces around a vertex gets its own copy
-    new_ids = []
+    # Non-manifold edges: Open3D drops faces until each edge has at most two; skipped when none exist
+    _, per_edge = np.unique(face_edge_ids(f, len(v), directed=False), return_counts=True)
 
-    for vid in np.asarray(mesh.get_non_manifold_vertices(), dtype=np.int64):
-        tris = np.flatnonzero((f == vid).any(axis=1))
-        others = f[tris][f[tris] != vid].reshape(-1, 2)
-        share = (others[:, None, :, None] == others[None, :, None, :]).any(axis=(2, 3))
-        _, fan = connected_components(share, directed=False)
+    if (per_edge > 2).any():
+        mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+        mesh.remove_non_manifold_edges()
+        f = np.asarray(mesh.triangles)
 
-        for k in range(1, fan.max() + 1):
-            fan_faces = f[tris[fan == k]]
-            f[tris[fan == k]] = np.where(fan_faces == vid, len(v) + len(new_ids), fan_faces)
-            new_ids.append(vid)
-
-    # Rebuild with the copies appended, then drop vertices no face references
+    # Split bowtie vertices, then rebuild with the copies appended and drop vertices no face references
+    f, new_ids = _split_bowties(f, len(v))
     out = o3d.geometry.TriangleMesh(
         o3d.utility.Vector3dVector(np.vstack([v, v[new_ids]])), o3d.utility.Vector3iVector(f)
     )
@@ -685,6 +715,63 @@ def make_manifold(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
         len(new_ids),
     )
     return out
+
+
+def _split_bowties(faces: np.ndarray, n_verts: int) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Vertex copy for every fan around a vertex after its first; returns new faces and copied ids.
+
+    - fan: the vertex's corners joined across shared edges; one corner graph covers every vertex at once
+    - fans ordered by their lowest face; copies numbered from n_verts, by vertex then fan
+    """
+    f = faces.astype(np.int64)
+    n_faces = len(f)
+
+    # Each edge's two corners, ordered by vertex id, so shared edges pair corners of the same vertex
+    nxt = np.roll(f, -1, axis=1)
+    k = np.arange(3)
+    base = 3 * np.arange(n_faces)[:, None]
+    lo_corner = base + np.where(f < nxt, k, (k + 1) % 3)
+    hi_corner = base + np.where(f < nxt, (k + 1) % 3, k)
+
+    # Link the matching corners across every shared edge; components are fans
+    key = face_edge_ids(f, n_verts, directed=False).ravel()
+    order = np.argsort(key, kind="stable")
+    key = key[order]
+    lo_corner = lo_corner.ravel()[order]
+    hi_corner = hi_corner.ravel()[order]
+    same = key[1:] == key[:-1]
+    src = np.concatenate([lo_corner[:-1][same], hi_corner[:-1][same]])
+    dst = np.concatenate([lo_corner[1:][same], hi_corner[1:][same]])
+    graph = sp.coo_matrix((np.ones(len(src), np.int8), (src, dst)), shape=(3 * n_faces, 3 * n_faces))
+    fan = connected_components(graph, directed=False)[1]
+
+    # Group corners by (vertex, fan); each group's lowest face orders the fans of its vertex
+    vert = f.ravel()
+    corner_order = np.lexsort((fan, vert))
+    group_vert = vert[corner_order]
+    group_fan = fan[corner_order]
+    new_group = np.ones(len(vert), dtype=bool)
+    new_group[1:] = (group_vert[1:] != group_vert[:-1]) | (group_fan[1:] != group_fan[:-1])
+    starts = np.flatnonzero(new_group)
+    first_face = np.minimum.reduceat(corner_order // 3, starts)
+    group_vert = group_vert[starts]
+
+    # Every fan but a vertex's first gets a copy, numbered by vertex then fan
+    by_fan = np.lexsort((first_face, group_vert))
+    sorted_vert = group_vert[by_fan]
+    rank = np.arange(len(by_fan)) - np.searchsorted(sorted_vert, sorted_vert, side="left")
+    split = by_fan[rank > 0]
+    copy_of_group = np.full(len(starts), -1)
+    copy_of_group[split] = n_verts + np.arange(len(split))
+
+    # Point each corner of a split fan at its copy
+    group_of_corner = np.cumsum(new_group) - 1
+    target = copy_of_group[group_of_corner]
+    moved = target >= 0
+    flat = f.ravel()
+    flat[corner_order[moved]] = target[moved]
+    return flat.reshape(-1, 3), group_vert[split]
 
 
 def prepare_mesh(
@@ -731,9 +818,9 @@ def prepare_mesh(
     return manifold
 
 
-########################
+########################################################################
 # Helpers
-########################
+########################################################################
 
 
 def _find_ground_plane(
@@ -783,33 +870,20 @@ def get_scene_scale(vertices: np.ndarray) -> float:
     return float(np.linalg.norm(hi - lo))
 
 
-def _to_meshlib(mesh: o3d.geometry.TriangleMesh) -> mm.Mesh:
+def _fill_each(mmesh: mm.Mesh, holes: list, params: mm.FillHoleParams) -> int:
     """
-    meshlib copy of an Open3D mesh's vertices and faces.
+    meshlib fillHole on each hole; returns how many raised.
     """
-    return mn.meshFromFacesVerts(
-        np.ascontiguousarray(np.asarray(mesh.triangles), dtype=np.int32),
-        np.ascontiguousarray(np.asarray(mesh.vertices), dtype=np.float64),
-    )
+    # A hole meshlib cannot fill raises; count it and go on
+    n_failed = 0
 
+    for hole in holes:
+        try:
+            mm.fillHole(mmesh, hole, params)
+        except RuntimeError:
+            n_failed += 1
 
-def _from_meshlib(mmesh: mm.Mesh, source: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
-    """
-    Open3D mesh from a meshlib one; vertex colors from source's nearest vertex.
-
-    - packs mmesh first: getNumpyFaces writes deleted face slots as zero rows
-    """
-    mmesh.pack()
-    out = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(mn.getNumpyVerts(mmesh).astype(np.float64)),
-        o3d.utility.Vector3iVector(mn.getNumpyFaces(mmesh.topology).astype(np.int64)),
-    )
-
-    if source.has_vertex_colors():
-        _, nearest = cKDTree(np.asarray(source.vertices)).query(np.asarray(out.vertices), k=1, workers=-1)
-        out.vertex_colors = o3d.utility.Vector3dVector(np.asarray(source.vertex_colors)[nearest])
-
-    return out
+    return n_failed
 
 
 def _outer_rim_loop(mmesh: mm.Mesh) -> list:
@@ -832,43 +906,44 @@ def _median_edge(verts: np.ndarray, faces: np.ndarray) -> float:
     return float(np.median(np.linalg.norm(verts[faces] - verts[np.roll(faces, 1, axis=1)], axis=2)))
 
 
-def _face_edge_ids(faces: np.ndarray, n_verts: int, *, directed: bool) -> np.ndarray:
-    """
-    An id for each of a face's 3 edges, (F, 3); two faces sharing an edge get the same id.
-
-    - id of edge a->b: a * n_verts + b, so id // n_verts and id % n_verts give its ends back
-    - directed on: a->b and b->a get different ids (winding matters)
-    - directed off: a->b and b->a share one id, the smaller end first
-    """
-    start = faces.astype(np.int64)
-    end = start[:, [1, 2, 0]]
-
-    if not directed:
-        start, end = np.minimum(start, end), np.maximum(start, end)
-
-    return start * n_verts + end
-
-
 def _drop_small_pieces(verts: np.ndarray, faces: np.ndarray, min_faces: int) -> np.ndarray:
     """
     Faces of the edge-connected pieces with at least min_faces faces.
     """
-    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces))
-    cluster_ids, cluster_sizes, _ = mesh.cluster_connected_triangles()
-    return faces[np.asarray(cluster_sizes)[np.asarray(cluster_ids)] >= min_faces]
+    cluster_ids, cluster_sizes, _ = face_components(verts, faces)
+    return faces[cluster_sizes[cluster_ids] >= min_faces]
 
 
 def _local_median(xy: np.ndarray, values: np.ndarray, radius: float) -> np.ndarray:
     """
     Median of values over the points within radius of each point, in the ground plane.
+
+    - one k-nearest query, k = the largest neighborhood; missing slots pad with +inf and sort last
+    - memory: (N, k) floats; k stays small since the rim is a thin band
     """
-    neighbours = cKDTree(xy).query_ball_point(xy, radius, workers=-1)
-    return np.array([np.median(values[ix]) for ix in neighbours])
+    if len(xy) == 0:
+        return np.zeros(0)
+
+    # Neighborhood size per point, then one k-nearest query sized to the largest
+    tree = cKDTree(xy)
+    count = tree.query_ball_point(xy, radius, workers=-1, return_length=True)
+    bound = np.nextafter(radius, np.inf)
+    _, neighbors = tree.query(xy, k=int(count.max()), distance_upper_bound=bound, workers=-1)
+
+    # Neighbor values, +inf in the slots past each point's count, sorted per row
+    found = neighbors < len(xy)
+    vals = np.full(neighbors.shape, np.inf)
+    vals[found] = values[neighbors[found]]
+    vals.sort(axis=1)
+
+    # Middle element, or mean of the two middle ones for an even count
+    row = np.arange(len(xy))
+    return (vals[row, (count - 1) // 2] + vals[row, count // 2]) / 2
 
 
-########################
+########################################################################
 # Top-down image of the mesh
-########################
+########################################################################
 
 
 def _ground_image_bounds(xy: np.ndarray, res: float, *, margin: int) -> tuple[np.ndarray, tuple[int, int]]:
@@ -891,13 +966,29 @@ def _ground_xy_to_pixel(xy: np.ndarray, lo: np.ndarray, res: float) -> np.ndarra
 
 
 def _mesh_coverage_mask(
-    xy: np.ndarray, faces: np.ndarray, lo: np.ndarray, res: float, shape: tuple[int, int]
+    xy: np.ndarray, faces: np.ndarray, lo: np.ndarray, res: float, shape: tuple[int, int], n_threads: int = 4
 ) -> np.ndarray:
     """
     Top-down image of the mesh as a uint8 mask: 255 where a face covers that pixel, else 0.
     """
+    # Face corners on the top-down pixel grid
+    corners = _ground_xy_to_pixel(xy[faces], lo, res)
+
+    # fillPoly runs on one core: fill face chunks in threads, one image each, then OR them
+    chunks = np.array_split(corners, n_threads)
+
+    with ThreadPoolExecutor(n_threads) as pool:
+        images = list(pool.map(_fill_faces, chunks, [shape] * n_threads))
+
+    return np.bitwise_or.reduce(images)
+
+
+def _fill_faces(corners: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    """
+    uint8 mask with each (3, 2) pixel-corner face filled to 255.
+    """
     img = np.zeros(shape, np.uint8)
-    cv2.fillPoly(img, list(_ground_xy_to_pixel(xy[faces], lo, res)), 255)
+    cv2.fillPoly(img, corners, 255)
     return img
 
 

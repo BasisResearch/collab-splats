@@ -4,6 +4,7 @@ Meshing from depth + RGB arrays.
 - tsdf: fuse depth + RGB views into a mesh
 - clean: drop floaters, fill small holes; prepare_mesh for mesh.ply
 - texture: unwrap, project the views into a UV atlas
+- utils: meshlib conversion, face connectivity, the view-array contract
 """
 
 from __future__ import annotations

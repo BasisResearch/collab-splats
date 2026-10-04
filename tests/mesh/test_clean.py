@@ -6,6 +6,8 @@ import pytest
 from scipy.spatial import cKDTree
 
 from collab_splats.mesh.clean import (
+    _local_median,
+    _mesh_coverage_mask,
     bridge_mesh_edges,
     clean_repair_mesh,
     decimate_mesh,
@@ -92,6 +94,17 @@ def test_fill_holes_without_subdivide_fill_adds_a_flat_lid(tmp_path):
     assert len(flat.vertices) == len(mesh.vertices)  # the rim is triangulated, never split
     assert len(flat.triangles) == len(mesh.triangles) + 12  # a 14-edge loop takes 14 - 2 triangles
     assert len(fine.triangles) > len(flat.triangles)
+
+
+def test_fill_holes_gives_small_loops_a_plain_lid_even_when_subdividing(tmp_path):
+    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+    plain = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=True, max_plain_edges=14)
+    nicely = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=True, max_plain_edges=13)
+
+    assert _n_boundary_edges(plain) == 0
+    assert len(plain.vertices) == len(mesh.vertices)  # the 14-edge loop is at the bound: no subdivision
+    assert len(plain.triangles) == len(mesh.triangles) + 12
+    assert len(nicely.vertices) > len(mesh.vertices)  # one edge over the bound: subdivided as before
 
 
 def test_fill_holes_keeps_outer_rim_open_at_any_bound():
@@ -392,6 +405,73 @@ def test_make_manifold_removes_degenerate_before_fold_over_check():
     m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
     fo = np.asarray(make_manifold(m).triangles)
     assert len(fo) == 2 and [0, 1, 2] in fo.tolist()
+
+
+def test_make_manifold_drops_zero_area_face_with_distinct_ids():
+    # Vertex 4 sits on vertex 1: [1, 4, 3] has three distinct ids but no area
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]], float)
+    f = np.array([[0, 1, 2], [1, 3, 2], [1, 4, 3]])
+    m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+    out = make_manifold(m)
+
+    assert np.asarray(out.triangles).tolist() == [[0, 1, 2], [1, 3, 2]]
+    assert len(out.vertices) == 4
+
+
+def test_make_manifold_splits_every_extra_fan_in_vertex_then_face_order():
+    # Vertex 0: two fans of two faces; vertex 5: a two-face fan plus a lone face; [9, 2, 1] has zero area
+    v = np.array(
+        [
+            [0, 0, 0],
+            [1, 0, 0],
+            [1, 1, 0],
+            [0, 1, 0],
+            [-1, 0, 0],
+            [-1, -1, 0],
+            [0, -1, 0],
+            [-2, -1, 0],
+            [-1, -2, 0],
+            [1, 0, 0],
+        ],
+        float,
+    )
+    f = np.array([[0, 1, 2], [0, 2, 3], [0, 4, 5], [0, 5, 6], [5, 7, 8], [9, 2, 1]])
+    m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+    m.vertex_colors = o3d.utility.Vector3dVector(np.linspace(0, 1, 30).reshape(10, 3))
+    out = make_manifold(m)
+
+    # Expected faces are the pre-vectorization output: copy 9 is vertex 0, copy 10 is vertex 5
+    fo = np.asarray(out.triangles)
+    assert fo.tolist() == [[0, 1, 2], [0, 2, 3], [9, 4, 5], [9, 5, 6], [10, 7, 8]]
+    assert len(out.get_non_manifold_vertices()) == 0
+
+    vo, co = np.asarray(out.vertices), np.asarray(out.vertex_colors)
+    np.testing.assert_array_equal(vo[[9, 10]], v[[0, 5]])
+    np.testing.assert_array_equal(co[[9, 10]], np.asarray(m.vertex_colors)[[0, 5]])
+
+
+def test_local_median_matches_per_point_median():
+    rng = np.random.default_rng(0)
+    xy = rng.random((300, 2))
+    values = rng.random(300)
+    tree = cKDTree(xy)
+    expected = np.array([np.median(values[ix]) for ix in tree.query_ball_point(xy, 0.1)])
+    counts = tree.query_ball_point(xy, 0.1, return_length=True)
+
+    # Both parities present, so both middle-element branches are checked
+    assert (counts % 2 == 0).any() and (counts % 2 == 1).any()
+    np.testing.assert_array_equal(_local_median(xy, values, 0.1), expected)
+    assert len(_local_median(np.zeros((0, 2)), np.zeros(0), 0.1)) == 0
+
+
+def test_mesh_coverage_mask_fills_each_face():
+    xy = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [3.0, 3.0], [4.0, 3.0], [3.0, 4.0]])
+    faces = np.array([[0, 1, 2], [3, 4, 5]])
+    mask = _mesh_coverage_mask(xy, faces, np.zeros(2), 0.1, (50, 50))
+
+    assert mask[2, 2] == 255 and mask[32, 32] == 255
+    assert mask[20, 20] == 0 and mask[9, 9] == 0
+    assert set(np.unique(mask)) == {0, 255}
 
 
 def test_make_manifold_after_decimate_yields_manifold_mesh():

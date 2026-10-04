@@ -14,3 +14,7 @@ TSDF meshing from depth + RGB arrays, plus cleaning, texturing and vertex-featur
 .. automodule:: collab_splats.mesh.texture
    :members:
    :show-inheritance:
+
+.. automodule:: collab_splats.mesh.utils
+   :members:
+   :show-inheritance:

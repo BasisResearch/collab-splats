@@ -1,7 +1,7 @@
 """
 Depth + RGB views fused into a mesh.
 
-- create_tsdf_mesh: the entry point, Open3D ScalableTSDFVolume then extract
+- create_tsdf_mesh: the entry point, Open3D VoxelBlockGrid (CUDA when available) then extract
 - writes out_dir/mesh.ply, the one name every reader probes
 """
 
@@ -12,16 +12,18 @@ from pathlib import Path
 
 import numpy as np
 import open3d as o3d
+import open3d.core as o3c
 from tqdm.auto import tqdm
 
-from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
+from collab_splats.geometry.transforms import invert_poses
+from collab_splats.mesh.utils import validate_views
 
 logger = logging.getLogger(__name__)
 
 
-########################
+########################################################################
 # Entry point
-########################
+########################################################################
 
 
 def create_tsdf_mesh(
@@ -36,7 +38,10 @@ def create_tsdf_mesh(
     sdf_trunc: float | None = None,
 ) -> Path:
     """
-    Integrate depth + RGB views into a ScalableTSDFVolume and write the extracted mesh.
+    Integrate depth + RGB views into a VoxelBlockGrid and write the extracted mesh.
+
+    - runs on CUDA:0 when Open3D has CUDA, else on the CPU; same grid, same mesh
+    - the block hashmap starts at 10k blocks and grows on its own
 
     Args:
         depths: (N, H, W) depth in world units, 0 = no observation.
@@ -54,7 +59,7 @@ def create_tsdf_mesh(
     Raises:
         ValueError: sdf_trunc is narrower than voxel_size.
     """
-    rgbs, c2w, K, depths = _validate_views(rgbs, c2w, K, depths)
+    rgbs, c2w, K, depths = validate_views(rgbs, c2w, K, depths)
 
     if sdf_trunc is None:
         sdf_trunc = 4 * voxel_size
@@ -63,28 +68,47 @@ def create_tsdf_mesh(
     if sdf_trunc < voxel_size:
         raise ValueError(f"create_tsdf_mesh: sdf_trunc {sdf_trunc} is narrower than voxel_size {voxel_size}")
 
-    # Integrate every view; Open3D wants world-to-camera extrinsics
-    n, h, w = depths.shape
-    volume = o3d.pipelines.integration.ScalableTSDFVolume(
-        voxel_length=float(voxel_size),
-        sdf_trunc=float(sdf_trunc),
-        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
+    # CUDA:0 when Open3D was built with it, else the CPU
+    on_cuda = o3c.cuda.is_available()
+    device = o3c.Device("CUDA:0" if on_cuda else "CPU:0")
+
+    # Sparse voxel grid of 16³ blocks: TSDF, weight and float color per voxel
+    grid = o3d.t.geometry.VoxelBlockGrid(
+        attr_names=("tsdf", "weight", "color"),
+        attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+        attr_channels=(1, 1, 3),
+        voxel_size=float(voxel_size),
+        block_resolution=16,
+        block_count=10_000,
+        device=device,
     )
+
+    # Convert once: Open3D wants contiguous float32 depth, float64 world-to-camera poses, float scalars
+    n = len(depths)
+    trunc_mult = float(sdf_trunc / voxel_size)
+    depth_trunc = float(depth_trunc)
+    depths = np.ascontiguousarray(depths, dtype=np.float32)
+    rgbs = np.ascontiguousarray(rgbs)
+    K = K.astype(np.float64)
     w2c = invert_poses(c2w)
+    w2c = w2c.astype(np.float64)
 
-    for i in tqdm(range(n), desc=f"TSDF integration (voxel {voxel_size:g})"):
-        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            o3d.geometry.Image(np.ascontiguousarray(rgbs[i])),
-            o3d.geometry.Image(np.ascontiguousarray(depths[i], dtype=np.float32)),
-            depth_scale=1.0,
-            depth_trunc=float(depth_trunc),
-            convert_rgb_to_intensity=False,
-        )
-        fx, fy, cx, cy = extract_intrinsics(K[i])
-        intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy)
-        volume.integrate(rgbd, intrinsic, np.asarray(w2c[i], dtype=np.float64))
+    # Integrate every view; depth is already in world units (scale 1.0), color goes in as float in [0, 1]
+    for i in tqdm(range(n), desc=f"TSDF integration (voxel {voxel_size:g}, {device})"):
+        depth = o3c.Tensor(depths[i], device=device)
+        depth = o3d.t.geometry.Image(depth)
+        color = o3c.Tensor(rgbs[i], device=device)
+        color = color.to(o3c.float32) / 255.0
+        color = o3d.t.geometry.Image(color)
+        intrinsic = o3c.Tensor(K[i])
+        extrinsic = o3c.Tensor(w2c[i])
+        blocks = grid.compute_unique_block_coordinates(depth, intrinsic, extrinsic, 1.0, depth_trunc, trunc_mult)
+        grid.integrate(blocks, depth, color, intrinsic, intrinsic, extrinsic, 1.0, depth_trunc, trunc_mult)
 
-    mesh = volume.extract_triangle_mesh()
+    # Extract; averaged colors can overshoot 1.0 by float error, so clip before the PLY writer clamps noisily
+    tmesh = grid.extract_triangle_mesh(weight_threshold=0.0)
+    tmesh.vertex.colors = tmesh.vertex.colors.clip(0.0, 1.0)
+    mesh = tmesh.to_legacy()
 
     # Write out_dir/mesh.ply
     out_dir = Path(out_dir)
@@ -100,47 +124,3 @@ def create_tsdf_mesh(
         len(mesh.vertices),
     )
     return mesh_path
-
-
-########################
-# Helpers
-########################
-
-
-def _validate_views(
-    rgbs: np.ndarray, c2w: np.ndarray, K: np.ndarray, depths: np.ndarray | None = None
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
-    """
-    Coerce the view arrays and reject dtype, count and resolution mismatches.
-
-    - shared by create_tsdf_mesh and create_texture_mesh
-    - depths, when given, must match the rgbs resolution
-    """
-    rgbs = np.asarray(rgbs)
-    c2w = np.asarray(c2w)
-    K = np.asarray(K)
-
-    # Input contract: uint8 color, one view count, K at the image resolution
-    if rgbs.dtype != np.uint8:
-        raise ValueError(f"rgbs must be uint8 in [0, 255], got {rgbs.dtype}")
-
-    n, h, w = rgbs.shape[:3]
-
-    if rgbs.shape != (n, h, w, 3) or c2w.shape != (n, 4, 4) or K.shape != (n, 3, 3):
-        raise ValueError(f"views disagree: rgbs {rgbs.shape}, c2w {c2w.shape}, K {K.shape}")
-
-    if depths is not None:
-        depths = np.asarray(depths)
-
-        if depths.shape != (n, h, w):
-            raise ValueError(f"views disagree: depths {depths.shape}, rgbs {rgbs.shape}")
-
-    cx, cy = K[:, 0, 2], K[:, 1, 2]
-
-    if cx.min() < 0 or cx.max() > w or cy.min() < 0 or cy.max() > h:
-        raise ValueError(
-            f"Principal point outside the {w}x{h} image grid (cx range [{cx.min():.1f}, {cx.max():.1f}], "
-            f"cy range [{cy.min():.1f}, {cy.max():.1f}]) — intrinsics and images are at different resolutions."
-        )
-
-    return rgbs, c2w, K, depths

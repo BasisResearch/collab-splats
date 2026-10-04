@@ -25,6 +25,19 @@ def test_create_tsdf_mesh_writes_mesh_ply(tmp_path):
     assert np.allclose(np.asarray(mesh.vertex_colors), 128 / 255, atol=0.05)
 
 
+def test_create_tsdf_mesh_falls_back_to_cpu_without_cuda(tmp_path, monkeypatch):
+    depths, rgbs, c2w, K = _views()
+    gpu = create_tsdf_mesh(depths, rgbs, c2w, K, tmp_path / "gpu", voxel_size=0.02, depth_trunc=2.0)
+
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    cpu = create_tsdf_mesh(depths, rgbs, c2w, K, tmp_path / "cpu", voxel_size=0.02, depth_trunc=2.0)
+    gpu = o3d.io.read_triangle_mesh(str(gpu))
+    cpu = o3d.io.read_triangle_mesh(str(cpu))
+
+    assert len(cpu.triangles) > 0 and cpu.has_vertex_colors()
+    assert np.allclose(cpu.get_center(), gpu.get_center(), atol=0.02)  # same plane, within a voxel
+
+
 def test_create_tsdf_mesh_rejects_float_rgb(tmp_path):
     depths, rgbs, c2w, K = _views()
 
@@ -51,21 +64,24 @@ def test_create_tsdf_mesh_sdf_trunc_defaults_to_four_voxels(tmp_path, monkeypatc
     seen = []
 
     class _Recorder:
-        def __init__(self, voxel_length, sdf_trunc, color_type):
-            seen.append((voxel_length, sdf_trunc, color_type))
+        def __init__(self, *, voxel_size, **kwargs):
+            seen.append(voxel_size)
 
-        def integrate(self, *args, **kwargs):
-            pass
+        def compute_unique_block_coordinates(self, *args):
+            seen.append(args[-1])
 
-        def extract_triangle_mesh(self):
-            return o3d.geometry.TriangleMesh.create_sphere(0.1)
+        def integrate(self, *args):
+            seen.append(args[-1])
 
-    monkeypatch.setattr(o3d.pipelines.integration, "ScalableTSDFVolume", _Recorder)
+        def extract_triangle_mesh(self, weight_threshold):
+            sphere = o3d.geometry.TriangleMesh.create_sphere(0.1)
+            sphere.paint_uniform_color((0.5, 0.5, 0.5))
+            return o3d.t.geometry.TriangleMesh.from_legacy(sphere)
+
+    monkeypatch.setattr(o3d.t.geometry, "VoxelBlockGrid", _Recorder)
     depths, rgbs, c2w, K = _views(n=1)
     create_tsdf_mesh(depths, rgbs, c2w, K, tmp_path, voxel_size=0.01, depth_trunc=2.0)
-    assert len(seen) == 1
-    assert seen[0][0] == 0.01 and seen[0][1] == pytest.approx(0.04)
-    assert seen[0][2] == o3d.pipelines.integration.TSDFVolumeColorType.RGB8
+    assert seen == [0.01, pytest.approx(4.0), pytest.approx(4.0)]
 
 
 def test_create_tsdf_mesh_refuses_a_band_narrower_than_a_voxel(tmp_path):

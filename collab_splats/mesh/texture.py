@@ -29,17 +29,16 @@ from collab_splats.geometry.transforms import (
     invert_poses,
     rescale_intrinsics,
 )
-from collab_splats.mesh.clean import _face_edge_ids
-from collab_splats.mesh.tsdf import _validate_views
+from collab_splats.mesh.utils import adjacent_face_pairs, face_areas, validate_views
 from collab_splats.utils.image import fill_missing_pixels
 from collab_splats.utils.io import to_uint8_hwc, write_textured_obj
 
 logger = logging.getLogger(__name__)
 
 
-########################
+########################################################################
 # Entry point
-########################
+########################################################################
 
 
 def create_texture_mesh(
@@ -76,7 +75,7 @@ def create_texture_mesh(
     Returns:
         Path to out_dir/mesh.obj.
     """
-    rgbs, c2w, K, _ = _validate_views(rgbs, c2w, K)
+    rgbs, c2w, K, _ = validate_views(rgbs, c2w, K)
 
     # Exposure gains solved on the occluder, divided out of a copy of the views
     if color_correct:
@@ -101,9 +100,9 @@ def create_texture_mesh(
     return out
 
 
-########################
+########################################################################
 # Color gains
-########################
+########################################################################
 
 
 def _solve_view_gains(
@@ -214,7 +213,7 @@ def _gain_samples(
     # Area-weighted face centroids
     rng = np.random.default_rng(seed)
     fv = verts[faces]
-    area = 0.5 * np.linalg.norm(np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0]), axis=1)
+    area = face_areas(verts, faces)
     pick = rng.choice(len(faces), n_points, p=area / area.sum())
     points = torch.from_numpy(fv[pick].mean(1).astype(np.float32)).cuda()
 
@@ -282,9 +281,9 @@ def _solve_log_gains(
     return log_gain, log_albedo
 
 
-########################
+########################################################################
 # UV unwrap: view charts
-########################
+########################################################################
 
 
 def unwrap_view_charts(
@@ -338,7 +337,7 @@ def unwrap_view_charts(
     scores = _face_view_scores(verts, faces, w2c, K, image_hw, frac=frac, small_px=small_px, rel_tol=rel_tol)
     unseen = (scores.max(1).values == 0).cpu().numpy()
     labels = scores.float().argmax(1)
-    pairs = _adjacent_face_pairs(faces, len(verts))
+    pairs = adjacent_face_pairs(faces, len(verts))
     labels = _smooth_labels(labels, scores, pairs, alpha=alpha, rounds=rounds).cpu().numpy()
     del scores
     torch.cuda.empty_cache()
@@ -423,18 +422,6 @@ def _face_view_scores(
     return scores
 
 
-def _adjacent_face_pairs(faces: np.ndarray, n_verts: int) -> np.ndarray:
-    """
-    Edge-adjacent face pairs (P, 2), one per consecutive pair of faces sharing an edge.
-    """
-    edge = _face_edge_ids(faces, n_verts, directed=False).T.ravel()
-    face = np.tile(np.arange(len(faces)), 3)
-    order = np.argsort(edge, kind="stable")
-    edge, face = edge[order], face[order]
-    same = edge[1:] == edge[:-1]
-    return np.stack([face[:-1][same], face[1:][same]], 1)
-
-
 def _smooth_labels(
     labels: torch.Tensor, scores: torch.Tensor, pairs: np.ndarray, *, alpha: float, rounds: int
 ) -> torch.Tensor:
@@ -498,9 +485,9 @@ def _plane_uv(fv: np.ndarray, normal: np.ndarray) -> np.ndarray:
     return np.stack([np.einsum("fcj,fj->fc", fv, e1), np.einsum("fcj,fj->fc", fv, e2)], -1)
 
 
-########################
+########################################################################
 # UV unwrap: packing
-########################
+########################################################################
 
 
 def _pack_charts(
@@ -615,9 +602,9 @@ def _find_broken_faces(
     return flipped | lost
 
 
-########################
+########################################################################
 # Projection
-########################
+########################################################################
 
 
 def project_images_to_texture(
@@ -799,9 +786,9 @@ def _dilate_chart_gutters(albedo: np.ndarray, uvs: np.ndarray, boxes: np.ndarray
     return img.round().clamp(0, 255).byte().cpu().numpy()
 
 
-########################
+########################################################################
 # Helpers
-########################
+########################################################################
 
 
 def _gl_projection(K: np.ndarray, width: int, height: int, near: float = 0.01, far: float = 1000.0) -> np.ndarray:

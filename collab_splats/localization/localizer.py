@@ -369,7 +369,7 @@ class CameraLocalizer:
             ).astype(np.float32)
             rec_group.create_array("scales", data=all_scales, chunks=(max(all_scales.shape[0], 1),), compressors=LZ4)
 
-        # keypoints_normalized: loma-split pre-transform coords the learned matcher consumes.
+        # keypoints_normalized: loma model-grid coords its matcher consumes.
         # Written only when EVERY frame carries them — a zero-filled normalized table would be
         # wrong data, unlike scores/scales (absent, never zeros).
         has_norm = bool(self._frame_features) and all(

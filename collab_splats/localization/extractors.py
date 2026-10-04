@@ -217,9 +217,8 @@ class LocalMatcher:
     def match_images(self, query_image: np.ndarray, ref_image: np.ndarray) -> MatchResult:
         """Pairwise match two HxWx3 uint8 RGB images. Pre-RANSAC matches.
 
-        vismatch's own RANSAC fits a homography — a planar-scene model that is the
-        wrong geometric filter for 3D localization. We take matched_kpts (pre-RANSAC)
-        and let PnP LO-RANSAC / epipolar verification do the filtering.
+        vismatch's homography RANSAC is skipped in __init__ (wrong model for 3D scenes);
+        PnP LO-RANSAC / epipolar verification do the filtering.
         """
         q_hw, r_hw = query_image.shape[:2], ref_image.shape[:2]
         with torch.inference_mode():

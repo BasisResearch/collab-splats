@@ -273,6 +273,7 @@ def test_match_passes_features_and_maps_indices(mock_get):
 
     (f0, f1), _ = m.match.call_args
     assert f0["image_size"] == (100, 80) and "kpts_normalized" not in f0
+    assert f0["all_kpts0"] is q.keypoints and f0["all_desc0"] is q.descriptors
     assert torch.equal(f1["kpts_normalized"], db.keypoints_normalized)
     np.testing.assert_array_equal(res.idx_q, [0, 2])
     np.testing.assert_array_equal(res.idx_db, [3, 1])

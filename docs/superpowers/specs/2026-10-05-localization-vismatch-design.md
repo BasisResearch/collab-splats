@@ -99,7 +99,7 @@ def build_tracks(
 - Track assembly stays in pycolmap (verification, correspondence graph); the Python loop only reads `seed_frames × max_num_keypoints` star queries (prototype chain 7–23 s on gh1k). No union-find, no full transitive closure.
 - Not carried from the prototype:
   - `"tri"` chain (`pycolmap.triangulate_points`): COLMAP's angle gates drop nearly every track on small window baselines; never the measured arm
-  - `"graph"` chain (full closure over all frames): not measured as a BA arm
+  - `"graph"` chain (full transitive closure): measured and failed on chess — mismatches glued tracks into ~110 oversized components, nothing survived BA's filter after conflict removal
   - `pts_mode="tri"`, stats dict / prints (→ `logger.info` with per-phase timings), `MT_FULL_DIR` full-res extract (see open question)
 - BA hook (after BA lands, ~5 lines in `bundle_adjustment.py`):
   - `BundleAdjustmentConfig.track_source: Literal["vggsfm", "xfeat", "loma"] = "vggsfm"`

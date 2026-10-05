@@ -12,7 +12,7 @@
   - index build calls `extract(rgb)` one frame at a time
 - No matcher-based tracks exist; BA only has VGGSfM `predict_tracks`.
 - Avoidable processing time: DINO-SALAD re-embeds all N frames on every load, serial PNG decode, O(N²) zarr appends.
-- `from_feedforward` predates the `PointcloudResult` contract: duck-typed, reads private `_zarr_path`, maps full-res pixels to the model grid by size only (ignores the crop in `original_coords`).
+- `from_feedforward` predates the `PointcloudResult` contract: duck-typed, reads private `_zarr_path`, requires `load_images=True` only for the pairwise path; its unused descriptor path maps pixels by size only (ignores the crop in `original_coords`).
 - `localization` is not under the docstring contract.
 
 ## Goals
@@ -26,9 +26,10 @@
 ## Priorities and coordination
 
 - BA branches land first; vismatch speedups second; this cleanup third.
-- Whatever BA lands in `localization/` is final; this branch adapts:
-  - `rgbd-ba` uncommitted `LocalMatcher.match_batch`: deleted here (vismatch spec: equal to per-pair `match()` on GPU features)
-  - `rgbd-ba` DinoSalad tensor-path ImageNet normalize: kept / moved here if not landed
+- Whatever BA lands in `localization/` is final; this branch adapts. State checked 2026-10-05:
+  - `feat/rgbd-ba` @ `4ccf1438` forks at `ffee192c`, 39 commits behind `clean/final`; its `extractors.py` still has single-image `extract` and `load_localization_db` (clean/final: `extract(list)`, `read_localization_db`)
+  - `4ccf1438` `LocalMatcher.match_batch` (xfeat padded cdist): no caller in `collab_splats/`; deleted here (vismatch spec: equal to per-pair `match()` on GPU features)
+  - `5606870e` DinoSalad tensor-path ImageNet normalize: kept; §5a depends on it
 - `clean/dashboard-release`: public `CameraLocalizer` API keeps its signatures except the `from_feedforward` → `from_pointcloud` rename (one call site in `dashboard/pipeline.py`).
 - VGGSfM tracks stay in `geometry/bundle_adjustment.py`.
 
@@ -48,13 +49,15 @@
   - typed; `zarr_path` explicit, no `result._zarr_path` read
   - no `load_images=True` requirement; stale "load_world_points" message dropped
   - stale cache: `image_paths` compared exactly → rebuild (no stem / jpg-png legacy branches)
-- Index build: `extract(list)` in chunks of 32 via `utils.torch_utils.batch_iterator`; features moved to the matcher device once, at build and at load.
+- Index build: `extract(list)` in chunks of 32 via `utils.torch_utils.batch_iterator`; `extract` returns CPU tensors, so the localizer moves features to the matcher device once, at build and at load.
+- Callers keep passing a lazy image iterable: a cache hit reads zero frames (both callers rely on it today).
+- `reconstructor._build_localization_db` drops `load_images=True` (only the pairwise path needed `ff.images`); it keeps deleting the group first (always-rebuild).
 - `localize(query_image, query_intrinsics=None, refs=None)`:
   - `refs=None`: DINO-SALAD ranks reconstruction frames, top-K matched
   - `refs=[i, ...]`: exactly those frames (align to a chosen scene image)
   - per ref: cached features + `match()`; ref px → world_points grid (§4); `sample_world_points`; unchanged `_solve_pnp`
 - Delete: `_localize_pairwise`, `_ref_images`, the descriptor-path loop's size-only rescale, image retention in `_build_pairwise_refs` (shrinks to global descriptors).
-- `update_index` and the localized group persist `keypoints_normalized` (loma breaks after an append today).
+- `update_index` and the localized group persist `keypoints_normalized`; the localized group also stores per-frame `image_size` (queries vary in size). Today `load_index` rebuilds localized frames with neither, so loma cannot match them.
 - Unchanged public API: `add_localized_frame`, `clear_localized_frames`, `save_index`, `load_index`, `update_index`, `image_paths`, `frame_sources`, `extrinsics`, `LocalizationResult` (incl. `ranked_ref_frames`), `read_localization_db`, `sample_world_points`, `seed_intrinsics`.
 - `add_localized_frame` duplicate guard: exact id, not stem.
 
@@ -63,36 +66,37 @@
 ```python
 def build_tracks(
     matcher: LocalMatcher,
-    images: np.ndarray,        # (N, H, W, 3) uint8, BA's grid
-    world_points: np.ndarray,  # (N, Hw, Ww, 3)
-    intrinsics: np.ndarray,    # (N, 3, 3) K of `images`
-    world_intrinsics: np.ndarray,  # (N, 3, 3) K of the world_points grid
+    images: np.ndarray,        # (N, 3, H, W) RGB [0, 1], model grid (BA's `images`)
+    world_points: np.ndarray,  # (N, H, W, 3), same grid
+    intrinsics: np.ndarray,    # (N, 3, 3) model-grid K
     *,
     window: int = 25,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:  # tracks (N, P, 2), vis (N, P), pts3d (P, 3)
 ```
 
-- Same return triple as `extract_tracks_vggsfm`.
+- Inputs are what `BundleAdjustment.refine` already holds (rgbd-ba: `images`, `world_points`, model-res `intrinsics`); one grid, so no pixel map.
+- Frames to matcher input via `utils.io.to_uint8_hwc(images, channels_first=True)`.
+- Same return triple as `extract_tracks_vggsfm`, float32; `vis` is 1.0 on observed, 0.0 elsewhere.
 - Steps:
   1. batched `extract`, features resident on device
   2. sequential-window pairs `(a, b)`, `b - a ≤ window`; `match()` per pair
   3. temp pycolmap `Database`: one PINHOLE camera per frame from `intrinsics`, keypoints, matches
   4. `pycolmap.verify_matches` (two-view geometry)
   5. `DatabaseCache` → `CorrespondenceGraph`; tracks from transitive correspondences
-  6. `pts3d`: `sample_world_points` at each track's first observation, px mapped via §4; tracks without a valid sample dropped
-- Tracks live in the pixel grid of `images`.
+  6. `pts3d`: `sample_world_points` at each track's first observation; tracks without a valid sample dropped
 - No in-repo union-find (standing rule: tracks via pycolmap).
 - BA hook (after BA lands, ~5 lines in `bundle_adjustment.py`):
   - `BundleAdjustmentConfig.track_source: Literal["vggsfm", "xfeat", "loma"] = "vggsfm"`
-  - `extract_tracks` dispatches to `build_tracks` when not `vggsfm`
+  - `extract_tracks(images, confidence, world_points, image_paths)` gains `intrinsics` (refine passes its own); dispatches to `build_tracks` when not `vggsfm`; `confidence` unused there
   - `_compute_tracks_cache_key` includes `track_source`
 
 ### 4. Pixel grid map — full-res → model grid
 
-- Suspected bug: today's map scales by image size only; `original_coords` carries a crop box, so cropped preprocs sample the wrong world point.
-- Fix: `px_model = K_model · K_full⁻¹ · [px, 1]` from `result.model_intrinsics` and `result.intrinsics` (both on the contract; encode crop and scale). Pixels outside the model grid are dropped.
-- One private helper, used by `localize` and `build_tracks`.
-- Plan task 1 writes the failing test (cropped `original_coords` fixture) before the fix; if it passes on today's code, the bug claim is withdrawn and only the reuse change stays.
+- Today: the live pairwise path matches against model-res `ff.images`, so ref px already sit on the world_points grid — correct. The descriptor path's size-only rescale ignores the crop, but no `LocalMatcher` reaches it.
+- Needed now: refs become full-res store frames (§2), so ref px must map through the crop.
+- Map: exact inverse of `PointcloudResult.__post_init__` — `px_model = (px - tl) * (W, H) / crop_wh` from `original_coords` (pixel-corner, as `rescale_intrinsics` / `shift_intrinsics`). Pixels outside the model grid are dropped.
+- One private helper in `localizer.py`; `build_tracks` does not need it (single grid).
+- Test: cropped `original_coords` fixture; mapped px sample the world point of the matching model pixel.
 
 ### 5. Processing-time levers (profile first)
 
@@ -101,7 +105,7 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 | # | Today | Fix |
 |---|---|---|
 | a | DINO-SALAD re-embeds all N frames on every load, PIL per image | persist `global_desc (N, D)` in `local_features/<m>/reconstruction`; embed once, batched tensor path; missing array → cache rebuild (no legacy fallback) |
-| b | serial `read_image` genexpr in `reconstructor._build_localization_db` and `dashboard/pipeline._build_localizer` | `preproc.frames.read_frames(dir, idxs, workers=8)` per 32-frame chunk |
+| b | serial `read_image` genexpr in `reconstructor._build_localization_db` and `dashboard/pipeline._build_localizer` | lazy generator of `preproc.frames.read_frames(dir, idxs, workers=8)` per 32-frame chunk; still zero reads on a hit |
 | c | `update_index` resizes every single-chunk array once per frame (O(N²) IO) | concatenate new frames, one resize + write per array |
 | d | single-chunk LZ4 feature arrays: one-threaded decode on load | row chunks; only if (a)'s profile shows read time |
 | e | CPU features re-uploaded per `match()` | one upload per frame (§2) |
@@ -110,6 +114,8 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 ### 6. Reuse and contract pass
 
 - `reconstructor._localization_db_exists` and `from_pointcloud`'s cache check → one localization helper.
+- Frame rows: `reconstructor.store_rows` stays the one zarr-row → store-file lookup.
+- `PointcloudResult.intrinsics` is typed `| None` but `__post_init__` always fills it; no None branch.
 - `tqdm` inline import → top-level.
 - Contract style on touched files: docstrings (summary line, bullets, `Args:`/`Returns:`), every parameter and return annotated, single-line block comments, absolute imports.
 - Add `"localization"` to `PACKAGES` in `tests/test_docstring_contract.py`.
@@ -119,7 +125,7 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 
 - Flat functions, `tests/localization/` mirrors the package.
 - Delete: probe, `_recover_indices`, `match_images`, pairwise-path, descriptor-path stub tests.
-- Add: `test_tracks.py` (synthetic scene: known tracks recovered, pts3d from world_points); cropped pixel-map test; `refs=[i]` test; `update_index` keeps `keypoints_normalized`; `global_desc` round trip; non-batch model refused.
+- Add: `test_tracks.py` (synthetic scene: known tracks recovered, pts3d from world_points); cropped pixel-map test; `refs=[i]` test; `update_index` and localized frames keep `keypoints_normalized` + `image_size`; `global_desc` round trip; non-batch model refused; cache hit reads zero frames.
 - Update callers' tests: `tests/reconstructor`, `tests/dashboard` for `from_pointcloud`.
 
 ## Gates

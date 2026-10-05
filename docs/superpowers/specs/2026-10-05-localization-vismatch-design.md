@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-05
 **Status:** design agreed in brainstorming 2026-10-05; plan to follow
-**Branch:** `clean/localization`, worktree `.worktrees/localization`, created from `clean/final` **after** the BA branches (`rgbd-ba` / `ba-speed`) land
+**Branch:** `clean/localization`, worktree `.worktrees/localization`, created from `clean/final` **after** `feat/rgbd-ba-cf` lands
 **Builds on:** [2026-10-03-vismatch-feature-matching-design.md](2026-10-03-vismatch-feature-matching-design.md) (pin `BasisResearch/vismatch@aa81830d`)
 
 ## Problem
@@ -26,10 +26,12 @@
 ## Priorities and coordination
 
 - BA branches land first; vismatch speedups second; this cleanup third.
-- Whatever BA lands in `localization/` is final; this branch adapts. State checked 2026-10-05:
-  - `feat/rgbd-ba` @ `4ccf1438` forks at `ffee192c`, 39 commits behind `clean/final`; its `extractors.py` still has single-image `extract` and `load_localization_db` (clean/final: `extract(list)`, `read_localization_db`)
-  - `4ccf1438` `LocalMatcher.match_batch` (xfeat padded cdist): no caller in `collab_splats/`; deleted here (vismatch spec: equal to per-pair `match()` on GPU features)
-  - `5606870e` DinoSalad tensor-path ImageNet normalize: kept; §5a depends on it
+- BA lands as `feat/rgbd-ba-cf` (@ `f196ecf4`, 58 commits on top of `clean/final` `c0bed552`, 0 behind); `clean/localization` branches from `clean/final` after it lands. State checked 2026-10-05:
+  - `extractors.py` / `localizer.py` signatures identical to `clean/final`; no `match_batch` (the older `feat/rgbd-ba` `4ccf1438` copy is not carried, and stays out)
+  - `retrieval.py`: `73877a40` tensor-path ImageNet normalize + `8e69804f` contract docstring on `DinoSaladExtractor.forward`; §5a depends on the normalize
+  - BA: `extract_tracks(images, confidence, world_points, image_paths)` unchanged; `refine(..., image_paths=None, depth=None)` holds model-grid `images` (N, 3, H, W), `world_points`, model-res `intrinsics`; config gains `refine_focal`, `dtype`, `use_photometric`, `use_depth`, `depth_sigma` and a `__post_init__` check
+  - `PointcloudResult` fields unchanged; `_unproject_frames` moves to `geometry.projection.unproject_frames`
+  - reconstructor localization functions (`_localization_db_exists`, `_build_localization_db`, `store_rows`) unchanged
 - `clean/dashboard-release`: public `CameraLocalizer` API keeps its signatures except the `from_feedforward` → `from_pointcloud` rename (one call site in `dashboard/pipeline.py`).
 - VGGSfM tracks stay in `geometry/bundle_adjustment.py`.
 
@@ -38,7 +40,7 @@
 ### 1. `extractors.py` — xfeat + loma only
 
 - `LocalMatcher.__init__` raises `ValueError` when vismatch `supports_batches` is False.
-- Delete: `match_images`, `_probe_index_stability`, `_recover_indices`, `has_stable_indices`, `probe=`, both `_VISMATCH_*_BLOCKLIST`s, `_to_numpy` (→ `utils.torch_utils.to_numpy`), `match_batch` if landed.
+- Delete: `match_images`, `_probe_index_stability`, `_recover_indices`, `has_stable_indices`, `probe=`, both `_VISMATCH_*_BLOCKLIST`s, `_to_numpy` (→ `utils.torch_utils.to_numpy`).
 - `MatchResult.idx_q` / `idx_db` always set (`match()` returns native indices).
 - New keyword `max_num_keypoints: int | None = None`, forwarded to the vismatch matcher.
 - `import vismatch` moves to module top (pinned dep).
@@ -74,7 +76,7 @@ def build_tracks(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:  # tracks (N, P, 2), vis (N, P), pts3d (P, 3)
 ```
 
-- Inputs are what `BundleAdjustment.refine` already holds (rgbd-ba: `images`, `world_points`, model-res `intrinsics`); one grid, so no pixel map.
+- Inputs are what `BundleAdjustment.refine` already holds (`feat/rgbd-ba-cf`: `images`, `world_points`, model-res `intrinsics`); one grid, so no pixel map.
 - Frames to matcher input via `utils.io.to_uint8_hwc(images, channels_first=True)`.
 - Same return triple as `extract_tracks_vggsfm`, float32; `vis` is 1.0 on observed, 0.0 elsewhere.
 - Steps:

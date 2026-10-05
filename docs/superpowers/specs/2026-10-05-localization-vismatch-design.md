@@ -71,8 +71,9 @@ Promotes the prototype that produced the measured xfeat BA runs (gh1kq60, gstar2
 ```python
 def build_tracks(
     matcher: LocalMatcher,
-    images: np.ndarray,        # (N, 3, H, W) RGB [0, 1], model grid (BA's `images`)
-    world_points: np.ndarray,  # (N, H, W, 3), same grid
+    images: np.ndarray,        # (N, 3, H, W) RGB [0, 1], model grid (BA's `images`): retrieval only
+    frame_paths: list[Path],   # full-res store frames, one per model frame (BA's `image_paths`)
+    world_points: np.ndarray,  # (N, H, W, 3), model grid
     extrinsics: np.ndarray,    # (N, 4, 4) w2c
     intrinsics: np.ndarray,    # (N, 3, 3) model-grid K
     *,
@@ -89,30 +90,31 @@ def build_tracks(
 - Inputs are what `BundleAdjustment.refine` already holds (`feat/rgbd-ba-cf`: `images`, `world_points`, `extrinsics`, model-res `intrinsics`).
 - Same return triple as `extract_tracks_vggsfm`, float32; `vis` 1.0 on observed, 0.0 elsewhere (prototype layout).
 - Steps, prototype order; each step is an existing package / vismatch / pycolmap call:
-  1. `utils.io.to_uint8_hwc(images, channels_first=True)` → `LocalMatcher.extract` per `batch_iterator` chunk (prototype: one frame at a time, 142–285 s on gh1k; this is the gate's extract lever)
-  2. pairs: sequential `b - a ≤ window`, plus DINO-SALAD retrieval — `localization.retrieval.DinoSaladExtractor` on `images` in chunks, cosine top-`retrieval_k` per frame outside `|a - b| ≤ retrieval_nms`, deduped against the sequential set
-  3. `LocalMatcher.match` per pair (native `idx_q` / `idx_db`)
-  4. depth-consistency filter, symmetric: keypoints of `a` → `world_points[a]` at the nearest pixel → `geometry.projection.project` into `b` → px error vs the matched keypoint; same `b → a`; keep `max < depth_tol`. Replaces the prototype's `_transfer_err` (its own unproject math); `world_points` is already the unprojected depth
-  5. temp-dir pycolmap `Database`: `write_camera` (PINHOLE from `intrinsics`, `use_camera_id=True`) / `write_image` / `write_keypoints` / `write_matches`; pairs txt; `pycolmap.verify_matches(db, pairs_txt)`
-  6. star chaining: `pycolmap.DatabaseCache.create(db, DatabaseCacheOptions(min_num_matches=min_matches)).correspondence_graph`; `seed_frames` evenly spaced seeds (`np.linspace`), seeds absent from the graph skipped; per seed keypoint `extract_transitive_correspondences(seed, idx, 1)` → the seed plus its direct verified matches (a VGGSfM-style query); a frame holding two keypoints of one track is dropped from that track; ≥ 2 observations kept
-  7. `pts3d`: `world_points` at the first observation's nearest pixel (prototype `"wp"`, VGGSfM semantics)
+  1. full-res extract, as the prototype's `MT_FULL_DIR` arm: per `batch_iterator` chunk of `frame_paths`, `preproc.frames.read_frames(dir, idxs)` (idxs via `frame_idx_from_path`; same 8-thread decode as the prototype, but chunked so the ~6 GB gh1k full-res stack is never resident) → `LocalMatcher.extract(list)` with `max_num_keypoints=2048`. Prototype extracted one frame at a time (142–285 s on gh1k); batching is the gate's extract lever
+  2. keypoints → model grid, the prototype's map verbatim: `(kp + 0.5) * (W / w, H / h) - 0.5` (pixel centers, size only); `ValueError` when a frame's aspect ratio differs from the model grid's by more than one model pixel (a cropped preprocess; out of scope, never silently mis-mapped). Tracks, depth filter and pts3d all live on the model grid from here
+  3. pairs: sequential `b - a ≤ window`, plus DINO-SALAD retrieval — `localization.retrieval.DinoSaladExtractor` on `images` in chunks, cosine top-`retrieval_k` per frame outside `|a - b| ≤ retrieval_nms`, deduped against the sequential set
+  4. `LocalMatcher.match` per pair (native `idx_q` / `idx_db`)
+  5. depth-consistency filter, symmetric: keypoints of `a` → `world_points[a]` at the nearest pixel → `geometry.projection.project` into `b` → px error vs the matched keypoint; same `b → a`; keep `max < depth_tol`. Replaces the prototype's `_transfer_err` (its own unproject math); `world_points` is already the unprojected depth
+  6. temp-dir pycolmap `Database`: `write_camera` (PINHOLE from `intrinsics`, `use_camera_id=True`) / `write_image` / `write_keypoints` / `write_matches`; pairs txt; `pycolmap.verify_matches(db, pairs_txt)`
+  7. star chaining: `pycolmap.DatabaseCache.create(db, DatabaseCacheOptions(min_num_matches=min_matches)).correspondence_graph`; `seed_frames` evenly spaced seeds (`np.linspace`), seeds absent from the graph skipped; per seed keypoint `extract_transitive_correspondences(seed, idx, 1)` → the seed plus its direct verified matches (a VGGSfM-style query); a frame holding two keypoints of one track is dropped from that track; ≥ 2 observations kept
+  8. `pts3d`: `world_points` at the first observation's nearest pixel (prototype `"wp"`, VGGSfM semantics)
 - Track assembly stays in pycolmap (verification, correspondence graph); the Python loop only reads `seed_frames × max_num_keypoints` star queries (prototype chain 7–23 s on gh1k). No union-find, no full transitive closure.
 - Not carried from the prototype:
   - `"tri"` chain (`pycolmap.triangulate_points`): COLMAP's angle gates drop nearly every track on small window baselines; never the measured arm
   - `"graph"` chain (full transitive closure): measured and failed on chess — mismatches glued tracks into ~110 oversized components, nothing survived BA's filter after conflict removal
-  - `pts_mode="tri"`, stats dict / prints (→ `logger.info` with per-phase timings), `MT_FULL_DIR` full-res extract (see open question)
+  - `pts_mode="tri"`, stats dict / prints (→ `logger.info` with per-phase timings), the model-grid-only extract path (full-res always, as every measured run)
 - BA hook (after BA lands, ~5 lines in `bundle_adjustment.py`):
   - `BundleAdjustmentConfig.track_source: Literal["vggsfm", "xfeat", "loma"] = "vggsfm"`
-  - `extract_tracks(images, confidence, world_points, image_paths)` gains `extrinsics`, `intrinsics` (refine passes its own); dispatches to `build_tracks` when not `vggsfm`; `confidence` unused there
+  - `extract_tracks(images, confidence, world_points, image_paths)` gains `extrinsics`, `intrinsics` (refine passes its own); dispatches to `build_tracks` when not `vggsfm`, passing `image_paths` as `frame_paths` (`ValueError` if None for a matcher source); `confidence` unused there
   - `_compute_tracks_cache_key` includes `track_source`
-- Open question (user): `MT_FULL_DIR` — gh1kq60 extracted on full-res 1080×1920 frames (2048 kp) and mapped keypoints to the model grid by size only. In scope (via the §4 crop-aware map and the frame store), or model grid only for now?
+- Decided 2026-10-05: full-res frames, exactly as the scratch runs (`MT_FULL_DIR`, 1080×1920, 2048 kp, size-only map).
 
 ### 4. Pixel grid map — full-res → model grid
 
 - Today: the live pairwise path matches against model-res `ff.images`, so ref px already sit on the world_points grid — correct. The descriptor path's size-only rescale ignores the crop, but no `LocalMatcher` reaches it.
 - Needed now: refs become full-res store frames (§2), so ref px must map through the crop.
 - Map: exact inverse of `PointcloudResult.__post_init__` — `px_model = (px - tl) * (W, H) / crop_wh` from `original_coords` (pixel-corner, as `rescale_intrinsics` / `shift_intrinsics`). Pixels outside the model grid are dropped.
-- One private helper in `localizer.py`; `build_tracks` needs it only if the full-res question is answered yes.
+- One private helper in `localizer.py`; `build_tracks` keeps the prototype's size-only map (§3 step 2) and refuses cropped frames.
 - Test: cropped `original_coords` fixture; mapped px sample the world point of the matching model pixel.
 
 ### 5. Processing-time levers (profile first)
@@ -143,7 +145,7 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 
 - Flat functions, `tests/localization/` mirrors the package.
 - Delete: probe, `_recover_indices`, `match_images`, pairwise-path, descriptor-path stub tests.
-- Add: `test_tracks.py` (synthetic posed scene: known star tracks recovered, depth filter drops a planted outlier, pts3d from world_points); parity test vs the copied prototype (`MT_CHAIN=star`) on a small fixture: same pairs, same track count; cropped pixel-map test; `refs=[i]` test; `update_index` and localized frames keep `keypoints_normalized` + `image_size`; `global_desc` round trip; non-batch model refused; cache hit reads zero frames.
+- Add: `test_tracks.py` (synthetic posed scene: known star tracks recovered, depth filter drops a planted outlier, pts3d from world_points); parity test vs the copied prototype (`MT_CHAIN=star`) on a small fixture: same pairs, same track count; aspect-mismatch frames refused; cropped pixel-map test; `refs=[i]` test; `update_index` and localized frames keep `keypoints_normalized` + `image_size`; `global_desc` round trip; non-batch model refused; cache hit reads zero frames.
 - Update callers' tests: `tests/reconstructor`, `tests/dashboard` for `from_pointcloud`.
 
 ## Gates

@@ -42,7 +42,7 @@
 - `LocalMatcher.__init__` raises `ValueError` when vismatch `supports_batches` is False.
 - Delete: `match_images`, `_probe_index_stability`, `_recover_indices`, `has_stable_indices`, `probe=`, both `_VISMATCH_*_BLOCKLIST`s, `_to_numpy` (→ `utils.torch_utils.to_numpy`).
 - `MatchResult.idx_q` / `idx_db` always set (`match()` returns native indices).
-- New keyword `max_num_keypoints: int | None = None`, forwarded to the vismatch matcher.
+- New keyword `max_num_keypoints: int = 2048` (vismatch `get_matcher`'s own default), forwarded unchanged.
 - `import vismatch` moves to module top (pinned dep).
 
 ### 2. `localizer.py` — one match path
@@ -51,7 +51,8 @@
   - typed; `zarr_path` explicit, no `result._zarr_path` read
   - no `load_images=True` requirement; stale "load_world_points" message dropped
   - stale cache: `image_paths` compared exactly → rebuild (no stem / jpg-png legacy branches)
-- Index build: `extract(list)` in chunks of 32 via `utils.torch_utils.batch_iterator`; `extract` returns CPU tensors, so the localizer moves features to the matcher device once, at build and at load.
+- Index build: `extract(list)` via `utils.torch_utils.batch_iterator`, chunk size a keyword default (`batch_size: int = 32`) on `from_pointcloud`.
+- Device: vismatch `match()` already calls `torch.as_tensor(v, device=self.device)` on its inputs; the localizer moves cached features to the matcher device once (build and load) so that call becomes a no-op. No other device code.
 - Callers keep passing a lazy image iterable: a cache hit reads zero frames (both callers rely on it today).
 - `reconstructor._build_localization_db` drops `load_images=True` (only the pairwise path needed `ff.images`); it keeps deleting the group first (always-rebuild).
 - `localize(query_image, query_intrinsics=None, refs=None)`:
@@ -70,26 +71,29 @@ def build_tracks(
     matcher: LocalMatcher,
     images: np.ndarray,        # (N, 3, H, W) RGB [0, 1], model grid (BA's `images`)
     world_points: np.ndarray,  # (N, H, W, 3), same grid
+    extrinsics: np.ndarray,    # (N, 4, 4) w2c
     intrinsics: np.ndarray,    # (N, 3, 3) model-grid K
     *,
     window: int = 25,
+    batch_size: int = 32,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:  # tracks (N, P, 2), vis (N, P), pts3d (P, 3)
 ```
 
-- Inputs are what `BundleAdjustment.refine` already holds (`feat/rgbd-ba-cf`: `images`, `world_points`, model-res `intrinsics`); one grid, so no pixel map.
-- Frames to matcher input via `utils.io.to_uint8_hwc(images, channels_first=True)`.
+- Inputs are what `BundleAdjustment.refine` already holds (`feat/rgbd-ba-cf`: `images`, `world_points`, `extrinsics`, model-res `intrinsics`); one grid, so no pixel map.
 - Same return triple as `extract_tracks_vggsfm`, float32; `vis` is 1.0 on observed, 0.0 elsewhere.
-- Steps:
-  1. batched `extract`, features resident on device
-  2. sequential-window pairs `(a, b)`, `b - a ≤ window`; `match()` per pair
-  3. temp pycolmap `Database`: one PINHOLE camera per frame from `intrinsics`, keypoints, matches
-  4. `pycolmap.verify_matches` (two-view geometry)
-  5. `DatabaseCache` → `CorrespondenceGraph`; tracks from transitive correspondences
-  6. `pts3d`: `sample_world_points` at each track's first observation; tracks without a valid sample dropped
-- No in-repo union-find (standing rule: tracks via pycolmap).
+- Steps, each an existing package / vismatch / pycolmap call:
+  1. `utils.io.to_uint8_hwc(images, channels_first=True)` → `LocalMatcher.extract` per `batch_iterator` chunk
+  2. sequential-window pairs `(a, b)`, `b - a ≤ window`; `LocalMatcher.match` per pair (native `idx_q` / `idx_db`)
+  3. temp-dir pycolmap `Database`: `write_camera` / `write_image` / `write_keypoints` / `write_matches`; pairs txt (one `name_a name_b` line per pair)
+  4. `pycolmap.verify_matches(db, pairs_txt)` (two-view geometry)
+  5. posed `Reconstruction` from `utils.colmap.posed_reconstruction` (below); `pycolmap.triangulate_points(recon, db, image_dir, out_dir, clear_points=True)` triangulates from known poses and owns track assembly; it mutates its input, so it gets the freshly built recon only
+  6. per Point3D: `track.elements` → (image_id, point2D_idx) → keypoint px → `tracks`/`vis`; `pts3d` = `sample_world_points` at the first observation (same world as the VGGSfM path), Point3Ds without a valid sample dropped
+- Zero in-repo track assembly: no union-find, no per-keypoint `CorrespondenceGraph` loop in Python (standing rule: tracks via pycolmap).
+- `utils.colmap.posed_reconstruction(extrinsics, intrinsics, names, sizes)`: the camera + image loop moved out of `PointcloudResult.to_colmap`, which then calls it (no duplicate code). DB image/camera ids and names match it (`i + 1`, frame name).
+- Plan verifies first: `triangulate_points` with an empty `image_dir` (colors only) and its default reprojection filter on pre-BA poses; if the filter starves tracks, loosen via `IncrementalPipelineOptions`, not new code.
 - BA hook (after BA lands, ~5 lines in `bundle_adjustment.py`):
   - `BundleAdjustmentConfig.track_source: Literal["vggsfm", "xfeat", "loma"] = "vggsfm"`
-  - `extract_tracks(images, confidence, world_points, image_paths)` gains `intrinsics` (refine passes its own); dispatches to `build_tracks` when not `vggsfm`; `confidence` unused there
+  - `extract_tracks(images, confidence, world_points, image_paths)` gains `extrinsics`, `intrinsics` (refine passes its own); dispatches to `build_tracks` when not `vggsfm`; `confidence` unused there
   - `_compute_tracks_cache_key` includes `track_source`
 
 ### 4. Pixel grid map — full-res → model grid
@@ -110,7 +114,7 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 | b | serial `read_image` genexpr in `reconstructor._build_localization_db` and `dashboard/pipeline._build_localizer` | lazy generator of `preproc.frames.read_frames(dir, idxs, workers=8)` per 32-frame chunk; still zero reads on a hit |
 | c | `update_index` resizes every single-chunk array once per frame (O(N²) IO) | concatenate new frames, one resize + write per array |
 | d | single-chunk LZ4 feature arrays: one-threaded decode on load | row chunks; only if (a)'s profile shows read time |
-| e | CPU features re-uploaded per `match()` | one upload per frame (§2) |
+| e | CPU features re-uploaded inside every vismatch `match()` | one upload per frame (§2); vismatch's own move becomes a no-op |
 | f | `sample_world_points` per ref, full map through `grid_sample` | one call over the top-K maps; only if the localize profile shows it |
 
 ### 6. Reuse and contract pass
@@ -119,7 +123,8 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 - Frame rows: `reconstructor.store_rows` stays the one zarr-row → store-file lookup.
 - `PointcloudResult.intrinsics` is typed `| None` but `__post_init__` always fills it; no None branch.
 - `tqdm` inline import → top-level.
-- Contract style on touched files: docstrings (summary line, bullets, `Args:`/`Returns:`), every parameter and return annotated, single-line block comments, absolute imports.
+- Reused, not rewritten: `utils.torch_utils.to_numpy` / `batch_iterator`, `utils.io.to_uint8_hwc` / `open_valid`, `preproc.frames.read_frames`, `reconstructor.store_rows`, `localizer.sample_world_points`, `PointcloudResult.to_colmap` (via its extracted loop), vismatch `extract` / `match`, pycolmap `Database` / `verify_matches` / `triangulate_points`.
+- Contract style on touched files: docstrings (summary line, bullets, `Args:`/`Returns:`), every parameter and return annotated, single-line block comments, one call per line (no nested calls), tunables as keyword defaults (`batch_size`, `window`, `max_num_keypoints`), absolute imports.
 - Add `"localization"` to `PACKAGES` in `tests/test_docstring_contract.py`.
 - Left alone: `seed_intrinsics` (no package equivalent), `viz.py` display rescale.
 
@@ -127,14 +132,14 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 
 - Flat functions, `tests/localization/` mirrors the package.
 - Delete: probe, `_recover_indices`, `match_images`, pairwise-path, descriptor-path stub tests.
-- Add: `test_tracks.py` (synthetic scene: known tracks recovered, pts3d from world_points); cropped pixel-map test; `refs=[i]` test; `update_index` and localized frames keep `keypoints_normalized` + `image_size`; `global_desc` round trip; non-batch model refused; cache hit reads zero frames.
+- Add: `test_tracks.py` (synthetic posed scene: known tracks recovered, pts3d from world_points); `tests/utils/test_colmap.py` `posed_reconstruction` + `to_colmap` unchanged output; cropped pixel-map test; `refs=[i]` test; `update_index` and localized frames keep `keypoints_normalized` + `image_size`; `global_desc` round trip; non-batch model refused; cache hit reads zero frames.
 - Update callers' tests: `tests/reconstructor`, `tests/dashboard` for `from_pointcloud`.
 
 ## Gates
 
 | Gate | Pass |
 |---|---|
-| gh1k matcher tracks (984 frames, window 25, xfeat 2048 kpts) | extract ≤ 15 s, match ≤ 28 s; verify + graph time reported |
+| gh1k matcher tracks (984 frames, window 25, xfeat 2048 kpts) | extract ≤ 15 s, match ≤ 28 s; verify + triangulate time reported; tracks ≥ 3 views counted |
 | localize, LoMa, top-K 8, tutorial query | wall time reported before/after; inliers ≥ before |
 | tutorial `ref_image`, `refs=[i]` | pose, ≥ 4 inliers |
 | cache-hit `from_pointcloud` on gh1k | before/after reported; no DINO forward over N |

@@ -19,7 +19,7 @@
 
 - Minimal change that puts every localization path on the vismatch fast path.
 - Localization serves two consumers:
-  - BA: matcher tracks (`xfeat`, `loma`) as an opt-in track source
+  - BA: its batched extract / cached match feed `geometry/tracks.py` (`xfeat`, `loma`), an opt-in track source
   - query alignment: localize an external image against the scene, or against chosen scene frames (tutorial `ref_image`)
 - Reuse existing package functions; delete what the updates make dead.
 
@@ -34,7 +34,8 @@
   - reconstructor localization functions (`_localization_db_exists`, `_build_localization_db`, `store_rows`) unchanged
 - `clean/dashboard-release`: public `CameraLocalizer` API keeps its signatures except the `from_feedforward` → `from_pointcloud` rename (one call site in `dashboard/pipeline.py`).
 - `dashboard/localize.py` `_METHODS` lists `disk-lightglue` and `aliked-lightglue`, which §1 now refuses; it shrinks to `["xfeat", "loma"]` (one line, plus `tests/dashboard/test_localize_page.py` fixtures). `configs/base.yaml` `localization.matcher: loma` is already valid.
-- VGGSfM tracks stay in `geometry/bundle_adjustment.py`.
+- VGGSfM tracks stay in `geometry/bundle_adjustment.py`; matcher tracks go beside them in `geometry/tracks.py` (§3).
+- Layering: `utils` → `localization.extractors` / `retrieval` (matching primitives) → `localization.localizer` (query → pose) and `geometry.tracks` → `geometry.bundle_adjustment` (matches → tracks → poses). Localization imports nothing from geometry.
 
 ## Design
 
@@ -65,7 +66,7 @@
 - Unchanged public API: `add_localized_frame`, `clear_localized_frames`, `save_index`, `load_index`, `update_index`, `image_paths`, `frame_sources`, `extrinsics`, `LocalizationResult` (incl. `ranked_ref_frames`), `read_localization_db`, `sample_world_points`, `seed_intrinsics`.
 - `add_localized_frame` duplicate guard: exact id, not stem.
 
-### 3. `tracks.py` (new) — matcher tracks for BA
+### 3. `geometry/tracks.py` (new) — matcher tracks for BA
 
 Promotes the prototype that produced the measured xfeat BA runs (gh1kq60, gstar294r): `$S/match_tracks.py` with `MT_CHAIN=star`, `make_extract("xfeat", 10, "wp")`, where `$S` = session scratchpad `d91a918d…/scratchpad` (volatile `/tmp`: copy it into the worktree before the plan starts). Every `MT_*` env var becomes a keyword default with the measured value; the module-global `_state` / `set_poses` / `set_depth` monkeypatch goes away because the BA hook passes the arrays.
 
@@ -108,9 +109,7 @@ def build_tracks(
   - `BundleAdjustmentConfig.track_source: Literal["vggsfm", "xfeat", "loma"] = "vggsfm"`; `loma` reuses the same path but has no measured BA run (the parity gate is xfeat only)
   - `extract_tracks(images, confidence, world_points, image_paths)` gains `extrinsics`, `intrinsics` (refine passes its own); dispatches to `build_tracks` when not `vggsfm`, passing `image_paths` as `frame_paths` (`ValueError` if None for a matcher source); `confidence` unused there
   - `_compute_tracks_cache_key` includes `track_source`
-- Import cycle (open, user decision): `geometry/__init__` eagerly imports `bundle_adjustment`; the hook makes `bundle_adjustment` import `localization.tracks`, and `tracks` imports `geometry.projection`. Importing `collab_splats.localization.tracks` first then re-enters the half-loaded `tracks` → `ImportError`. Today the direction is one-way, geometry → localization (`loop_closure/wrapper.py` imports `BaseRetrievalExtractor`; localization imports nothing from geometry). Options:
-  - A (recommended): module at `collab_splats/geometry/tracks.py`, next to BA and VGGSfM tracks; it imports `localization.extractors` / `retrieval` / `localizer.sample_world_points`, keeping geometry → localization one-way
-  - B: keep `localization/tracks.py` and replace `geometry.projection.project` with in-module projection math (new code, against the reuse rule)
+- Placement decided 2026-10-05: `geometry/tracks.py`. Tracks are multi-view geometry consumed only by BA (as `extract_tracks_vggsfm` beside it); they use localization's matching primitives. Imports stay one-way geometry → localization (as `loop_closure/wrapper.py` already does): `tracks` imports `localization.extractors.LocalMatcher`, `localization.retrieval.DinoSaladExtractor`, `localization.localizer.sample_world_points`, `geometry.projection.project`. A `localization/tracks.py` would cycle through `geometry/__init__` → `bundle_adjustment` → `tracks` → `geometry.projection`.
 - Decided 2026-10-05: full-res frames, exactly as the scratch runs (`MT_FULL_DIR`, 1080×1920, 2048 kp, size-only map).
 
 ### 4. Pixel grid map — full-res → model grid
@@ -142,14 +141,14 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 - `tqdm` inline import → top-level.
 - Reused, not rewritten: `utils.torch_utils.to_numpy` / `batch_iterator`, `utils.io.to_uint8_hwc` / `open_valid`, `preproc.frames.read_frames`, `reconstructor.store_rows`, `localizer.sample_world_points`, `localization.retrieval.DinoSaladExtractor`, `geometry.projection.project`, vismatch `extract` / `match`, pycolmap `Database` / `verify_matches` / `DatabaseCache` / `CorrespondenceGraph`.
 - Contract style on touched files: docstrings (summary line, bullets, `Args:`/`Returns:`), every parameter and return annotated, single-line block comments (memory override of the CLAUDE.md header+bullet rule), blank line around every block, one call per line (no nested calls), tunables as keyword defaults (`batch_size`, `window`, `retrieval_k`, `retrieval_nms`, `seed_frames`, `min_matches`, `depth_tol`, `max_num_keypoints`) never module constants, `logger` not `print`, absolute imports in the four isort groups (`vismatch` is in `known_models`; `pycolmap` is general third-party), no inline imports.
-- Add `"localization"` to `PACKAGES` in `tests/test_docstring_contract.py`; `tracks.py` is written to the contract from the start (the prototype has no docstrings, `print`s, env-var constants and a module-global `_state`).
+- Add `"localization"` to `PACKAGES` in `tests/test_docstring_contract.py`; `geometry/tracks.py` (geometry already in `PACKAGES`) is written to the contract from the start (the prototype has no docstrings, `print`s, env-var constants and a module-global `_state`).
 - Left alone: `seed_intrinsics` (no package equivalent), `viz.py` display rescale.
 
 ### 7. Tests
 
-- Flat functions, `tests/localization/` mirrors the package.
+- Flat functions; `tests/localization/` and `tests/geometry/` mirror the packages.
 - Delete: probe, `_recover_indices`, `match_images`, pairwise-path, descriptor-path stub tests.
-- Add: `test_tracks.py` (synthetic posed scene: known star tracks recovered, depth filter drops a planted outlier, pts3d from world_points); parity test vs the copied prototype (`MT_CHAIN=star`) on a small fixture: same pairs, same track count; aspect-mismatch frames refused; cropped pixel-map test; `refs=[i]` test; `update_index` and localized frames keep `keypoints_normalized` + `image_size`; `global_desc` round trip; non-batch model refused; cache hit reads zero frames.
+- Add: `tests/geometry/test_tracks.py` (synthetic posed scene: known star tracks recovered, depth filter drops a planted outlier, pts3d from world_points); parity test vs the copied prototype (`MT_CHAIN=star`) on a small fixture: same pairs, same track count; aspect-mismatch frames refused; cropped pixel-map test; `refs=[i]` test; `update_index` and localized frames keep `keypoints_normalized` + `image_size`; `global_desc` round trip; non-batch model refused; cache hit reads zero frames.
 - Update callers' tests: `tests/reconstructor`, `tests/dashboard` for `from_pointcloud`.
 
 ## Gates

@@ -20,7 +20,7 @@ preproc:
   min_frames: null            # fps only: floor on the count; null honors fps literally
   max_frames: 300             # frame budget: count for uniform, ceiling otherwise; also caps loger
                               # vggt_omega OOMs above ~300
-  n_workers: 4                # quality report: parallel decode ranges; 1 = serial (use during GPU runs)
+  n_workers: 16               # quality report and selection decode: parallel ranges; 1 = serial (use during GPU runs)
   undistort: false            # self-calibrate, then rewrite images/ undistorted (COLMAP framing)
                               # existing images/ needs overwrite=True; localize queries stay raw
   on_empty_slot: rescue       # fps only: rescue keeps an all-ineligible slot's sharpest frame, drop skips it
@@ -55,8 +55,27 @@ pointcloud:
   viz:
     enabled: false          # instantiate the viser Viewer during loop closure
     port: 8080              # viser server port
-  # LM bundle adjustment (leaf stage `refine`); rewrites pointcloud.zarr whole, dropping the localization DB; exclusive with loop_closure
-  bundle_adjustment: false
+  # LM bundle adjustment (leaf stage `refine`); rewrites pointcloud.zarr whole, dropping the localization DB; with loop_closure on, runs inside each LC window instead (no refine stage)
+  bundle_adjustment:
+    enabled: false
+    max_query_pts: 4096        # VGGSfM track query points (upstream demo default)
+    query_frame_num: 8         # VGGSfM query frames (upstream demo default)
+    fine_tracking: false       # VGGSfM fine tracking; true peaks at 34 GB RSS on 50 frames
+    track_source: vggsfm       # vggsfm | xfeat | loma (matcher star tracks, geometry/tracks.py)
+    vis_thresh: 0.2            # min VGGSfM visibility score for an observation
+    max_reproj_error: 4.0      # pre-solve pixel reprojection gate; null skips the filter
+    min_inliers_per_frame: 64  # frames below this inlier count sit out the solve
+    lm_steps: 40               # max LM steps without photometric; photometric runs up to its 30-step schedule
+    lm_tol: 1.0e-4             # relative loss drop below which an LM step counts as stalled
+    lm_patience: 2             # stalled steps in a row that end the solve, or one photometric re-sample
+    shared_camera: true        # one focal per scene; false = one per frame
+    refine_focal: true         # solve for focal; false holds the input mean focal fixed
+    dtype: float32             # solve precision: float32 | float64
+    increment_size: 0          # 0 = one global solve; N = frames added per incremental solve
+    use_photometric: true      # brightness matching between overlapping frames; not with increment_size > 0
+    use_depth: true            # track camera z against feedforward depth
+    depth_sigma: 0.01          # relative depth error weighted like 1 px
+    device: null               # CUDA device; null = auto (bae LM is CUDA-only)
   clean:
     enabled: true              # statistical outlier removal on the final sparse point set
   # InstantSfM global SfM (method: sfm, backend: instantsfm)
@@ -177,11 +196,8 @@ splats:
 
 localization:
   enabled: false
-  # vismatch model name (e.g. loma, xfeat, disk-lightglue, aliked-lightglue) —
-  # matched pairwise against the retrieval top-K. Some models are blocked
-  # (license/deps) — see _VISMATCH_*_BLOCKLIST in localization/extractors.py.
+  # vismatch model name: only batch-capable xfeat | loma (cached-feature matching)
   matcher: loma
-  top_k: 8  # refs matched per query
 
 reconstruction_quality_report:
   min_pair_overlap: 0.0   # 0 = every ordered pair; >0 skips pairs whose frustum overlap is below it

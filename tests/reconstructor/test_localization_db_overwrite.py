@@ -1,8 +1,8 @@
 """Building the localization DB must drop the stale zarr cache group.
 
 Regression tests for the silent no-op: the localize stage's overwrite called
-_build_localization_db with no overwrite notion, and from_feedforward always
-cache-hits on an existing local_features/<extractor>/reconstruction group — so the
+_build_localization_db with no overwrite notion, and from_pointcloud cache-hits on an
+existing local_features/<extractor>/reconstruction group — so the
 stale (payload-less) cache was reloaded untouched and verify()'s rebuild-once
 branch crashed downstream.
 """
@@ -11,6 +11,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import zarr
 
 from collab_splats import reconstructor as R
@@ -31,7 +32,7 @@ def _make_stale_store(tmp_path: Path) -> Path:
 def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
     """Stub the heavy deps of _build_localization_db; record cache state at call time."""
 
-    # from_feedforward is where the cache check lives — capture whether the stale
+    # from_pointcloud is where the cache check lives — capture whether the stale
     # reconstruction group still exists in the store at the moment it runs.
     def record_cache_state(*args, **kwargs):
         seen["rec_group_present"] = REC_KEY in zarr.open_group(str(pc_zarr), mode="r")
@@ -39,7 +40,7 @@ def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
 
     stack.enter_context(
         patch(
-            "collab_splats.localization.localizer.CameraLocalizer.from_feedforward",
+            "collab_splats.localization.localizer.CameraLocalizer.from_pointcloud",
             side_effect=record_cache_state,
         )
     )
@@ -57,7 +58,7 @@ def _images_dir(tmp_path: Path) -> Path:
     A two-frame images/ directory for _build_localization_db to list.
 
     - Only the filenames are read here (frame_indices and ids come from them); the images
-      genexpr is never consumed because from_feedforward is stubbed, so empty files do.
+      genexpr is never consumed because from_pointcloud is stubbed, so empty files do.
     """
     images_dir = tmp_path / "images"
     images_dir.mkdir(exist_ok=True)
@@ -72,14 +73,27 @@ def test_build_drops_stale_group_before_rebuild(tmp_path):
     seen = {}
     with ExitStack() as stack:
         _patch_heavy_deps(stack, pc_zarr, seen)
-        _build_localization_db(pc_zarr, "loma", images_dir, top_k=8)
-    # The stale group must be gone when from_feedforward runs, so its cache check misses
+        _build_localization_db(pc_zarr, "loma", images_dir)
+    # The stale group must be gone when from_pointcloud runs, so its cache check misses
     assert seen["rec_group_present"] is False
+
+
+def test_build_refuses_a_missing_images_store_and_keeps_the_db(tmp_path):
+    pc_zarr = _make_stale_store(tmp_path)
+    seen = {}
+
+    with ExitStack() as stack, pytest.raises(FileNotFoundError, match="no images/ store"):
+        _patch_heavy_deps(stack, pc_zarr, seen)
+        _build_localization_db(pc_zarr, "loma", tmp_path / "images")
+
+    # The check runs before the drop: the existing group survives, and no build started
+    assert REC_KEY in zarr.open_group(str(pc_zarr), mode="r")
+    assert seen == {}
 
 
 def test_localize_stage_always_rebuilds(tmp_path):
     """run() only calls localize() to (re)build, so the stale group is always dropped."""
-    # Minimal config; base.yaml fills the rest (matcher=loma, top_k=8 defaults)
+    # Minimal config; base.yaml fills the rest (matcher=loma default)
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
@@ -90,4 +104,4 @@ def test_localize_stage_always_rebuilds(tmp_path):
     pc_zarr.mkdir(parents=True)
     with patch.object(R, "_build_localization_db") as build:
         rec.localize()
-    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, top_k=8)
+    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir)

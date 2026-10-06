@@ -59,11 +59,11 @@ def test_pycolmap_version():
 
 
 def test_bae_installed_version():
-    """bae must be 0.2.4 (pypose/bae git source) installed in the active venv."""
+    """bae must be 0.2.5 (pypose/bae git source) installed in the active venv."""
     import bae
 
-    # Version pin: bae 0.2.4 is the source pinned in [tool.uv.sources] (pypose/bae@0.2.4)
-    assert importlib_metadata.version("bae") == "0.2.4", f"bae must be 0.2.4, got {importlib_metadata.version('bae')}"
+    # Version pin: bae 0.2.5 is the source pinned in [tool.uv.sources] (pypose/bae@0.2.5)
+    assert importlib_metadata.version("bae") == "0.2.5", f"bae must be 0.2.5, got {importlib_metadata.version('bae')}"
     # Location: must live under the running interpreter's site-packages (venv-agnostic —
     # works for conda /opt/conda/... and uv /opt/venv/..., not a hardcoded path).
     site = sysconfig.get_path("purelib")

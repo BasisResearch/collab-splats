@@ -360,7 +360,7 @@ def test_sequential_edge_last_tier_drops_zero_confidence_points():
     pg = PoseGraph(min_conf_points=100)
     for sm in (s0, s1):
         pg.add_submap(sm, 1)
-    H_w = pg.get_homography(pg._submap_node_ids[1][0])
+    H_w = pg.get_homography(pg.submap_node_ids(1)[0])
     assert H_w[0, 0] / H_w[3, 3] == pytest.approx(4.0, rel=1e-5)
 
 
@@ -388,7 +388,7 @@ def test_sequential_edge_recovers_a_known_2x_scale():
     pg = PoseGraph()
     for sm in (s0, s1):
         pg.add_submap(sm, 1)
-    H_w = pg.get_homography(pg._submap_node_ids[1][0])
+    H_w = pg.get_homography(pg.submap_node_ids(1)[0])
     assert H_w[0, 0] / H_w[3, 3] == pytest.approx(2.0, rel=1e-5)
 
 
@@ -402,8 +402,8 @@ def _sequential_scale(s0: Submap, s1: Submap, min_conf_points: int = 100) -> flo
     pg = PoseGraph(min_conf_points=min_conf_points)
     for sm in (s0, s1):
         pg.add_submap(sm, 1)
-    H_prev = pg.get_homography(pg._submap_node_ids[0][-1])
-    H_scale = np.linalg.inv(H_prev) @ pg.get_homography(pg._submap_node_ids[1][0])
+    H_prev = pg.get_homography(pg.submap_node_ids(0)[-1])
+    H_scale = np.linalg.inv(H_prev) @ pg.get_homography(pg.submap_node_ids(1)[0])
     return float(H_scale[0, 0] / H_scale[3, 3])
 
 

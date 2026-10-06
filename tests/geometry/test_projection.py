@@ -6,12 +6,16 @@ import numpy as np
 import pytest
 import torch
 
+from vggt.utils.geometry import unproject_depth_map_to_point_map
+
 from collab_splats.geometry.projection import (
     depth_agreement,
     depth_residual,
     multiview_depth_confidence,
     project,
+    sample_world_points,
     unproject,
+    unproject_frames,
 )
 
 
@@ -60,6 +64,88 @@ def test_unproject_accepts_3x4_pose():
     assert torch.equal(full, top)
 
 
+def _rot_z(theta: float) -> np.ndarray:
+    """
+    3x3 float32 rotation about z by theta radians.
+    """
+    c, s = np.cos(theta), np.sin(theta)
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+
+
+def _frames_scene(k: int, H: int, W: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Varied float32 depth (k, H, W), non-identity (k, 3, 4) w2c and (k, 3, 3) K.
+    """
+    rng = np.random.default_rng(seed)
+    depth = rng.uniform(0.5, 50.0, (k, H, W)).astype(np.float32)
+    ext = np.zeros((k, 3, 4), dtype=np.float32)
+
+    for i in range(k):
+        ext[i, :3, :3] = _rot_z(0.3 * i)
+        ext[i, :3, 3] = 10 * rng.standard_normal(3)
+
+    K = np.array([[300.0, 0, W / 2], [0, 300.0, H / 2], [0, 0, 1]], dtype=np.float32)
+    K = np.tile(K, (k, 1, 1))
+
+    return depth, ext, K
+
+
+def test_unproject_frames_matches_vggt_numpy():
+    """
+    The float32 unproject equals vggt's numpy unproject to float32 rounding.
+    """
+    rng = np.random.default_rng(0)
+    k, H, W = 70, 12, 16
+    depth = rng.uniform(0.5, 5.0, (k, H, W)).astype(np.float32)
+    ext = np.zeros((k, 3, 4), dtype=np.float32)
+
+    for i in range(k):
+        ext[i, :3, :3] = _rot_z(0.01 * i)
+        ext[i, :3, 3] = rng.standard_normal(3)
+
+    K = np.array([[50.0, 0, 8], [0, 50.0, 6], [0, 0, 1]], dtype=np.float32)
+    K = np.tile(K, (k, 1, 1))
+
+    expected = unproject_depth_map_to_point_map(depth[..., None], ext, K).astype(np.float32)
+    got = unproject_frames(depth, ext, K)
+
+    assert got.dtype == np.float32 and got.shape == (k, H, W, 3)
+    np.testing.assert_allclose(got, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_unproject_frames_batches_match_one_pass():
+    """
+    A batch_size smaller than N, with a ragged last batch, fills every frame as one pass does.
+    """
+    depth, ext, K = _frames_scene(7, 8, 10, seed=2)
+
+    one_pass = unproject_frames(depth, ext, K, batch_size=7)
+    batched = unproject_frames(depth, ext, K, batch_size=3)
+
+    np.testing.assert_array_equal(batched, one_pass)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="TF32 only exists on CUDA")
+def test_unproject_frames_ignores_global_tf32():
+    """
+    A process-wide TF32 setting (mapanything enables it) neither rounds the unproject nor leaks.
+    """
+    depth, ext, K = _frames_scene(4, 64, 96, seed=1)
+
+    before = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+
+    try:
+        exact = unproject_frames(depth, ext, K)
+        torch.set_float32_matmul_precision("high")
+        under_tf32 = unproject_frames(depth, ext, K)
+        assert torch.get_float32_matmul_precision() == "high"
+    finally:
+        torch.set_float32_matmul_precision(before)
+
+    np.testing.assert_array_equal(under_tf32, exact)
+
+
 def test_project_clamps_depth_behind_camera():
     _, K = _pose()
     behind = torch.tensor([[0.0, 0.0, -5.0]], dtype=torch.float64)
@@ -78,9 +164,9 @@ def test_project_divides_by_the_camera_depth_and_floors_it_at_min_depth():
     # Identity pose: the camera-frame point is the world point and the divide is by z = 4
     assert torch.equal(points_cam, points)
     assert torch.allclose(pixels, torch.tensor([[300.0 / 4 + 31.0, 2 * 280.0 / 4 + 22.0]], dtype=torch.float64))
+
     # A floor above z takes over the divide, collapsing the point towards the principal point
     assert torch.allclose(floored, torch.tensor([[300.0 / 1e3 + 31.0, 2 * 280.0 / 1e3 + 22.0]], dtype=torch.float64))
-
 
 
 def test_project_one_camera_keeps_point_shape_and_points_dtype():
@@ -354,3 +440,28 @@ def test_depth_agreement_over_a_pose_batch_matches_one_view_at_a_time():
         assert torch.equal(agree[b], a1) and torch.equal(seen[b], s1)
         torch.testing.assert_close(rel[b], r1, rtol=1e-5, atol=1e-6)
         torch.testing.assert_close(expected[b], e1, rtol=0, atol=1e-6)
+
+
+def test_sample_world_points_bilinear_and_invalid():
+    """Exact-pixel and bilinear samples return grid values; NaN cells are invalid."""
+    # 4x4 grid whose world point at (row r, col c) is (c, r, 1)
+    H = W = 4
+    wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
+    wp[0, 0] = np.nan  # unmapped pixel
+
+    px = np.array([[2.0, 1.0], [1.5, 2.5], [0.0, 0.0]], dtype=np.float32)  # xy
+    pts, valid = sample_world_points(wp, px)
+    assert pts.shape == (3, 3) and valid.dtype == bool
+    np.testing.assert_allclose(pts[0], [2.0, 1.0, 1.0], atol=1e-5)  # exact pixel
+    np.testing.assert_allclose(pts[1], [1.5, 2.5, 1.0], atol=1e-5)  # bilinear midpoint
+    assert not valid[2] and valid[0] and valid[1]  # NaN cell dropped
+
+
+def test_sample_world_points_out_of_bounds():
+    """Pixels outside the image bounds are marked invalid."""
+    H = W = 4
+    wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
+
+    px = np.array([[10.0, 1.0]], dtype=np.float32)  # x beyond W-1
+    _, valid = sample_world_points(wp, px)
+    assert not valid[0]

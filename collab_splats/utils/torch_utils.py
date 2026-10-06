@@ -4,6 +4,7 @@ import gc
 import logging
 import math
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Iterator, List
@@ -32,6 +33,46 @@ def pytorch_gc():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+# Matmul precision is process-wide; one lock orders every change against a running forward
+_matmul_precision_lock = threading.RLock()
+
+
+@contextmanager
+def full_fp32_matmul() -> Iterator[None]:
+    """
+    Run the block at full fp32 matmul precision, then restore the caller's setting.
+
+    - TF32, which a mapanything import enables, would round the matmul
+    - the setting is process-wide: waits while another thread holds hold_matmul_precision
+
+    Yields:
+        None; the block runs at "highest" precision.
+    """
+    with _matmul_precision_lock:
+        precision = torch.get_float32_matmul_precision()
+        torch.set_float32_matmul_precision("highest")
+
+        try:
+            yield
+        finally:
+            torch.set_float32_matmul_precision(precision)
+
+
+@contextmanager
+def hold_matmul_precision() -> Iterator[None]:
+    """
+    Keep the matmul precision unchanged for the block, across threads.
+
+    - full_fp32_matmul on another thread waits until the block exits
+    - wrap a forward that runs while other threads do guarded matmuls
+
+    Yields:
+        None.
+    """
+    with _matmul_precision_lock:
+        yield
 
 
 def to_numpy(x: torch.Tensor | np.ndarray) -> np.ndarray:

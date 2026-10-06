@@ -164,6 +164,18 @@ def test_load_zarr_round_trips_both_intrinsics(tmp_path):
     np.testing.assert_array_equal(loaded.model_intrinsics, result.model_intrinsics)
 
 
+def test_load_zarr_sets_zarr_path(tmp_path):
+    """
+    load_zarr records the store it read on the result.
+    """
+    path = tmp_path / "pointcloud.zarr"
+    _tiny_result().save_zarr(path)
+
+    loaded = PointcloudResult.load_zarr(path)
+
+    assert loaded._zarr_path == path
+
+
 def test_write_ply_round_trip(tmp_path):
     """
     write_ply round-trips xyz and uint8 rgb exactly and creates missing parents.

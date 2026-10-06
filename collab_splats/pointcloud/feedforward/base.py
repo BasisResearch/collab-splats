@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 import torch
+from PIL import Image
 
 from collab_splats.geometry.projection import multiview_depth_confidence, unproject
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
@@ -46,6 +47,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         conf_threshold: depth-confidence percentile (0-100); pixels strictly above it are kept.
         min_views: other views that must agree with a pixel's depth; 0 turns the filter off.
         mv_rel_thresh: multiview agreement tolerance, as a fraction of depth.
+        frames: preproc's RGB uint8 frames by file name; None, any path missing, or loger reads the files.
     """
 
     # Registry of feedforward backends, filled in as each backend module is imported
@@ -61,6 +63,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
     # Settings for the multiview depth filter, which is off when min_views is 0
     min_views: int = 0
     mv_rel_thresh: float = 0.01
+
+    # Preproc's frames, set by Reconstructor when this process decoded them
+    frames: dict[str, np.ndarray] | None = field(default=None, repr=False)
 
     # State filled in as the pipeline runs
     model: Any = field(default=None, init=False, repr=False)
@@ -97,18 +102,47 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
 
     def setup_inference(self, paths: list[Path]) -> None:
         """
-        Preprocess the frame files into the backend's model input.
+        Preprocess the frames into the backend's model input.
 
         - sets views, image_paths (frame stems) and original_coords
 
         Args:
-            paths: frame image files, reconstruction order.
+            paths: frame image paths, reconstruction order; handed-off frames are matched by name.
         """
         # Name each frame by its file stem and let the backend prepare the model inputs
         t0 = time.perf_counter()
         self.image_paths = [Path(p.stem) for p in paths]
         self.views, self.original_coords = self._preprocess(paths)
         logger.info("Preprocessed %d images in %.1fs", len(paths), time.perf_counter() - t0)
+
+    def _list_frames(self, images_dir: Path) -> list[Path]:
+        """
+        Frame paths named by the handed-off frames, else listed from images_dir.
+
+        - preproc may still be writing images/, so a handoff never lists the directory
+        """
+        if self.frames is None:
+            return super()._list_frames(images_dir)
+
+        return [images_dir / name for name in sorted(self.frames)]
+
+    def _get_path_frames(self, paths: list[Path]) -> list[np.ndarray] | None:
+        """
+        The handed-off frame for every path, in order, or None to read the files.
+
+        - None when nothing was handed off, or with a warning when any path is missing
+        """
+        if self.frames is None:
+            return None
+
+        # A partial handoff is ignored in favor of reading every file
+        missing = sum(p.name not in self.frames for p in paths)
+
+        if missing:
+            logger.warning("frames handed off but %d of %d paths missing; reading files", missing, len(paths))
+            return None
+
+        return [self.frames[p.name] for p in paths]
 
     def run_inference(self) -> None:
         """
@@ -135,8 +169,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
     @abstractmethod
     def _preprocess(self, paths: list[Path]) -> tuple[Any, np.ndarray]:
         """
-        Model input batch from frame image files.
+        Model input batch from the frames at paths.
 
+        - a backend may read the handed-off arrays (_get_path_frames) instead of the files
         - returns (views, original_coords)
         - original_coords: (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]
         """
@@ -368,3 +403,13 @@ def _decode_depth_head(predictions: dict, hw: tuple[int, int], decode: Callable)
         "depth": predictions["depth"].squeeze(0).cpu().float().numpy(),
         "depth_conf": predictions["depth_conf"].squeeze(0).cpu().float().numpy(),
     }
+
+
+def _frame_sizes(paths: list[Path], arrays: list[np.ndarray] | None) -> list[tuple[int, int]]:
+    """
+    Each frame's (w, h): from the handed-off arrays when given, else a header read per file.
+    """
+    if arrays is None:
+        return [Image.open(p).size for p in paths]
+
+    return [(a.shape[1], a.shape[0]) for a in arrays]

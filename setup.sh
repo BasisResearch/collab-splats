@@ -120,7 +120,7 @@ fi
 # the weights download lazily on first use instead.
 "$PYTHON" - <<'EOF' || echo "WARN: vismatch weights pre-fetch failed — weights will download on first use."
 import vismatch
-for name in ("disk-lightglue",):  # extend when configs reference more models
+for name in ("loma", "xfeat"):  # the LocalMatcher models
     vismatch.get_matcher(name, device="cpu")
     print(f"vismatch weights cached: {name}")
 EOF

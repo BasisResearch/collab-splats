@@ -42,10 +42,24 @@ def _mapanything_boxes(sizes: list[tuple[int, int]], model_w: int, model_h: int)
     paths, image = _sized_paths(sizes)
     views = [{"img": torch.empty(1, 3, model_h, model_w)}]
     with (
-        patch("collab_splats.pointcloud.feedforward.mapanything.Image", image),
+        patch("collab_splats.pointcloud.feedforward.base.Image", image),
         patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=views),
         patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference"),
         patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference"),
     ):
         _, coords = MapAnythingCreator()._preprocess(paths)
     return coords
+
+
+def _assert_views_equal(views_a: list[dict], views_f: list[dict]) -> None:
+    """
+    Two load_images view lists hold the same keys and bit-equal values.
+    """
+    assert len(views_a) == len(views_f)
+
+    for a, f in zip(views_a, views_f, strict=True):
+        assert a.keys() == f.keys()
+        assert torch.equal(a["img"], f["img"])
+        np.testing.assert_array_equal(a["true_shape"], f["true_shape"])
+        assert a["true_shape"].dtype == f["true_shape"].dtype
+        assert (a["idx"], a["instance"], a["data_norm_type"]) == (f["idx"], f["instance"], f["data_norm_type"])

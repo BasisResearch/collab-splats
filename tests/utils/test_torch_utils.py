@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import threading
 
 import numpy as np
 import pytest
@@ -10,6 +11,8 @@ import zarr
 
 from collab_splats.utils.torch_utils import (
     batch_iterator,
+    full_fp32_matmul,
+    hold_matmul_precision,
     infer_batch_size,
     load_features,
     pytorch_gc,
@@ -181,3 +184,50 @@ def test_load_features_empty_raises():
 def test_load_features_item_over_budget_raises():
     with pytest.raises(ValueError, match="over max_gb"):
         load_features(np.ones((2, 4, 8), dtype=np.float32), "cpu", max_gb=1e-12)
+
+
+@pytest.mark.usefixtures("matmul_precision")
+def test_full_fp32_matmul_sets_highest_and_restores_on_error():
+    torch.set_float32_matmul_precision("high")
+
+    # Inside the block TF32 is off; an exception still restores "high"
+    with pytest.raises(RuntimeError):
+        with full_fp32_matmul():
+            assert torch.get_float32_matmul_precision() == "highest"
+            raise RuntimeError("boom")
+
+    assert torch.get_float32_matmul_precision() == "high"
+
+
+@pytest.mark.usefixtures("matmul_precision")
+def test_full_fp32_matmul_waits_for_a_held_precision():
+    torch.set_float32_matmul_precision("high")
+    held, release, seen = threading.Event(), threading.Event(), []
+
+    def forward():
+        with hold_matmul_precision():
+            held.set()
+            release.wait(5)
+            seen.append(torch.get_float32_matmul_precision())
+
+    def guarded():
+        with full_fp32_matmul():
+            seen.append("guarded")
+
+    try:
+        # A guarded call started while a forward holds the precision blocks until it exits
+        t1 = threading.Thread(target=forward)
+        t1.start()
+        assert held.wait(5)
+        t2 = threading.Thread(target=guarded)
+        t2.start()
+        t2.join(0.2)
+        assert t2.is_alive()
+
+        release.set()
+        t1.join(5)
+        t2.join(5)
+        assert seen == ["high", "guarded"]
+        assert torch.get_float32_matmul_precision() == "high"
+    finally:
+        release.set()

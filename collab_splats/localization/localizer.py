@@ -1,1120 +1,1071 @@
-"""Stage 3 — Pose estimation: 2D→3D depth lookup + absolute pose via LO-RANSAC (pycolmap)."""
+"""
+Stage 3 pose estimation: cached-feature matches, world-point lookup, pycolmap absolute pose.
+
+- feature DB: pointcloud.zarr local_features/<matcher>/{reconstruction,localized}
+- refs: DINO-SALAD top-k reconstruction frames, or frames the caller chooses
+- ref px map through the preprocess crop onto the world_points grid before lookup
+"""
 
 from __future__ import annotations
 
+import dataclasses
+import itertools
 import logging
-import pathlib
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+import cv2
 import numpy as np
 import pycolmap
 import torch
-import torch.nn.functional as F
 import zarr
-from PIL import Image
+from tqdm.auto import tqdm
 
+from collab_splats.geometry.projection import sample_world_points
+from collab_splats.geometry.transforms import rescale_intrinsics
 from collab_splats.localization.extractors import LocalFeatures, LocalMatcher
-from collab_splats.localization.retrieval import BaseRetrievalExtractor
-from collab_splats.utils.io import LZ4, to_uint8_hwc
+from collab_splats.localization.retrieval import DinoSaladExtractor
+from collab_splats.utils.io import LZ4
+from collab_splats.utils.torch_utils import to_numpy
+
+if TYPE_CHECKING:
+    from collab_splats.pointcloud.base import PointcloudResult
 
 logger = logging.getLogger(__name__)
 
 
-def seed_intrinsics(height: int, width: int) -> np.ndarray:
-    """Model-free pinhole K seed from image proportions (COLMAP `1.2*max` rule).
+########################################
+# Helpers
+########################################
 
-    Focal cannot be recovered from proportions alone, so use COLMAP's default
-    ``f = 1.2 * max(W, H)`` with a centered principal point and square pixels.
-    pycolmap focal refinement solves the true focal from 2D<->3D correspondences.
+
+def seed_intrinsics(height: int, width: int) -> np.ndarray:
+    """
+    Pinhole K seed from image proportions, COLMAP's f = 1.2 * max(W, H) rule.
+
+    - centered principal point, square pixels; pycolmap SIMPLE_PINHOLE refinement solves the true focal
+
+    Args:
+        height: image height, px.
+        width: image width, px.
+
+    Returns:
+        (3, 3) float32 K.
     """
     f = 1.2 * max(width, height)
-    return np.array(
-        [[f, 0.0, width / 2.0], [0.0, f, height / 2.0], [0.0, 0.0, 1.0]],
-        dtype=np.float32,
-    )
+    return np.array([[f, 0.0, width / 2.0], [0.0, f, height / 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
 
 
-def sample_world_points(
-    world_points: np.ndarray,  # (H, W, 3) world-space per-pixel points
-    px: np.ndarray,  # (K, 2) float32 xy pixel coords
-) -> tuple[np.ndarray, np.ndarray]:
-    """Bilinear-sample per-pixel world points at px (hloc interpolate_scan analog).
-
-    Returns (pts3d (K,3) float32, valid (K,) bool) — invalid where the sample
-    touches NaN (unmapped pixels) or falls outside the image.
+def _crop_to_model_grid(px: np.ndarray, box: np.ndarray, model_hw: tuple[int, int]) -> np.ndarray:
     """
-    H, W, _ = world_points.shape
-    # Normalize to [-1, 1] for grid_sample (align_corners=True convention)
-    grid = torch.from_numpy(px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1)
-    wp = torch.from_numpy(world_points).permute(2, 0, 1)[None].float()  # (1,3,H,W)
-    interp = F.grid_sample(wp, grid[None, None].float(), align_corners=True, mode="bilinear")[0, :, 0]  # (3,K)
-    # NaN-only invalidation is intentional: our backends (VGGT-X/MapAnything) emit
-    # dense world_points with no zero-encoding for unmapped pixels, and an exact-zero
-    # check could drop legitimate near-origin points.
-    valid = ~torch.any(torch.isnan(interp), dim=0)
-    # Out-of-bounds px → invalid (grid_sample pads with border values otherwise)
-    in_bounds = torch.from_numpy((px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1))
-    valid = (valid & in_bounds).numpy()
-    return interp.T.numpy().astype(np.float32), valid
+    Full-res pixels on the model grid: inverse of PointcloudResult.__post_init__'s crop map.
+
+    - box is one original_coords row [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], pixel-corner
+    - pixels outside the grid come back outside it; sample_world_points marks them invalid
+    """
+    H, W = model_hw
+    crop_wh = np.array([box[2] - box[0], box[3] - box[1]], dtype=np.float32)
+    scale = np.array([W, H], dtype=np.float32) / crop_wh
+    shifted = px - box[:2]
+    return (shifted * scale).astype(np.float32)
+
+
+def _to_query_grid(
+    result: LocalizationResult, small_hw: tuple[int, int], full_hw: tuple[int, int]
+) -> LocalizationResult:
+    """
+    Result with K and query px mapped from the shrunk query grid back to the original one.
+
+    - per-axis full / small scale, pixel-corner convention as rescale_intrinsics; pose unchanged
+    """
+    if small_hw == full_hw:
+        return result
+
+    K = rescale_intrinsics(result.query_intrinsics, small_hw, full_hw)
+    K = K.astype(np.float32)
+    pts2d = result.pts2d
+
+    if pts2d is not None:
+        scale = np.array([full_hw[1] / small_hw[1], full_hw[0] / small_hw[0]], dtype=np.float32)
+        pts2d = pts2d * scale
+
+    return dataclasses.replace(result, query_intrinsics=K, pts2d=pts2d)
+
+
+def _chunked(items: Iterable[np.ndarray], size: int) -> Iterator[list[np.ndarray]]:
+    """
+    Consecutive lists of up to size items, drawn lazily.
+    """
+    it = iter(items)
+
+    while True:
+        window = itertools.islice(it, size)
+        chunk = list(window)
+
+        if not chunk:
+            return
+
+        yield chunk
+
+
+def _full_frame_coords(n: int, height: int, width: int) -> np.ndarray:
+    """
+    original_coords rows for uncropped frames whose model grid is the image itself.
+    """
+    row = np.array([0, 0, width, height, width, height], dtype=np.float32)
+    return np.tile(row, (n, 1))
+
+
+def localization_db_exists(zarr_path: Path | str, extractor_name: str) -> bool:
+    """
+    True when pointcloud.zarr holds a complete reconstruction feature DB for the extractor.
+
+    - a missing store, or one that is not a group, reads as absent
+    - a group without the image_paths commit marker is a crashed build and reads as absent
+
+    Args:
+        zarr_path: pointcloud.zarr path.
+        extractor_name: feature-cache key.
+
+    Returns:
+        Whether local_features/<extractor_name>/reconstruction exists and is committed.
+    """
+    # Open read-only; a missing or non-group store has no DB
+    try:
+        store = zarr.open_group(str(zarr_path), mode="r")
+    except (FileNotFoundError, zarr.errors.NodeNotFoundError, zarr.errors.ContainsArrayError):
+        return False
+
+    # save_index writes image_paths last; without it the build never finished
+    key = f"local_features/{extractor_name}/reconstruction"
+
+    if key not in store:
+        return False
+
+    return "image_paths" in store[key].attrs
+
+
+def _append_rows(group: zarr.Group, name: str, rows: np.ndarray) -> None:
+    """
+    Append rows to an existing array in one resize and one write.
+    """
+    arr = group[name]
+    n = arr.shape[0]
+    arr.resize((n + len(rows), *arr.shape[1:]))
+    arr[n:] = rows
+
+
+def _features_from_csr(group: zarr.Group, image_sizes: list[tuple[int, int]]) -> list[LocalFeatures]:
+    """
+    Per-frame LocalFeatures from the reconstruction CSR feature group.
+    """
+    offsets = group["frame_offsets"][:]
+    kpts = group["keypoints"][:]
+    descs = group["descriptors"][:]
+    norm = group["keypoints_normalized"][:] if "keypoints_normalized" in group else None
+    feats = []
+
+    for i in range(len(offsets) - 1):
+        s, e = int(offsets[i]), int(offsets[i + 1])
+        norm_i = None if norm is None else torch.from_numpy(norm[s:e])
+        feats.append(
+            LocalFeatures(
+                keypoints=torch.from_numpy(kpts[s:e]),
+                descriptors=torch.from_numpy(descs[s:e]),
+                keypoints_normalized=norm_i,
+                image_size=image_sizes[i],
+            )
+        )
+
+    return feats
+
+
+def _write_csr(group: zarr.Group, feats: list[LocalFeatures], chunk_rows: int = 65536) -> None:
+    """
+    Create the CSR arrays of a feature group: offsets, keypoints, descriptors, normalized keypoints.
+
+    - keypoints_normalized: written only when every frame has it; zeros would be wrong data
+    - per-keypoint arrays chunk by chunk_rows rows, so a cache-hit load decodes chunks in parallel
+    """
+    # Row offsets per frame
+    counts = [len(f.keypoints) for f in feats]
+    offsets = np.zeros(len(counts) + 1, dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+
+    # Flat keypoint and descriptor tables
+    d = feats[0].descriptors.shape[1] if feats else 1
+    kpts = [to_numpy(f.keypoints) for f in feats]
+    descs = [to_numpy(f.descriptors) for f in feats]
+    all_kpts = np.concatenate(kpts).astype(np.float32) if offsets[-1] else np.zeros((0, 2), np.float32)
+    all_descs = np.concatenate(descs).astype(np.float32) if offsets[-1] else np.zeros((0, d), np.float32)
+
+    # Row chunks no taller than the table, so a small DB stays one chunk
+    n_rows = int(offsets[-1])
+    rows = min(chunk_rows, max(n_rows, 1))
+
+    group.create_array("frame_offsets", data=offsets, chunks=offsets.shape, compressors=LZ4)
+    group.create_array("keypoints", data=all_kpts, chunks=(rows, 2), compressors=LZ4)
+    group.create_array("descriptors", data=all_descs, chunks=(rows, max(d, 1)), compressors=LZ4)
+
+    # Normalized keypoints only when every frame carries them
+    if feats and offsets[-1] and all(f.keypoints_normalized is not None for f in feats):
+        parts = [to_numpy(f.keypoints_normalized) for f in feats]
+        data = np.concatenate(parts).astype(np.float32)
+        group.create_array("keypoints_normalized", data=data, chunks=(rows, 2), compressors=LZ4)
+
+
+def _append_csr(group: zarr.Group, feats: list[LocalFeatures]) -> None:
+    """
+    Append frames to an existing CSR feature group, one resize and write per array.
+    """
+    counts = [len(f.keypoints) for f in feats]
+    last = int(group["frame_offsets"][-1])
+    offsets = last + np.cumsum(counts, dtype=np.int64)
+    _append_rows(group, "frame_offsets", offsets)
+    kpts = [to_numpy(f.keypoints) for f in feats]
+    descs = [to_numpy(f.descriptors) for f in feats]
+    kpts = np.concatenate(kpts, dtype=np.float32)
+    descs = np.concatenate(descs, dtype=np.float32)
+    _append_rows(group, "keypoints", kpts)
+    _append_rows(group, "descriptors", descs)
+
+    # Normalized keypoints must exist for every appended frame, or the array would misalign
+    if "keypoints_normalized" in group:
+        if any(f.keypoints_normalized is None for f in feats):
+            raise ValueError("feature DB stores keypoints_normalized; every appended frame must carry it")
+
+        parts = [to_numpy(f.keypoints_normalized) for f in feats]
+        data = np.concatenate(parts, dtype=np.float32)
+        _append_rows(group, "keypoints_normalized", data)
+
+
+########################################
+# Result
+########################################
 
 
 @dataclass
 class LocalizationResult:
-    """Output of CameraLocalizer.localize().
+    """
+    Output of CameraLocalizer.localize: pose plus the correspondences PnP saw.
 
-    pts2d and pts3d_matched are the M correspondences fed to PnP.
-    inlier_mask[i] is True when correspondence i survived RANSAC.
-    pose is None when PnP fails or fewer than 4 correspondences exist.
-
-    pts2d_ref holds the reference-frame pixel coordinates for each correspondence
-    (same ordering as pts2d), enabling visualisation of matched keypoint pairs
-    across query and reference images.
-    ref_frame_indices records which reference frame each correspondence came from.
-
-    pts2d_ref lives in the pixel space of the reference images the index was built
-    from, recorded in ref_hw — scale by (W_display / ref_hw[1], H_display / ref_hw[0])
-    before drawing on a reference image at a different resolution.
+    - pose None when PnP fails or fewer than 4 correspondences exist
+    - pts2d_ref lives in reference-image pixels of size ref_hw; rescale before drawing elsewhere
+    - ref_frame_indices: source reference frame per correspondence
     """
 
-    pose: np.ndarray | None  # (4, 4) world-to-camera, or None
-    n_correspondences: int  # M — total 2D↔3D pairs before RANSAC
-    n_inliers: int  # RANSAC inlier count
-    pts2d: np.ndarray | None  # (M, 2) query pixel coords
-    pts3d_matched: np.ndarray | None  # (M, 3) matched world points
+    pose: np.ndarray | None  # (4, 4) world-to-camera
+    n_correspondences: int  # M, 2D-3D pairs before RANSAC
+    n_inliers: int
+    pts2d: np.ndarray | None  # (M, 2) query px
+    pts3d_matched: np.ndarray | None  # (M, 3) world
     inlier_mask: np.ndarray | None  # (M,) bool
-    pts2d_ref: np.ndarray | None = None  # (M, 2) reference-frame pixel coords
-    ref_frame_indices: np.ndarray | None = None  # (M,) int32 — source reference frame per correspondence
-    query_features: "LocalFeatures | None" = None  # always set by localize(); pass to add_localized_frame
-    query_intrinsics: np.ndarray | None = None  # (3, 3) K used for PnP (seed or supplied)
-    ref_hw: tuple[int, int] | None = None  # (H, W) pixel space of pts2d_ref (reference-image resolution)
+    pts2d_ref: np.ndarray | None = None  # (M, 2) reference px
+    ref_frame_indices: np.ndarray | None = None  # (M,) int32
+    query_intrinsics: np.ndarray | None = None  # (3, 3) refined K when a pose is found, else the input K
+    ref_hw: tuple[int, int] | None = None  # (H, W) of the reference images
 
     @property
     def ranked_ref_frames(self) -> list[int]:
-        """Reference-frame indices ordered by inlier-match count, most first.
-
-        Excludes frames with zero inliers. Empty when pose failed / no inliers.
-        Ties broken by lowest frame index.
-        Slice for the n best (``[:n]``) or take ``[0]`` for the single best.
         """
-        # No inliers or no per-correspondence source frames → nothing to rank
+        Reference frames ordered by inlier count, most first; zero-inlier frames dropped.
+
+        - ties broken by lowest frame index; empty when pose failed
+
+        Returns:
+            Reference-frame indices.
+        """
         if self.inlier_mask is None or self.ref_frame_indices is None:
             return []
-        # Count inlier correspondences per reference frame; order desc with stable
-        # tie-break (ascending index), dropping zero-inlier frames
-        counts = np.bincount(self.ref_frame_indices[self.inlier_mask].astype(np.intp))
+
+        # Inliers per reference frame, descending, stable tie-break
+        frames = self.ref_frame_indices[self.inlier_mask]
+        frames = frames.astype(np.intp)
+        counts = np.bincount(frames)
         order = np.argsort(-counts, kind="stable")
         return [int(i) for i in order if counts[i] > 0]
 
 
 def read_localization_db(
-    zarr_path: "str | Path", extractor_name: str
+    zarr_path: Path | str, extractor_name: str
 ) -> tuple[list[LocalFeatures], list[str], tuple[int, int]]:
-    """Read the localization DB (per-frame feature cache) for one extractor.
-
-    The `local_features/<extractor>/reconstruction` group is a pycolmap-Database-shaped
-    store (per-image keypoint/descriptor tables + CSR offsets), not reconstruction
-    geometry. Returns (per-frame LocalFeatures, image ids, (H, W)). Raises KeyError when
-    the cache is missing. This is the read half of CameraLocalizer.save_index; load_index
-    builds a localizer on top of it.
     """
-    zarr_path = pathlib.Path(zarr_path)
-    store = zarr.open(str(zarr_path), mode="r")
+    Read the reconstruction feature DB of one extractor.
 
+    - the read half of CameraLocalizer.save_index; load_index builds a localizer on it
+    - image_paths is written last, so a DB cut short mid-write reads as missing
+
+    Args:
+        zarr_path: pointcloud.zarr path.
+        extractor_name: feature-cache key.
+
+    Returns:
+        Per-frame LocalFeatures, frame ids, and the reference images' (H, W).
+
+    Raises:
+        KeyError: no DB for the extractor, or one that is incomplete (rebuild it).
+    """
+    store = zarr.open(str(zarr_path), mode="r")
     rec_key = f"local_features/{extractor_name}/reconstruction"
+
     if rec_key not in store:
         raise KeyError(
-            f"No feature cache for extractor '{extractor_name}' in {zarr_path}. "
-            "Rebuild via CameraLocalizer.from_feedforward()."
+            f"No feature DB for '{extractor_name}' in {zarr_path}; build via CameraLocalizer.from_pointcloud()"
         )
 
-    # ── Load reconstruction group ────────────────────────────────────────
-    rec_group = store[rec_key]
-    rec_image_paths = [str(p) for p in rec_group.attrs["image_paths"]]
-    hw = tuple(int(x) for x in rec_group.attrs["hw"])
-    offsets = rec_group["frame_offsets"][:]
-    # Bulk decode is the first slow phase of a cache-hit load (descriptors can be GBs
-    # for dense extractors) — log around it so long loads are attributable.
-    logger.info("CameraLocalizer: reading feature DB (%d frames) from zarr", len(offsets) - 1)
+    # Completeness: the image_paths commit marker, global_desc, and agreeing frame counts
+    group = store[rec_key]
+
+    if "image_paths" not in group.attrs or "global_desc" not in group:
+        raise KeyError(f"feature DB for '{extractor_name}' is incomplete (no image_paths or global_desc); rebuild it")
+
+    ids = [str(p) for p in group.attrs["image_paths"]]
+    n_frames = group["frame_offsets"].shape[0] - 1
+    n_desc = group["global_desc"].shape[0]
+
+    if not n_frames == len(ids) == n_desc:
+        raise KeyError(
+            f"feature DB for '{extractor_name}' is inconsistent "
+            f"({n_frames} frames, {len(ids)} ids, {n_desc} global_desc); rebuild it"
+        )
+
+    # Bulk decode is the slow phase of a cache-hit load; time it
+    hw = tuple(int(x) for x in group.attrs["hw"])
     t0 = time.perf_counter()
-    all_kpts = (
-        rec_group["keypoints"][:] if rec_group["keypoints"].shape[0] > 0 else np.zeros((0, 2), dtype=np.float32)
-    )
-    all_descs = (
-        rec_group["descriptors"][:] if rec_group["descriptors"].shape[0] > 0 else np.zeros((0, 1), dtype=np.float32)
-    )
-    all_scores = rec_group["scores"][:] if "scores" in rec_group else None
-    all_scales = rec_group["scales"][:] if "scales" in rec_group else None
-    all_norm = rec_group["keypoints_normalized"][:] if "keypoints_normalized" in rec_group else None
-    logger.info(
-        "CameraLocalizer: read %s keypoints / %.0f MB descriptors in %.1fs",
-        f"{len(all_kpts):,}",
-        all_descs.nbytes / 1e6,
-        time.perf_counter() - t0,
-    )
+    feats = _features_from_csr(group, [(hw[1], hw[0])] * len(ids))
+    logger.info("CameraLocalizer: read feature DB (%d frames) in %.1fs", len(feats), time.perf_counter() - t0)
+    return feats, ids, hw
 
-    rec_features: list[LocalFeatures] = []
-    for i in range(len(offsets) - 1):
-        s, e = int(offsets[i]), int(offsets[i + 1])
-        f_kpts = torch.from_numpy(all_kpts[s:e])
-        f_descs = torch.from_numpy(all_descs[s:e])
-        f_scores = torch.from_numpy(all_scores[s:e]) if all_scores is not None else None
-        f_scales = torch.from_numpy(all_scales[s:e]) if all_scales is not None else None
-        f_norm = torch.from_numpy(all_norm[s:e]) if all_norm is not None else None
-        rec_features.append(
-            LocalFeatures(
-                keypoints=f_kpts,
-                descriptors=f_descs,
-                scores=f_scores,
-                scales=f_scales,
-                keypoints_normalized=f_norm,
-                image_size=(hw[1], hw[0]),
-            )
-        )
 
-    return rec_features, rec_image_paths, hw
+########################################
+# Localizer
+########################################
 
 
 class CameraLocalizer:
-    """Locates a query camera within a known 3D scene.
+    """
+    Locates a query camera in a known scene from cached reference-frame features.
 
-    Matches the query image against all N reference frames via local feature
-    matching (exhaustive — no global retrieval) then solves absolute pose via
-    LO-RANSAC + Ceres refinement (pycolmap). Build once per scene; call
-    localize() for each query image.
-
-    Output convention matches PointcloudResult.extrinsics: (4, 4) float32
-    world-to-camera homogeneous transform.
+    - reference features stay on the CPU; each chosen ref moves to the matcher's device per localize
+    - localized frames are id and pose only, never match sources
     """
 
     def __init__(
         self,
         world_points: np.ndarray,
         extrinsics: np.ndarray,
-        images,  # Iterable[np.ndarray] — RGB arrays, one per reference frame
-        ids: list[str],  # stable per-frame labels, index-aligned with images
-        extractor=None,
+        images: Iterable[np.ndarray],
+        ids: list[str],
+        *,
+        extractor: LocalMatcher | None = None,
         config: dict | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
-    ):
-        """Build feature index from scene data.
+        original_coords: np.ndarray | None = None,
+        top_k: int = 8,
+        batch_size: int = 32,
+    ) -> None:
+        """
+        Extract and embed every reference frame, one chunk at a time.
 
         Args:
-            world_points: (N, H, W, 3) float32 world-space per-pixel point maps, one per
-                          reference frame — 2D→3D lookup samples these at matched ref pixels.
-            extrinsics:   (N, 4, 4) float32 world-to-camera transforms.
-            images:       iterable of (H, W, 3) uint8 RGB arrays, one per reference frame.
-                          Pixel fetching is the caller's responsibility — this class does no image IO.
-            ids:          length-N list of stable per-frame string labels, index-aligned with images.
-            extractor:    local feature matcher; defaults to LocalMatcher("loma").
-            config:       solver options dict. Keys:
-                            "estimation" → pycolmap estimation_options
-                              (default: {"ransac": {"max_error": 50}})
-                            "refinement" → pycolmap refinement_options
-                              (default: {"refine_focal_length": True,
-                                         "refine_extra_params": True})
+            world_points: (N, H, W, 3) model-grid world points, one map per reference frame.
+            extrinsics: (N, 4, 4) world-to-camera.
+            images: (h, w, 3) uint8 RGB reference frames, drawn lazily; no image IO here.
+            ids: stable per-frame labels, index-aligned with images.
+            extractor: local matcher; None builds LocalMatcher("loma").
+            config: pycolmap options: "estimation" {"ransac": {"max_error"}} (50),
+                "refinement" {"refine_focal_length", "refine_extra_params"} (True, False).
+            progress_callback: called (frame_index, total) as frames are indexed.
+            original_coords: (N, 6) preprocess crop per frame; None means images are the uncropped grid source.
+            top_k: retrieved reference frames per localize(refs=None).
+            batch_size: frames per extract and embed call.
+
+        Raises:
+            ValueError: images is empty, or a frame's size disagrees with its original_coords row.
+        """
+        self._setup(world_points, extrinsics, ids, extractor, config, original_coords, top_k, batch_size)
+        descs = []
+
+        # Extract and embed per chunk; tqdm only without an external progress sink
+        bar = tqdm(
+            total=len(ids), desc="Indexing frames", unit="frame", leave=False, disable=progress_callback is not None
+        )
+
+        for chunk in _chunked(images, batch_size):
+            start = len(self._frame_features)
+
+            # Ref pixels map through original_coords; each frame must be its row's full-res (orig_w, orig_h)
+            if original_coords is not None:
+                for k, image in enumerate(chunk, start):
+                    frame_wh = (image.shape[1], image.shape[0])
+                    orig_wh = original_coords[k, 4:6].tolist()
+
+                    if frame_wh != tuple(orig_wh):
+                        raise ValueError(
+                            f"CameraLocalizer: reference frame {k} is {frame_wh[0]}x{frame_wh[1]} "
+                            f"but original_coords expects {orig_wh}; pass full-res frames"
+                        )
+
+            feats = self._extractor.extract(chunk)
+            self._frame_features += feats
+            descs.append(self._embed(chunk))
+            bar.update(len(chunk))
+
+            if progress_callback is not None:
+                for k in range(start, len(self._frame_features)):
+                    progress_callback(k, len(ids))
+
+        bar.close()
+
+        if not self._frame_features:
+            raise ValueError("CameraLocalizer: no reference frames")
+
+        # Reference image size, and the crop each frame went through
+        w, h = self._frame_features[0].image_size
+        self._set_frames(self._frame_features, np.concatenate(descs), (h, w))
+        logger.info("CameraLocalizer: indexed %d frames", len(self._frame_features))
+
+    def _setup(
+        self,
+        world_points: np.ndarray,
+        extrinsics: np.ndarray,
+        ids: list[str],
+        extractor: LocalMatcher | None,
+        config: dict | None,
+        original_coords: np.ndarray | None,
+        top_k: int,
+        batch_size: int,
+    ) -> None:
+        """
+        State shared by __init__ and load_index, before any reference frame is known.
         """
         self.config = config or {}
-
-        # Store scene geometry for use in localize()
         self._world_points = world_points
         self._extrinsics = extrinsics
-
         self._extractor = extractor if extractor is not None else LocalMatcher("loma")
-
-        # Pairwise-matcher state (LocalMatcher only): model-res reference images +
-        # DinoSalad retrieval gate, attached by from_feedforward. None on the
-        # descriptor path, where localize() matches descriptors against all frames.
-        self._ref_images: list[np.ndarray] | None = None
-        self._ref_global_desc: np.ndarray | None = None
-        self._retrieval = None
-        self._top_k: int = 8
-
-        # Store image paths and provenance for duplicate guard and dashboard display.
-        # _extrinsics stays reconstruction-only (world_points indexing depends on that); poses
-        # for appended localized frames accumulate here and are joined by the extrinsics property.
-        self._image_paths: list[str] = [str(i) for i in ids]
-        self._frame_sources: list[str] = []
+        self._retrieval: DinoSaladExtractor | None = None
+        self._top_k = top_k
+        self._batch_size = batch_size
+        self._original_coords = original_coords
+        self._ids = [str(i) for i in ids]
+        self._localized_ids: list[str] = []
         self._localized_extrinsics: list[np.ndarray] = []
-
-        logger.info("CameraLocalizer: building index for %d frames", len(ids))
-
-        # TODO(future-C): pre-compute and store these features in pointcloud.zarr so index
-        # build is a zarr read (~1 s) instead of O(N) GPU inference. See spec 2026-05-29.
-
-        # Extract local features for all reference frames. Pixels are supplied by the caller
-        # as RGB arrays — this class performs no image IO.
         self._frame_features: list[LocalFeatures] = []
-        first_hw: tuple[int, int] | None = None
-        total = len(ids)
-        # tqdm only when no external progress_callback is wired
-        if progress_callback is None:
-            try:
-                from tqdm.auto import tqdm as _tqdm
 
-                _iter = _tqdm(zip(images, ids), total=total, desc="Indexing frames", unit="frame", leave=False)
-            except ImportError:
-                _iter = zip(images, ids)
-        else:
-            _iter = zip(images, ids)
-        for rgb, fid in _iter:
-            if first_hw is None:
-                first_hw = (rgb.shape[0], rgb.shape[1])
-            feats = self._extractor.extract(rgb)
-            self._frame_features.append(feats)
-            if progress_callback is not None:
-                progress_callback(len(self._frame_features) - 1, total)
-            logger.debug("  frame %s: %d keypoints", fid, len(feats.keypoints))
+    def _set_frames(self, features: list[LocalFeatures], global_desc: np.ndarray, hw: tuple[int, int]) -> None:
+        """
+        Reference features, descriptors and image size; uncropped coords when none were given.
+        """
+        self._frame_features = features
+        self._global_desc = global_desc
+        self._image_hw = hw
+        coords = self._original_coords
 
-        self._image_hw: tuple[int, int] = first_hw or (480, 640)
+        if coords is None:
+            coords = _full_frame_coords(len(features), *hw)
 
-        self._frame_sources = ["reconstruction"] * len(self._frame_features)
+        self._coords = coords
 
-        logger.info("CameraLocalizer: index built")
+    ########################################
+    # Views
+    ########################################
 
     @property
     def frame_sources(self) -> list[str]:
-        """Provenance per frame: 'reconstruction' or 'localized'."""
-        return list(self._frame_sources)
+        """
+        Provenance per frame, index-aligned with image_paths.
+
+        Returns:
+            'reconstruction' or 'localized' per frame.
+        """
+        return ["reconstruction"] * len(self._ids) + ["localized"] * len(self._localized_ids)
 
     @property
     def image_paths(self) -> list[str]:
-        """Stable per-frame labels/ids (strings), index-aligned with frame_sources and extrinsics."""
-        return list(self._image_paths)
+        """
+        Frame ids, index-aligned with frame_sources and extrinsics.
+
+        Returns:
+            Frame ids: reconstruction then localized.
+        """
+        return self._ids + self._localized_ids
 
     @property
     def extrinsics(self) -> np.ndarray:
-        """(N, 4, 4) world-to-camera for ALL reference frames — reconstruction then localized.
+        """
+        World-to-camera pose of every frame: reconstruction then localized.
 
-        Index-aligned with image_paths / frame_sources / LocalizationResult.ref_frame_indices.
+        Returns:
+            (N, 4, 4) poses.
         """
         if not self._localized_extrinsics:
             return self._extrinsics
-        return np.concatenate([self._extrinsics, np.stack(self._localized_extrinsics)], axis=0)
 
-    def save_index(self, zarr_path: "str | Path", extractor_name: str, attrs: "dict | None" = None) -> None:
-        """Persist extracted frame features to pointcloud.zarr reconstruction/ subgroup.
+        localized = np.stack(self._localized_extrinsics)
+        return np.concatenate([self._extrinsics, localized], axis=0)
 
-        Overwrites any existing reconstruction cache for extractor_name.
-        Not automatically invalidated when source images change — caller's responsibility.
-        Single-writer assumption; not safe for concurrent calls.
+    ########################################
+    # Retrieval
+    ########################################
+
+    def _embed(self, images: list[np.ndarray]) -> np.ndarray:
+        """
+        DINO-SALAD descriptors of uint8 RGB frames; the model is built on first use.
+        """
+        if self._retrieval is None:
+            self._retrieval = DinoSaladExtractor()
+
+        # Upload uint8, convert on device
+        device = next(self._retrieval.parameters()).device
+        stack = np.stack(images)
+        tensor = torch.from_numpy(stack).to(device)
+        tensor = tensor.permute(0, 3, 1, 2).float() / 255
+        desc = self._retrieval(tensor)
+        return to_numpy(desc).astype(np.float32)
+
+    def _rank_refs(self, query_image: np.ndarray) -> list[int]:
+        """
+        Top-k reconstruction frames by cosine similarity to the query.
+        """
+        query_desc = self._embed([query_image])[0]
+        sims = self._global_desc @ query_desc
+        order = np.argsort(-sims, kind="stable")
+        return [int(i) for i in order[: self._top_k]]
+
+    ########################################
+    # Persistence
+    ########################################
+
+    def save_index(self, zarr_path: Path | str, extractor_name: str, attrs: dict | None = None) -> None:
+        """
+        Persist the reconstruction features and global descriptors to pointcloud.zarr.
+
+        - replaces the extractor's whole group, localized frames included
+        - image_paths is written last: it marks the DB complete
 
         Args:
-            zarr_path:      pointcloud.zarr store path.
-            extractor_name: registry key naming the local_features/ subgroup.
-            attrs:          optional build provenance (e.g. backbone, ba, lc, built_at)
-                            written to the extractor-level group. Replaces any prior
-                            attrs wholesale; extractor_name is always stamped.
+            zarr_path: pointcloud.zarr path.
+            extractor_name: feature-cache key.
+            attrs: build provenance (backbone, ba, lc, built_at, ...).
         """
-        zarr_path = pathlib.Path(zarr_path)
         store = zarr.open(str(zarr_path), mode="a")
+        ext_key = f"local_features/{extractor_name}"
 
-        # Clean overwrite: delete existing reconstruction group if present
-        rec_key = f"local_features/{extractor_name}/reconstruction"
-        if rec_key in store:
-            del store[rec_key]
+        # Clean overwrite; localized poses belong to the reconstruction being replaced
+        if ext_key in store:
+            del store[ext_key]
 
-        rec_group = store.require_group(rec_key)
+        ext_group = store.require_group(ext_key)
+        provenance = dict(attrs) if attrs is not None else {}
+        provenance["extractor"] = extractor_name
+        ext_group.attrs.put(provenance)
 
-        # Stamp build provenance on the extractor group — wholesale replacement so a
-        # rebuild never inherits stale attrs from a previous build
-        ext_group = store.require_group(f"local_features/{extractor_name}")
-        ext_group.attrs.put({"extractor": extractor_name, **(attrs or {})})
-
-        # Build CSR frame_offsets from per-frame keypoint counts
-        counts = [len(f.keypoints) for f in self._frame_features]
-        offsets = np.zeros(len(counts) + 1, dtype=np.int64)
-        np.cumsum(counts, out=offsets[1:])
-
-        # Concatenate all keypoints and descriptors across frames
-        if offsets[-1] > 0:
-            all_kpts = np.concatenate([f.keypoints.numpy() for f in self._frame_features], axis=0).astype(np.float32)
-            all_descs = np.concatenate([f.descriptors.numpy() for f in self._frame_features], axis=0).astype(np.float32)
-        else:
-            d = self._frame_features[0].descriptors.shape[1] if self._frame_features else 1
-            all_kpts = np.zeros((0, 2), dtype=np.float32)
-            all_descs = np.zeros((0, d), dtype=np.float32)
-
-        rec_group.attrs["image_paths"] = [str(p) for p in self._image_paths]
-        rec_group.attrs["hw"] = list(self._image_hw)
-
-        rec_group.create_array("frame_offsets", data=offsets, chunks=offsets.shape, compressors=LZ4)
-        rec_group.create_array("keypoints", data=all_kpts, chunks=(max(all_kpts.shape[0], 1), 2), compressors=LZ4)
-        d_dim = all_descs.shape[1] if all_descs.shape[1] > 0 else 1
-        rec_group.create_array(
-            "descriptors", data=all_descs, chunks=(max(all_descs.shape[0], 1), d_dim), compressors=LZ4
-        )
-
-        # scores: optional per-keypoint saliency — skip if all None
-        has_scores = any(f.scores is not None for f in self._frame_features)
-        if has_scores:
-            all_scores = np.concatenate(
-                [
-                    f.scores.numpy() if f.scores is not None else np.zeros(len(f.keypoints), dtype=np.float32)
-                    for f in self._frame_features
-                ]
-            ).astype(np.float32)
-            rec_group.create_array("scores", data=all_scores, chunks=(max(all_scores.shape[0], 1),), compressors=LZ4)
-
-        # scales: optional per-keypoint extraction scale — skip if all None
-        has_scales = any(f.scales is not None for f in self._frame_features)
-        if has_scales:
-            all_scales = np.concatenate(
-                [
-                    f.scales.numpy() if f.scales is not None else np.zeros(len(f.keypoints), dtype=np.float32)
-                    for f in self._frame_features
-                ]
-            ).astype(np.float32)
-            rec_group.create_array("scales", data=all_scales, chunks=(max(all_scales.shape[0], 1),), compressors=LZ4)
-
-        # keypoints_normalized: loma model-grid coords its matcher consumes.
-        # Written only when EVERY frame carries them — a zero-filled normalized table would be
-        # wrong data, unlike scores/scales (absent, never zeros).
-        has_norm = bool(self._frame_features) and all(
-            f.keypoints_normalized is not None for f in self._frame_features
-        )
-        if has_norm and offsets[-1] > 0:
-            all_norm = np.concatenate(
-                [f.keypoints_normalized.numpy() for f in self._frame_features], axis=0
-            ).astype(np.float32)
-            rec_group.create_array(
-                "keypoints_normalized",
-                data=all_norm,
-                chunks=(max(all_norm.shape[0], 1), 2),
-                compressors=LZ4,
-            )
-
-        logger.info(
-            "CameraLocalizer.save_index: saved %d frames to %s [%s]",
-            len(self._frame_features),
-            zarr_path,
-            extractor_name,
-        )
+        # Arrays first, then the cache stamps, then the image_paths commit marker
+        group = store.require_group(f"{ext_key}/reconstruction")
+        _write_csr(group, self._frame_features)
+        group.create_array("global_desc", data=self._global_desc, chunks=self._global_desc.shape, compressors=LZ4)
+        group.attrs["hw"] = list(self._image_hw)
+        group.attrs["max_num_keypoints"] = self._extractor.max_num_keypoints
+        group.attrs["image_paths"] = list(self._ids)
+        logger.info("CameraLocalizer.save_index: %d frames to %s [%s]", len(self._ids), zarr_path, extractor_name)
 
     @classmethod
     def load_index(
         cls,
-        zarr_path: "str | Path",
+        zarr_path: Path | str,
         extractor_name: str,
         world_points: np.ndarray,
         extrinsics: np.ndarray,
-        config: "dict | None" = None,
-        extractor=None,
-        pairwise_refs=None,
-    ) -> "CameraLocalizer":
-        """Load feature index from zarr; attach current scene geometry (world_points, extrinsics).
-
-        Loads reconstruction/ and localized/ (if present) groups and merges them.
-        Raises KeyError if extractor_name reconstruction cache not found.
-
-        pairwise_refs: (ref_images, ref_global_desc, retrieval) tuple for pairwise
-        matchers (LocalMatcher), built by from_feedforward from ff.images — the zarr
-        feature cache holds no reference pixels, so a pairwise extractor without this
-        cannot localize and raises.
+        config: dict | None = None,
+        extractor: LocalMatcher | None = None,
+        *,
+        original_coords: np.ndarray | None = None,
+        top_k: int = 8,
+    ) -> CameraLocalizer:
         """
-        zarr_path = pathlib.Path(zarr_path)
-        rec_features, rec_image_paths, hw = read_localization_db(zarr_path, extractor_name)
+        Localizer from the zarr feature DB, attached to the current scene geometry.
 
-        # load_index also needs the localized/ group, which read_localization_db
-        # doesn't touch — keep a store handle open for that.
+        - localized frames load as ids and poses only; the retrieval model loads on first localize
+
+        Args:
+            zarr_path: pointcloud.zarr path.
+            extractor_name: feature-cache key.
+            world_points: (N, H, W, 3) model-grid world points.
+            extrinsics: (N, 4, 4) world-to-camera.
+            config: pycolmap options, as __init__.
+            extractor: local matcher; None builds LocalMatcher("loma").
+            original_coords: (N, 6) preprocess crop per frame; None means uncropped.
+            top_k: retrieved reference frames per localize(refs=None).
+
+        Returns:
+            The localizer.
+
+        Raises:
+            KeyError: no DB for the extractor, or an incomplete one (rebuild it).
+            ValueError: the geometry does not cover exactly the DB's frames.
+        """
+        rec_features, rec_ids, hw = read_localization_db(zarr_path, extractor_name)
+
+        # Geometry must cover exactly the DB's frames
+        n = len(rec_ids)
+
+        if (
+            len(world_points) != n
+            or len(extrinsics) != n
+            or (original_coords is not None and len(original_coords) != n)
+        ):
+            raise ValueError(
+                f"load_index: DB holds {n} frames; world_points, extrinsics and original_coords must match"
+            )
+
         store = zarr.open(str(zarr_path), mode="r")
+        rec_group = store[f"local_features/{extractor_name}/reconstruction"]
 
-        # ── Load localized group (optional) ──────────────────────────────────
+        # Same state as __init__, with the stored features in place of extraction
+        obj = cls.__new__(cls)
+        obj._setup(world_points, extrinsics, rec_ids, extractor, config, original_coords, top_k, 32)
+        global_desc = rec_group["global_desc"][:]
+        obj._set_frames(rec_features, global_desc, hw)
+
+        # Localized frames, if any: ids and the poses image_paths commits
         loc_key = f"local_features/{extractor_name}/localized"
-        loc_features: list[LocalFeatures] = []
-        loc_image_paths: list[str] = []
-        loc_extrinsics_list: list[np.ndarray] = []
 
         if loc_key in store:
             loc_group = store[loc_key]
-            loc_image_paths = [str(p) for p in loc_group.attrs.get("image_paths", [])]
-            if loc_image_paths:
-                loc_offsets = loc_group["frame_offsets"][:]
-                loc_kpts = loc_group["keypoints"][:]
-                loc_descs = loc_group["descriptors"][:]
-                loc_scores = loc_group["scores"][:] if "scores" in loc_group else None
-                loc_scales = loc_group["scales"][:] if "scales" in loc_group else None
-                loc_ext = loc_group["extrinsics"][:]  # (N_loc, 4, 4)
-                for i in range(len(loc_offsets) - 1):
-                    s, e = int(loc_offsets[i]), int(loc_offsets[i + 1])
-                    f_kpts = torch.from_numpy(loc_kpts[s:e])
-                    f_descs = torch.from_numpy(loc_descs[s:e])
-                    f_scores = torch.from_numpy(loc_scores[s:e]) if loc_scores is not None else None
-                    f_scales = torch.from_numpy(loc_scales[s:e]) if loc_scales is not None else None
-                    loc_features.append(
-                        LocalFeatures(keypoints=f_kpts, descriptors=f_descs, scores=f_scores, scales=f_scales)
-                    )
-                    loc_extrinsics_list.append(loc_ext[i])
-
-        # ── Assemble object without running __init__ extraction loop ──────────
-        obj = object.__new__(cls)
-        obj.config = config or {}
-        obj._world_points = world_points
-        obj._extrinsics = extrinsics
-        obj._extractor = extractor if extractor is not None else LocalMatcher("loma")
-        obj._image_hw = hw
-        obj._frame_features = rec_features + loc_features
-        obj._frame_sources = ["reconstruction"] * len(rec_features) + ["localized"] * len(loc_features)
-        obj._image_paths = rec_image_paths + loc_image_paths
-        # Keep the localized poses so extrinsics stays aligned with image_paths/frame_sources
-        obj._localized_extrinsics = list(loc_extrinsics_list)
-
-        # Pairwise-matcher state: attach ref images + retrieval gate when supplied;
-        # a pairwise extractor without reference images can never localize — fail now.
-        obj._ref_images = None
-        obj._ref_global_desc = None
-        obj._retrieval = None
-        obj._top_k = 8
-        if pairwise_refs is not None:
-            obj._ref_images, obj._ref_global_desc, obj._retrieval = pairwise_refs
-        if isinstance(obj._extractor, LocalMatcher) and obj._ref_images is None:
-            raise RuntimeError(
-                "Pairwise matcher needs reference images: build via from_feedforward "
-                "(pointcloud.zarr images array), not load_index alone."
-            )
+            obj._localized_ids = [str(p) for p in loc_group.attrs.get("image_paths", [])]
+            obj._localized_extrinsics = list(loc_group["extrinsics"][: len(obj._localized_ids)])
 
         logger.info(
-            "CameraLocalizer.load_index: loaded %d rec + %d loc frames from %s [%s]",
-            len(rec_features),
-            len(loc_features),
-            zarr_path,
+            "CameraLocalizer.load_index: %d rec + %d loc frames [%s]",
+            len(rec_ids),
+            len(obj._localized_ids),
             extractor_name,
         )
         return obj
 
     def update_index(
         self,
-        new_images,  # Iterable[np.ndarray] — RGB arrays for new reconstruction frames
+        new_images: Iterable[np.ndarray],
         new_ids: list[str],
-        zarr_path: "str | Path",
+        zarr_path: Path | str,
         extractor_name: str,
-        progress_callback: "Callable[[int, int], None] | None" = None,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> None:
-        """Extract features for new reconstruction frames; append to zarr cache.
-
-        Pixels are supplied by the caller as RGB arrays (index-aligned with new_ids) —
-        this method performs no image IO. Does NOT update world_points/extrinsics —
-        caller must update those and call clear_localized_frames() + load_index() to
-        reattach current geometry.
         """
-        zarr_path = pathlib.Path(zarr_path)
+        Extract and embed new reconstruction frames; append them to the zarr DB in one write per array.
 
-        # Extract features for each supplied RGB array; no image IO here
+        - persist only: this localizer is unchanged, since the new frames have no world_points yet
+        - reload via load_index with geometry that covers them
+
+        Args:
+            new_images: (h, w, 3) uint8 RGB frames, drawn lazily.
+            new_ids: labels, index-aligned with new_images.
+            zarr_path: pointcloud.zarr path.
+            extractor_name: feature-cache key.
+            progress_callback: called (frame_index, total) as frames are extracted.
+        """
         new_features: list[LocalFeatures] = []
-        for i, (rgb, fid) in enumerate(zip(new_images, new_ids)):
-            feats = self._extractor.extract(rgb)
-            new_features.append(feats)
+        descs = []
+
+        # Extract and embed per chunk
+        for chunk in _chunked(new_images, self._batch_size):
+            start = len(new_features)
+            feats = self._extractor.extract(chunk)
+            new_features += feats
+            descs.append(self._embed(chunk))
+
             if progress_callback is not None:
-                progress_callback(i, len(new_ids))
-            logger.debug("update_index: frame %s: %d kpts", fid, len(feats.keypoints))
+                for k in range(start, len(new_features)):
+                    progress_callback(k, len(new_ids))
 
-        # Update in-memory state — _image_paths holds string ids
-        for fid, feats in zip(new_ids, new_features):
-            self._frame_features.append(feats)
-            self._frame_sources.append("reconstruction")
-            self._image_paths.append(fid)
+        new_desc = np.concatenate(descs)
 
-        # Append to reconstruction/ zarr group
-        store = zarr.open(str(zarr_path), mode="a")
-        rec_key = f"local_features/{extractor_name}/reconstruction"
-
-        if rec_key not in store:
-            logger.warning("update_index: no existing reconstruction cache — building from scratch")
+        # No DB yet: write this localizer's frames first, then append
+        if not localization_db_exists(zarr_path, extractor_name):
+            logger.warning("update_index: no reconstruction DB, writing it first")
             self.save_index(zarr_path, extractor_name)
-            return
 
-        rec_group = store[rec_key]
+        store = zarr.open(str(zarr_path), mode="a")
+        group = store[f"local_features/{extractor_name}/reconstruction"]
 
-        # Update attrs
-        existing_paths = list(rec_group.attrs.get("image_paths", []))
-        existing_paths.extend([str(f) for f in new_ids])
-        rec_group.attrs["image_paths"] = existing_paths
-
-        # Append CSR data frame by frame
-        for feats in new_features:
-            kpts_np = feats.keypoints.numpy().astype(np.float32)
-            descs_np = feats.descriptors.numpy().astype(np.float32)
-
-            off_arr = rec_group["frame_offsets"]
-            last_off = int(off_arr[-1])
-            n_off = off_arr.shape[0]
-            off_arr.resize((n_off + 1,))
-            off_arr[n_off] = last_off + len(kpts_np)
-
-            kpts_arr = rec_group["keypoints"]
-            old_m = kpts_arr.shape[0]
-            kpts_arr.resize((old_m + len(kpts_np), kpts_arr.shape[1]))
-            kpts_arr[old_m:] = kpts_np
-
-            descs_arr = rec_group["descriptors"]
-            descs_arr.resize((old_m + len(descs_np), descs_arr.shape[1]))
-            descs_arr[old_m:] = descs_np
-
-            if feats.scores is not None and "scores" in rec_group:
-                scores_np = feats.scores.numpy().astype(np.float32)
-                sc_arr = rec_group["scores"]
-                old_sc = sc_arr.shape[0]
-                sc_arr.resize((old_sc + len(scores_np),))
-                sc_arr[old_sc:] = scores_np
-
-            if feats.scales is not None and "scales" in rec_group:
-                scales_np = feats.scales.numpy().astype(np.float32)
-                sl_arr = rec_group["scales"]
-                old_sl = sl_arr.shape[0]
-                sl_arr.resize((old_sl + len(scales_np),))
-                sl_arr[old_sl:] = scales_np
-
-        logger.info(
-            "CameraLocalizer.update_index: appended %d frames to %s [%s]",
-            len(new_ids),
-            zarr_path,
-            extractor_name,
-        )
+        # Arrays first, then the image_paths commit marker
+        _append_csr(group, new_features)
+        _append_rows(group, "global_desc", new_desc)
+        paths = [str(p) for p in group.attrs["image_paths"]]
+        paths += [str(i) for i in new_ids]
+        group.attrs["image_paths"] = paths
+        logger.info("CameraLocalizer.update_index: appended %d frames [%s]", len(new_ids), extractor_name)
 
     def add_localized_frame(
         self,
-        image_path: "str | Path",
+        image_path: Path | str,
         pose: np.ndarray,
-        intrinsics: np.ndarray,
-        features: "LocalFeatures",
-        zarr_path: "str | Path | None" = None,
-        extractor_name: "str | None" = None,
-        provenance: "dict | None" = None,
+        zarr_path: Path | str | None = None,
+        extractor_name: str | None = None,
+        provenance: dict | None = None,
     ) -> None:
-        """Add a successfully localized frame to the DB for provenance and retrieval.
-
-        Localized frames carry no world_points map, so localize() skips them as
-        match sources — they are appended for record-keeping, not 2D→3D lookup.
-        If zarr_path and extractor_name are provided, appends to localized/ in zarr.
-        provenance: optional per-frame metadata (e.g. video_ref, scene, frame_idx)
-        recorded alongside the localized frame in zarr; stored opaquely, never indexed.
-        Single-writer; not thread-safe across concurrent callers.
-        Call clear_localized_frames() after BA/LC updates that invalidate poses.
         """
-        image_path = pathlib.Path(image_path)
+        Record a localized frame's pose; it is never a match source.
 
-        # Duplicate guard on stems: frame identity, not the label's extension
-        # - old DBs hold localized .jpg ids; re-localizing the same frame now writes .png
-        if image_path.stem in {pathlib.Path(p).stem for p in self._image_paths}:
-            logger.warning(
-                "CameraLocalizer.add_localized_frame: %s already in index, skipping",
-                image_path.name,
-            )
+        - a repeat of an existing id is logged and skipped
+        - persisted to the localized group when zarr_path and extractor_name are given
+        - call clear_localized_frames after BA / LC updates that invalidate poses
+
+        Args:
+            image_path: frame id.
+            pose: (4, 4) world-to-camera.
+            zarr_path: pointcloud.zarr path; None keeps id and pose in memory only.
+            extractor_name: feature-cache key; None keeps id and pose in memory only.
+            provenance: opaque per-frame metadata stored beside the frame.
+        """
+        frame_id = str(image_path)
+
+        if frame_id in self._ids or frame_id in self._localized_ids:
+            logger.warning("CameraLocalizer.add_localized_frame: %s already in index, skipping", frame_id)
             return
 
-        # Append in-memory; the pose keeps extrinsics aligned with image_paths/frame_sources
-        self._frame_features.append(features)
-        self._frame_sources.append("localized")
-        self._image_paths.append(str(image_path))
+        self._localized_ids.append(frame_id)
         self._localized_extrinsics.append(np.asarray(pose))
 
-        # Persist to zarr if requested
         if zarr_path is not None and extractor_name is not None:
-            self._append_localized_to_zarr(
-                image_path,
-                pose,
-                intrinsics,
-                features,
-                pathlib.Path(zarr_path),
-                extractor_name,
-                provenance=provenance,
-            )
+            self._append_localized_to_zarr(frame_id, pose, zarr_path, extractor_name, provenance)
 
+    @staticmethod
     def _append_localized_to_zarr(
-        self,
-        image_path: "pathlib.Path",
+        frame_id: str,
         pose: np.ndarray,
-        intrinsics: np.ndarray,
-        features: "LocalFeatures",
-        zarr_path: "pathlib.Path",
+        zarr_path: Path | str,
         extractor_name: str,
-        provenance: "dict | None" = None,
+        provenance: dict | None,
     ) -> None:
-        """Append one localized frame to the localized/ zarr group."""
+        """
+        Write one localized frame's pose at row len(image_paths), then commit its id.
+
+        - rows past image_paths, left by a crashed append, are overwritten
+        """
+        store = zarr.open(str(zarr_path), mode="a")
+        loc_key = f"local_features/{extractor_name}/localized"
+        pose_row = np.asarray(pose)[None]
+        meta = provenance if provenance is not None else {}
+
+        # First frame creates the group
+        if loc_key not in store:
+            group = store.require_group(loc_key)
+            group.create_array("extrinsics", data=pose_row, chunks=(1, 4, 4), compressors=LZ4)
+            group.attrs.update({"provenance": [meta], "image_paths": [frame_id]})
+            return
+
+        # Later frames write row n, then commit provenance and image_paths together
+        group = store[loc_key]
+        paths = list(group.attrs["image_paths"])
+        metas = list(group.attrs["provenance"])
+        n = len(paths)
+        group["extrinsics"].resize((n + 1, 4, 4))
+        group["extrinsics"][n] = pose_row[0]
+        group.attrs.update({"provenance": metas[:n] + [meta], "image_paths": paths + [frame_id]})
+
+    @staticmethod
+    def clear_localized_frames(zarr_path: Path | str, extractor_name: str) -> None:
+        """
+        Delete the extractor's localized group; reconstruction data is untouched.
+
+        - call after BA / LC updates that invalidate localized poses, then reload via load_index
+
+        Args:
+            zarr_path: pointcloud.zarr path.
+            extractor_name: feature-cache key.
+        """
         store = zarr.open(str(zarr_path), mode="a")
         loc_key = f"local_features/{extractor_name}/localized"
 
-        kpts_np = features.keypoints.numpy().astype(np.float32)
-        descs_np = features.descriptors.numpy().astype(np.float32)
-        scores_np = features.scores.numpy().astype(np.float32) if features.scores is not None else None
-        scales_np = features.scales.numpy().astype(np.float32) if features.scales is not None else None
-
-        if loc_key not in store:
-            # First localized frame — create group + arrays
-            loc_group = store.require_group(loc_key)
-            offsets = np.array([0, len(kpts_np)], dtype=np.int64)
-            loc_group.attrs["image_paths"] = [str(image_path)]
-            loc_group.attrs["provenance"] = [provenance or {}]
-            loc_group.create_array("frame_offsets", data=offsets, chunks=(max(offsets.shape[0], 2),), compressors=LZ4)
-            loc_group.create_array("keypoints", data=kpts_np, chunks=(max(kpts_np.shape[0], 1), 2), compressors=LZ4)
-            loc_group.create_array(
-                "descriptors",
-                data=descs_np,
-                chunks=(max(descs_np.shape[0], 1), max(descs_np.shape[1], 1)),
-                compressors=LZ4,
-            )
-            if scores_np is not None:
-                loc_group.create_array("scores", data=scores_np, chunks=(max(scores_np.shape[0], 1),), compressors=LZ4)
-            if scales_np is not None:
-                loc_group.create_array("scales", data=scales_np, chunks=(max(scales_np.shape[0], 1),), compressors=LZ4)
-            loc_group.create_array("extrinsics", data=pose[np.newaxis], chunks=(1, 4, 4), compressors=LZ4)
-            loc_group.create_array("intrinsics", data=intrinsics[np.newaxis], chunks=(1, 3, 3), compressors=LZ4)
-        else:
-            # Append to existing group
-            loc_group = store[loc_key]
-            existing = list(loc_group.attrs.get("image_paths", []))
-            existing.append(str(image_path))
-            loc_group.attrs["image_paths"] = existing
-
-            prov_list = list(loc_group.attrs.get("provenance", []))
-            # Backfill empty provenance for frames appended before provenance existed
-            while len(prov_list) < len(existing) - 1:
-                prov_list.append({})
-            prov_list.append(provenance or {})
-            loc_group.attrs["provenance"] = prov_list
-
-            off_arr = loc_group["frame_offsets"]
-            last_off = int(off_arr[-1])
-            n_off = off_arr.shape[0]
-            off_arr.resize((n_off + 1,))
-            off_arr[n_off] = last_off + len(kpts_np)
-
-            kpts_arr = loc_group["keypoints"]
-            old_m = kpts_arr.shape[0]
-            kpts_arr.resize((old_m + len(kpts_np), kpts_arr.shape[1]))
-            kpts_arr[old_m:] = kpts_np
-
-            descs_arr = loc_group["descriptors"]
-            descs_arr.resize((old_m + len(descs_np), descs_arr.shape[1]))
-            descs_arr[old_m:] = descs_np
-
-            if scores_np is not None and "scores" in loc_group:
-                sc_arr = loc_group["scores"]
-                old_sc = sc_arr.shape[0]
-                sc_arr.resize((old_sc + len(scores_np),))
-                sc_arr[old_sc:] = scores_np
-
-            if scales_np is not None and "scales" in loc_group:
-                sl_arr = loc_group["scales"]
-                old_sl = sl_arr.shape[0]
-                sl_arr.resize((old_sl + len(scales_np),))
-                sl_arr[old_sl:] = scales_np
-
-            ext_arr = loc_group["extrinsics"]
-            n_loc = ext_arr.shape[0]
-            ext_arr.resize((n_loc + 1, 4, 4))
-            ext_arr[n_loc] = pose
-
-            intr_arr = loc_group["intrinsics"]
-            intr_arr.resize((n_loc + 1, 3, 3))
-            intr_arr[n_loc] = intrinsics
-
-        logger.debug("CameraLocalizer: appended localized frame %s to zarr", image_path.name)
-
-    @staticmethod
-    def clear_localized_frames(zarr_path: "str | Path", extractor_name: str) -> None:
-        """Delete the localized/ group for extractor_name from pointcloud.zarr.
-
-        Reconstruction data is untouched. Call this after BA/LC updates that
-        invalidate previously estimated localized poses, then reload via load_index().
-        """
-        store = zarr.open(str(pathlib.Path(zarr_path)), mode="a")
-        loc_key = f"local_features/{extractor_name}/localized"
         if loc_key in store:
             del store[loc_key]
-            logger.info(
-                "CameraLocalizer.clear_localized_frames: cleared '%s' from %s",
-                extractor_name,
-                zarr_path,
-            )
-        else:
-            logger.debug(
-                "CameraLocalizer.clear_localized_frames: no localized group for '%s'",
-                extractor_name,
-            )
-
-    @staticmethod
-    def _build_pairwise_refs(ff_images):
-        """Model-res reference images + DinoSalad descriptors for the pairwise retrieval gate.
-
-        Returns (ref_images uint8 HWC list, ref_global_desc (N, D) float32, retrieval).
-        """
-        # ff.images is (N, 3, H, W) float in [0, 1] -> HWC uint8 RGB per frame; .float() lifts VGGT-X's bf16
-        imgs = ff_images.detach().float().cpu().numpy() if torch.is_tensor(ff_images) else np.asarray(ff_images)
-        ref_images = list(to_uint8_hwc(imgs, channels_first=True))
-
-        # DinoSalad retrieval gate: one L2-normalized global descriptor per ref frame
-        retrieval = BaseRetrievalExtractor.get("dino-salad")()
-        desc = retrieval.forward([Image.fromarray(im) for im in ref_images])
-        ref_global_desc = F.normalize(torch.as_tensor(desc), dim=-1).cpu().numpy()
-        return ref_images, ref_global_desc, retrieval
+            logger.info("CameraLocalizer.clear_localized_frames: cleared '%s' from %s", extractor_name, zarr_path)
 
     @classmethod
-    def from_feedforward(
+    def from_pointcloud(
         cls,
-        result,
-        images=None,
-        ids=None,
-        extractor=None,
-        progress_callback=None,
-        zarr_path=None,
-        extractor_name=None,
+        result: PointcloudResult,
+        *,
+        zarr_path: Path | str,
+        images: Iterable[np.ndarray] | None = None,
+        ids: list[str] | None = None,
+        extractor: LocalMatcher | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
         top_k: int = 8,
-        **kwargs,
-    ) -> "CameraLocalizer":
-        """Construct from a PointcloudResult. Loads from zarr cache if available.
+        config: dict | None = None,
+    ) -> CameraLocalizer:
+        """
+        Localizer for a reconstruction: loads the zarr feature DB, or builds and saves it.
+
+        - cache hit: ids, the matcher's max_num_keypoints and the full-res (H, W) all match the DB
+        - a hit draws nothing from images; an incomplete DB rebuilds
+        - a rebuild replaces the DB and drops its localized frames
 
         Args:
-            result:            PointcloudResult (or duck-typed object with .world_points,
-                               .extrinsics, .image_paths, ._zarr_path).
-            images:            Caller-built reference pixel source (iterable of HxWx3 RGB
-                               arrays), aligned to result. Consumed ONLY on a cache miss;
-                               ignored on a cache hit (index loads from zarr).
-            ids:               Caller-built string labels aligned to images, used ONLY on a
-                               cache miss. Both images and ids are required to build.
-            extractor:         Local feature matcher; defaults to LocalMatcher("loma").
-            progress_callback: Called as (frame_idx, total) during index build.
-            zarr_path:         Override zarr cache path; falls back to result._zarr_path.
-            extractor_name:    Override the zarr feature-cache key; auto-detected if None.
-            top_k:             Pairwise matchers (LocalMatcher) only — number of
-                               retrieval-ranked reference frames localize() matches.
-            **kwargs:          Forwarded to CameraLocalizer.__init__ (e.g. config).
+            result: the reconstruction; reads world_points, extrinsics, original_coords, image_paths.
+            zarr_path: pointcloud.zarr path holding the DB.
+            images: (h, w, 3) uint8 RGB full-res reference frames, aligned to ids; drawn only on a rebuild.
+            ids: frame labels, index-aligned with result's frames; None labels them str(result.image_paths).
+            extractor: local matcher; None builds LocalMatcher("loma"). Its model_name keys the DB.
+            progress_callback: called (frame_index, total) during a rebuild.
+            top_k: retrieved reference frames per localize(refs=None).
+            config: pycolmap options, as __init__.
 
         Returns:
-            CameraLocalizer ready to localize query images in the given scene.
+            The localizer.
+
+        Raises:
+            ValueError: result's per-frame arrays or ids disagree in length, or a rebuild is needed without images,
+                or a rebuild's frame size disagrees with original_coords.
         """
-        # Depth-lookup localization requires the dense per-frame world map
-        if getattr(result, "world_points", None) is None:
-            raise ValueError("PointcloudResult has no world_points — re-save zarr or load with load_world_points=True")
+        coords = result.original_coords
+        n = len(result.world_points)
 
-        extractor_inst = extractor if extractor is not None else LocalMatcher("loma")
+        # Default labels: the reconstruction's own image paths
+        if ids is None:
+            ids = [str(p) for p in result.image_paths]
 
-        # Cache key: vismatch model name for LocalMatcher; class name for duck-typed
-        # descriptor-path extractors (test stubs, follow-on match_extracted models).
-        if extractor_name is None:
-            extractor_name = (
-                extractor_inst.model_name
-                if isinstance(extractor_inst, LocalMatcher)
-                else type(extractor_inst).__name__.lower()
-            )
+        if len(result.extrinsics) != n or len(ids) != n or (coords is not None and len(coords) != n):
+            raise ValueError("from_pointcloud: world_points, extrinsics, ids and original_coords must align per frame")
 
-        # Resolve zarr_path: explicit arg > result._zarr_path
-        if zarr_path is None:
-            zarr_path = getattr(result, "_zarr_path", None)
+        extractor = extractor if extractor is not None else LocalMatcher("loma")
+        name = extractor.model_name
 
-        # Pairwise matchers (LocalMatcher) match query IMAGE vs ref IMAGE — retain the
-        # model-res ff.images (index-aligned with world_points; same grid, so matched
-        # ref pixels sample world_points with no rescale) plus a DinoSalad retrieval
-        # gate so localize() matches top-K refs, not all N.
-        pairwise_refs = None
-        if isinstance(extractor_inst, LocalMatcher):
-            if getattr(result, "images", None) is None:
-                raise ValueError(
-                    "Pairwise matcher needs result.images (model-res reference frames) — "
-                    "reload the PointcloudResult with load_images=True"
+        # Cache key: what the DB was built from
+        expected = {"image_paths": [str(i) for i in ids], "max_num_keypoints": extractor.max_num_keypoints}
+
+        if coords is not None:
+            expected["hw"] = [int(coords[0, 5]), int(coords[0, 4])]
+
+        cached = {}
+
+        if localization_db_exists(zarr_path, name):
+            store = zarr.open_group(str(zarr_path), mode="r")
+            group = store[f"local_features/{name}/reconstruction"]
+            cached = dict(group.attrs)
+
+        stale = [key for key, value in expected.items() if cached.get(key) != value]
+
+        # Cache hit, unless the DB turns out incomplete
+        if not stale:
+            try:
+                return cls.load_index(
+                    zarr_path,
+                    name,
+                    result.world_points,
+                    result.extrinsics,
+                    config=config,
+                    extractor=extractor,
+                    original_coords=coords,
+                    top_k=top_k,
                 )
-            pairwise_refs = cls._build_pairwise_refs(result.images)
+            except KeyError as exc:
+                logger.info("CameraLocalizer: %s, rebuilding", exc)
+        else:
+            logger.info("CameraLocalizer: feature DB stale on %s, rebuilding", stale)
 
-        # Try cache first
-        if zarr_path is not None:
-            try:
-                store = zarr.open(str(zarr_path), mode="r")
-                rec_key = f"local_features/{extractor_name}/reconstruction"
-                if rec_key in store:
-                    # Staleness check on stems: frame identity, not the label's extension
-                    # - DBs on disk hold frame_NNNNNN.jpg ids; new builds write .png
-                    cached_paths = [Path(str(p)).stem for p in store[rec_key].attrs["image_paths"]]
-                    expected = [Path(str(x)).stem for x in (ids if ids is not None else result.image_paths)]
-                    if cached_paths != expected:
-                        logger.warning("CameraLocalizer: cached image_paths differ from expected — cache may be stale")
-                    logger.info("CameraLocalizer: cache hit for '%s', loading from zarr", extractor_name)
-                    localizer = cls.load_index(
-                        zarr_path=zarr_path,
-                        extractor_name=extractor_name,
-                        world_points=result.world_points,
-                        extrinsics=result.extrinsics,
-                        extractor=extractor_inst,
-                        pairwise_refs=pairwise_refs,
-                        **{k: v for k, v in kwargs.items() if k in ("config",)},
-                    )
-                    localizer._top_k = top_k
-                    return localizer
-            except KeyError:
-                logger.debug("CameraLocalizer: cache miss for '%s', building index", extractor_name)
-            except Exception as exc:
-                logger.warning("CameraLocalizer: cache load failed (%s), rebuilding", exc)
+        # Rebuild from the caller's frames
+        if images is None:
+            raise ValueError("from_pointcloud: building the feature DB needs images")
 
-        # Cache miss — build from GPU inference using caller-built (images, ids)
-        if images is None or ids is None:
-            raise ValueError("from_feedforward: cache miss requires images and ids (caller must build them)")
         localizer = cls(
-            world_points=result.world_points,
-            extrinsics=result.extrinsics,
-            images=images,
-            ids=ids,
-            extractor=extractor_inst,
+            result.world_points,
+            result.extrinsics,
+            images,
+            ids,
+            extractor=extractor,
+            config=config,
             progress_callback=progress_callback,
-            **kwargs,
+            original_coords=coords,
+            top_k=top_k,
         )
-
-        # Attach pairwise retention (ref images + retrieval gate) on the build path too
-        if pairwise_refs is not None:
-            localizer._ref_images, localizer._ref_global_desc, localizer._retrieval = pairwise_refs
-        localizer._top_k = top_k
-
-        # Save for next session
-        if zarr_path is not None:
-            try:
-                localizer.save_index(zarr_path, extractor_name)
-            except Exception as exc:
-                logger.warning("CameraLocalizer: failed to save index to zarr: %s", exc)
-
+        localizer.save_index(zarr_path, name)
         return localizer
+
+    ########################################
+    # Localization
+    ########################################
 
     def localize(
         self,
         query_image: np.ndarray,
         query_intrinsics: np.ndarray | None = None,
+        refs: Sequence[int] | None = None,
     ) -> LocalizationResult:
-        """Estimate world-to-camera pose for a query image.
+        """
+        World-to-camera pose of a query image.
 
-        Matches query against all reference frames; each matched ref pixel yields a
-        3D point by sampling that frame's dense world_points map (hloc
-        pose_from_cluster model). Pose solved via LO-RANSAC + Ceres refinement.
+        - refs None: DINO-SALAD ranks reconstruction frames, top_k are matched
+        - refs given: exactly those reconstruction frames (align to a chosen scene image)
+        - query shrunk to the reference long side; K and px returned on the original grid
 
         Args:
-            query_image:      HxWx3 uint8 RGB image.
-            query_intrinsics: (3, 3) K, or None to seed from image proportions
-                              (COLMAP 1.2*max rule) — pycolmap refines focal during PnP.
+            query_image: HxWx3 uint8 RGB.
+            query_intrinsics: (3, 3) K; None seeds from proportions; its focal is refined, fx == fy.
+            refs: reconstruction frame indices to match against.
 
         Returns:
-            LocalizationResult with pose (4, 4) and inlier data.
-            pose is None if solver fails or fewer than 4 correspondences exist.
+            LocalizationResult; pose None when PnP fails; query_intrinsics is the refined K on success.
+
+        Raises:
+            ValueError: refs names a frame with no world_points (not a reconstruction frame).
         """
-        # Extract local features from query image
-        query_feats = self._extractor.extract(query_image)
+        # Chosen frames must carry world points
+        n_rec = len(self._world_points)
 
-        # Seed intrinsics from image proportions when the query camera is uncalibrated;
-        # pycolmap focal refinement (enabled by default) solves the true focal from
-        # correspondences below.
+        if refs is not None and any(not 0 <= i < n_rec for i in refs):
+            raise ValueError(f"localize: refs {list(refs)} must index reconstruction frames [0, {n_rec})")
+
+        # Match on a query no larger than the references; K follows the resize
+        full_hw = query_image.shape[:2]
+        small = self._shrink_query(query_image)
+        small_hw = small.shape[:2]
+
         if query_intrinsics is None:
-            H, W = query_image.shape[:2]
-            query_intrinsics = seed_intrinsics(H, W)
+            query_intrinsics = seed_intrinsics(*small_hw)
+        else:
+            query_intrinsics = rescale_intrinsics(query_intrinsics, full_hw, small_hw)
 
-        logger.debug("CameraLocalizer.localize: query has %d keypoints", len(query_feats.keypoints))
-
-        # Pairwise matchers have no descriptor-level match() — take the image-vs-image
-        # path: retrieval-ranked top-K reference images, matched one pair at a time.
-        if isinstance(self._extractor, LocalMatcher):
-            return self._localize_pairwise(query_image, query_feats, query_intrinsics)
-
-        # Match against each reference frame; 3D via depth lookup at the matched ref pixel.
-        # _world_points holds exactly the reconstruction frames (index-aligned with the
-        # leading "reconstruction" entries of _frame_features); localized frames are only
-        # ever appended AFTER them and are skipped here, so indexing by i stays valid.
+        query_feats = self._extractor.extract(small)
+        query_feats = self._extractor.to_device(query_feats)
+        refs = self._rank_refs(small) if refs is None else list(refs)
+        model_hw = self._world_points.shape[1:3]
         all_q, all_3d, all_ref, all_frame = [], [], [], []
-        for i, db_feats in enumerate(self._frame_features):
-            if self._frame_sources[i] != "reconstruction":
-                continue  # localized frames carry no world_points
-            if len(db_feats.keypoints) == 0:
-                continue
-            m = self._extractor.match(query_feats, db_feats)
+
+        # Match each ref and lift its matched px through the world map
+        for i in refs:
+            ref_feats = self._extractor.to_device(self._frame_features[i])
+            m = self._extractor.match(query_feats, ref_feats)
+
             if len(m) == 0:
                 continue
-            # Matched ref pixels live in the reference-image grid (_image_hw), which may be
-            # full resolution while world_points is model resolution — map between the two
-            # grids with the align_corners=True corner convention before sampling.
-            wp = self._world_points[i]
-            ref_px_wp = m.ref_px
-            if (wp.shape[0], wp.shape[1]) != tuple(self._image_hw):
-                scale = np.array(
-                    [
-                        (wp.shape[1] - 1) / max(self._image_hw[1] - 1, 1),
-                        (wp.shape[0] - 1) / max(self._image_hw[0] - 1, 1),
-                    ],
-                    dtype=np.float32,
-                )
-                ref_px_wp = m.ref_px * scale
-            pts3d, valid = sample_world_points(wp, ref_px_wp)
-            if not valid.any():
+
+            px_model = _crop_to_model_grid(m.ref_px, self._coords[i], model_hw)
+            pts3d, valid = sample_world_points(self._world_points[i], px_model)
+            n_valid = int(valid.sum())
+
+            if n_valid == 0:
                 continue
+
             all_q.append(m.query_px[valid])
             all_3d.append(pts3d[valid])
             all_ref.append(m.ref_px[valid])
-            all_frame.append(np.full(int(valid.sum()), i, dtype=np.int32))
+            all_frame.append(np.full(n_valid, i, dtype=np.int32))
 
-        return self._solve_pnp(
-            all_q,
-            all_3d,
-            all_ref,
-            all_frame,
-            query_image,
-            query_feats,
-            query_intrinsics,
-            ref_hw=tuple(self._image_hw),
-        )
+        result = self._solve_pnp(all_q, all_3d, all_ref, all_frame, small_hw, query_intrinsics)
+        return _to_query_grid(result, small_hw, full_hw)
 
-    def _localize_pairwise(self, query_image, query_feats, query_intrinsics):
-        """Pairwise path: match query image vs top-K retrieved model-res ref images."""
-        if self._ref_images is None:
-            raise RuntimeError(
-                "Pairwise matcher needs reference images: build via from_feedforward "
-                "(pointcloud.zarr images array), not load_index alone."
-            )
+    def _shrink_query(self, query_image: np.ndarray) -> np.ndarray:
+        """
+        Query resized so its long side is the reference long side; never upscaled.
+        """
+        ref_long = max(self._image_hw)
+        h, w = query_image.shape[:2]
+        scale = ref_long / max(h, w)
 
-        # Rank reconstruction frames by retrieval cosine similarity (descriptors are
-        # L2-normalized, so the dot product is cosine similarity). Localized frames
-        # carry no world_points/ref image — only reconstruction frames are candidates.
-        desc = self._retrieval.forward([Image.fromarray(np.asarray(query_image, dtype=np.uint8))])
-        q_desc = F.normalize(torch.as_tensor(desc), dim=-1)[0].cpu().numpy()
-        recon_idx = [i for i, s in enumerate(self._frame_sources) if s == "reconstruction"]
-        sims = self._ref_global_desc[recon_idx] @ q_desc
-        top = [recon_idx[j] for j in np.argsort(-sims)[: self._top_k]]
+        if scale >= 1:
+            return query_image
 
-        # Match query IMAGE vs each top-K reference IMAGE. Matched ref pixels already
-        # live in the world_points grid (both model-res) — sample with NO rescale.
-        all_q, all_3d, all_ref, all_frame = [], [], [], []
-        for i in top:
-            m = self._extractor.match_images(query_image, self._ref_images[i])
-            if len(m) == 0:
-                continue
-            pts3d, valid = sample_world_points(self._world_points[i], m.ref_px)
-            if not valid.any():
-                continue
-            all_q.append(m.query_px[valid])
-            all_3d.append(pts3d[valid])
-            all_ref.append(m.ref_px[valid])
-            all_frame.append(np.full(int(valid.sum()), i, dtype=np.int32))
-
-        # ref_hw is the model-res grid of the reference images (viz display rescale)
-        model_hw = tuple(int(x) for x in self._ref_images[0].shape[:2])
-        return self._solve_pnp(
-            all_q,
-            all_3d,
-            all_ref,
-            all_frame,
-            query_image,
-            query_feats,
-            query_intrinsics,
-            ref_hw=model_hw,
-        )
+        size = (round(w * scale), round(h * scale))
+        return cv2.resize(query_image, size, interpolation=cv2.INTER_AREA)
 
     def _solve_pnp(
         self,
-        all_q,
-        all_3d,
-        all_ref,
-        all_frame,
-        query_image,
-        query_feats,
-        query_intrinsics,
-        ref_hw,
-    ):
-        """LO-RANSAC + Ceres PnP over accumulated correspondences (both matching paths)."""
+        all_q: list[np.ndarray],
+        all_3d: list[np.ndarray],
+        all_ref: list[np.ndarray],
+        all_frame: list[np.ndarray],
+        query_hw: tuple[int, int],
+        query_intrinsics: np.ndarray,
+    ) -> LocalizationResult:
+        """
+        LO-RANSAC + refinement PnP over the accumulated correspondences.
+
+        - no pose: correspondences are still returned for display when any exist
+        - SIMPLE_PINHOLE query camera: pycolmap refines the focal, the principal point stays fixed
+        """
+        ref_hw = self._image_hw
         n_corr = sum(len(a) for a in all_q)
 
-        if n_corr < 4:
-            logger.warning(
-                "CameraLocalizer: only %d 2D↔3D correspondences — need ≥4 for PnP",
-                n_corr,
-            )
-            return LocalizationResult(
-                pose=None,
-                n_correspondences=n_corr,
-                n_inliers=0,
-                pts2d=None,
-                pts3d_matched=None,
-                inlier_mask=None,
-                pts2d_ref=None,
-                ref_frame_indices=None,
-                query_features=query_feats,
-                query_intrinsics=query_intrinsics,
-                ref_hw=ref_hw,
-            )
+        # Assemble correspondence arrays, when there are any
+        pts2d = pts3d_matched = pts2d_ref = ref_frame_indices = None
 
-        # Assemble correspondence arrays for PnP
-        pts2d = np.concatenate(all_q).astype(np.float32)
-        pts3d_matched = np.concatenate(all_3d).astype(np.float32)
-        pts2d_ref = np.concatenate(all_ref).astype(np.float32)
-        ref_frame_indices = np.concatenate(all_frame).astype(np.int32)
+        if n_corr > 0:
+            pts2d = np.concatenate(all_q).astype(np.float32)
+            pts3d_matched = np.concatenate(all_3d).astype(np.float32)
+            pts2d_ref = np.concatenate(all_ref).astype(np.float32)
+            ref_frame_indices = np.concatenate(all_frame).astype(np.int32)
 
-        # Build pycolmap camera from query intrinsics
-        H, W = query_image.shape[:2]
-        camera = pycolmap.Camera(
-            model="PINHOLE",
-            width=int(W),
-            height=int(H),
-            params=[
-                float(query_intrinsics[0, 0]),  # fx
-                float(query_intrinsics[1, 1]),  # fy
-                float(query_intrinsics[0, 2]),  # cx
-                float(query_intrinsics[1, 2]),  # cy
-            ],
+        failed = LocalizationResult(
+            pose=None,
+            n_correspondences=n_corr,
+            n_inliers=0,
+            pts2d=pts2d,
+            pts3d_matched=pts3d_matched,
+            inlier_mask=None,
+            pts2d_ref=pts2d_ref,
+            ref_frame_indices=ref_frame_indices,
+            query_intrinsics=query_intrinsics,
+            ref_hw=ref_hw,
         )
 
-        # Build pycolmap solver options from config dict
-        est_cfg = self.config.get("estimation", {})
-        estimation_options = pycolmap.AbsolutePoseEstimationOptions()
-        estimation_options.ransac.max_error = est_cfg.get("ransac", {}).get("max_error", 50)
+        # PnP needs at least 4 correspondences
+        if n_corr < 4:
+            logger.warning("CameraLocalizer: only %d 2D-3D correspondences, need >= 4 for PnP", n_corr)
+            return failed
 
+        # Single-focal pinhole camera from the query intrinsics
+        H, W = query_hw
+        params = [
+            float(query_intrinsics[0, 0]),
+            float(query_intrinsics[0, 2]),
+            float(query_intrinsics[1, 2]),
+        ]
+        camera = pycolmap.Camera(model="SIMPLE_PINHOLE", width=int(W), height=int(H), params=params)
+
+        # Solver options from the config dict
+        est_cfg = self.config.get("estimation", {})
+        ransac_cfg = est_cfg.get("ransac", {})
+        estimation_options = pycolmap.AbsolutePoseEstimationOptions()
+        estimation_options.ransac.max_error = ransac_cfg.get("max_error", 50)
         ref_cfg = self.config.get("refinement", {})
         refinement_options = pycolmap.AbsolutePoseRefinementOptions()
         refinement_options.refine_focal_length = ref_cfg.get("refine_focal_length", True)
-        refinement_options.refine_extra_params = ref_cfg.get("refine_extra_params", True)
+        refinement_options.refine_extra_params = ref_cfg.get("refine_extra_params", False)
 
-        # Solve with LO-RANSAC + Ceres refinement
+        # Solve with LO-RANSAC + refinement
+        pts2d_f64 = pts2d.astype(np.float64)
+        pts3d_f64 = pts3d_matched.astype(np.float64)
         ret = pycolmap.estimate_and_refine_absolute_pose(
-            pts2d.astype(np.float64),
-            pts3d_matched.astype(np.float64),
+            pts2d_f64,
+            pts3d_f64,
             camera,
             estimation_options=estimation_options,
             refinement_options=refinement_options,
         )
+        n_inliers = 0 if ret is None else int(ret["num_inliers"])
 
-        if ret is None or ret["num_inliers"] < 4:
-            logger.warning(
-                "CameraLocalizer: pycolmap failed (inliers=%d / %d correspondences)",
-                ret["num_inliers"] if ret is not None else 0,
-                len(pts2d),
-            )
-            return LocalizationResult(
-                pose=None,
-                n_correspondences=len(pts2d),
-                n_inliers=ret["num_inliers"] if ret is not None else 0,
-                pts2d=pts2d,
-                pts3d_matched=pts3d_matched,
-                inlier_mask=None,
-                pts2d_ref=pts2d_ref,
-                ref_frame_indices=ref_frame_indices,
-                query_features=query_feats,
-                query_intrinsics=query_intrinsics,
-                ref_hw=ref_hw,
-            )
+        # Too few inliers: no pose, but keep the correspondences for display
+        if n_inliers < 4:
+            logger.warning("CameraLocalizer: pycolmap failed (inliers=%d / %d correspondences)", n_inliers, n_corr)
+            failed.n_inliers = n_inliers
+            return failed
 
-        logger.info(
-            "CameraLocalizer: localized — %d / %d inliers",
-            ret["num_inliers"],
-            len(pts2d),
-        )
+        logger.info("CameraLocalizer: localized, %d / %d inliers", n_inliers, n_corr)
 
-        # Build inlier mask and 4×4 world-to-camera transform
-        inlier_mask = ret["inlier_mask"]
+        # Inlier mask and 4x4 world-to-camera transform
         cam_from_world = ret["cam_from_world"]
         pose = np.eye(4, dtype=np.float32)
         pose[:3, :3] = cam_from_world.rotation.matrix()
         pose[:3, 3] = cam_from_world.translation
-        return LocalizationResult(
-            pose=pose,
-            n_correspondences=len(pts2d),
-            n_inliers=ret["num_inliers"],
-            pts2d=pts2d,
-            pts3d_matched=pts3d_matched,
-            inlier_mask=inlier_mask,
-            pts2d_ref=pts2d_ref,
-            ref_frame_indices=ref_frame_indices,
-            query_features=query_feats,
-            query_intrinsics=query_intrinsics,
-            ref_hw=ref_hw,
+
+        # Refined K from the camera pycolmap updated in place
+        refined_K = camera.calibration_matrix()
+        refined_K = refined_K.astype(np.float32)
+        return dataclasses.replace(
+            failed, pose=pose, n_inliers=n_inliers, inlier_mask=ret["inlier_mask"], query_intrinsics=refined_K
         )

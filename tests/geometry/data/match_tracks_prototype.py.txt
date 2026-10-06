@@ -1,0 +1,254 @@
+# Matcher tracks for BA: LocalMatcher features -> sequential pair matches -> pycolmap known-pose triangulation -> tracks
+# - drop-in for extract_tracks_vggsfm's (tracks (N,P,2), vis (N,P), pts3d (P,3)) contract
+# - track chaining, verification and triangulation all pycolmap (COLMAP's), zero in-repo track code
+# - poses/K come from the caller via set_poses(); extract_tracks_vggsfm's signature carries none
+# - pts3d: "wp" = world_points at the first observation (VGGSfM semantics), "tri" = COLMAP triangulation
+import os
+import shutil
+import tempfile
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from pathlib import Path
+
+import numpy as np
+import cv2
+import pycolmap
+import torch
+
+from collab_splats.localization.extractors import LocalMatcher
+from collab_splats.localization.retrieval import DinoSaladExtractor
+
+MIN_ANGLE = float(os.environ.get("MT_MIN_ANGLE", "0.1"))
+CHAIN = os.environ.get("MT_CHAIN", "tri")
+QUERY_FRAMES = int(os.environ.get("MT_QFN", "8"))
+RETR_K = int(os.environ.get("MT_RETR_K", "0"))
+RETR_NMS = int(os.environ.get("MT_RETR_NMS", "25"))
+MIN_MATCHES = int(os.environ.get("MT_MIN_MATCHES", "0"))
+FULL_DIR = os.environ.get("MT_FULL_DIR", "")
+MAX_KP = int(os.environ.get("MT_MAX_KP", "2048"))
+DEPTH_TOL = float(os.environ.get("MT_DEPTH_TOL", "0"))
+_state = {"matcher": None, "ext": None, "K": None, "depth": None, "stats": []}
+
+
+# Poses and model-res K of the window about to be refined
+def set_poses(ext: np.ndarray, K: np.ndarray) -> None:
+    _state["ext"] = ext
+    _state["K"] = K
+
+
+# Dense model-grid depth for the depth-consistency match filter
+def set_depth(depth: np.ndarray) -> None:
+    _state["depth"] = depth
+
+
+def _transfer_err(a: int, b: int, xa: np.ndarray, xb: np.ndarray) -> np.ndarray:
+    """Pixel error of a's keypoints lifted by a's depth and projected into b."""
+    ext, K, depth = _state["ext"], _state["K"], _state["depth"]
+    H, W = depth.shape[1:]
+    u = np.clip(np.round(xa[:, 0]).astype(int), 0, W - 1)
+    v = np.clip(np.round(xa[:, 1]).astype(int), 0, H - 1)
+    d = depth[a, v, u].astype(np.float64)
+    ray = np.linalg.solve(K[a], np.stack([xa[:, 0], xa[:, 1], np.ones(len(xa))]))
+    Xc = ray.T * d[:, None]
+    rel = ext[b] @ np.linalg.inv(ext[a])
+    Xb = Xc @ rel[:3, :3].T + rel[:3, 3]
+    proj = Xb @ K[b].T
+    uv = proj[:, :2] / np.maximum(proj[:, 2:], 1e-9)
+    err = np.linalg.norm(uv - xb, axis=1)
+    err[(d <= 0) | (Xb[:, 2] <= 0)] = np.inf
+    return err
+
+
+def make_extract(model_name: str, overlap: int, pts_mode: str):
+    _state["matcher"] = LocalMatcher(model_name, probe=False)
+
+    def extract(images, conf, world_points, cfg):
+        timings = {}
+        matcher = _state["matcher"]
+        ext, K = _state["ext"], _state["K"]
+        imgs = images.cpu().numpy() if hasattr(images, "cpu") else np.asarray(images)
+        N, _, H, W = imgs.shape
+        print(f"MATCH_TRACKS images range {imgs.min():.3f}..{imgs.max():.3f} shape {imgs.shape}", flush=True)
+        rgb = (np.clip(imgs.transpose(0, 2, 3, 1), 0, 1) * 255).round().astype(np.uint8)
+
+        # Full-res frames: decode on 8 threads, raise the keypoint cap
+        src = rgb
+        if FULL_DIR:
+            paths = sorted(Path(FULL_DIR).glob("frame_*.png"))
+            assert len(paths) == N, f"{len(paths)} full-res frames for {N} model frames"
+            with ThreadPoolExecutor(8) as pool:
+                src = list(pool.map(lambda q: np.ascontiguousarray(cv2.imread(str(q))[..., ::-1]), paths))
+            matcher._matcher.max_num_keypoints = MAX_KP
+
+        # Per-frame features, once; full-res keypoints mapped to the model grid (pixel-center convention)
+        t = time.perf_counter()
+        feats = [matcher.extract(src[i]) for i in range(N)]
+        if FULL_DIR:
+            scale = torch.tensor([W / src[0].shape[1], H / src[0].shape[0]])
+            feats = [replace(f, keypoints=(f.keypoints + 0.5) * scale - 0.5) for f in feats]
+            print(f"MATCH_TRACKS full-res {src[0].shape} kp/frame median {np.median([len(f.keypoints) for f in feats]):.0f}", flush=True)
+            del src
+        timings["extract"] = time.perf_counter() - t
+
+        # Model with known poses: one PINHOLE camera + image per frame at model res
+        recon = pycolmap.Reconstruction()
+        for i in range(N):
+            cam = pycolmap.Camera(
+                model="PINHOLE", width=W, height=H,
+                params=[K[i, 0, 0], K[i, 1, 1], K[i, 0, 2], K[i, 1, 2]], camera_id=i + 1,
+            )
+            recon.add_camera_with_trivial_rig(cam)
+            image = pycolmap.Image(name=f"{i:05d}.png", camera_id=i + 1, image_id=i + 1)
+            recon.add_image_with_trivial_frame(image, pycolmap.Rigid3d(ext[i, :3, :].astype(np.float64)))
+
+        # Database: cameras, images, keypoints, then sequential pair matches
+        tmp = Path(tempfile.mkdtemp(prefix="match_tracks_"))
+        db_path = tmp / "database.db"
+        db = pycolmap.Database.open(str(db_path))
+        t = time.perf_counter()
+        for i in range(N):
+            db.write_camera(recon.cameras[i + 1], use_camera_id=True)
+            row = pycolmap.Image(name=f"{i:05d}.png", camera_id=i + 1)
+            row.image_id = i + 1
+            db.write_image(row, use_image_id=True)
+            db.write_keypoints(i + 1, feats[i].keypoints.numpy().astype(np.float64))
+        pairs = [(a, b) for a in range(N) for b in range(a + 1, min(N, a + overlap + 1))]
+        n_seq = len(pairs)
+
+        # Retrieval pairs: DINO-SALAD top-k per frame beyond the sequential neighborhood
+        if RETR_K > 0:
+            salad = DinoSaladExtractor()
+            desc = torch.cat([salad(torch.from_numpy(imgs[i : i + 32]).float()) for i in range(0, N, 32)])
+            sim = (desc @ desc.T).numpy()
+            idx = np.arange(N)
+            sim[np.abs(idx[:, None] - idx[None, :]) <= RETR_NMS] = -np.inf
+            seq = set(pairs)
+            extra = {tuple(sorted((int(a), int(b)))) for a in range(N) for b in np.argsort(-sim[a])[:RETR_K]}
+            pairs += sorted(extra - seq)
+            del salad
+            torch.cuda.empty_cache()
+        print(f"MATCH_TRACKS pairs sequential {n_seq} retrieval {len(pairs) - n_seq}", flush=True)
+        n_matches = 0
+        kept = {"seq": [0, 0], "retr": [0, 0]}
+        for k, (a, b) in enumerate(pairs):
+            m = matcher.match(feats[a], feats[b])
+            if len(m) == 0:
+                continue
+            idx = np.stack([m.idx_q, m.idx_db], axis=1).astype(np.uint32)
+
+            # Depth-consistency filter: symmetric transfer error under the prior poses
+            if DEPTH_TOL > 0:
+                xa = feats[a].keypoints.numpy()[idx[:, 0]].astype(np.float64)
+                xb = feats[b].keypoints.numpy()[idx[:, 1]].astype(np.float64)
+                ok = np.maximum(_transfer_err(a, b, xa, xb), _transfer_err(b, a, xb, xa)) < DEPTH_TOL
+                kind = "seq" if k < n_seq else "retr"
+                kept[kind][0] += int(ok.sum())
+                kept[kind][1] += len(ok)
+                idx = idx[ok]
+                if len(idx) == 0:
+                    continue
+            db.write_matches(a + 1, b + 1, idx)
+            n_matches += len(idx)
+        print(f"MATCH_TRACKS depth filter kept (pass, total) {kept}", flush=True)
+        db.close()
+        timings["match"] = time.perf_counter() - t
+
+        # Epipolar verification, then known-pose triangulation chains the tracks
+        t = time.perf_counter()
+        pairs_path = tmp / "pairs.txt"
+        pairs_path.write_text("\n".join(f"{a:05d}.png {b:05d}.png" for a, b in pairs))
+        pycolmap.verify_matches(str(db_path), str(pairs_path))
+        timings["verify"] = time.perf_counter() - t
+        t = time.perf_counter()
+        n_conflict = 0
+        if CHAIN in ("graph", "star"):
+            # Pose-free chaining: connected components of the verified correspondence graph
+            copts = pycolmap.DatabaseCacheOptions()
+            copts.min_num_matches = MIN_MATCHES
+            db = pycolmap.Database.open(str(db_path))
+            cg = pycolmap.DatabaseCache.create(db, copts).correspondence_graph
+            db.close()
+            seen = set()
+            obs_lists = []
+            seeds = range(N) if CHAIN == "graph" else np.linspace(0, N - 1, QUERY_FRAMES).round().astype(int)
+            for i in seeds:
+                # Skip seeds with no verified matches: absent from the correspondence graph
+                if not cg.exists_image(int(i) + 1):
+                    print(f"MATCH_TRACKS seed {i} has no correspondences, skipped", flush=True)
+                    continue
+
+                for idx in range(len(feats[i].keypoints)):
+                    if CHAIN == "graph" and (i + 1, idx) in seen:
+                        continue
+
+                    # graph: full transitive closure; star: the seed plus its direct verified matches, like a VGGSfM query
+                    depth = 10000 if CHAIN == "graph" else 1
+                    comp = {(c.image_id, c.point2D_idx) for c in cg.extract_transitive_correspondences(int(i) + 1, idx, depth)}
+                    comp.add((int(i) + 1, idx))
+                    seen |= comp
+
+                    # One observation per frame: a frame holding two keypoints of one component is ambiguous, drop it
+                    per_img = defaultdict(list)
+                    for img_id, kp in comp:
+                        per_img[img_id].append(kp)
+                    obs = []
+                    for img_id, kps in sorted(per_img.items()):
+                        if len(kps) > 1:
+                            n_conflict += 1
+                            continue
+                        obs.append((img_id - 1, feats[img_id - 1].keypoints[kps[0]].numpy()))
+                    if len(obs) >= 2:
+                        obs_lists.append((obs, None))
+        else:
+            out_dir = tmp / "tri"
+            out_dir.mkdir()
+            # Window baselines are small: COLMAP's 1.5 deg angle gates drop nearly every track, so relax them
+            opts = pycolmap.IncrementalPipelineOptions()
+            opts.triangulation.min_angle = MIN_ANGLE
+            opts.mapper.filter_min_tri_angle = MIN_ANGLE
+            opts.triangulation.ignore_two_view_tracks = False
+            tri = pycolmap.triangulate_points(
+                pycolmap.Reconstruction(recon), str(db_path), str(tmp), str(out_dir), options=opts
+            )
+            obs_lists = []
+            for pid in sorted(tri.points3D):
+                p = tri.points3D[pid]
+                els = sorted(p.track.elements, key=lambda e: e.image_id)
+                obs = [(e.image_id - 1, tri.images[e.image_id].points2D[e.point2D_idx].xy) for e in els]
+                obs_lists.append((obs, p.xyz))
+        timings["chain"] = time.perf_counter() - t
+
+        # Dense (N, P) layout: observed entries vis 1, the rest vis 0 at (0, 0)
+        P = len(obs_lists)
+        tracks = np.zeros((N, P, 2), np.float32)
+        vis = np.zeros((N, P), np.float32)
+        pts3d = np.zeros((P, 3), np.float32)
+        lengths = np.zeros(P, np.int64)
+        for j, (obs, xyz) in enumerate(obs_lists):
+            for i, xy in obs:
+                tracks[i, j] = xy
+                vis[i, j] = 1.0
+            lengths[j] = len(obs)
+
+            # pts3d: world_points at the first observation's nearest pixel, or COLMAP's xyz
+            if pts_mode == "wp" or xyz is None:
+                i0 = obs[0][0]
+                u, v = tracks[i0, j]
+                pts3d[j] = world_points[i0, int(np.clip(round(v), 0, H - 1)), int(np.clip(round(u), 0, W - 1))]
+            else:
+                pts3d[j] = xyz
+        shutil.rmtree(tmp)
+
+        stat = {
+            "N": N, "pairs": len(pairs), "raw_matches": n_matches, "P": P,
+            "obs": int(vis.sum()), "len_mean": float(lengths.mean()) if P else 0.0,
+            "len_med": float(np.median(lengths)) if P else 0.0, "conflicts": n_conflict, "chain": CHAIN,
+            "timings": timings,
+        }
+        _state["stats"].append(stat)
+        print(f"MATCH_TRACKS {stat}", flush=True)
+        return tracks, vis, pts3d
+
+    return extract

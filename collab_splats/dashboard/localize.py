@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Constants + pure helpers (unit-tested)
 ########
 
-_METHODS = ["disk-lightglue", "aliked-lightglue", "xfeat", "loma"]  # vismatch model names
+_METHODS = ["xfeat", "loma"]  # vismatch models that match cached features (LocalMatcher)
 _DEFAULT_METHOD = "loma"
 _SUBSAMPLE_ABOVE = 60  # plot every 3rd camera beyond this many reconstruction frames
 _PREVIEW_DEBOUNCE_S = 0.3  # slider settles this long before a frame decode fires
@@ -633,9 +633,7 @@ class LocalizePage(param.Parameterized):
             # Figures + mesh read are slow — build them here so on_done only assigns panes.
             images_dir = self._base_dir / scene / "images"
             with self._op_log.step("building result figures"):
-                figs = self._build_result_figures(
-                    out, config, images_dir=images_dir if images_dir.is_dir() else None
-                )
+                figs = self._build_result_figures(out, config, images_dir=images_dir if images_dir.is_dir() else None)
             mesh = self._ensure_scene_mesh(scene, mesh_path)
             return (out, figs, mesh)
 
@@ -703,8 +701,7 @@ class LocalizePage(param.Parameterized):
                 if not Path(out.ref_image_paths[ref]).exists():
                     continue
                 ref_image = read_image(out.ref_image_paths[ref])
-            # ref keypoints live in model-res space (loc.ref_hw) — rescale to the
-            # displayed frame's resolution or lines land in the top-left corner
+            # Ref keypoints are full-res frame pixels (loc.ref_hw); rescale to the displayed frame
             mfig = plot_correspondences(
                 out.query_frame,
                 ref_image,

@@ -19,6 +19,8 @@ from PIL import Image
 from collab_splats.dashboard.config import PULL_EXCLUDES, LocalizationConfig, RunConfig
 from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.geometry.transforms import invert_poses
+from collab_splats.localization import CameraLocalizer
+from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.mesh.clean import clean_repair_mesh
 from collab_splats.mesh.tsdf import create_tsdf_mesh
 from collab_splats.pointcloud.feedforward import (
@@ -46,7 +48,7 @@ from collab_splats.semantics.utils import (
     read_point_features,
     write_point_features,
 )
-from collab_splats.utils.io import read_image, to_uint8_hwc
+from collab_splats.utils.io import to_uint8_hwc
 from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
@@ -406,26 +408,23 @@ class LocalizationRunOutput:
 
     result: "object"  # LocalizationResult
     query_frame: np.ndarray  # (H, W, 3) uint8 RGB
-    query_intrinsics: np.ndarray  # (3, 3) — proportions seed or calibrated
-    intrinsics_source: str  # "calibration file" | "proportions seed"
+    query_intrinsics: np.ndarray  # (3, 3) — K the pose was solved with; focal refined on success
+    intrinsics_source: str  # "calibration file" | "proportions seed", + ", focal refined" on success
     ref_image_paths: list  # local paths, index-aligned with ref_frame_indices
     ref_extrinsics: np.ndarray  # (N, 4, 4) world-to-camera
     frame_sources: list  # per-frame 'reconstruction' | 'localized'
 
 
-def _load_feedforward_result(out_dir: Path, load_world_points: bool = False, load_images: bool = False):
+def _load_feedforward_result(out_dir: Path, load_world_points: bool = False):
     """Load the reconstruction result from the local zarr (lazy heavy import)."""
     from collab_splats.pointcloud.base import PointcloudResult
 
-    # Localization reads only the required member set (remote pulls already exclude the
-    # dense arrays); skip decoding them for locally-generated scenes too. world_points and
-    # images are opted in by the localizer path — CameraLocalizer.from_feedforward requires
-    # world_points, and the pairwise LocalMatcher additionally needs model-res ref images.
+    # Skip the dense arrays; only the localizer path opts into world_points
     return PointcloudResult.load_zarr(
         out_dir / "pointcloud.zarr",
         load_depth=False,
         load_world_points=load_world_points,
-        load_images=load_images,
+        load_images=False,
         load_confidence=False,
         load_pixel_indices=False,
     )
@@ -475,17 +474,25 @@ def _build_localizer(
     config: LocalizationConfig,
     zarr_path: Path,
     op_log: OperationLog,
+    *,
+    images_dir: Path,
     cache=None,
     scene_key=None,
-    images_dir: "Path | None" = None,
 ):
-    """Load (or build, with progress) the feature DB; keep the localizer warm in the
-    SceneCache so consecutive runs skip index reload and extractor model load."""
-    from collab_splats.localization import CameraLocalizer
-    from collab_splats.localization.extractors import LocalMatcher
+    """
+    Load (or build, with progress) the feature DB and keep the localizer warm in the SceneCache.
+
+    - consecutive runs skip index reload and extractor model load
+    - reference frames come only from images_dir; FileNotFoundError when it is missing
+    - full-res frames are read lazily; a cache hit reads none
+    """
+    # Reference frames come only from the scene's images/ store
+    if not images_dir.is_dir():
+        raise FileNotFoundError(f"{images_dir}: scene has no images/ store")
 
     if cache is not None and scene_key is not None:
         cached = cache.get(scene_key, f"localizer:{config.matcher}")
+
         if cached is not None:
             return cached
 
@@ -499,21 +506,18 @@ def _build_localizer(
             log=False,
         )
 
-    # Boundary adapter: build (images, ids) from the scene's images/ directory when present,
-    # else from the result's export paths. Lazy genexpr → zero reads on a cache hit.
-    paths = fr.frame_paths(images_dir) if images_dir is not None else [Path(p) for p in result.image_paths]
-    images = (read_image(p) for p in paths)
-    ids = [p.name for p in paths]
+    # Full-res frames read lazily; KeyError here when a zarr frame is missing from images/
+    idxs = [fr.frame_idx_from_path(p) for p in result.image_paths]
+    images = fr.read_frames_chunked(images_dir, idxs)
 
-    localizer = CameraLocalizer.from_feedforward(
+    localizer = CameraLocalizer.from_pointcloud(
         result,
-        images=images,
-        ids=ids,
-        extractor=extractor,
-        extractor_name=config.matcher,
         zarr_path=zarr_path,
+        images=images,
+        extractor=extractor,
         progress_callback=on_progress,
     )
+
     if cache is not None and scene_key is not None:
         cache.put(scene_key, f"localizer:{config.matcher}", localizer)
     return localizer
@@ -546,34 +550,45 @@ def read_localized_group(zarr_path: Path, extractor: str, out_dir: Path) -> "tup
     if key not in store:
         return np.zeros((0, 4, 4), dtype=np.float32), []
     group = store[key]
-    poses = np.asarray(group["extrinsics"])
+
+    # image_paths commits the frames; rows past it come from a crashed append
+    paths = group.attrs.get("image_paths", [])
+    poses = np.asarray(group["extrinsics"][: len(paths)])
+
     # image_paths attrs were recorded on the building machine — only basenames are portable
-    names = [Path(p).name for p in group.attrs.get("image_paths", [])]
+    names = [Path(p).name for p in paths]
     return poses, [Path(out_dir) / "localized_frames" / n for n in names]
 
 
-def _local_ref_path(out_dir: Path, label: str, source: str) -> Path:
+def _local_ref_paths(out_dir: Path, labels: list[str], sources: list[str]) -> list[Path]:
     """
-    Resolve a DB id to this machine's file: images/ by stem, localized_frames/ by name.
+    Resolve DB ids to this machine's files: images/ by frame index, localized_frames/ by name.
 
-    Args:
-        out_dir: scene output directory.
-        label: DB id as recorded on the building machine.
-        source: 'reconstruction' or 'localized'.
-
-    Returns:
-        The existing file with the id's stem, else the id's name under the expected directory.
+    - lists images/ once for every id
+    - a reconstruction id not on disk, or with a non-numeric stem tail, keeps its name under images/
     """
-    if source != "reconstruction":
-        return Path(out_dir) / "localized_frames" / Path(label).name
-
-    # Ids may carry .jpg while the store writes .png; the stem is the frame identity
     images_dir = Path(out_dir) / "images"
-    for ext in fr.IMAGE_EXTS:
-        candidate = images_dir / f"{Path(label).stem}{ext}"
-        if candidate.exists():
-            return candidate
-    return images_dir / Path(label).name
+    localized_dir = Path(out_dir) / "localized_frames"
+    by_idx = {fr.frame_idx_from_path(p): p for p in fr.frame_paths(images_dir)}
+
+    paths = []
+
+    for label, source in zip(labels, sources):
+        name = Path(label).name
+
+        if source != "reconstruction":
+            paths.append(localized_dir / name)
+            continue
+
+        # A non-numeric stem tail cannot name an images/ file
+        try:
+            idx = fr.frame_idx_from_path(label)
+        except ValueError:
+            idx = None
+
+        paths.append(by_idx.get(idx, images_dir / name))
+
+    return paths
 
 
 def load_browse_data(
@@ -625,22 +640,19 @@ def run_localization(
                 source.pull_processed(scene, out_dir, excludes=PULL_EXCLUDES)
             op_log.update_progress(15, "localize: loading reconstruction")
             with op_log.step("localize: loading reconstruction"):
-                result = _load_feedforward_result(out_dir, load_world_points=True, load_images=True)
+                result = _load_feedforward_result(out_dir, load_world_points=True)
 
             # Feature DB: warm-cache hit skips reload; zarr hit is fast; miss builds on GPU
             op_log.update_progress(25, f"localize: loading DB ({config.matcher})")
             with op_log.step(f"localize: DB ({config.matcher})"):
-                # images/ is the sole persistent frame store and is now pulled for processed
-                # scenes too; guard defensively so any legacy scene without it falls back to image_paths.
-                images_dir = out_dir / "images"
                 localizer = _build_localizer(
                     result,
                     config,
                     out_dir / "pointcloud.zarr",
                     op_log,
+                    images_dir=out_dir / "images",
                     cache=cache,
                     scene_key=scene,
-                    images_dir=images_dir if images_dir.is_dir() else None,
                 )
             _stamp_db_provenance(out_dir / "pointcloud.zarr", config.matcher, out_dir)
 
@@ -655,8 +667,13 @@ def run_localization(
             op_log.update_progress(70, "localize: matching + solving pose")
             with op_log.step("localize: matching + solving pose"):
                 loc = localizer.localize(frame, K)
-            # localize() seeds K from proportions when K is None — use what it actually used.
-            K = loc.query_intrinsics if K is None else K
+
+            # The pose was solved with the returned K (seeded or supplied, focal refined on success)
+            K = loc.query_intrinsics
+
+            if loc.pose is not None:
+                intr_source = f"{intr_source}, focal refined"
+
             op_log.append_line(
                 f"localize: {loc.n_inliers}/{loc.n_correspondences} inliers"
                 + ("" if loc.pose is not None else " — POSE FAILED")
@@ -672,8 +689,6 @@ def run_localization(
                 localizer.add_localized_frame(
                     img_path,
                     loc.pose,
-                    K,
-                    loc.query_features,
                     zarr_path=out_dir / "pointcloud.zarr",
                     extractor_name=config.matcher,
                     provenance=provenance,
@@ -682,9 +697,7 @@ def run_localization(
                 _push_async(source, out_dir, scene, op_log)
 
             # DB ids were recorded on the building machine; resolve each to a local file
-            ref_image_paths = [
-                _local_ref_path(out_dir, p, src) for p, src in zip(localizer.image_paths, localizer.frame_sources)
-            ]
+            ref_image_paths = _local_ref_paths(out_dir, localizer.image_paths, localizer.frame_sources)
 
             output = LocalizationRunOutput(
                 result=loc,

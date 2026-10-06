@@ -278,6 +278,7 @@ def _measure_photometry_and_motion(
     Measure one contiguous frame range; returns (frame rows, pair rows).
 
     - decodes `stride` lead-in frames before `emit_from` so boundary pairs have a partner
+    - pairs tile the video: (b - stride, b) for b on the global stride grid, so ORB runs on grid frames only
     - emits rows from `emit_from` on only, so ranges tile the video exactly once
     - module-level so ProcessPoolExecutor can pickle it
 
@@ -293,8 +294,7 @@ def _measure_photometry_and_motion(
     """
     video_path, start, count, emit_from, stride = args
 
-    # Pin cv2 and BLAS to one thread per worker
-    # - unpinned, process fan-out oversubscribes the cores and runs slower than serial
+    # Pin cv2, BLAS and PyAV decode to one thread per worker; unpinned fan-out oversubscribes
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     cv2.setNumThreads(1)
@@ -302,11 +302,10 @@ def _measure_photometry_and_motion(
     frame_rows: list[dict] = []
     pair_rows: list[dict] = []
 
-    # Hold only the ORB features still owed a partner: stride + 1 frames at a
-    # time, so memory does not track range length.
+    # ORB features of the last grid frame, owed to the next pair
     pending: dict[int, tuple] = {}
 
-    for idx, bgr in iter_frames(video_path, start=start, count=count):
+    for idx, bgr in iter_frames(video_path, start=start, count=count, threads=1):
         # Lead-in frames belong to the previous range
         # - that range is already measuring them
         # - decoded here only to be somebody's partner
@@ -316,10 +315,11 @@ def _measure_photometry_and_motion(
                 {"frame_idx": idx, **compute_frame_quality(bgr, analysis_width=analysis_width, blur_h_size=blur_h_size)}
             )
 
-        # Motion against the frame one stride back, once one exists
-        # - first pair this can fire on is (emit_from - stride, emit_from)
-        # - that is exactly the boundary pair the lead-in exists to reach
-        # - so no pair owned by the previous range is emitted twice
+        # Off-grid frames take no part in motion
+        if idx % stride:
+            continue
+
+        # Motion against the grid frame one stride back; lead-in supplies the partner, so no pair repeats
         gray_small = analysis_gray(bgr, width=analysis_width)
         pending[idx] = detect_orb(gray_small, n_features=n_features)
         partner = idx - stride
@@ -381,7 +381,7 @@ def compute_video_quality(
 
     Args:
         video_path: source video; every frame is decoded and scored.
-        motion_stride: frames between the two members of each pair, >= 1; None = round(fps).
+        motion_stride: frames between the two members of each pair, which tile the video; None = round(fps).
         workers: contiguous frame ranges processed in parallel; 1 is serial.
         analysis_width: width blur, laplacian and ORB run at.
         blur_h_size: Crete-Roffet re-blur kernel width.

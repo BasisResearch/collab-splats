@@ -3,6 +3,7 @@ Pose and geometry backend: bundle adjustment, loop closure, scene metrics.
 
 - transforms: pose conversions, Umeyama, intrinsics, decompose_camera, project_to_so3
 - bundle_adjustment: LM refinement on arrays (feedforward only at refine)
+- photometric: brightness residual and pixel samples for the BA photometric term
 - metrics: report-only quality tables on arrays; the Reconstructor stage owns the zarr
 - loop_closure: submap pose graph around a feedforward creator's forward pass
 """

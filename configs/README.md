@@ -41,8 +41,10 @@ reconstruct local --output-root /workspace/outputs \
 
 `preproc`, `pointcloud` and `reconstruction_quality_report` always run. `refine`,
 `semantics`, `splats`, `mesh` and `localize` run only when enabled in the config
-(`pointcloud.bundle_adjustment` / `semantics.enabled` / `splats.enabled` /
+(`pointcloud.bundle_adjustment.enabled` / `semantics.enabled` / `splats.enabled` /
 `mesh.enabled` / `localization.enabled`), or when named explicitly via `--stages`.
+With loop closure on, `refine` is not planned: BA runs inside the pointcloud stage, one
+solve per window.
 
 ### Where outputs land
 
@@ -309,9 +311,10 @@ Preproc runs in two steps: **measure**, then **select**.
    absolute ceiling on `clipped_low_frac + clipped_high_frac` (`max_clipped_frac`,
    default 0.25). Changing sampling policy never re-decodes the video.
 
-`preproc.n_workers` affects **only** step 1 — it parallelises the measurement
-decode and has no effect on which frames get selected. The report is byte-
-identical at any worker count.
+`preproc.n_workers` sets the parallel decode ranges for the step 1 measurement
+and for the `fps`/`uniform` selection decode in step 2. It parallelizes decode
+only and never changes which frames get selected. The report is byte-identical
+at any worker count.
 
 Each method has exactly one density knob. `max_frames` is the frame budget — the
 target count for `uniform`, a ceiling for the other two.
@@ -356,7 +359,7 @@ parameter and raises.
 | `preproc.fps` | float | `2.0` | `fps` method only: samples per second |
 | `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
 | `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see below) |
-| `preproc.n_workers` | int | `4` | Quality-report parallelism: decode+measure this many frame ranges at once. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
+| `preproc.n_workers` | int | `16` | Decode parallelism: the quality report (step 1) and the `fps`/`uniform` selection decode (step 2) each split into this many frame ranges at once; never changes which frames are selected. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
 | `preproc.undistort` | bool | `false` | After `images/` is written, self-calibrate one shared OPENCV camera from those frames (pycolmap, ≤60 of them) and rewrite `images/` undistorted. COLMAP framing: focal kept, canvas resized to the undistorted corners, so frame dims change. `images/` reuse is by existence — toggling on an existing scene needs `--stages preproc --overwrite`. Localization query images are not undistorted. |
 | `preproc.on_empty_slot` | str | `rescue` | `fps` method only: a slot with no eligible frame keeps its sharpest frame (`rescue`) or is skipped (`drop`). A preproc-level key, not under `quality`. |
 | `preproc.quality.sharpness_k` | float | `2.0` | Eligibility gate for every sampler: MAD z-score cut on `log(laplacian)`; larger keeps more |
@@ -383,8 +386,26 @@ parameter and raises.
 | `pointcloud.hloc.matcher_conf` | str | `superpoint+lightglue` | `hloc.match_features.confs` key. Conf keys are checked as non-empty strings only, not against hloc |
 | `pointcloud.hloc.num_threads` | int | `8` | Mapper thread cap |
 | `pointcloud.hloc.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
-| `pointcloud.bundle_adjustment` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`) |
-| `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`) |
+| `pointcloud.bundle_adjustment.enabled` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`); with `loop_closure` on it runs inside each LC window instead (first window sets the focal, later windows hold it; no `refine` stage); a bare bool sets this |
+| `pointcloud.bundle_adjustment.max_query_pts` | int | `4096` | VGGSfM track query points (upstream demo default) |
+| `pointcloud.bundle_adjustment.query_frame_num` | int | `8` | VGGSfM query frames (upstream demo default) |
+| `pointcloud.bundle_adjustment.fine_tracking` | bool | `false` | VGGSfM fine tracking; `true` peaks at 34 GB RSS on 50 frames |
+| `pointcloud.bundle_adjustment.track_source` | str | `vggsfm` | Track source: `vggsfm` predicts tracks; `xfeat` / `loma` build matcher star tracks over the full-res `images/` frames (`geometry/tracks.py`); `xfeat` / `loma` with `loop_closure` on is a `ValueError` (window BA gets no frame paths); anything else is a `ValueError` |
+| `pointcloud.bundle_adjustment.vis_thresh` | float | `0.2` | Min VGGSfM visibility score for an observation |
+| `pointcloud.bundle_adjustment.max_reproj_error` | float\|null | `4.0` | Pre-solve pixel reprojection gate; `null` skips the filter |
+| `pointcloud.bundle_adjustment.min_inliers_per_frame` | int | `64` | Frames below this inlier count sit out the solve |
+| `pointcloud.bundle_adjustment.lm_steps` | int | `40` | Max LM steps for a solve without photometric. Ignored with `use_photometric`, which runs up to (3, 2, 1) scale re-samples x 5 IRLS steps, 30 in all |
+| `pointcloud.bundle_adjustment.lm_tol` | float | `1.0e-4` | Relative loss drop below which an LM step counts as stalled; `ValueError` below 0 |
+| `pointcloud.bundle_adjustment.lm_patience` | int | `2` | Stalled steps in a row that end the solve, or one photometric re-sample; `ValueError` below 1 |
+| `pointcloud.bundle_adjustment.shared_camera` | bool | `true` | One focal per scene; `false` = one per frame |
+| `pointcloud.bundle_adjustment.refine_focal` | bool | `true` | Solve for focal; `false` holds the input mean focal fixed |
+| `pointcloud.bundle_adjustment.dtype` | str | `float32` | Solve precision, `float32` or `float64`; anything else is a `ValueError` |
+| `pointcloud.bundle_adjustment.increment_size` | int | `0` | `0` = one global solve; `N` = frames added per incremental solve |
+| `pointcloud.bundle_adjustment.use_photometric` | bool | `true` | Brightness matching between overlapping frames; `ValueError` with `increment_size > 0` |
+| `pointcloud.bundle_adjustment.use_depth` | bool | `true` | Track camera z against feedforward depth |
+| `pointcloud.bundle_adjustment.depth_sigma` | float | `0.01` | Relative depth error weighted like 1 px |
+| `pointcloud.bundle_adjustment.device` | str\|null | `null` | CUDA device (`cuda`, `cuda:1`); `null` = auto. The track cache dir is set by the pipeline, not here |
+| `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`); with `bundle_adjustment.enabled` BA runs inside each window |
 | `pointcloud.min_views` | int | `0` | Feedforward cross-view depth filter: keep a pixel when min(min_views, seen) other views agree. `0` = off; upstream MapAnything uses `1` |
 | `pointcloud.mv_rel_thresh` | float | `0.01` | Multiview agreement tolerance, as a fraction of depth |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points, every method. sfm deletes the same points3D from the mapper's COLMAP export, which keeps its tracks and camera model |
@@ -424,8 +445,7 @@ parameter and raises.
 | `splats.losses.<name>.start` | int | `0` | Step at which that loss switches on |
 | `splats.losses.normal_consistency.depth_ratio` | float | `0.0` | `2dgs` only: RaDe-GS blend weight on the median-depth normal — `(1-r)·d(n, dn_expected) + r·d(n, dn_median)`, `d = 1 - cos`. `0` = expected depth only. Rejected on `3dgs` and outside `[0, 1]` |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
-| `localization.matcher` | str | `loma` | vismatch model name (`loma`, `xfeat`, `disk-lightglue`, `aliked-lightglue`, …) |
-| `localization.top_k` | int | `8` | Reference frames matched per query |
+| `localization.matcher` | str | `loma` | vismatch model name: `loma` or `xfeat`, the batch-capable models; anything else is a `ValueError` |
 
 **Migration (2026-09-06):** the pointcloud cleanup retired eight keys from `base.yaml`, and
 they are **not refused** — a published `run_config.yaml` that still sets them deep-merges and
@@ -462,24 +482,27 @@ load. `colmap/verification.json`, `colmap/verified/` and
 `run_config.yaml` carrying the retired `depth_align` / `features` / `single_camera` raises
 `ValueError` naming them; delete them.
 
+**Migration (2026-10-06):** `localization.top_k` retired, not refused; a config that sets it
+runs with top_k 8 (`CameraLocalizer` default).
+
 ### Localization matchers
 
 `localization.matcher` is a vismatch model name, constructed as
-`LocalMatcher(name)` (`collab_splats/localization/extractors.py`) — e.g. `loma`,
-`xfeat`, `disk-lightglue`, `aliked-lightglue`, `xfeat-steerers-perm`. vismatch
-exposes no descriptor-level match API, so queries are matched **pairwise**: the
-retrieval stage ranks reference frames and the query is matched against the top
-`localization.top_k` of them.
+`LocalMatcher(name)` (`collab_splats/localization/extractors.py`) — `loma` or
+`xfeat`. There is one match path: reference features are extracted once and cached in
+the localization zarr, the query is extracted once, and `LocalMatcher.match` pairs the
+query features against each reference's cached features. DINO-SALAD retrieval picks
+the top `top_k` reference frames (`CameraLocalizer` default 8), or the caller passes
+`refs=`; reference pixels map back to the world-point grid through `original_coords`.
 
 (Historical: until 2026-08-17 this key was `localization.extractor` and also
 accepted legacy in-repo registry keys — `disk`, `xfeat`, `xfeat-star`, `loma`,
 `loma-g` — which took precedence over colliding vismatch names. The legacy
 extractors were retired after the vismatch loma parity gate passed.)
 
-Two blocklists in `collab_splats/localization/extractors.py` gate vismatch names:
-`_VISMATCH_LICENSE_BLOCKLIST` (non-commercial licenses) and
-`_VISMATCH_DEP_BLOCKLIST` (models whose deps are broken in this environment).
-Blocked names raise `ValueError` at construction time with the reason.
+`LocalMatcher` accepts only batch-capable vismatch models (`xfeat`, `loma`): it matches
+cached features, so a model without vismatch `supports_batches` raises `ValueError` at
+construction time.
 
 ### The `loger` backend
 
@@ -550,7 +573,7 @@ re-run the setup.sh block afterwards.
 VDA metric weights are CC-BY-NC-4.0.
 
 **Unsupported with any sfm backend (all `ValueError` at config validation):**
-`bundle_adjustment: true` (the sfm mapper runs its own BA; the `refine` stage also
+`bundle_adjustment.enabled: true` (the sfm mapper runs its own BA; the `refine` stage also
 refuses) and `loop_closure` (not a sequential submap pipeline).
 
 **Output layout** (`<backend>` is `instantsfm/`):

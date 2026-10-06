@@ -12,6 +12,7 @@ import logging
 import shutil
 import warnings
 from collections.abc import Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,7 +32,10 @@ from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosure
 from collab_splats.geometry.metrics import compute_reconstruction_quality
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.localization.extractors import LocalMatcher
-from collab_splats.localization.localizer import CameraLocalizer
+from collab_splats.localization.localizer import (
+    CameraLocalizer,
+    localization_db_exists,
+)
 from collab_splats.mesh import (
     clean_repair_mesh,
     create_texture_mesh,
@@ -61,7 +65,7 @@ from collab_splats.semantics.store import (
     write_point_features,
 )
 from collab_splats.utils.colmap import write_colmap_reconstruction
-from collab_splats.utils.io import read_image, write_json
+from collab_splats.utils.io import to_json_safe, write_json
 from collab_splats.utils.torch_utils import (
     get_device,
     load_features,
@@ -157,67 +161,36 @@ def _load_frame(
         return ae.encode(fmap)
 
 
-def _localization_db_exists(pointcloud_zarr: Path, extractor_name: str) -> bool:
-    """
-    True if the local-feature DB group already exists in pointcloud.zarr.
-
-    - a missing store, or one that is not a group, reads as absent
-    """
-    # Open read-only; a missing or non-group store has no DB
-    try:
-        store = zarr.open_group(str(pointcloud_zarr), mode="r")
-    except (FileNotFoundError, zarr.errors.NodeNotFoundError, zarr.errors.ContainsArrayError):
-        return False
-
-    return (
-        "local_features" in store
-        and extractor_name in store["local_features"]
-        and "reconstruction" in store["local_features"][extractor_name]
-    )
-
-
-def _build_localization_db(
-    pointcloud_zarr: Path,
-    extractor_name: str,
-    images_dir: Path,
-    top_k: int,
-) -> None:
+def _build_localization_db(pointcloud_zarr: Path, extractor_name: str, images_dir: Path) -> None:
     """
     Build the per-frame local-feature localization cache into pointcloud.zarr.
 
     - persists keypoints/descriptors to local_features/{extractor_name}/reconstruction
     - always rebuilds: an existing group for the extractor is dropped first
-    - top_k is the pairwise (vismatch) fan-out; the descriptor path ignores it
-    - a missing pointcloud.zarr raises FileNotFoundError; nothing is created in its place
+    - a missing pointcloud.zarr, images/ or frame raises before the old group is dropped
     """
-    # Drop the stale group; from_feedforward has no overwrite and always cache-hits one
+    # Open the zarr, then validate images/; a bad store must never cost the existing DB
     store = zarr.open_group(str(pointcloud_zarr), mode="r+")
+
+    if not images_dir.is_dir():
+        raise FileNotFoundError(f"{images_dir}: scene has no images/ store")
+
+    # Load the reconstruction; the localizer reads full-res frames, not model-res images
+    pointcloud = PointcloudResult.load_zarr(pointcloud_zarr, load_world_points=True)
+
+    # Full-res frames read lazily; KeyError here when a zarr frame is missing from images/
+    idxs = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
+    images = frames.read_frames_chunked(images_dir, idxs)
+
+    # Drop the stale group; from_pointcloud would cache-hit it
     rec_key = f"local_features/{extractor_name}/reconstruction"
 
     if rec_key in store:
         del store[rec_key]
 
-    # Load the reconstruction and the matcher
-    ff = PointcloudResult.load_zarr(pointcloud_zarr, load_images=True, load_world_points=True)
+    # Extract every reference frame and save the DB
     extractor = LocalMatcher(extractor_name)
-
-    # Lazily read the store's frames in the zarr's image_paths order
-    all_paths = frames.frame_paths(images_dir)
-    rows = store_rows(images_dir, ff.image_paths)
-    paths = [all_paths[row] for row in rows]
-    images = (read_image(p) for p in paths)
-
-    # Localization ids name the store's own files
-    ids = [p.name for p in paths]
-    CameraLocalizer.from_feedforward(
-        ff,
-        images=images,
-        ids=ids,
-        extractor=extractor,
-        extractor_name=extractor_name,
-        zarr_path=pointcloud_zarr,
-        top_k=top_k,
-    )
+    CameraLocalizer.from_pointcloud(pointcloud, zarr_path=pointcloud_zarr, images=images, extractor=extractor)
     logger.info("Localization DB built: %s :: local_features/%s", pointcloud_zarr, extractor_name)
 
 
@@ -256,6 +229,12 @@ class Reconstructor:
         self.config = self.validate_config(merged)
         self._result: PointcloudResult | None = None
 
+        # Preproc's final RGB frames by file name, handed to an in-process feedforward pointcloud
+        self._frames: dict[str, np.ndarray] | None = None
+
+        # Preproc's background PNG write of those frames, joined before anything reads images/
+        self._frames_write: Future | None = None
+
         # Viser server kept by pointcloud() under viz + loop closure, reachable after run() returns
         self.viewer: Viewer | None = None
 
@@ -266,13 +245,13 @@ class Reconstructor:
 
         - only cross-field checks: required paths, method/backend pairing, BA/LC/sfm/LoGeR exclusions
         - per-argument bounds live in the creators and create_tsdf_mesh
-        - pointcloud.loop_closure is normalized in place to a dict carrying `enabled`
+        - pointcloud.loop_closure and bundle_adjustment are normalized in place to dicts carrying `enabled`
 
         Args:
             config: config already merged over base.yaml.
 
         Returns:
-            The same config, loop_closure normalized.
+            The same config, loop_closure and bundle_adjustment normalized.
 
         Raises:
             ValueError: a required field is missing or two settings cannot run together.
@@ -307,15 +286,28 @@ class Reconstructor:
 
         pc["loop_closure"] = lc
 
-        # Refuse BA with LC: submaps lack the per-frame model tensors BA tracks need
-        if pc["bundle_adjustment"] and lc["enabled"]:
-            raise ValueError(
-                "pointcloud.bundle_adjustment and pointcloud.loop_closure are mutually "
-                "exclusive — BA needs per-frame model tensors that LC submaps do not carry."
-            )
+        # Normalize bundle_adjustment to a dict carrying `enabled`
+        ba = pc["bundle_adjustment"]
+        ba = dict(ba) if isinstance(ba, dict) else {"enabled": bool(ba)}
+        ba.setdefault("enabled", True)
+        # tracks_cache_dir is the stage's own path, never a config key
+        unknown = (
+            set(ba) - {"enabled", "tracks_cache_dir"} - {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
+        )
+
+        if unknown:
+            raise ValueError(f"pointcloud.bundle_adjustment has unknown keys {sorted(unknown)}")
+
+        pc["bundle_adjustment"] = ba
+
+        # Build the BA config so its own checks refuse values the solver cannot run
+        try:
+            ba_cfg = BundleAdjustmentConfig(**{k: v for k, v in ba.items() if k != "enabled"})
+        except ValueError as e:
+            raise ValueError(f"pointcloud.bundle_adjustment: {e}") from e
 
         # Refuse BA with sfm: every sfm mapper runs its own
-        if method == "sfm" and pc["bundle_adjustment"]:
+        if method == "sfm" and ba["enabled"]:
             raise ValueError(
                 "pointcloud.bundle_adjustment is not supported with method: sfm — "
                 "every sfm backend runs its own bundle adjustment"
@@ -326,6 +318,15 @@ class Reconstructor:
             raise ValueError(
                 "pointcloud.loop_closure is not supported with method: sfm — "
                 "sfm backends map the whole frame set at once, not in sequential submaps"
+            )
+
+        # Refuse matcher tracks with LC: window BA gets no full-res frame paths
+        source = ba_cfg.track_source
+
+        if ba["enabled"] and lc["enabled"] and source != "vggsfm":
+            raise ValueError(
+                f"pointcloud.bundle_adjustment.track_source {source!r} is not supported with "
+                "pointcloud.loop_closure — window BA does not receive frame paths; use track_source: vggsfm"
             )
 
         # Refuse LC with LoGeR: no LC verify thresholds are calibrated for it
@@ -455,7 +456,7 @@ class Reconstructor:
         # localize lives inside pointcloud.zarr; pointcloud also needs its COLMAP model
         if stage == "localize":
             matcher = self.config["localization"]["matcher"]
-            return self.pointcloud_zarr.exists() and _localization_db_exists(self.pointcloud_zarr, matcher)
+            return self.pointcloud_zarr.exists() and localization_db_exists(self.pointcloud_zarr, matcher)
 
         if stage == "pointcloud":
             return self.pointcloud_zarr.exists() and self.colmap_model_dir.exists()
@@ -490,6 +491,8 @@ class Reconstructor:
         - None takes every stage the config enables; preproc, pointcloud and the report always run
         - a dependency is met by this run or by its output on disk
         - a done stage is skipped, except a named leaf, which raises unless overwrite
+        - preproc writes images/ in the background; the next stage or the run's exit joins it, re-raising a write error
+          (only logged when a stage error is already propagating)
 
         Args:
             stages: stage names, any order.
@@ -500,10 +503,11 @@ class Reconstructor:
         """
         named = stages is not None
 
-        # Default stage set from the config's enable flags
+        # Default stage set from the enable flags; BA with LC runs inside pointcloud, not refine
         if stages is None:
+            pc = self.config["pointcloud"]
             enabled = {
-                "refine": self.config["pointcloud"]["bundle_adjustment"],
+                "refine": pc["bundle_adjustment"]["enabled"] and not pc["loop_closure"]["enabled"],
                 "semantics": self.config["semantics"]["enabled"],
                 "splats": self.config["splats"]["enabled"],
                 "mesh": self.config["mesh"]["enabled"],
@@ -526,26 +530,64 @@ class Reconstructor:
             if named and stage in LEAF_STAGES and self.done(stage) and not overwrite:
                 raise ValueError(f"stage '{stage}' output already exists; pass overwrite=True to replace it")
 
-        # Run in table order; skip done stages
-        for stage in [s for s in STAGES if s in stages]:
-            if self.done(stage) and not overwrite:
-                logger.info("stage %s done, skipping", stage)
-                continue
+        # Run in table order; skip done stages; finish the PNG write and drop preproc's frames on any exit
+        try:
+            for stage in [s for s in STAGES if s in stages]:
+                if self.done(stage) and not overwrite:
+                    logger.info("stage %s done, skipping", stage)
+                    continue
 
-            logger.info("=== Stage: %s ===", stage)
-            getattr(self, stage)()
+                logger.info("=== Stage: %s ===", stage)
+
+                # Pointcloud joins the PNG write itself; every other stage starts after it
+                if stage != "pointcloud":
+                    self._join_frames_write()
+
+                # Preproc writes its PNGs in the background so pointcloud overlaps them
+                if stage == "preproc":
+                    self.preproc(background_write=True)
+                else:
+                    getattr(self, stage)()
+        except BaseException:
+            # Let the stage error win; wait for the write and only log its own failure
+            write = self._frames_write
+            self._frames_write = None
+            write_error = write.exception() if write is not None else None
+
+            if write_error is not None:
+                logger.error("background PNG write failed: %s", write_error)
+
+            raise
+        finally:
+            self._frames = None
+            self._join_frames_write()
+
+    def _join_frames_write(self) -> None:
+        """
+        Wait for preproc's background PNG write, re-raising its error; a no-op when none is pending.
+        """
+        if self._frames_write is None:
+            return
+
+        write = self._frames_write
+        self._frames_write = None
+        write.result()
 
     ########################################
     # Pipeline stages
     ########################################
 
-    def preproc(self) -> None:
+    def preproc(self, background_write: bool = False) -> None:
         """
         Select keyframes from the input into images/.
 
         - video: measure quality, sample, write, plot the report with the kept frames marked
         - directory: every image, in filename order, source index = position
         - undistort self-calibrates from the written frames, then rewrites them
+        - background_write leaves the final write pending; the next stage or run() joins it
+
+        Args:
+            background_write: submit the final PNG write to a thread instead of waiting for it.
 
         Raises:
             ValueError: an unknown preproc.frame_selection, or no frame survives selection.
@@ -580,10 +622,11 @@ class Reconstructor:
                     fps=cfg["fps"],
                     min_frames=cfg["min_frames"],
                     on_empty_slot=cfg["on_empty_slot"],
+                    workers=cfg["n_workers"],
                     **common,
                 )
             elif cfg["frame_selection"] == "uniform":
-                rgbs, records = sample_uniform(str(input_path), **common)
+                rgbs, records = sample_uniform(str(input_path), workers=cfg["n_workers"], **common)
             elif cfg["frame_selection"] == "optical_flow":
                 rgbs, records = sample_optical_flow(str(input_path), **common)
             else:
@@ -595,20 +638,31 @@ class Reconstructor:
             if not len(rgbs):
                 raise ValueError(f"0 of {total} frames selected from {input_path}; see {report_path}")
 
-        # Write the selected frames under their source indices
+        # Source frame index of each selected frame
         idxs = [r["frame_idx"] for r in records]
-        frames.write_frames(self.images_dir, rgbs, idxs)
 
-        # Undistort from the written frames, then rewrite them on the new framing
+        # Undistort calibrates from written frames, then undistorts them for the final write
         if cfg["undistort"]:
+            frames.write_frames(self.images_dir, rgbs, idxs)
             camera = calibrate_camera(self.images_dir)
             rgbs, _ = undistort_frames(rgbs, camera)
+
+        # Write the final frames under their source indices, in the background when asked
+        if background_write:
+            executor = ThreadPoolExecutor(1)
+            self._frames_write = executor.submit(frames.write_frames, self.images_dir, rgbs, idxs)
+            executor.shutdown(wait=False)
+        else:
             frames.write_frames(self.images_dir, rgbs, idxs)
 
         # Plot the quality report with the kept frames marked
         if report is not None:
             plot_photometric(report, self.images_dir.parent, selected=idxs)
             plot_motion(report, self.images_dir.parent, selected=idxs)
+
+        # Keep the final frames, by write_frames' file names, for an in-process pointcloud stage
+        names = [frames.frame_name(idx) for idx in idxs]
+        self._frames = dict(zip(names, rgbs, strict=True))
 
         logger.info("preproc: %d frames in %s", len(idxs), self.images_dir)
 
@@ -617,10 +671,18 @@ class Reconstructor:
         Reconstruct images/ into pointcloud.zarr, the COLMAP model and sparse_pc.ply.
 
         - feedforward optionally wraps the creator in loop closure, with a live viewer when viz is on
+        - BA on with LC: bundle adjustment runs inside each window; records land in the zarr attrs as window_ba
         - sfm is experimental; its creator writes its own subset and alignment attrs
         """
         cfg = self.config["pointcloud"]
         backend = cfg["backend"]
+
+        # Backends that read images/ (sfm, loger) wait for preproc's PNG write
+        if cfg["method"] == "sfm" or backend == "loger":
+            self._join_frames_write()
+
+        # Window BA config; set only for feedforward with LC and BA on
+        ba_cfg = None
 
         # Build the feedforward creator, optionally inside loop closure
         if cfg["method"] == "feedforward":
@@ -630,6 +692,7 @@ class Reconstructor:
                 min_views=cfg["min_views"],
                 mv_rel_thresh=cfg["mv_rel_thresh"],
                 clean=cfg["clean"]["enabled"],
+                frames=self._frames,
                 **cfg[backend],
             )
 
@@ -638,7 +701,13 @@ class Reconstructor:
 
             if lc.pop("enabled"):
                 lc_config = LoopClosureConfig(**lc) if lc else None
-                creator = LoopClosure(base=creator, config=lc_config)
+
+                # BA with LC runs inside each window, with the refine stage's terms
+                if cfg["bundle_adjustment"]["enabled"]:
+                    terms = {k: v for k, v in cfg["bundle_adjustment"].items() if k != "enabled"}
+                    ba_cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir / "window_ba", **terms)
+
+                creator = LoopClosure(base=creator, config=lc_config, ba=ba_cfg)
 
                 # Viewer shows each loop edge live; heavy websocket dep, so imported here
                 if cfg["viz"]["enabled"]:
@@ -664,11 +733,18 @@ class Reconstructor:
         # Reconstruct; the creator writes the COLMAP model itself
         result = creator.create_pointcloud(self.images_dir, self.backend_dir, self.colmap_model_dir)
 
+        # Finish preproc's PNG write before the zarr marks this stage done
+        self._join_frames_write()
+
         # Provenance attrs; an sfm creator supplies its own subset and alignment attrs
         if cfg["method"] == "feedforward":
             attrs = {"method": "feedforward", "backend": backend}
         else:
             attrs = {"backend": backend, **creator.attrs}
+
+        # Per-window BA records; zarr attrs need strict JSON
+        if ba_cfg is not None:
+            attrs["window_ba"] = to_json_safe(creator.window_ba)
 
         # Persist the zarr and the PLY
         result.save_zarr(self.pointcloud_zarr, extra_attrs=attrs)
@@ -678,6 +754,7 @@ class Reconstructor:
         # Free the model before the next stage loads its own
         del creator, result
         self._result = None
+        self._frames = None
         pytorch_gc()
 
     def refine(self) -> None:
@@ -686,44 +763,80 @@ class Reconstructor:
 
         - points are re-derived, re-cleaned and re-capped, so their count can change
         - the zarr is rewritten whole, which drops any localization DB built on the old points
+        - a matcher track_source (xfeat / loma) reads the full-res frames in the images/ store
 
         Raises:
-            ValueError: pointcloud.method is sfm.
+            ValueError: pointcloud.method is sfm, or loop closure is on.
+            FileNotFoundError: a matcher track_source and no images/ store.
         """
         cfg = self.config["pointcloud"]
 
         if cfg["method"] == "sfm":
             raise ValueError("refine is not supported for pointcloud.method: sfm")
 
+        if cfg["loop_closure"]["enabled"]:
+            raise ValueError("refine is not supported with pointcloud.loop_closure — BA already ran inside each window")
+
+        # Build the BA config; a matcher track_source needs the images/ store before any load
+        terms = {k: v for k, v in cfg["bundle_adjustment"].items() if k != "enabled"}
+        ba_cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir, **terms)
+
+        if ba_cfg.track_source != "vggsfm" and not self.images_dir.is_dir():
+            raise FileNotFoundError(f"{self.images_dir}: scene has no images/ store")
+
         # Refine poses, then re-derive the points under the new cameras
-        ff = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=True)
-        ba_cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir)
+        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=True)
         ba = BundleAdjustment(ba_cfg)
+
+        # Full-res store frames in zarr order; only matcher track sources read them
+        frame_paths = None
+
+        if ba_cfg.track_source != "vggsfm":
+            idxs = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
+            frame_paths = frames.frame_paths(self.images_dir, idxs)
+
+        # Bundle-adjust, then reproject the points under the refined cameras
         extrinsics, intrinsics = ba.refine(
-            ff.images, ff.confidence, ff.world_points, ff.extrinsics, ff.model_intrinsics, ff.image_paths
+            pointcloud.images,
+            pointcloud.confidence,
+            pointcloud.world_points,
+            pointcloud.extrinsics,
+            pointcloud.model_intrinsics,
+            pointcloud.image_paths,
+            depth=pointcloud.depth,
+            frame_paths=frame_paths,
         )
-        ff = dataclasses.replace(ff, extrinsics=extrinsics, model_intrinsics=intrinsics, intrinsics=None)
-        ff = ff.reproject()
+        pointcloud = dataclasses.replace(
+            pointcloud, extrinsics=extrinsics, model_intrinsics=intrinsics, intrinsics=None
+        )
+        pointcloud = pointcloud.reproject()
 
         # Re-clean and re-cap under the refined cameras
-        n_before = len(ff.points)
-        ff = clean_pointcloud(ff, remove_outliers=cfg["clean"]["enabled"], max_points=cfg["max_points"])
-        logger.info("refine: %d of %d pts kept after clean + cap", len(ff.points), n_before)
+        n_before = len(pointcloud.points)
+        pointcloud = clean_pointcloud(pointcloud, remove_outliers=cfg["clean"]["enabled"], max_points=cfg["max_points"])
+        logger.info("refine: %d of %d pts kept after clean + cap", len(pointcloud.points), n_before)
 
         # Rewrite the zarr with its provenance attrs, then the COLMAP model and PLY
         store = zarr.open_group(str(self.pointcloud_zarr), mode="r")
         attrs = dict(store.attrs)
-        ff.save_zarr(self.pointcloud_zarr, extra_attrs=attrs)
-        recon = ff.to_colmap()
+        pointcloud.save_zarr(self.pointcloud_zarr, extra_attrs=attrs)
+        recon = pointcloud.to_colmap()
         write_colmap_reconstruction(recon, self.colmap_model_dir)
-        ff.write_ply(self.sparse_ply)
+        pointcloud.write_ply(self.sparse_ply)
         self._result = None
 
         # Marker last: BA config and loss history
         marker = self.outputs["refine"]
         marker.parent.mkdir(parents=True, exist_ok=True)
         config = {k: str(v) if isinstance(v, Path) else v for k, v in dataclasses.asdict(ba_cfg).items()}
-        write_json(marker, {"config": config, "loss_history": ba.loss_history, "n_frames": len(ff.image_paths)})
+        report = {
+            "config": config,
+            "loss_history": ba.loss_history,
+            "losses": ba.losses,
+            "alignment_scale": ba.alignment_scale,
+            "n_frames": len(pointcloud.image_paths),
+        }
+        write_json(marker, report)
 
     def semantics(self) -> None:
         """
@@ -753,8 +866,8 @@ class Reconstructor:
 
         # Scene cache read lazily; pick the zarr's frames, in the zarr's order
         features = zarr.open(str(cache), mode="r")["features"]
-        ff = PointcloudResult.load_zarr(self.pointcloud_zarr, load_world_points=False)
-        rows = store_rows(self.images_dir, ff.image_paths)
+        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_world_points=False)
+        rows = store_rows(self.images_dir, pointcloud.image_paths)
 
         # Reuse the AE stored with the 2D cache when its width matches, else fit and store it
         ae = None
@@ -781,7 +894,7 @@ class Reconstructor:
 
         # Lift per-frame codes (or full-width maps when uncompressed) to points
         frame_features = partial(_load_frame, features, rows, ae)
-        lifted = lift_features(frame_features, ff)
+        lifted = lift_features(frame_features, pointcloud)
 
         # Write the per-point codes beside the lifted-store marker
         codes = to_numpy(lifted)
@@ -826,12 +939,12 @@ class Reconstructor:
 
         # Feedforward source: the zarr's depth on the zarr's own frames
         elif source == "feedforward":
-            ff = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=False, load_world_points=False)
-            image_ids = [frames.frame_idx_from_path(p) for p in ff.image_paths]
+            pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=False, load_world_points=False)
+            image_ids = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
             rgbs = frames.read_frames(self.images_dir, image_ids)
-            depths = frame_depths(ff, rgbs, conf_percentile=cfg["conf_percentile"])
-            c2w = invert_poses(ff.extrinsics)
-            intrinsics = ff.intrinsics
+            depths = frame_depths(pointcloud, rgbs, conf_percentile=cfg["conf_percentile"])
+            c2w = invert_poses(pointcloud.extrinsics)
+            intrinsics = pointcloud.intrinsics
 
         else:
             raise ValueError(f"mesh.source must be 'feedforward' or 'splats', got {source!r}")
@@ -884,7 +997,7 @@ class Reconstructor:
         - always rebuilds: an existing group for the matcher is dropped first
         """
         cfg = self.config["localization"]
-        _build_localization_db(self.pointcloud_zarr, cfg["matcher"], self.images_dir, top_k=cfg["top_k"])
+        _build_localization_db(self.pointcloud_zarr, cfg["matcher"], self.images_dir)
 
     def splats(self) -> None:
         """
@@ -912,8 +1025,8 @@ class Reconstructor:
 
         if "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0:
             conf_percentile = self.config["mesh"]["conf_percentile"]
-            ff = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=False, load_world_points=False)
-            depth_targets = frame_depths(ff, rgbs, conf_percentile=conf_percentile)
+            pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=False, load_world_points=False)
+            depth_targets = frame_depths(pointcloud, rgbs, conf_percentile=conf_percentile)
             logger.info("splats depth targets use mesh.conf_percentile=%s", conf_percentile)
 
         train(
@@ -938,29 +1051,29 @@ class Reconstructor:
         - a failing measurement raises
         - runs no model and no matcher; reads the zarr and images/ only
         """
-        ff = PointcloudResult.load_zarr(self.pointcloud_zarr)
+        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr)
 
         # Optional frames for photometric, read by the zarr's frame ids; images/ may hold frames sfm dropped
         images = None
 
         if frames.frame_paths(self.images_dir):
-            image_ids = [frames.frame_idx_from_path(p) for p in ff.image_paths]
+            image_ids = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
             images = frames.read_frames(self.images_dir, image_ids)
 
         # Every table from arrays, keyed by frame name
-        names = [Path(str(p)).name for p in ff.image_paths]
+        names = [Path(str(p)).name for p in pointcloud.image_paths]
 
         # Optional pair pruning; 0.0 (base.yaml) keeps every ordered pair
         min_pair_overlap = self.config["reconstruction_quality_report"]["min_pair_overlap"]
 
         tables = compute_reconstruction_quality(
-            ff.depth,
-            ff.model_intrinsics,
-            ff.intrinsics,
-            ff.extrinsics,
-            ff.original_coords,
+            pointcloud.depth,
+            pointcloud.model_intrinsics,
+            pointcloud.intrinsics,
+            pointcloud.extrinsics,
+            pointcloud.original_coords,
             names,
-            ff.confidence,
+            pointcloud.confidence,
             images,
             min_pair_overlap=min_pair_overlap,
         )
@@ -968,9 +1081,9 @@ class Reconstructor:
         # Atomic write beside the zarr: reuse-by-existence never sees a half file
         scene = {
             "backend": self.config["pointcloud"]["backend"],
-            "n_frames": len(ff.depth),
-            "model_resolution": f"{ff.model_width}x{ff.model_height}",
-            "image_width": int(ff.original_coords[0][4]),
+            "n_frames": len(pointcloud.depth),
+            "model_resolution": f"{pointcloud.model_width}x{pointcloud.model_height}",
+            "image_width": int(pointcloud.original_coords[0][4]),
             "zarr": str(self.pointcloud_zarr),
             "min_pair_overlap": min_pair_overlap,
         }

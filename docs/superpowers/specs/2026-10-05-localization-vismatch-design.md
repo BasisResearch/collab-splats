@@ -35,7 +35,7 @@
 - `clean/dashboard-release`: public `CameraLocalizer` API keeps its signatures except the `from_feedforward` → `from_pointcloud` rename (one call site in `dashboard/pipeline.py`).
 - `dashboard/localize.py` `_METHODS` lists `disk-lightglue` and `aliked-lightglue`, which §1 now refuses; it shrinks to `["xfeat", "loma"]` (one line, plus `tests/dashboard/test_localize_page.py` fixtures). `configs/base.yaml` `localization.matcher: loma` is already valid.
 - VGGSfM tracks stay in `geometry/bundle_adjustment.py`; matcher tracks go beside them in `geometry/tracks.py` (§3).
-- Layering: `utils` → `localization.extractors` / `retrieval` (matching primitives) → `localization.localizer` (query → pose) and `geometry.tracks` → `geometry.bundle_adjustment` (matches → tracks → poses). Localization imports nothing from geometry.
+- Layering: `utils` → `localization.extractors` / `retrieval` (matching primitives) → `localization.localizer` (query → pose) and `geometry.tracks` → `geometry.bundle_adjustment` (matches → tracks → poses). Localization imports from geometry only the leaf modules `projection` (`sample_world_points`) and `transforms`.
 
 ## Design
 
@@ -49,11 +49,11 @@
 
 ### 2. `localizer.py` — one match path
 
-- `CameraLocalizer.from_pointcloud(result: PointcloudResult, *, zarr_path: Path, images: Iterable[np.ndarray] | None = None, ids: list[str] | None = None, extractor: LocalMatcher | None = None, progress_callback: Callable[[int, int], None] | None = None, top_k: int = 8, batch_size: int = 32) -> CameraLocalizer` replaces `from_feedforward`:
+- `CameraLocalizer.from_pointcloud(result: PointcloudResult, *, zarr_path: Path, images: Iterable[np.ndarray] | None = None, ids: list[str] | None = None, extractor: LocalMatcher | None = None, progress_callback: Callable[[int, int], None] | None = None, top_k: int = 8, config: dict | None = None) -> CameraLocalizer` replaces `from_feedforward`:
   - typed; `zarr_path` explicit, no `result._zarr_path` read
   - no `load_images=True` requirement; stale "load_world_points" message dropped
   - stale cache: `image_paths` compared exactly → rebuild (no stem / jpg-png legacy branches)
-- Index build: `extract(list)` per `utils.torch_utils.batch_iterator` chunk of `batch_size`.
+- Index build: `extract(list)` per lazily drawn chunk of `batch_size`, a `CameraLocalizer.__init__` keyword (default 32); `from_pointcloud` and `update_index` take no `batch_size`.
 - Device: vismatch `match()` already calls `torch.as_tensor(v, device=self.device)` on its inputs; the localizer moves cached features to the matcher device once (build and load) so that call becomes a no-op. No other device code.
 - Callers keep passing a lazy image iterable: a cache hit reads zero frames (both callers rely on it today).
 - `reconstructor._build_localization_db` drops `load_images=True` (only the pairwise path needed `ff.images`); it keeps deleting the group first (always-rebuild).
@@ -61,9 +61,10 @@
   - `refs=None`: DINO-SALAD ranks reconstruction frames, top-K matched
   - `refs=[i, ...]`: exactly those frames (align to a chosen scene image)
   - per ref: cached features + `match()`; ref px → world_points grid (§4); `sample_world_points`; unchanged `_solve_pnp`
+  - query shrunk to the reference long side before matching (never upscaled); K and px return on the original query grid
 - Delete: `_localize_pairwise`, `_ref_images`, the descriptor-path loop's size-only rescale, image retention in `_build_pairwise_refs` (shrinks to global descriptors).
 - `update_index` and the localized group persist `keypoints_normalized`; the localized group also stores per-frame `image_size` (queries vary in size). Today `load_index` rebuilds localized frames with neither, so loma cannot match them.
-- Unchanged public API: `add_localized_frame`, `clear_localized_frames`, `save_index`, `load_index`, `update_index`, `image_paths`, `frame_sources`, `extrinsics`, `LocalizationResult` (incl. `ranked_ref_frames`), `read_localization_db`, `sample_world_points`, `seed_intrinsics`.
+- Unchanged public API: `add_localized_frame`, `clear_localized_frames`, `save_index`, `load_index`, `update_index`, `image_paths`, `frame_sources`, `extrinsics`, `LocalizationResult` (incl. `ranked_ref_frames`), `read_localization_db`, `seed_intrinsics`. `sample_world_points` moves to `geometry.projection`, with no `localization` re-export.
 - `add_localized_frame` duplicate guard: exact id, not stem.
 
 ### 3. `geometry/tracks.py` (new) — matcher tracks for BA
@@ -74,7 +75,7 @@ Promotes the prototype that produced the measured xfeat BA runs (gh1kq60, gstar2
 def build_tracks(
     matcher: LocalMatcher,
     images: np.ndarray,        # (N, 3, H, W) RGB [0, 1], model grid (BA's `images`): retrieval only
-    frame_paths: list[Path],   # full-res store frames, one per model frame (BA's `image_paths`)
+    frame_paths: list[Path],   # full-res store frames, one per model frame (resolved by the reconstructor via `store_rows`; BA's `image_paths` are stems)
     world_points: np.ndarray,  # (N, H, W, 3), model grid
     extrinsics: np.ndarray,    # (N, 4, 4) w2c
     intrinsics: np.ndarray,    # (N, 3, 3) model-grid K
@@ -93,10 +94,10 @@ def build_tracks(
 - Same return triple as `extract_tracks_vggsfm`, float32; `vis` 1.0 on observed, 0.0 elsewhere (prototype layout).
 - Steps, prototype order; each step is an existing package / vismatch / pycolmap call:
   1. full-res extract, as the prototype's `MT_FULL_DIR` arm: per `batch_iterator` chunk of `frame_paths`, `preproc.frames.read_frames(dir, idxs)` (idxs via `frame_idx_from_path`; same 8-thread decode as the prototype, but chunked so the ~6 GB gh1k full-res stack is never resident) → `LocalMatcher.extract(list)` with `max_num_keypoints=2048`. Prototype extracted one frame at a time (142–285 s on gh1k); batching is the gate's extract lever
-  2. keypoints → model grid, the prototype's map verbatim: `(kp + 0.5) * (W / w, H / h) - 0.5` (pixel centers, size only); `ValueError` when a frame's aspect ratio differs from the model grid's by more than one model pixel (a cropped preprocess; out of scope, never silently mis-mapped). Tracks, depth filter and pts3d all live on the model grid from here
+  2. keypoints → model grid, the prototype's map verbatim: `(kp + 0.5) * (W / w, H / h) - 0.5` (pixel centers, size only); `ValueError` when a frame's aspect ratio differs from the model grid's by more than a relative `aspect_tol` (default 0.02: a cropped preprocess; out of scope, never silently mis-mapped). The VGGT-X / MapAnything resize rounds height to a multiple of 14 (1920x1080 → 518x294), a ~1% stretch that the separate x / y scales map exactly, so it passes. Tracks, depth filter and pts3d all live on the model grid from here
   3. pairs: sequential `b - a ≤ window`, plus DINO-SALAD retrieval — `localization.retrieval.DinoSaladExtractor` on `images` in chunks, cosine top-`retrieval_k` per frame outside `|a - b| ≤ retrieval_nms`, deduped against the sequential set
   4. `LocalMatcher.match` per pair (native `idx_q` / `idx_db`)
-  5. depth-consistency filter, symmetric: keypoints of `a` → `localizer.sample_world_points(world_points[a], px)` → `geometry.projection.project` into `b` → px error vs the matched keypoint; same `b → a`; keep `max < depth_tol` and `valid`. Replaces the prototype's `_transfer_err` (own unproject math) and its nearest-pixel clip: `world_points` is already the unprojected depth, and `sample_world_points` (bilinear, NaN / out-of-image → invalid) is the package's one lookup. The parity gate's 5% tolerance absorbs bilinear vs nearest
+  5. depth-consistency filter, symmetric: keypoints of `a` → `projection.sample_world_points(world_points[a], px)` → `geometry.projection.project` into `b` → px error vs the matched keypoint; same `b → a`; keep `max < depth_tol` and `valid`. Replaces the prototype's `_transfer_err` (own unproject math) and its nearest-pixel clip: `world_points` is already the unprojected depth, and `sample_world_points` (bilinear, NaN / out-of-image → invalid) is the package's one lookup. The parity gate's 5% tolerance absorbs bilinear vs nearest
   6. temp-dir pycolmap `Database`: `write_camera` (PINHOLE from `intrinsics`, `use_camera_id=True`) / `write_image` / `write_keypoints` / `write_matches`; pairs txt; `pycolmap.verify_matches(db, pairs_txt)`
   7. star chaining: `DatabaseCacheOptions` with `min_num_matches`, then `DatabaseCache.create(db, options)`, then its `correspondence_graph` (one call per line); `seed_frames` evenly spaced seeds (`np.linspace`), seeds absent from the graph skipped; per seed keypoint `extract_transitive_correspondences(seed, idx, 1)` → the seed plus its direct verified matches (a VGGSfM-style query); a frame holding two keypoints of one track is dropped from that track; ≥ 2 observations kept
   8. `pts3d`: `sample_world_points` at the first observation (prototype `"wp"`, VGGSfM semantics); tracks whose sample is invalid dropped
@@ -107,9 +108,10 @@ def build_tracks(
   - `pts_mode="tri"`, stats dict / prints (→ `logger.info` with per-phase timings), the model-grid-only extract path (full-res always, as every measured run)
 - BA hook (after BA lands, ~5 lines in `bundle_adjustment.py`):
   - `BundleAdjustmentConfig.track_source: Literal["vggsfm", "xfeat", "loma"] = "vggsfm"`; `loma` reuses the same path but has no measured BA run (the parity gate is xfeat only)
-  - `extract_tracks(images, confidence, world_points, image_paths)` gains `extrinsics`, `intrinsics` (refine passes its own); dispatches to `build_tracks` when not `vggsfm`, passing `image_paths` as `frame_paths` (`ValueError` if None for a matcher source); `confidence` unused there
+  - `extract_tracks(images, confidence, world_points, image_paths)` gains keyword-only `extrinsics`, `intrinsics`, `frame_paths` (refine passes its own poses and a new `frame_paths` kwarg); dispatches to `build_tracks` when not `vggsfm` (`ValueError` if any is None for a matcher source); `confidence` unused there
+  - Amended 2026-10-05 (planning): `PointcloudResult.image_paths` are frame stems (`feedforward/base.py:115`), so they cannot locate full-res frames; `refine(frame_paths=)` carries them, the reconstructor builds them from `frames.frame_paths` + `store_rows`; `image_paths` keeps keying the cache
   - `_compute_tracks_cache_key` includes `track_source`
-- Placement decided 2026-10-05: `geometry/tracks.py`. Tracks are multi-view geometry consumed only by BA (as `extract_tracks_vggsfm` beside it); they use localization's matching primitives. Imports stay one-way geometry → localization (as `loop_closure/wrapper.py` already does): `tracks` imports `localization.extractors.LocalMatcher`, `localization.retrieval.DinoSaladExtractor`, `localization.localizer.sample_world_points`, `geometry.projection.project`. A `localization/tracks.py` would cycle through `geometry/__init__` → `bundle_adjustment` → `tracks` → `geometry.projection`.
+- Placement decided 2026-10-05: `geometry/tracks.py`. Tracks are multi-view geometry consumed only by BA (as `extract_tracks_vggsfm` beside it); they use localization's matching primitives. Imports stay one-way geometry → localization (as `loop_closure/wrapper.py` already does): `tracks` imports `localization.extractors.LocalMatcher`, `localization.retrieval.DinoSaladExtractor`, `geometry.projection.sample_world_points` / `project`. A `localization/tracks.py` would cycle through `geometry/__init__` → `bundle_adjustment` → `tracks` → `geometry.projection`.
 - Decided 2026-10-05: full-res frames, exactly as the scratch runs (`MT_FULL_DIR`, 1080×1920, 2048 kp, size-only map).
 
 ### 4. Pixel grid map — full-res → model grid
@@ -139,7 +141,7 @@ Profile on gh1k before fixing; a lever with no profile share is dropped from the
 - Frame rows: `reconstructor.store_rows` stays the one zarr-row → store-file lookup.
 - `PointcloudResult.intrinsics` is typed `| None` but `__post_init__` always fills it; no None branch.
 - `tqdm` inline import → top-level.
-- Reused, not rewritten: `utils.torch_utils.to_numpy` / `batch_iterator`, `utils.io.to_uint8_hwc` / `open_valid`, `preproc.frames.read_frames`, `reconstructor.store_rows`, `localizer.sample_world_points`, `localization.retrieval.DinoSaladExtractor`, `geometry.projection.project`, vismatch `extract` / `match`, pycolmap `Database` / `verify_matches` / `DatabaseCache` / `CorrespondenceGraph`.
+- Reused, not rewritten: `utils.torch_utils.to_numpy` / `batch_iterator`, `utils.io.to_uint8_hwc` / `open_valid`, `preproc.frames.read_frames` / `read_frames_chunked`, `reconstructor.store_rows`, `geometry.projection.sample_world_points`, `localization.retrieval.DinoSaladExtractor`, `geometry.projection.project`, vismatch `extract` / `match`, pycolmap `Database` / `verify_matches` / `DatabaseCache` / `CorrespondenceGraph`.
 - Contract style on touched files: docstrings (summary line, bullets, `Args:`/`Returns:`), every parameter and return annotated, single-line block comments (memory override of the CLAUDE.md header+bullet rule), blank line around every block, one call per line (no nested calls), tunables as keyword defaults (`batch_size`, `window`, `retrieval_k`, `retrieval_nms`, `seed_frames`, `min_matches`, `depth_tol`, `max_num_keypoints`) never module constants, `logger` not `print`, absolute imports in the four isort groups (`vismatch` is in `known_models`; `pycolmap` is general third-party), no inline imports.
 - Add `"localization"` to `PACKAGES` in `tests/test_docstring_contract.py`; `geometry/tracks.py` (geometry already in `PACKAGES`) is written to the contract from the start (the prototype has no docstrings, `print`s, env-var constants and a module-global `_state`).
 - Left alone: `seed_intrinsics` (no package equivalent), `viz.py` display rescale.

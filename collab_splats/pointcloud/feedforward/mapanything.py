@@ -9,16 +9,24 @@ MapAnything feedforward backend: metric depth and camera poses in one forward pa
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
 import torch
 from PIL import Image
+from torchvision import transforms as TF
 
 from mapanything.models import MapAnything
-from mapanything.utils.image import load_images
+from mapanything.utils.cropping import crop_resize_if_necessary
+from mapanything.utils.image import (
+    IMAGE_NORMALIZATION_DICT,
+    find_closest_aspect_ratio,
+    load_images,
+)
 from mapanything.utils.inference import (
     postprocess_model_outputs_for_inference,
     preprocess_input_views_for_inference,
@@ -28,6 +36,7 @@ from mapanything.utils.inference import (
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.pointcloud.feedforward.base import (
     BaseFeedforwardCreator,
+    _frame_sizes,
     capture_qk,
     center_crop_coords,
 )
@@ -108,38 +117,83 @@ class MapAnythingCreator(BaseFeedforwardCreator):
         """
         Load frames as MapAnything view dicts and keep a model-ready copy on CPU.
 
-        - returns (views, original_coords): view dicts and (N, 6) float32 crop boxes
         - crop boxes ignore EXIF orientation; frame-store PNGs carry none
+        - returns (views, original_coords): view dicts and (N, 6) float32 crop boxes
         """
-        # Load and resize the frames with MapAnything's own loader
-        loader_paths = [str(p) for p in paths]
-        upstream_mode = _MA_RESIZE_MODE_MAP[self.resize_mode]
+        # Take the handed-off arrays only when they cover every path
+        arrays = self._get_path_frames(paths)
 
-        if self.resize_mode == "fixed":
-            views = load_images(loader_paths, resize_mode=upstream_mode, resolution_set=self.resolution)
+        # Read the files when nothing was handed off, else preprocess the arrays
+        if arrays is None:
+            views = self._preprocess_files(paths)
         else:
-            views = load_images(loader_paths, resize_mode=upstream_mode, size=self.resolution)
+            views = self._preprocess_arrays(arrays)
 
+        # Each frame's crop box from its original size and the model grid
         model_h: int = views[0]["img"].shape[-2]
         model_w: int = views[0]["img"].shape[-1]
-
-        # Compute each frame's crop box the same way MapAnything's loader resizes and crops it
-        rows = []
-
-        for p in paths:
-            w, h = Image.open(p).size
-            s = max(model_w / w, model_h / h) + 1e-8  # same scale formula as MapAnything's loader
-            resized_wh = (int(w * s), int(h * s))
-            box = center_crop_coords((w, h), resized_wh, (model_w, model_h), (s, s))
-            rows.append(box)
-
-        original_coords = np.array(rows, dtype=np.float32)
+        sizes = _frame_sizes(paths, arrays)
+        original_coords = _crop_boxes(sizes, model_w, model_h)
 
         # Check the views and convert them to the model's input format, leaving them on the CPU
         validated = validate_input_views_for_inference(views)
         self._processed_views = preprocess_input_views_for_inference(validated)
 
         return views, original_coords
+
+    def _preprocess_files(self, paths: list[Path]) -> list[dict[str, Any]]:
+        """
+        Frame files as view dicts through MapAnything's own loader.
+        """
+        loader_paths = [str(p) for p in paths]
+        upstream_mode = _MA_RESIZE_MODE_MAP[self.resize_mode]
+
+        # The fixed mode picks from a lookup table; the others take a target size
+        if self.resize_mode == "fixed":
+            return load_images(loader_paths, resize_mode=upstream_mode, resolution_set=self.resolution)
+
+        return load_images(loader_paths, resize_mode=upstream_mode, size=self.resolution)
+
+    def _preprocess_arrays(self, arrays: list[np.ndarray], *, workers: int = 8) -> list[dict[str, Any]]:
+        """
+        RGB arrays as load_images view dicts, resized on a thread pool, minus the file open.
+
+        - mirrors mapanything.utils.image.load_images for fixed_mapping, square and longest_side
+        - upstream's exif_transpose and RGB convert are no-ops on (H, W, 3) uint8 arrays
+        - patch size 14 and dinov2 normalization, load_images' defaults
+        - the target-size step is inline upstream; the bit-exact test guards drift
+        """
+        # One target size for every frame, from the mean aspect ratio
+        aspect_ratios = [rgb.shape[1] / rgb.shape[0] for rgb in arrays]
+        average = sum(aspect_ratios) / len(aspect_ratios)
+        size = self.resolution
+
+        if self.resize_mode == "fixed":
+            target_size = find_closest_aspect_ratio(average, size)
+        elif self.resize_mode == "square":
+            target_size = (round(size // 14) * 14, round(size // 14) * 14)
+        elif average >= 1:
+            target_size = (size, round((size // 14) / average) * 14)
+        else:
+            target_size = (round((size // 14) * average) * 14, size)
+
+        # Normalize the way load_images does for dinov2
+        norm = IMAGE_NORMALIZATION_DICT["dinov2"]
+        to_tensor = TF.ToTensor()
+        normalize = TF.Normalize(mean=norm.mean, std=norm.std)
+        img_norm = TF.Compose([to_tensor, normalize])
+
+        # Resize and normalize every frame
+        preprocess = partial(_preprocess_frame, target_size=target_size, img_norm=img_norm)
+
+        with ThreadPoolExecutor(workers) as pool:
+            processed = list(pool.map(preprocess, arrays))
+
+        # One view dict per frame, keyed as load_images keys them
+        return [
+            {"img": img, "true_shape": true_shape, "idx": i, "instance": str(i), "data_norm_type": ["dinov2"]}
+            for i, (img, true_shape) in enumerate(processed)
+        ]
 
     def _forward(self, model: Any, views: Any) -> dict[str, np.ndarray]:
         """
@@ -270,3 +324,33 @@ def _views_to(views: list[dict[str, Any]], device: torch.device | str) -> list[d
     - returns new view dicts; non-tensor values pass through
     """
     return [{k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in view.items()} for view in views]
+
+
+def _crop_boxes(sizes: list[tuple[int, int]], model_w: int, model_h: int) -> np.ndarray:
+    """
+    (N, 6) float32 crop boxes for (w, h) frames, the way MapAnything's loader resizes and crops.
+    """
+    rows = []
+
+    for w, h in sizes:
+        s = max(model_w / w, model_h / h) + 1e-8  # same scale formula as MapAnything's loader
+        resized_wh = (int(w * s), int(h * s))
+        box = center_crop_coords((w, h), resized_wh, (model_w, model_h), (s, s))
+        rows.append(box)
+
+    return np.array(rows, dtype=np.float32)
+
+
+def _preprocess_frame(
+    rgb: np.ndarray, *, target_size: tuple[int, int], img_norm: TF.Compose
+) -> tuple[torch.Tensor, np.ndarray]:
+    """
+    One frame through upstream's Lanczos resize and center crop, then normalized.
+
+    - returns the (1, 3, H, W) image and its (1, 2) int32 true_shape
+    """
+    image = Image.fromarray(rgb)
+    resized = crop_resize_if_necessary(image, resolution=target_size)[0]
+    normalized = img_norm(resized)
+
+    return normalized[None], np.int32([resized.size[::-1]])

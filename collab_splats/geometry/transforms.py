@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import numpy as np
 import open3d as o3d
-import torch
 from scipy.linalg import rq
 from torch import Tensor
+
+from collab_splats.utils.torch_utils import full_fp32_matmul
 
 ########################################################################
 # Constants
@@ -81,7 +82,7 @@ def transform_points(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.
     - torch: differentiable in both arguments
     - a (B, 4, 4) batch maps (P, 3) or (B, P, 3) points to (B, P, 3)
     - computes forward in full fp32 whatever the matmul precision: TF32 would round R @ p
-    - TF32 is forced off only for torch inputs; the setting is process-wide, so the restore is not thread-safe
+    - TF32 is forced off only for torch inputs; the toggle waits while another thread holds hold_matmul_precision
 
     Args:
         points: (..., 3) points, or (P, 3) / (B, P, 3) with a pose batch.
@@ -95,13 +96,8 @@ def transform_points(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.
         return _rigid_transform(points, T)
 
     # Full fp32 precision: TF32, which a mapanything import enables, rounds the matmul
-    precision = torch.get_float32_matmul_precision()
-    torch.set_float32_matmul_precision("highest")
-
-    try:
+    with full_fp32_matmul():
         return _rigid_transform(points, T)
-    finally:
-        torch.set_float32_matmul_precision(precision)
 
 
 def _rigid_transform(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.ndarray | Tensor:

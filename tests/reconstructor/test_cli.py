@@ -26,7 +26,7 @@ PULLED_CONFIG = {
     "preproc": {"frame_selection": "uniform", "max_frames": 250},
     "pointcloud": {"method": "feedforward", "backend": "vggtx"},
     "mesh": {"enabled": True, "voxel_size": 0.02},
-    "localization": {"enabled": True, "matcher": "disk-lightglue"},
+    "localization": {"enabled": True, "matcher": "xfeat"},
 }
 
 

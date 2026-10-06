@@ -32,7 +32,7 @@ overrides = [
 
 [[manifest.dependency-metadata]]
 name = "bae"
-version = "0.2.4"
+version = "0.2.5"
 requires-dist = ["torch", "torchvision", "warp-lang"]
 
 [[manifest.dependency-metadata]]
@@ -581,8 +581,8 @@ wheels = [
 
 [[package]]
 name = "bae"
-version = "0.2.4"
-source = { git = "https://github.com/pypose/bae.git?rev=0.2.4#90909b334f77d69abfb1a4d8cd9a8932f92556d1" }
+version = "0.2.5"
+source = { git = "https://github.com/pypose/bae.git?rev=0.2.5#765d787b8e3a6e217fa7feadd80b9a36903ab086" }
 dependencies = [
     { name = "torch" },
     { name = "torchvision" },
@@ -1088,7 +1088,7 @@ hloc = [
 [package.metadata]
 requires-dist = [
     { name = "av", specifier = ">=17.0" },
-    { name = "bae", git = "https://github.com/pypose/bae.git?rev=0.2.4" },
+    { name = "bae", git = "https://github.com/pypose/bae.git?rev=0.2.5" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "clip", git = "https://github.com/openai/CLIP.git" },
     { name = "co3d", marker = "extra == 'feedforward'", git = "https://github.com/facebookresearch/co3d.git" },

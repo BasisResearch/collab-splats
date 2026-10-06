@@ -1,4 +1,7 @@
-"""Stage 1 — Global retrieval: compact global image descriptors for top-K frame retrieval."""
+"""
+Global retrieval: compact image descriptors that rank reference frames for top-K retrieval.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -19,27 +22,37 @@ logger = logging.getLogger(__name__)
 
 
 class BaseRetrievalExtractor(RegistryMixin, nn.Module, ABC):
-    """Abstract base for global image descriptor extractors with name-based registry.
+    """
+    Global image descriptor extractor with a name-based registry.
 
-    Returns (N, D) normalized descriptors — one compact vector per image.
-    Used for top-K candidate retrieval before local feature matching.
+    - one compact (N, D) normalized vector per image
+    - used for top-K candidate retrieval before local feature matching
     """
 
     _registry: dict[str, type["BaseRetrievalExtractor"]] = {}
 
     @abstractmethod
     def forward(self, images: list | torch.Tensor) -> torch.Tensor:
-        """Return (N, D) normalized global descriptors for N images."""
+        """
+        Normalized global descriptors, one per image.
+
+        Args:
+            images: PIL images, or an (N, 3, H, W) RGB tensor.
+
+        Returns:
+            (N, D) L2-normalized descriptors.
+        """
 
 
 @BaseRetrievalExtractor.register("dino-salad")
 class DinoSaladExtractor(BaseRetrievalExtractor):
-    """DINO-SALAD global image descriptor for visual place recognition.
+    """
+    DINO-SALAD global image descriptor for visual place recognition.
 
-    DINOv2 ViT-B/14 backbone + SALAD aggregator, pretrained on GSV-Cities.
-    Installed via pip (Dominic101/salad). Avoids VPRModel to skip pytorch_lightning
-    at runtime — imports SALAD and DINOv2 directly.
-    Weights: https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt
+    - DINOv2 ViT-B/14 backbone + SALAD aggregator, pretrained on GSV-Cities
+    - pip package Dominic101/salad
+    - SALAD + DINOv2 imported directly: VPRModel pulls in pytorch_lightning
+    - weights: https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt
     """
 
     _WEIGHTS_URL = "https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt"
@@ -65,21 +78,32 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
         ).to(self._device)
 
         # Load pretrained weights; strict=False tolerates minor key mismatches
-        sd = torch.hub.load_state_dict_from_url(
-            self._WEIGHTS_URL, map_location=torch.device("cpu")
-        )
+        sd = torch.hub.load_state_dict_from_url(self._WEIGHTS_URL, map_location=torch.device("cpu"))
         self.load_state_dict(sd, strict=False)
         self.eval()
 
         # Build input transform once — resize + normalize to ImageNet stats
-        self._transform = T.Compose([
-            T.Resize((self._INPUT_SIZE, self._INPUT_SIZE)),
-            T.ToTensor(),
-            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-        ])
+        self._transform = T.Compose(
+            [
+                T.Resize((self._INPUT_SIZE, self._INPUT_SIZE)),
+                T.ToTensor(),
+                T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            ]
+        )
 
     def forward(self, images: list | torch.Tensor) -> torch.Tensor:
-        """Return (N, D) normalized float32 descriptors on CPU."""
+        """
+        Global DINO-SALAD descriptors, one per image.
+
+        - tensor input: resized to 224 and ImageNet-normalized here, as the PIL transform
+        - input raw RGB in [0, 1], never pre-normalized
+
+        Args:
+            images: PIL images, or an (N, 3, H, W) RGB tensor in [0, 1].
+
+        Returns:
+            (N, D) float32 descriptors, L2-normalized, on CPU.
+        """
         # Preprocess: PIL list → stacked tensor, or resize if already a tensor
         if isinstance(images, (list, tuple)):
             imgs = torch.stack([self._transform(img) for img in images])
@@ -87,9 +111,14 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
             imgs = images.float()
             if imgs.shape[-2] != self._INPUT_SIZE or imgs.shape[-1] != self._INPUT_SIZE:
                 imgs = torch.nn.functional.interpolate(
-                    imgs, size=(self._INPUT_SIZE, self._INPUT_SIZE),
-                    mode="bilinear", align_corners=False,
+                    imgs,
+                    size=(self._INPUT_SIZE, self._INPUT_SIZE),
+                    mode="bilinear",
+                    align_corners=False,
                 )
+
+            # ImageNet stats, as the PIL path's transform applies
+            imgs = T.functional.normalize(imgs, mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
         logger.debug("DinoSaladExtractor: embedding batch of %d images", len(imgs))
 
@@ -101,22 +130,20 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
         return torch.nn.functional.normalize(descriptors, p=2, dim=-1).cpu()
 
 
-########################################################
-########## PE-CLIP retrieval extractor #################
-########################################################
+########################################################################
+# PE-CLIP retrieval extractor
+########################################################################
 
 
 @BaseRetrievalExtractor.register("pe-clip")
 class PECLIPExtractor(BaseRetrievalExtractor):
-    """PE-Core-L/14-336 global image+text encoder for open-label frame retrieval.
+    """
+    PE-Core-L/14-336 global image+text encoder for open-label frame retrieval.
 
-    Uses open_clip with hf-hub:timm/PE-Core-L-14-336. Produces (N, 1024)
-    normalized descriptors for both images and text — aligned in the same
-    CLIP embedding space. Suitable for text-driven frame retrieval.
-
-    Architecture note: PE-Core uses AttentionPoolLatent (pool='map') with no
-    separate linear projection. Patch-level CLIP-aligned features are not
-    available; use this extractor for global retrieval only.
+    - open_clip with hf-hub:timm/PE-Core-L-14-336
+    - (N, 1024) normalized image and text descriptors, one CLIP space
+    - AttentionPoolLatent (pool='map'), no separate projection
+    - global retrieval only, no patch-level features
     """
 
     _MODEL_ID = "hf-hub:timm/PE-Core-L-14-336"
@@ -131,10 +158,11 @@ class PECLIPExtractor(BaseRetrievalExtractor):
         logger.debug("PECLIPExtractor: loaded %s on %s", model_id, self._device)
 
     def forward(self, images: list | torch.Tensor) -> torch.Tensor:
-        """Return (N, 1024) normalized image descriptors.
+        """
+        Normalized PE-Core image descriptors, one per image.
 
         Args:
-            images: List of PIL Images or (N, 3, H, W) float32 tensor.
+            images: PIL images, or an (N, 3, H, W) float32 tensor already preprocessed.
 
         Returns:
             (N, 1024) float32, L2-normalized, on CPU.
@@ -150,10 +178,11 @@ class PECLIPExtractor(BaseRetrievalExtractor):
         return features.cpu().float()
 
     def encode_text(self, texts: list[str]) -> torch.Tensor:
-        """Return (N, 1024) normalized text descriptors.
+        """
+        Normalized PE-Core text descriptors, one per string.
 
         Args:
-            texts: List of text strings.
+            texts: text prompts.
 
         Returns:
             (N, 1024) float32, L2-normalized, on CPU.

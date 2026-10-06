@@ -44,6 +44,7 @@ if not hasattr(pkg_resources, "packaging"):
 import cv2
 import numpy as np
 import pytest
+import torch
 
 
 @pytest.fixture(scope="session")
@@ -64,3 +65,11 @@ def tiny_video(tmp_path_factory):
         writer.write(frame)
     writer.release()
     return str(path)
+
+
+@pytest.fixture
+def matmul_precision():
+    """Restore torch's float32 matmul precision after the test, pass or fail."""
+    before = torch.get_float32_matmul_precision()
+    yield
+    torch.set_float32_matmul_precision(before)

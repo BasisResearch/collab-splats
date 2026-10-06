@@ -48,7 +48,7 @@ def _vggtx_boxes(sizes: list[tuple[int, int]]) -> np.ndarray:
     """(N, 6) boxes VGGTXCreator._preprocess returns for frames of these (w, h) sizes."""
     paths, image = _sized_paths(sizes)
     with (
-        patch("collab_splats.pointcloud.feedforward.vggtx.Image", image),
+        patch("collab_splats.pointcloud.feedforward.base.Image", image),
         patch("collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images"),
     ):
         _, coords = VGGTXCreator()._preprocess(paths)
@@ -59,7 +59,7 @@ def _omega_boxes(sizes: list[tuple[int, int]]) -> np.ndarray:
     """(N, 6) boxes VGGTOmegaCreator._preprocess returns for frames of these (w, h) sizes."""
     paths, image = _sized_paths(sizes)
     with (
-        patch("collab_splats.pointcloud.feedforward.vggt_omega.Image", image),
+        patch("collab_splats.pointcloud.feedforward.base.Image", image),
         patch(
             "collab_splats.pointcloud.feedforward.vggt_omega.load_and_preprocess_images",
             side_effect=lambda chunk, **kw: torch.zeros(len(chunk), 3, 16, 16),

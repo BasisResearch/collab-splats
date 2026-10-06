@@ -1,13 +1,14 @@
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import List, Optional, Union
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pyvista as pv
+import torch
+from matplotlib.figure import Figure
 
-from collab_splats.geometry.transforms import transform_points
-
-if TYPE_CHECKING:
-    import torch
+from collab_splats.geometry.projection import project
+from collab_splats.geometry.transforms import rescale_intrinsics, transform_points
 
 # Main visualization code - adaptation of your original
 MESH_KWARGS = {
@@ -369,3 +370,152 @@ def pointcloud_to_polydata(pts3d: np.ndarray, **point_data) -> pv.PolyData:
     for k, v in point_data.items():
         cloud[k] = v
     return cloud
+
+
+# ── Reprojection ───────────────────────────────────────────────────────────
+
+
+def render_points(
+    points: np.ndarray,
+    colors: np.ndarray,
+    w2c: np.ndarray,
+    K: np.ndarray,
+    hw: tuple[int, int],
+    *,
+    radius: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Z-buffered point splat of a colored pointcloud seen from one pinhole camera.
+
+    - points at or behind the camera (z <= 1e-6) are dropped
+    - each point writes a (2 * radius + 1)^2 pixel square at its rounded projection
+    - nearest point wins per pixel
+    - uint8 colors are read as 0-255, anything else as 0-1
+
+    Args:
+        points: (P, 3) world points.
+        colors: (P, 3) per-point RGB, uint8 0-255 or float 0-1.
+        w2c: (4, 4) or (3, 4) world-to-camera transform, OpenCV convention.
+        K: (3, 3) camera matrix at the output resolution.
+        hw: output (height, width) in pixels.
+        radius: footprint half-width in pixels.
+
+    Returns:
+        (rgb (H, W, 3) float in [0, 1] on a white background, depth (H, W) with inf where empty).
+    """
+    h, w = hw
+
+    # Colors to float 0-1
+    colors = np.asarray(colors)
+    if colors.dtype == np.uint8:
+        colors = colors / 255.0
+    else:
+        colors = colors.astype(np.float64)
+
+    # Project, keep points in front, round to pixel centers
+    points_t = torch.as_tensor(points, dtype=torch.float64)
+    w2c_t = torch.as_tensor(w2c, dtype=torch.float64)
+    K_t = torch.as_tensor(K, dtype=torch.float64)
+    pixels, points_cam = project(points_t, w2c_t, K_t)
+    cam = points_cam.numpy()
+    in_front = cam[:, 2] > 1e-6
+    pixels = pixels.numpy()[in_front]
+    colors = colors[in_front]
+    z = cam[in_front, 2]
+    pixels = np.round(pixels).astype(np.int64)
+    u, v = pixels[:, 0], pixels[:, 1]
+
+    rgb = np.ones((h, w, 3))
+    depth = np.full((h, w), np.inf)
+    rgb_flat = rgb.reshape(-1, 3)
+    depth_flat = depth.reshape(-1)
+
+    for du in range(-radius, radius + 1):
+        for dv in range(-radius, radius + 1):
+
+            # Shifted footprint pixels inside the image
+            uu = u + du
+            vv = v + dv
+            inside = (uu >= 0) & (uu < w) & (vv >= 0) & (vv < h)
+            flat = vv[inside] * w + uu[inside]
+            zz = z[inside]
+            cc = colors[inside]
+
+            # Nearest write per pixel: sort by pixel then depth, keep each pixel's first entry
+            order = np.lexsort((zz, flat))
+            flat = flat[order]
+            _, first = np.unique(flat, return_index=True)
+            keep = order[first]
+            flat = flat[first]
+
+            # Replace the buffer only where the new write is closer
+            closer = zz[keep] < depth_flat[flat]
+            depth_flat[flat[closer]] = zz[keep][closer]
+            rgb_flat[flat[closer]] = cc[keep][closer]
+
+    return rgb, depth
+
+
+def plot_reprojection(
+    image: np.ndarray,
+    points: np.ndarray,
+    colors: np.ndarray,
+    w2c: np.ndarray,
+    K: np.ndarray,
+    *,
+    max_width: int = 1200,
+    radius: int = 1,
+    title: str | None = None,
+) -> Figure:
+    """
+    Photo, pointcloud render from its solved camera, and a 50/50 blend in one row.
+
+    - photo and K are downscaled together so the width is at most max_width
+    - the render panel's title carries its coverage: the fraction of pixels hit by a point
+
+    Args:
+        image: (H, W, 3) uint8 RGB photo.
+        points: (P, 3) world points.
+        colors: (P, 3) per-point RGB, uint8 0-255 or float 0-1.
+        w2c: (4, 4) or (3, 4) world-to-camera pose of the photo.
+        K: (3, 3) camera matrix of the photo at full resolution.
+        max_width: widest displayed width in pixels.
+        radius: point footprint half-width in pixels.
+        title: figure suptitle; none when omitted.
+
+    Returns:
+        The three-panel figure.
+    """
+    h, w = image.shape[:2]
+
+    # Downscale photo and K to max_width
+    scale = min(1.0, max_width / w)
+    out_w = round(w * scale)
+    out_h = round(h * scale)
+    photo = cv2.resize(image, (out_w, out_h), interpolation=cv2.INTER_AREA)
+    photo = photo / 255.0
+    K_scaled = rescale_intrinsics(K, (h, w), (out_h, out_w))
+
+    # Render and blend
+    rgb, depth = render_points(points, colors, w2c, K_scaled, (out_h, out_w), radius=radius)
+    coverage = np.isfinite(depth).mean()
+    blend = 0.5 * photo + 0.5 * rgb
+
+    # Three panels in one row
+    fig, axes = plt.subplots(1, 3, figsize=(18, 18 * out_h / (3 * out_w) + 1))
+    panels = [
+        (photo, "photo"),
+        (rgb, f"render from pose (coverage {coverage:.0%})"),
+        (blend, "50/50 blend"),
+    ]
+
+    for ax, (panel, panel_title) in zip(axes, panels):
+        ax.imshow(panel)
+        ax.set_title(panel_title)
+        ax.axis("off")
+
+    if title is not None:
+        fig.suptitle(title)
+
+    fig.tight_layout()
+    return fig

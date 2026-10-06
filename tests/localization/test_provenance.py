@@ -1,38 +1,27 @@
 """Provenance attrs round-trip through the zarr feature cache."""
 
 import numpy as np
-import pytest
-import torch
 import zarr
 
-from collab_splats.localization.extractors import LocalFeatures
 from collab_splats.localization.localizer import CameraLocalizer
 
 
-class _FakeExtractor:
-    """Deterministic extractor: 8 fixed keypoints, 4-dim descriptors."""
-
-    def extract(self, rgb):
-        k = torch.arange(16, dtype=torch.float32).reshape(8, 2)
-        d = torch.ones(8, 4)
-        return LocalFeatures(keypoints=k, descriptors=d, scores=None)
-
-    def match(self, a, b, hw):
-        return torch.zeros((0, 2), dtype=torch.int64)
+def _eight_keypoints(image: np.ndarray) -> np.ndarray:
+    """Eight fixed keypoints, whatever the image."""
+    return np.arange(16, dtype=np.float32).reshape(8, 2)
 
 
-def _make_localizer(tmp_path, n_frames=2):
+def _make_localizer(tmp_path, stub_matcher, n_frames=2):
     """Build a localizer from synthetic RGB arrays (no GPU, no image IO)."""
     images = [np.full((48, 64, 3), 128, dtype=np.uint8) for _ in range(n_frames)]
     ids = [f"{i:05d}.jpg" for i in range(n_frames)]
     wp = np.random.default_rng(0).normal(size=(n_frames, 48, 64, 3)).astype(np.float32)
     extr = np.tile(np.eye(4, dtype=np.float32), (n_frames, 1, 1))
-    intr = np.tile(np.array([[60, 0, 32], [0, 60, 24], [0, 0, 1]], np.float32), (n_frames, 1, 1))
-    return CameraLocalizer(wp, extr, images=images, ids=ids, extractor=_FakeExtractor()), wp, extr, intr
+    return CameraLocalizer(wp, extr, images=images, ids=ids, extractor=stub_matcher(_eight_keypoints)), wp, extr
 
 
-def test_save_index_writes_build_attrs(tmp_path):
-    loc, *_ = _make_localizer(tmp_path)
+def test_save_index_writes_build_attrs(tmp_path, stub_matcher):
+    loc, *_ = _make_localizer(tmp_path, stub_matcher)
     zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk", attrs={"backbone": "vggtx", "ba": True, "lc": False, "built_at": "2026-07-14T00:00:00"})
     group = zarr.open(str(zp), mode="r")["local_features/disk"]
@@ -41,17 +30,17 @@ def test_save_index_writes_build_attrs(tmp_path):
     assert group.attrs["extractor"] == "disk"
 
 
-def test_save_index_without_attrs_still_stamps_extractor(tmp_path):
-    loc, *_ = _make_localizer(tmp_path)
+def test_save_index_without_attrs_still_stamps_extractor(tmp_path, stub_matcher):
+    loc, *_ = _make_localizer(tmp_path, stub_matcher)
     zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
     group = zarr.open(str(zp), mode="r")["local_features/disk"]
     assert group.attrs["extractor"] == "disk"
 
 
-def test_save_index_rebuild_replaces_stale_attrs(tmp_path):
+def test_save_index_rebuild_replaces_stale_attrs(tmp_path, stub_matcher):
     # Rebuild without attrs must not inherit provenance from a previous build
-    loc, *_ = _make_localizer(tmp_path)
+    loc, *_ = _make_localizer(tmp_path, stub_matcher)
     zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk", attrs={"backbone": "vggtx", "ba": True})
     loc.save_index(zp, "disk")
@@ -61,65 +50,36 @@ def test_save_index_rebuild_replaces_stale_attrs(tmp_path):
     assert group.attrs["extractor"] == "disk"
 
 
-def test_add_localized_frame_records_provenance(tmp_path):
-    loc, wp, extr, intr = _make_localizer(tmp_path)
+def test_add_localized_frame_records_provenance(tmp_path, stub_matcher):
+    loc, wp, extr = _make_localizer(tmp_path, stub_matcher)
     zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
 
-    feats = _FakeExtractor().extract(None)
     pose = np.eye(4, dtype=np.float32)
     prov = {
         "video_ref": "2024_02_06-office-cam_01",
         "scene": "2024_02_06-office-cam_01",
         "frame_idx": 42,
     }
-    loc.add_localized_frame(
-        tmp_path / "query.jpg", pose, intr[0], feats, zarr_path=zp, extractor_name="disk", provenance=prov
-    )
+    loc.add_localized_frame(tmp_path / "query.jpg", pose, zarr_path=zp, extractor_name="disk", provenance=prov)
 
     lg = zarr.open(str(zp), mode="r")["local_features/disk/localized"]
     assert lg.attrs["provenance"][0]["frame_idx"] == 42
     assert lg.attrs["provenance"][0]["scene"] == "2024_02_06-office-cam_01"
 
 
-def test_provenance_list_grows_per_frame(tmp_path):
-    loc, wp, extr, intr = _make_localizer(tmp_path)
+def test_provenance_list_grows_per_frame(tmp_path, stub_matcher):
+    loc, wp, extr = _make_localizer(tmp_path, stub_matcher)
     zp = tmp_path / "pointcloud.zarr"
     loc.save_index(zp, "disk")
-    feats = _FakeExtractor().extract(None)
     pose = np.eye(4, dtype=np.float32)
     for i in range(2):
         loc.add_localized_frame(
             tmp_path / f"q{i}.jpg",
             pose,
-            intr[0],
-            feats,
             zarr_path=zp,
             extractor_name="disk",
             provenance={"frame_idx": i},
         )
     lg = zarr.open(str(zp), mode="r")["local_features/disk/localized"]
     assert len(lg.attrs["provenance"]) == 2
-
-
-def test_append_backfills_pre_provenance_store(tmp_path):
-    # Older stores lack the provenance attr entirely — appending must backfill {}
-    loc, wp, extr, intr = _make_localizer(tmp_path)
-    zp = tmp_path / "pointcloud.zarr"
-    loc.save_index(zp, "disk")
-    feats = _FakeExtractor().extract(None)
-    pose = np.eye(4, dtype=np.float32)
-    loc.add_localized_frame(tmp_path / "q0.jpg", pose, intr[0], feats, zarr_path=zp, extractor_name="disk")
-
-    # Simulate a pre-provenance store by stripping the attr
-    lg = zarr.open(str(zp), mode="a")["local_features/disk/localized"]
-    stripped = {k: v for k, v in lg.attrs.asdict().items() if k != "provenance"}
-    lg.attrs.put(stripped)
-
-    loc.add_localized_frame(
-        tmp_path / "q1.jpg", pose, intr[0], feats, zarr_path=zp, extractor_name="disk", provenance={"frame_idx": 1}
-    )
-    lg = zarr.open(str(zp), mode="r")["local_features/disk/localized"]
-    prov = lg.attrs["provenance"]
-    assert prov == [{}, {"frame_idx": 1}]
-    assert len(prov) == len(lg.attrs["image_paths"])

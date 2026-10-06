@@ -156,3 +156,29 @@ def test_write_frames_raises_when_cv2_cannot_write(tmp_path, monkeypatch):
 
     with pytest.raises(OSError, match="frame_000005.png"):
         fr.write_frames(tmp_path / "images", _frames(1), [5])
+
+
+def test_read_frames_chunked_yields_in_idxs_order_across_chunks(tmp_path):
+    images = tmp_path / "images"
+    fr.write_frames(images, _frames(5), [0, 2, 4, 6, 8])
+
+    out = list(fr.read_frames_chunked(images, [8, 0, 4, 2, 6], batch_size=2))
+
+    assert [int(f[0, 0, 0]) for f in out] == [165, 5, 85, 45, 125]
+
+
+def test_read_frames_chunked_decodes_one_batch_per_read_frames_call(tmp_path, monkeypatch):
+    images = tmp_path / "images"
+    fr.write_frames(images, _frames(5), [0, 2, 4, 6, 8])
+    calls = []
+    real = fr.read_frames
+
+    def _spy(dir, idxs):
+        calls.append(list(idxs))
+        return real(dir, idxs)
+
+    monkeypatch.setattr(fr, "read_frames", _spy)
+    out = list(fr.read_frames_chunked(images, [0, 2, 4, 6, 8], batch_size=2))
+
+    assert len(out) == 5
+    assert calls == [[0, 2], [4, 6], [8]]

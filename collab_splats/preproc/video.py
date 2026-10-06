@@ -126,6 +126,7 @@ def iter_frames(
     indices: Sequence[int] | None = None,
     start: int = 0,
     count: int | None = None,
+    threads: int = 0,
 ) -> Iterator[tuple[int, np.ndarray]]:
     """
     Yield (frame_idx, BGR uint8 HWC) from one in-process PyAV decode pass.
@@ -140,6 +141,7 @@ def iter_frames(
         indices: only these source frames, deduped and ascending; one linear scan, no seek.
         start: first frame of a contiguous window, reached by a container seek.
         count: length of that window; None runs to the end of the video.
+        threads: decode threads for this container; 0 lets PyAV use every core.
 
     Returns:
         An iterator of (frame_idx, (H, W, 3) uint8 BGR) in ascending frame_idx
@@ -180,8 +182,11 @@ def iter_frames(
         except IndexError as exc:
             raise ValueError(f"iter_frames: cannot decode {video_path}: {exc}") from exc
 
-        # Decode is the whole cost here, so let PyAV use every core it is allowed
+        # Decode is the whole cost: AUTO threading uses every core unless threads caps it
         stream.thread_type = "AUTO"
+
+        if threads:
+            stream.codec_context.thread_count = threads
 
         fps = float(stream.average_rate) if stream.average_rate else 0.0
         cursor = 0

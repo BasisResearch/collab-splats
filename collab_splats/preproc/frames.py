@@ -8,7 +8,7 @@ Keyframe store: a COLMAP-style images/ directory of PNGs.
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -30,6 +30,19 @@ IMAGE_EXTS = (".png", ".jpg", ".jpeg")
 ########################
 # Store API
 ########################
+
+
+def frame_name(idx: int) -> str:
+    """
+    File name write_frames gives a frame.
+
+    Args:
+        idx: source video frame index.
+
+    Returns:
+        frame_NNNNNN.png for that index.
+    """
+    return f"frame_{int(idx):06d}.png"
 
 
 def frame_idx_from_path(path: Path | str) -> int:
@@ -120,7 +133,7 @@ def write_frames(
     for stale in frame_paths(dir):
         stale.unlink()
 
-    paths = [dir / f"frame_{int(idx):06d}.png" for idx in idxs]
+    paths = [dir / frame_name(idx) for idx in idxs]
 
     def _write(i: int) -> None:
         """
@@ -180,3 +193,24 @@ def read_frames(dir: Path | str, idxs: Sequence[int] | None = None, *, workers: 
         list(pool.map(_load, range(1, len(paths))))
 
     return stack
+
+
+def read_frames_chunked(dir: Path | str, idxs: Sequence[int], batch_size: int = 32) -> Iterator[np.ndarray]:
+    """
+    Frames drawn lazily one at a time, decoded batch_size per read_frames call.
+
+    - only one batch_size stack is resident at a time
+    - a missing frame_idx raises KeyError when its batch is reached
+
+    Args:
+        dir: images directory holding frame_NNNNNN.<ext>.
+        idxs: SOURCE frame indices to read, in the order given.
+        batch_size: frames per read_frames call.
+
+    Yields:
+        (H, W, 3) uint8 RGB frames, in idxs order.
+    """
+    idxs = list(idxs)
+
+    for start in range(0, len(idxs), batch_size):
+        yield from read_frames(dir, idxs[start : start + batch_size])

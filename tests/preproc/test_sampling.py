@@ -21,6 +21,13 @@ from collab_splats.preproc.video import iter_frames
 ########################################################################
 
 
+def _fake_iter_frames(p, start=0, count=None, threads=0):
+    """
+    iter_frames stand-in: a constant (4, 4, 3) frame per index of the window.
+    """
+    return [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in range(start, start + count)]
+
+
 def _synthetic_report(n=20, bad=()):
     """
     A report shaped like compute_video_quality's, with `bad` frames failing the gate.
@@ -103,7 +110,9 @@ def test_selector_score_is_monotonic_in_disparity():
 
 def test_decode_selection_raises_on_a_skipped_frame(monkeypatch, tmp_path):
     report = _fps_fixture(monkeypatch, [400.0] * 60)
-    monkeypatch.setattr(sampling, "iter_frames", lambda p, indices=None: [(0, np.zeros((4, 4, 3), np.uint8))])
+    monkeypatch.setattr(
+        sampling, "iter_frames", lambda p, start=0, count=None, threads=0: [(0, np.zeros((4, 4, 3), np.uint8))]
+    )
     with pytest.raises(ValueError, match="skipped"):
         sampling._decode_selection(str(tmp_path / "v.mp4"), [0, 5], report=report, on_progress=None, desc="x")
 
@@ -260,9 +269,9 @@ def test_sample_uniform_raises_when_the_report_condemns_everything(tiny_video, c
         sample_uniform(tiny_video, max_frames=8, report=clean_report)
 
 
-def test_sample_uniform_decodes_in_one_select_pass(tiny_video, clean_report, monkeypatch):
+def test_sample_uniform_decodes_in_one_window_pass(tiny_video, clean_report, monkeypatch):
     """
-    Uniform sampling must use the select filter, in exactly one ffmpeg call.
+    Uniform sampling at one worker decodes the selection in exactly one window call.
     """
     import collab_splats.preproc.sampling as s
 
@@ -270,16 +279,17 @@ def test_sample_uniform_decodes_in_one_select_pass(tiny_video, clean_report, mon
     calls = []
 
     def counting(path, **kwargs):
-        calls.append(kwargs.get("indices"))
+        calls.append(kwargs.get("count"))
         return real(path, **kwargs)
 
     monkeypatch.setattr(s, "iter_frames", counting)
 
-    frames, _ = sample_uniform(tiny_video, max_frames=4, report=clean_report)
+    frames, records = sample_uniform(tiny_video, max_frames=4, report=clean_report)
+    chosen = [r["frame_idx"] for r in records]
 
     assert len(frames) == 4
-    # One call, and it named the frames it wanted rather than decoding everything
-    assert len(calls) == 1 and calls[0] is not None
+    # One call, and it named a bounded window rather than decoding to the end
+    assert calls == [chosen[-1] - chosen[0] + 1]
 
 
 def test_sample_uniform_missing_file_raises(clean_report):
@@ -514,11 +524,7 @@ def test_sample_uniform_spans_the_eligible_pool(monkeypatch, tmp_path):
 
     # Only the decode is stubbed: the pool comes from the report, so uniform sampling
     # never probes the video. A re-added probe would see a path that does not exist.
-    monkeypatch.setattr(
-        sampling,
-        "iter_frames",
-        lambda p, indices=None: [(i, np.full((4, 4, 3), i, np.uint8)) for i in indices],
-    )
+    monkeypatch.setattr(sampling, "iter_frames", _fake_iter_frames)
 
     frames, records = sampling.sample_uniform(str(tmp_path / "v.mp4"), max_frames=4, report=report)
 
@@ -533,11 +539,7 @@ def test_sample_uniform_returns_the_whole_pool_when_it_is_short(monkeypatch, tmp
     A pool smaller than max_frames returns the pool and logs the shortfall.
     """
     report = _report([400.0] * 3)
-    monkeypatch.setattr(
-        sampling,
-        "iter_frames",
-        lambda p, indices=None: [(i, np.full((4, 4, 3), i, np.uint8)) for i in indices],
-    )
+    monkeypatch.setattr(sampling, "iter_frames", _fake_iter_frames)
 
     with caplog.at_level("WARNING"):
         frames, records = sampling.sample_uniform(str(tmp_path / "v.mp4"), max_frames=10, report=report)
@@ -559,11 +561,7 @@ def test_sample_fps_snaps_targets_to_the_nearest_eligible_frame(monkeypatch, tmp
     report = _report([400.0] * 10 + [2.0] * 5 + [400.0] * 45)
 
     monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": 60, "fps": 30.0})
-    monkeypatch.setattr(
-        sampling,
-        "iter_frames",
-        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
-    )
+    monkeypatch.setattr(sampling, "iter_frames", _fake_iter_frames)
 
     frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)
     picked = [r["frame_idx"] for r in records]
@@ -580,11 +578,7 @@ def test_sample_fps_respreads_outside_the_band(monkeypatch, tmp_path, caplog):
     """
     report = _report([400.0] * 60)
     monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": 60, "fps": 30.0})
-    monkeypatch.setattr(
-        sampling,
-        "iter_frames",
-        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
-    )
+    monkeypatch.setattr(sampling, "iter_frames", _fake_iter_frames)
 
     with caplog.at_level("WARNING"):
         frames, records = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=15.0, report=report, max_frames=6)
@@ -603,11 +597,7 @@ def test_sample_fps_grid_spans_the_report_not_the_metadata_count(monkeypatch, tm
     # Metadata claims 60 frames, but only 58 decoded; stride 1 puts targets past the report
     report = _report([400.0] * 58)
     monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": 60, "fps": 30.0})
-    monkeypatch.setattr(
-        sampling,
-        "iter_frames",
-        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
-    )
+    monkeypatch.setattr(sampling, "iter_frames", _fake_iter_frames)
 
     _frames, records = sampling.sample_fps(
         str(tmp_path / "v.mp4"), fps=30.0, report=report, on_empty_slot=on_empty_slot
@@ -625,11 +615,7 @@ def _fps_fixture(monkeypatch, laplacian, total=60, fps=30.0):
     Patch video IO so sample_fps runs off a synthetic report alone.
     """
     monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": total, "fps": fps})
-    monkeypatch.setattr(
-        sampling,
-        "iter_frames",
-        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
-    )
+    monkeypatch.setattr(sampling, "iter_frames", _fake_iter_frames)
     return _report(laplacian)
 
 
@@ -750,11 +736,7 @@ def test_sample_fps_honours_a_clipping_override(monkeypatch, tmp_path):
     report = _report([400.0] * 60, clipped_high=clipped_high)
 
     monkeypatch.setattr(sampling, "get_video_info", lambda p, **k: {"total_frames": 60, "fps": 30.0})
-    monkeypatch.setattr(
-        sampling,
-        "iter_frames",
-        lambda p, indices=None: [(i, np.full((4, 4, 3), i % 251, np.uint8)) for i in indices],
-    )
+    monkeypatch.setattr(sampling, "iter_frames", _fake_iter_frames)
 
     default = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report)[1]
     relaxed = sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report, quality={"max_clipped_frac": 0.5})[1]
@@ -790,3 +772,41 @@ def test_sample_fps_rejects_an_unknown_quality_key(monkeypatch, tmp_path):
 
     with pytest.raises(TypeError, match="bogus"):
         sampling.sample_fps(str(tmp_path / "v.mp4"), fps=3.0, report=report, quality={"bogus": 1})
+
+
+@pytest.mark.parametrize(
+    "workers, chosen",
+    [
+        (1, [5, 7, 20, 33, 59]),
+        (2, [0, 1, 7, 8, 9, 20, 33, 34, 50, 59]),
+        (3, [0, 1, 7, 8, 9, 20, 33, 34, 50, 59]),
+        (7, [0, 1, 7, 8, 9, 20, 33, 34, 50, 59]),
+        (4, [5, 7, 20, 33, 59]),
+    ],
+)
+def test_decode_selection_matches_single_pass_reference(tiny_video, workers, chosen):
+    """
+    Window-parallel selection decode equals the single indices= pass, converted to RGB.
+    """
+    report = {"frames": {"laplacian": list(range(60))}}
+    reference = dict(iter_frames(str(tiny_video), indices=chosen))
+
+    frames, rows = sampling._decode_selection(
+        str(tiny_video), chosen, report=report, on_progress=None, desc="t", workers=workers
+    )
+
+    assert [r["frame_idx"] for r in rows] == chosen
+
+    for idx, frame in zip(chosen, frames, strict=True):
+        np.testing.assert_array_equal(frame, reference[idx][:, :, ::-1])
+
+
+@pytest.mark.parametrize("workers", [0, -1])
+def test_decode_selection_rejects_non_positive_workers(tiny_video, workers):
+    """
+    workers below 1 raises instead of being clamped.
+    """
+    report = {"frames": {"laplacian": list(range(60))}}
+
+    with pytest.raises(ValueError, match="workers must be >= 1"):
+        sampling._decode_selection(str(tiny_video), [0, 1], report=report, on_progress=None, desc="t", workers=workers)

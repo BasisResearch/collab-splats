@@ -15,6 +15,7 @@ from collab_splats.pointcloud.feedforward import (
 )
 from tests.pointcloud.conftest import _frame_files
 from tests.pointcloud.feedforward.conftest import (
+    _assert_views_equal,
     _FakeMapAnythingModel,
     _mapanything_boxes,
 )
@@ -858,3 +859,45 @@ def test_mapanything_crop_box_matches_upstream_crop(hw):
     # Measured worst case is 0.228 (200x300); 0.3 still catches a 3-px box shift or a
     # dropped centering pass (see the mutant table in the consistency review report).
     assert np.abs(ours[..., :2] - upstream[..., :2]).mean() < 0.3
+
+
+########################################################################
+########## in-memory frame handoff #####################################
+########################################################################
+
+
+@pytest.mark.parametrize(
+    "mode, resolution",
+    [("fixed", 518), ("fixed", 512), ("longest_side", 518), ("longest_side", 252), ("square", 250)],
+)
+@pytest.mark.parametrize(
+    "sizes",
+    [
+        [(96, 48)] * 9,
+        [(96, 48)] * 4 + [(48, 96)] * 3,
+        [(200, 50)] * 3,
+        [(48, 120)] * 2,
+        [(1920, 1080), (1080, 1920), (1920, 1080)],
+    ],
+)
+def test_preprocess_frames_match_files(tmp_path, mode, resolution, sizes):
+    """
+    Handed-off arrays preprocess to the same view dicts and boxes as the PNG files.
+    """
+    rng = np.random.default_rng(0)
+    frames = [rng.integers(0, 256, (h, w, 3), dtype=np.uint8) for w, h in sizes]
+    paths = _frame_files(frames, tmp_path)
+
+    from_files = MapAnythingCreator(resize_mode=mode, resolution=resolution)
+    views_f, coords_f = from_files._preprocess(paths)
+
+    from_arrays = MapAnythingCreator(resize_mode=mode, resolution=resolution)
+    from_arrays.frames = {p.name: f for p, f in zip(paths, frames, strict=True)}
+    views_a, coords_a = from_arrays._preprocess(paths)
+
+    _assert_views_equal(views_a, views_f)
+    np.testing.assert_array_equal(coords_a, coords_f)
+
+    # The model-ready copy the forward pass reads matches too
+    for a, f in zip(from_arrays._processed_views, from_files._processed_views, strict=True):
+        assert torch.equal(a["img"], f["img"])

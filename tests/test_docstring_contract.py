@@ -19,7 +19,7 @@ import tokenize
 
 import pytest
 
-PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh")
+PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh", "localization")
 
 # Single modules held to the contract, release checks included, before their whole package is
 MODULES = ("utils/io.py", "reconstructor.py", "remote.py", "__main__.py", "viewer.py")
@@ -208,7 +208,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 ########################################################################
 
 # Packages that finished their release cleanup; the rest xfail the release checks
-RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats", "mesh", "evals"})
+RELEASED: frozenset[str] = frozenset({"preproc", "semantics", "geometry", "splats", "mesh", "evals", "localization"})
 
 # Module-level numbers that are facts, not tunables
 FIXED_FACTS = frozenset(
@@ -221,8 +221,8 @@ FIXED_FACTS = frozenset(
     }
 )
 
-# Defs whose broad handler is a deliberate fallback: a probe that reads failure as "absent", a lazy client
-FALLBACK_OWNERS = frozenset({"_localization_db_exists", "SceneSource.__init__"})
+# Defs whose broad handler is a deliberate fallback: a lazy client
+FALLBACK_OWNERS = frozenset({"SceneSource.__init__"})
 
 UPPER_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
 BANNED_RE = re.compile(r"\bmeasured\b|\bhypothesis\b|\d+(\.\d+)?x faster|ffmpeg pipe|replaces the old", re.I)
@@ -640,17 +640,15 @@ def test_silent_fallback_check_spares_a_logged_and_recorded_failure():
 
 def test_silent_fallback_check_spares_only_named_owners():
     handler = "    try:\n        pass\n    except Exception:\n        return False\n"
-    owned = "def _localization_db_exists() -> bool:\n" + handler
     method = "class SceneSource:\n    def __init__(self) -> None:\n        try:\n            pass\n        except Exception:\n            pass\n"
     other = "def _probe() -> bool:\n" + handler
     wrong_class = method.replace("SceneSource", "Other")
-    assert _silent_fallbacks(owned) == []
     assert _silent_fallbacks(method) == []
     assert _silent_fallbacks(other) == ["4: except Exception without re-raise"]
     assert _silent_fallbacks(wrong_class) == ["5: except Exception without re-raise"]
 
 
-# Round-3 checks: enforced for geometry and mesh; other packages are a changelog follow-up
+# Round-3 checks: enforced for geometry, mesh and localization; other packages are a changelog follow-up
 ROUND3_CHECKS = {
     "nested-def": _nested_defs,
     "quote-line-docstring": _quote_line_docstrings,
@@ -663,7 +661,7 @@ ROUND3_CHECKS = {
     [
         pytest.param(p, name, id=f"{pid}::{name}")
         for p, pid in zip(SOURCES, SOURCE_IDS)
-        if _package_path(p).parts[0] in ("geometry", "mesh")
+        if _package_path(p).parts[0] in ("geometry", "mesh", "localization")
         for name in ROUND3_CHECKS
     ],
 )

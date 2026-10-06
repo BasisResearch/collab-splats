@@ -1,11 +1,11 @@
 """plot_correspondences: resolution-mismatch handling between query and reference."""
 
-from types import SimpleNamespace
-
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 
 from collab_splats.localization.localizer import LocalizationResult
 from collab_splats.localization.viz import correspondences_for_ref, plot_correspondences
@@ -35,8 +35,6 @@ def test_plot_correspondences_handles_resolution_mismatch():
         query, ref_image, *correspondences_for_ref(_fake_result(), 0), max_pairs=10, show=False, warp_corners=False
     )
     assert fig is not None
-    import matplotlib.pyplot as plt
-
     plt.close(fig)
 
 
@@ -51,12 +49,16 @@ def test_plot_correspondences_plain_arrays():
     assert fig is not None
 
 
-def test_correspondences_for_ref_duck_typed():
-    loc = SimpleNamespace(
+def test_correspondences_for_ref_slices_one_frame():
+    loc = LocalizationResult(
+        pose=None,
+        n_correspondences=4,
+        n_inliers=3,
         pts2d=np.zeros((4, 2), np.float32),
+        pts3d_matched=np.zeros((4, 3), np.float32),
+        inlier_mask=np.array([True, False, True, True]),
         pts2d_ref=np.ones((4, 2), np.float32),
         ref_frame_indices=np.array([0, 1, 1, 0]),
-        inlier_mask=np.array([True, False, True, True]),
     )
     q_px, r_px, mask = correspondences_for_ref(loc, 1)
     assert len(q_px) == 2 and mask.tolist() == [False, True]
@@ -64,11 +66,15 @@ def test_correspondences_for_ref_duck_typed():
 
 def test_correspondences_for_ref_rescales_to_display_hw():
     """ref_px scales from loc.ref_hw space to the display image's resolution."""
-    loc = SimpleNamespace(
+    loc = LocalizationResult(
+        pose=None,
+        n_correspondences=2,
+        n_inliers=0,
         pts2d=np.zeros((2, 2), np.float32),
+        pts3d_matched=np.zeros((2, 3), np.float32),
+        inlier_mask=None,
         pts2d_ref=np.array([[10.0, 20.0], [30.0, 40.0]], np.float32),
         ref_frame_indices=np.array([0, 0]),
-        inlier_mask=None,
         ref_hw=(100, 200),
     )
     # Display image is 2x the indexed resolution in both axes
@@ -86,6 +92,4 @@ def test_plot_correspondences_same_resolution_still_works():
         query, ref_image, *correspondences_for_ref(_fake_result(), 0), max_pairs=10, show=False, warp_corners=False
     )
     assert fig is not None
-    import matplotlib.pyplot as plt
-
     plt.close(fig)

@@ -1,6 +1,7 @@
 """Tests for VGGTOmegaCreator.
 
-All tests mock vggt_omega.models and checkpoint loading — no GPU or HF download required.
+Tests mock vggt_omega.models and checkpoint loading, except the slow load-parity test, which
+needs CUDA and downloads the HF checkpoint.
 """
 
 from __future__ import annotations
@@ -12,14 +13,17 @@ import pytest
 import torch
 import torch.nn as nn
 
+from vggt_omega.models import VGGTOmega
 from vggt_omega.utils.load_fn import load_and_preprocess_images
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
 from collab_splats.pointcloud.feedforward.vggt_omega import (
+    VGGT_OMEGA_DEFAULT_FILENAME,
+    VGGT_OMEGA_HF_REPO,
     VGGTOmegaCreator,
-    _load_chunked,
 )
+from collab_splats.utils.torch_utils import load_hf_weights
 from tests.pointcloud.conftest import _frame_files, _omega_boxes
 
 ########################################################################
@@ -180,14 +184,14 @@ def test_preprocess_returns_correct_shapes(tmp_path):
 
 
 @pytest.mark.parametrize("sizes", [[(96, 48)] * 7, [(96, 48)] * 4 + [(48, 96)] * 3])
-def test_load_chunked_matches_one_upstream_call(tmp_path, sizes):
+def test_preprocess_chunks_match_one_upstream_call(tmp_path, sizes):
     """Chunked threads equal upstream's single call, including its mixed-shape padding."""
     rng = np.random.default_rng(0)
     frames = [rng.integers(0, 256, (h, w, 3), dtype=np.uint8) for w, h in sizes]
-    paths = [str(p) for p in _frame_files(frames, tmp_path)]
+    paths = _frame_files(frames, tmp_path)
 
-    one = load_and_preprocess_images(paths, image_resolution=64, mode="balanced")
-    chunked = _load_chunked(paths, 64, "balanced", workers=3)
+    one = load_and_preprocess_images([str(p) for p in paths], image_resolution=64, mode="balanced")
+    chunked = VGGTOmegaCreator(resolution=64)._preprocess_files(paths, workers=3)
 
     assert torch.equal(chunked, one)
 
@@ -392,6 +396,36 @@ def test_load_model_keeps_fp32_params(tmp_path):
         ), f"_load_model cast model to {dtype}; VGGTOmega heads require fp32 params"
 
 
+@pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_load_model_matches_cpu_init_load():
+    """
+    Device-init + mmap load gives every param and buffer bit-exact to CPU init + load + .to.
+    """
+    ckpt = load_hf_weights(VGGT_OMEGA_HF_REPO, VGGT_OMEGA_DEFAULT_FILENAME)
+
+    # Reference: CPU init, eager load, move to the device
+    ref = VGGTOmega()
+    ref.load_state_dict(torch.load(str(ckpt), map_location="cpu"))
+    ref = ref.eval().to("cuda")
+    ref_state = {k: v.detach().cpu().clone() for k, v in [*ref.named_parameters(), *ref.named_buffers()]}
+    del ref
+    torch.cuda.empty_cache()
+
+    got = VGGTOmegaCreator()._load_model("cuda")
+    got_state = dict([*got.named_parameters(), *got.named_buffers()])
+
+    assert got_state.keys() == ref_state.keys()
+    assert not got.training
+
+    for name, value in ref_state.items():
+        assert got_state[name].device.type == "cuda", name
+        assert torch.equal(got_state[name].cpu(), value), name
+
+    del got, got_state
+    torch.cuda.empty_cache()
+
+
 ########################################################################
 ########## extract_intermediate_features ###############################
 ########################################################################
@@ -491,3 +525,32 @@ def test_load_model_builds_on_upstream_defaults(tmp_path):
         creator._load_model("cpu")
 
     mock_cls.assert_called_once_with()
+
+
+########################################################################
+########## in-memory frame handoff #####################################
+########################################################################
+
+
+@pytest.mark.parametrize("mode", ["balanced", "max_size"])
+@pytest.mark.parametrize(
+    "sizes",
+    [[(96, 48)] * 9, [(96, 48)] * 4 + [(48, 96)] * 3, [(200, 50)] * 3, [(1920, 1080), (1080, 1920), (1920, 1080)]],
+)
+def test_preprocess_frames_match_files(tmp_path, mode, sizes):
+    """
+    Handed-off arrays preprocess bit-exact to the same frames read back from PNG.
+    """
+    rng = np.random.default_rng(0)
+    frames = [rng.integers(0, 256, (h, w, 3), dtype=np.uint8) for w, h in sizes]
+    paths = _frame_files(frames, tmp_path)
+
+    from_files = VGGTOmegaCreator(resize_mode=mode)
+    views_f, coords_f = from_files._preprocess(paths)
+
+    from_arrays = VGGTOmegaCreator(resize_mode=mode)
+    from_arrays.frames = {p.name: f for p, f in zip(paths, frames, strict=True)}
+    views_a, coords_a = from_arrays._preprocess(paths)
+
+    assert torch.equal(views_a, views_f)
+    np.testing.assert_array_equal(coords_a, coords_f)

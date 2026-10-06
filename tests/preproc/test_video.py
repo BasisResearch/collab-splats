@@ -124,6 +124,19 @@ def test_iter_frames_deep_window_lands_on_the_right_frames(tiny_video):
         assert np.array_equal(frame, everything[idx])
 
 
+def test_iter_frames_single_thread_matches_default(tiny_video):
+    """
+    Pinning one decode thread changes no pixel of a window decode.
+    """
+    default = list(iter_frames(str(tiny_video), start=10, count=20))
+    pinned = list(iter_frames(str(tiny_video), start=10, count=20, threads=1))
+
+    assert [i for i, _ in pinned] == [i for i, _ in default]
+
+    for (_, a), (_, b) in zip(default, pinned, strict=True):
+        np.testing.assert_array_equal(a, b)
+
+
 def test_iter_frames_missing_file_raises():
     with pytest.raises(FileNotFoundError, match="does not exist"):
         list(iter_frames("/nonexistent/video.mp4"))

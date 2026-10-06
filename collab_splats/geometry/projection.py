@@ -1,7 +1,9 @@
 """
-Pinhole projection in torch: unprojection, projection, cross-view depth residual and agreement.
+Pinhole projection: unprojection, projection, world-point lookup, cross-view depth agreement.
 
-- tensor helpers work in the input dtype; multiview_depth_confidence takes numpy, runs float32 on get_device()
+- tensor helpers work in the input dtype
+- unproject_frames and multiview_depth_confidence take numpy, run float32 on get_device()
+- sample_world_points: numpy bilinear lookup of a per-pixel world-point map
 - poses are w2c OpenCV, column vectors, `x_cam = R @ x_world + t`
 - K is on the depth map's own pixel grid
 """
@@ -12,7 +14,12 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from collab_splats.geometry.transforms import transform_points
-from collab_splats.utils.torch_utils import get_device
+from collab_splats.utils.torch_utils import (
+    batch_iterator,
+    full_fp32_matmul,
+    get_device,
+    to_numpy,
+)
 
 ########################################################################
 # Unprojection
@@ -57,6 +64,41 @@ def unproject(depth: Tensor, world_to_cam: Tensor, intrinsics: Tensor) -> Tensor
     return (points_cam - translation) @ rotation
 
 
+def unproject_frames(
+    depth: np.ndarray, extrinsics: np.ndarray, intrinsics: np.ndarray, *, batch_size: int = 100
+) -> np.ndarray:
+    """
+    World point of every depth pixel, unprojected batch by batch on get_device().
+
+    - batch_size bounds device memory
+    - full fp32 matmul: TF32, which a mapanything import enables, would round the rotation
+
+    Args:
+        depth: (N, H, W) z-depth.
+        extrinsics: (N, 4, 4) or (N, 3, 4) w2c.
+        intrinsics: (N, 3, 3) K on the depth grid.
+        batch_size: frames unprojected per device batch.
+
+    Returns:
+        (N, H, W, 3) float32 world points.
+    """
+    device = get_device()
+    world_points = np.empty((*depth.shape, 3), dtype=np.float32)
+
+    # Full fp32 matmul: each batch on device, copied back into the host array
+    with full_fp32_matmul():
+        for batch_depth, world_to_cam, K, out in batch_iterator(
+            batch_size, depth, extrinsics, intrinsics, world_points
+        ):
+            batch_depth = torch.as_tensor(batch_depth, dtype=torch.float32, device=device)
+            world_to_cam = torch.as_tensor(world_to_cam, dtype=torch.float32, device=device)
+            K = torch.as_tensor(K, dtype=torch.float32, device=device)
+            points = unproject(batch_depth, world_to_cam, K)
+            out[:] = to_numpy(points)
+
+    return world_points
+
+
 ########################################################################
 # Projection
 ########################################################################
@@ -96,6 +138,41 @@ def project(
     u = points_cam[..., 0] * fx / depth + cx
     v = points_cam[..., 1] * fy / depth + cy
     return torch.stack([u, v], dim=-1), points_cam
+
+
+def sample_world_points(world_points: np.ndarray, px: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Bilinear world points at pixel coordinates (hloc interpolate_scan analog).
+
+    - align_corners=True: pixel index i sits at coordinate i
+    - invalid where the sample touches NaN or px falls outside the map; never a zero check
+
+    Args:
+        world_points: (H, W, 3) per-pixel world points.
+        px: (K, 2) float32 xy on that grid.
+
+    Returns:
+        pts3d (K, 3) float32 and valid (K,) bool.
+    """
+    H, W, _ = world_points.shape
+
+    # Normalize to [-1, 1] for grid_sample
+    norm = px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1
+    norm = norm.astype(np.float32)
+    grid = torch.from_numpy(norm)
+    wp = torch.from_numpy(world_points).float()
+    wp = wp.permute(2, 0, 1)
+    sampled = F.grid_sample(wp[None], grid[None, None], align_corners=True, mode="bilinear")
+    interp = sampled[0, :, 0]
+
+    # NaN marks unmapped pixels; grid_sample pads out-of-bounds samples, so bounds are checked too
+    nan = torch.isnan(interp)
+    valid = ~nan.any(dim=0)
+    in_bounds = (px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1)
+    valid = valid.numpy() & in_bounds
+
+    pts3d = interp.T.numpy()
+    return pts3d.astype(np.float32), valid
 
 
 ########################################################################

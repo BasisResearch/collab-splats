@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
 import torch
+import zarr
 
-from collab_splats.localization import (
-    CameraLocalizer,
-    LocalFeatures,
-    LocalizationResult,
-)
-from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.localization import CameraLocalizer, LocalFeatures
+from collab_splats.localization import localizer as localizer_mod
+from collab_splats.localization.localizer import read_localization_db
 from collab_splats.utils.image import open_image
 
-# ── Shared fixtures ──────────────────────────────────────────────────────────
+########################################################################
+# Helpers
+########################################################################
 
 
 def _make_features(n_kpts: int = 10, desc_dim: int = 128) -> LocalFeatures:
@@ -26,7 +26,7 @@ def _make_features(n_kpts: int = 10, desc_dim: int = 128) -> LocalFeatures:
     return LocalFeatures(
         keypoints=torch.rand(n_kpts, 2) * 60,
         descriptors=torch.rand(n_kpts, desc_dim),
-        scores=None,
+        image_size=(64, 64),
     )
 
 
@@ -46,7 +46,7 @@ def _make_scene(n_frames: int = 3, n_pts: int = 20):
 
 
 def _make_image_files(tmp_path: Path, n: int = 3, size: int = 64) -> list[Path]:
-    """Write tiny solid-colour JPEG images to tmp_path."""
+    """Write tiny solid-color JPEG images to tmp_path."""
     tmp_path.mkdir(parents=True, exist_ok=True)
     paths = []
     for i in range(n):
@@ -57,11 +57,16 @@ def _make_image_files(tmp_path: Path, n: int = 3, size: int = 64) -> list[Path]:
     return paths
 
 
-def _build_localizer_with_mock(world_points, extrinsics, image_paths, desc_dim=128):
-    """Build CameraLocalizer backed by a mock extractor (no GPU)."""
-    mock_ext = MagicMock()
-    mock_ext.extract.return_value = _make_features(desc_dim=desc_dim)
-    mock_ext.match.return_value = torch.zeros((0, 2), dtype=torch.long)
+def _random_keypoints(image: np.ndarray) -> np.ndarray:
+    """
+    Ten keypoints inside the image.
+    """
+    return np.random.default_rng(0).random((10, 2)) * 60
+
+
+def _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher):
+    """Build CameraLocalizer backed by a stub matcher (no GPU)."""
+    mock_ext = stub_matcher(_random_keypoints)
     images = [np.asarray(open_image(p).convert("RGB")) for p in image_paths]
     ids = [Path(p).name for p in image_paths]
     localizer = CameraLocalizer(
@@ -76,76 +81,31 @@ def _build_localizer_with_mock(world_points, extrinsics, image_paths, desc_dim=1
 
 def _empty_zarr(tmp_path: Path) -> Path:
     """Create an empty pointcloud.zarr store and return its path."""
-    import zarr
-
     zarr_path = tmp_path / "pointcloud.zarr"
     zarr.open(str(zarr_path), mode="w")
     return zarr_path
 
 
-# ── Task 1 test ──────────────────────────────────────────────────────────────
+########################################################################
+# Feature DB save and load
+########################################################################
 
 
-def test_load_zarr_sets_zarr_path(tmp_path):
-    """PointcloudResult.load_zarr should set _zarr_path on the result."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene()
-    image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    result = PointcloudResult(
-        points=pts3d,
-        colors=np.zeros((len(pts3d), 3), dtype=np.uint8),
-        extrinsics=extrinsics,
-        intrinsics=None,
-        model_intrinsics=intrinsics,
-        image_paths=image_paths,
-        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (3, 1)),  # full-frame box
-        model_width=64,
-        model_height=64,
-    )
-    zarr_path = tmp_path / "test.zarr"
-    result.save_zarr(zarr_path)
-
-    loaded = PointcloudResult.load_zarr(zarr_path)
-    assert hasattr(loaded, "_zarr_path")
-    assert loaded._zarr_path == zarr_path
-
-
-# ── Task 2 tests ─────────────────────────────────────────────────────────────
-
-
-def test_localize_populates_query_features(tmp_path):
-    """localize() should always set query_features on the result."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene()
-    image_paths = _make_image_files(tmp_path, n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
-
-    query_img = np.zeros((64, 64, 3), dtype=np.uint8)
-    query_K = intrinsics[0]
-    result = localizer.localize(query_img, query_K)
-
-    assert result.query_features is not None
-    assert hasattr(result.query_features, "keypoints")
-    assert hasattr(result.query_features, "descriptors")
-
-
-def test_camera_localizer_stores_image_paths_and_sources(tmp_path):
+def test_camera_localizer_stores_image_paths_and_sources(tmp_path, stub_matcher):
     """CameraLocalizer should maintain _image_paths and _frame_sources after build."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
     image_paths = _make_image_files(tmp_path, n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
-    assert len(localizer._image_paths) == 3
-    assert len(localizer._frame_sources) == 3
-    assert all(s == "reconstruction" for s in localizer._frame_sources)
+    assert len(localizer.image_paths) == 3
     assert localizer.frame_sources == ["reconstruction", "reconstruction", "reconstruction"]
 
 
-def test_save_index_creates_reconstruction_group(tmp_path):
+def test_save_index_creates_reconstruction_group(tmp_path, stub_matcher):
     """save_index writes local_features/{name}/reconstruction/ with expected arrays."""
-    import zarr
-
     pts3d, world_points, extrinsics, intrinsics = _make_scene()
     image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
     zarr_path = _empty_zarr(tmp_path)
     localizer.save_index(zarr_path, "disk")
@@ -162,60 +122,6 @@ def test_save_index_creates_reconstruction_group(tmp_path):
     assert grp["descriptors"].shape[0] == grp["keypoints"].shape[0]
 
 
-def test_load_index_round_trip(tmp_path):
-    """save_index + load_index: loaded localizer has same frame count and sources."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene()
-    image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, mock_ext = _build_localizer_with_mock(world_points, extrinsics, image_paths)
-
-    zarr_path = _empty_zarr(tmp_path)
-    localizer.save_index(zarr_path, "disk")
-
-    loaded = CameraLocalizer.load_index(
-        zarr_path=zarr_path,
-        extractor_name="disk",
-        world_points=world_points,
-        extrinsics=extrinsics,
-        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
-    )
-
-    assert len(loaded._frame_features) == 3
-    assert len(loaded._frame_sources) == 3
-    assert all(s == "reconstruction" for s in loaded._frame_sources)
-    assert loaded.frame_sources == ["reconstruction", "reconstruction", "reconstruction"]
-    # Keypoint count preserved
-    assert loaded._frame_features[0].keypoints.shape[1] == 2
-    # _image_paths holds the stable string ids the localizer was built with, round-tripped
-    ids = [Path(p).name for p in image_paths]
-    assert loaded.image_paths == ids
-
-
-def test_load_index_round_trips_scales(tmp_path):
-    """Optional per-keypoint scales (dense XFeat*) survive save_index → load_index."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene()
-    image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
-
-    # Stamp synthetic scales onto the cached frame features (dense XFeat* path)
-    for f in localizer._frame_features:
-        f.scales = torch.rand(len(f.keypoints))
-
-    zarr_path = _empty_zarr(tmp_path)
-    localizer.save_index(zarr_path, "xfeat-star")
-
-    loaded = CameraLocalizer.load_index(
-        zarr_path=zarr_path,
-        extractor_name="xfeat-star",
-        world_points=world_points,
-        extrinsics=extrinsics,
-        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
-    )
-
-    for orig, rt in zip(localizer._frame_features, loaded._frame_features):
-        assert rt.scales is not None
-        np.testing.assert_allclose(rt.scales.numpy(), orig.scales.numpy(), rtol=1e-6)
-
-
 def test_load_index_missing_extractor_raises(tmp_path):
     """load_index raises KeyError when extractor cache not found."""
     zarr_path = _empty_zarr(tmp_path)
@@ -229,84 +135,16 @@ def test_load_index_missing_extractor_raises(tmp_path):
         )
 
 
-# ── Task 5 tests ─────────────────────────────────────────────────────────────
+########################################################################
+# Index updates and localized frames
+########################################################################
 
 
-def _make_ff_result(world_points, extrinsics, image_paths):
-    """Minimal PointcloudResult mock for testing from_feedforward."""
-    result = MagicMock()
-    result.world_points = world_points
-    result.extrinsics = extrinsics
-    result.image_paths = image_paths
-    result._zarr_path = None
-    return result
-
-
-def test_from_feedforward_cache_miss_builds_and_saves(tmp_path):
-    """Cache miss: from_feedforward runs GPU inference and saves to zarr."""
-    import zarr
-
-    pts3d, world_points, extrinsics, intrinsics = _make_scene()
-    image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    zarr_path = _empty_zarr(tmp_path)
-
-    mock_ext = MagicMock()
-    mock_ext.extract.return_value = _make_features()
-    mock_ext.match.return_value = torch.zeros((0, 2), dtype=torch.long)
-
-    result = _make_ff_result(world_points, extrinsics, image_paths)
-    result._zarr_path = zarr_path
-
-    # Caller builds (images, ids) aligned to result; consumed only on cache miss
-    images = [np.asarray(open_image(p).convert("RGB")) for p in image_paths]
-    ids = [Path(p).name for p in image_paths]
-    localizer = CameraLocalizer.from_feedforward(
-        result, images=images, ids=ids, extractor=mock_ext, extractor_name="disk"
-    )
-
-    assert mock_ext.extract.call_count == 3  # GPU ran for each frame
-    store = zarr.open(str(zarr_path), mode="r")
-    assert "local_features/disk/reconstruction" in store
-
-
-def test_from_feedforward_cache_hit_skips_extraction(tmp_path):
-    """Cache hit: from_feedforward loads from zarr, does not call extractor.extract."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene()
-    image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    zarr_path = _empty_zarr(tmp_path)
-
-    # Populate cache via first build
-    build_ext = MagicMock()
-    build_ext.extract.return_value = _make_features()
-    build_ext.match.return_value = torch.zeros((0, 2), dtype=torch.long)
-    result = _make_ff_result(world_points, extrinsics, image_paths)
-    images = [np.asarray(open_image(p).convert("RGB")) for p in image_paths]
-    ids = [Path(p).name for p in image_paths]
-    CameraLocalizer.from_feedforward(
-        result, images=images, ids=ids, extractor=build_ext, extractor_name="disk", zarr_path=zarr_path
-    )
-
-    # Second build — should hit cache; images/ids are ignored on a hit
-    load_ext = MagicMock()
-    load_ext.extract.return_value = _make_features()
-    loaded = CameraLocalizer.from_feedforward(
-        result, images=None, ids=None, extractor=load_ext, extractor_name="disk", zarr_path=zarr_path
-    )
-
-    assert load_ext.extract.call_count == 0  # no GPU inference on cache hit
-    assert len(loaded._frame_features) == 3
-
-
-# ── Task 6 tests ─────────────────────────────────────────────────────────────
-
-
-def test_update_index_appends_new_frames(tmp_path):
-    """update_index extracts + appends new reconstruction frames to zarr."""
-    import zarr
-
+def test_update_index_appends_new_frames(tmp_path, stub_matcher):
+    """update_index extracts + appends new reconstruction frames to zarr; memory is unchanged."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
     image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
     zarr_path = _empty_zarr(tmp_path)
     localizer.save_index(zarr_path, "disk")
@@ -317,9 +155,7 @@ def test_update_index_appends_new_frames(tmp_path):
         np.full((64, 64, 3), 220, dtype=np.uint8),
     ]
     new_ids = ["frame_098.jpg", "frame_099.jpg"]
-    new_ext = MagicMock()
-    new_ext.extract.return_value = _make_features()
-    new_ext.match.return_value = torch.zeros((0, 2), dtype=torch.long)
+    new_ext = stub_matcher(_random_keypoints)
     localizer._extractor = new_ext
 
     localizer.update_index(
@@ -329,10 +165,9 @@ def test_update_index_appends_new_frames(tmp_path):
         extractor_name="disk",
     )
 
-    assert new_ext.extract.call_count == 2
-    assert len(localizer._frame_features) == 5  # 3 + 2
-    assert localizer._frame_sources.count("reconstruction") == 5
-    assert localizer.image_paths[-1] == "frame_099.jpg"
+    assert new_ext.n_extract == 2
+    assert len(localizer._frame_features) == 3
+    assert localizer.image_paths[-1] == "frame_002.jpg"
 
     # Verify zarr updated
     store = zarr.open(str(zarr_path), mode="r")
@@ -341,53 +176,43 @@ def test_update_index_appends_new_frames(tmp_path):
     assert len(grp.attrs["image_paths"]) == 5
 
 
-def test_add_localized_frame_extends_index_in_memory(tmp_path):
-    """add_localized_frame appends a localized frame to in-memory reference set."""
+def test_add_localized_frame_extends_index_in_memory(tmp_path, stub_matcher):
+    """add_localized_frame records id and pose in memory; reference features are unchanged."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
     image_paths = _make_image_files(tmp_path, n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
     assert len(localizer._frame_features) == 3
 
     new_pose = np.eye(4, dtype=np.float32)
     new_pose[0, 3] = 2.0
-    new_intr = intrinsics[0].copy()
-    new_feats = _make_features()
     new_path = tmp_path / "query.jpg"
 
     localizer.add_localized_frame(
         image_path=new_path,
         pose=new_pose,
-        intrinsics=new_intr,
-        features=new_feats,
     )
 
-    assert len(localizer._frame_features) == 4
-    assert localizer._frame_sources[-1] == "localized"
-    assert localizer._image_paths[-1] == str(new_path)
+    assert len(localizer._frame_features) == 3
+    assert localizer.frame_sources[-1] == "localized"
+    assert localizer.image_paths[-1] == str(new_path)
 
 
-def test_add_localized_frame_persists_to_zarr(tmp_path):
+def test_add_localized_frame_persists_to_zarr(tmp_path, stub_matcher):
     """add_localized_frame with zarr_path writes to localized/ group."""
-    import zarr
-
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
     image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
     zarr_path = _empty_zarr(tmp_path)
     localizer.save_index(zarr_path, "disk")
 
     new_pose = np.eye(4, dtype=np.float32)
-    new_intr = intrinsics[0].copy()
-    new_feats = _make_features()
     new_path = tmp_path / "query.jpg"
 
     localizer.add_localized_frame(
         image_path=new_path,
         pose=new_pose,
-        intrinsics=new_intr,
-        features=new_feats,
         zarr_path=zarr_path,
         extractor_name="disk",
     )
@@ -396,47 +221,29 @@ def test_add_localized_frame_persists_to_zarr(tmp_path):
     assert "local_features/disk/localized" in store
     loc_grp = store["local_features/disk/localized"]
     assert loc_grp["extrinsics"].shape == (1, 4, 4)
-    assert loc_grp["intrinsics"].shape == (1, 3, 3)
     assert len(loc_grp.attrs["image_paths"]) == 1
 
 
-def test_add_localized_frame_duplicate_skipped(tmp_path):
+def test_add_localized_frame_duplicate_skipped(tmp_path, stub_matcher):
     """Duplicate image_path is silently skipped — no double-add."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=2)
     image_paths = _make_image_files(tmp_path, n=2)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
     new_pose = np.eye(4, dtype=np.float32)
     new_path = tmp_path / "query.jpg"
-    new_feats = _make_features()
 
-    localizer.add_localized_frame(new_path, new_pose, intrinsics[0], new_feats)
-    localizer.add_localized_frame(new_path, new_pose, intrinsics[0], new_feats)  # duplicate
+    localizer.add_localized_frame(new_path, new_pose)
+    localizer.add_localized_frame(new_path, new_pose)  # duplicate
 
-    assert len(localizer._frame_features) == 3  # 2 rec + 1 loc, not 4
-
-
-def test_add_localized_frame_duplicate_skipped_across_extensions(tmp_path):
-    """A legacy .jpg localized frame blocks re-adding the same query frame as .png."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=2)
-    image_paths = _make_image_files(tmp_path, n=2)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
-
-    new_pose = np.eye(4, dtype=np.float32)
-    new_feats = _make_features()
-
-    # Old DBs hold the .jpg id; re-localizing the same frame now writes .png
-    localizer.add_localized_frame(tmp_path / "X_f000010.jpg", new_pose, intrinsics[0], new_feats)
-    localizer.add_localized_frame(tmp_path / "X_f000010.png", new_pose, intrinsics[0], new_feats)
-
-    assert len(localizer._frame_features) == 3  # 2 rec + 1 loc, not 4
+    assert len(localizer.image_paths) == 3  # 2 rec + 1 loc, not 4
 
 
-def test_load_index_includes_localized_frames(tmp_path):
+def test_load_index_includes_localized_frames(tmp_path, stub_matcher):
     """After add + reload, localized frame is in the loaded index."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
     image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
     zarr_path = _empty_zarr(tmp_path)
     localizer.save_index(zarr_path, "disk")
@@ -444,9 +251,7 @@ def test_load_index_includes_localized_frames(tmp_path):
     new_pose = np.eye(4, dtype=np.float32)
     new_pose[0, 3] = 1.5
     new_path = tmp_path / "query.jpg"
-    localizer.add_localized_frame(
-        new_path, new_pose, intrinsics[0], _make_features(), zarr_path=zarr_path, extractor_name="disk"
-    )
+    localizer.add_localized_frame(new_path, new_pose, zarr_path=zarr_path, extractor_name="disk")
 
     # Reload from zarr
     loaded = CameraLocalizer.load_index(
@@ -454,24 +259,25 @@ def test_load_index_includes_localized_frames(tmp_path):
         extractor_name="disk",
         world_points=world_points,
         extrinsics=extrinsics,
-        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
+        extractor=stub_matcher(_random_keypoints),
     )
 
-    assert len(loaded._frame_features) == 4
-    assert loaded._frame_sources == ["reconstruction"] * 3 + ["localized"]
-    assert loaded._image_paths[-1] == str(new_path)
+    assert len(loaded._frame_features) == 3
+    assert loaded.frame_sources == ["reconstruction"] * 3 + ["localized"]
+    assert loaded.image_paths[-1] == str(new_path)
+    np.testing.assert_allclose(loaded.extrinsics[-1], new_pose)
 
 
-# ── Task 8 tests ─────────────────────────────────────────────────────────────
+########################################################################
+# Clearing localized frames
+########################################################################
 
 
-def test_clear_localized_frames_removes_zarr_group(tmp_path):
+def test_clear_localized_frames_removes_zarr_group(tmp_path, stub_matcher):
     """clear_localized_frames deletes localized/ group; reconstruction/ untouched."""
-    import zarr
-
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
     image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
+    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths, stub_matcher)
 
     zarr_path = _empty_zarr(tmp_path)
     localizer.save_index(zarr_path, "disk")
@@ -480,8 +286,6 @@ def test_clear_localized_frames_removes_zarr_group(tmp_path):
     localizer.add_localized_frame(
         tmp_path / "q.jpg",
         np.eye(4, dtype=np.float32),
-        intrinsics[0],
-        _make_features(),
         zarr_path=zarr_path,
         extractor_name="disk",
     )
@@ -497,97 +301,442 @@ def test_clear_localized_frames_removes_zarr_group(tmp_path):
     assert "local_features/disk/reconstruction" in store2  # untouched
 
 
-def test_load_index_after_clear_has_only_reconstruction(tmp_path):
-    """After clear_localized_frames, load_index returns only reconstruction frames."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=3)
-    image_paths = _make_image_files(tmp_path / "imgs", n=3)
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
-
-    zarr_path = _empty_zarr(tmp_path)
-    localizer.save_index(zarr_path, "disk")
-    localizer.add_localized_frame(
-        tmp_path / "q.jpg",
-        np.eye(4, dtype=np.float32),
-        intrinsics[0],
-        _make_features(),
-        zarr_path=zarr_path,
-        extractor_name="disk",
-    )
-
-    CameraLocalizer.clear_localized_frames(zarr_path, "disk")
-
-    loaded = CameraLocalizer.load_index(
-        zarr_path=zarr_path,
-        extractor_name="disk",
-        world_points=world_points,
-        extrinsics=extrinsics,
-        extractor=MagicMock(),  # duck-typed descriptor extractor — the LocalMatcher default is pairwise and needs ref images
-    )
-    assert len(loaded._frame_features) == 3
-    assert all(s == "reconstruction" for s in loaded._frame_sources)
+########################################################################
+# Cache reader and from_pointcloud
+########################################################################
 
 
-# ── Task 2 (localization module) tests: shared cache reader ──────────────────
-
-
-def test_read_localization_db_roundtrip(tmp_path):
-    """Module-level cache reader returns exactly what save_index wrote."""
-    from collab_splats.localization.localizer import read_localization_db
-
+def test_save_load_index_round_trip(tmp_path, replay_matcher):
+    """save_index then load_index returns the ids, grid, features, sources and global descriptors written."""
     pts3d, world_points, extrinsics, intrinsics = _make_scene(n_frames=2)
     image_paths = _make_image_files(tmp_path / "imgs", n=2)
     feats = [_make_features(n_kpts=5), _make_features(n_kpts=8)]
-
-    mock_ext = MagicMock()
-    mock_ext.extract.side_effect = feats
     images = [np.asarray(open_image(p).convert("RGB")) for p in image_paths]
     ids = [Path(p).name for p in image_paths]
-    localizer = CameraLocalizer(
-        world_points=world_points,
-        extrinsics=extrinsics,
-        images=images,
-        ids=ids,
-        extractor=mock_ext,
-    )
-
+    localizer = CameraLocalizer(world_points, extrinsics, images, ids, extractor=replay_matcher(feats))
     zarr_path = _empty_zarr(tmp_path)
     localizer.save_index(zarr_path, "xfeat")
 
-    out_feats, out_ids, hw = read_localization_db(zarr_path, "xfeat")
-    assert out_ids == ids and hw == (64, 64)
-    assert [len(f.keypoints) for f in out_feats] == [5, 8]
-    np.testing.assert_allclose(out_feats[1].keypoints.numpy(), feats[1].keypoints.numpy())
-    np.testing.assert_allclose(out_feats[0].descriptors.numpy(), feats[0].descriptors.numpy())
+    loaded = CameraLocalizer.load_index(zarr_path, "xfeat", world_points, extrinsics, extractor=replay_matcher([]))
+
+    assert loaded.image_paths == ids and loaded._image_hw == (64, 64)
+    assert loaded.frame_sources == ["reconstruction"] * 2
+    assert [len(f.keypoints) for f in loaded._frame_features] == [5, 8]
+
+    for want, have in zip(feats, loaded._frame_features):
+        np.testing.assert_allclose(have.keypoints.numpy(), want.keypoints.numpy())
+        np.testing.assert_allclose(have.descriptors.numpy(), want.descriptors.numpy())
+
+    np.testing.assert_allclose(loaded._global_desc, localizer._global_desc)
 
 
 def test_read_localization_db_missing_raises(tmp_path):
     """Missing cache raises KeyError naming the extractor."""
-    from collab_splats.localization.localizer import read_localization_db
-
     zarr_path = _empty_zarr(tmp_path)
     with pytest.raises(KeyError, match="disk"):
         read_localization_db(zarr_path, "disk")
 
 
-# ── Task 9 test ──────────────────────────────────────────────────────────────
+def _mock_result(world_points: np.ndarray) -> SimpleNamespace:
+    """
+    PointcloudResult stand-in carrying what from_pointcloud reads.
+    """
+    n, H, W = world_points.shape[:3]
+    return SimpleNamespace(
+        world_points=world_points,
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
+        image_paths=[Path(f"frame_{i:06d}") for i in range(n)],
+        original_coords=np.tile(np.array([0, 0, W, H, W, H], np.float32), (n, 1)),
+    )
 
 
-def test_cache_staleness_ignores_the_id_extension(tmp_path, caplog):
-    """A DB built with frame_NNN.jpg ids is not stale for frame_NNN.png ids; other stems are."""
-    pts3d, world_points, extrinsics, intrinsics = _make_scene()
-    image_paths = _make_image_files(tmp_path / "imgs", n=3)  # frame_000.jpg ...
-    localizer, _ = _build_localizer_with_mock(world_points, extrinsics, image_paths)
-    zarr_path = _empty_zarr(tmp_path)
-    localizer.save_index(zarr_path, "disk")
-    result = _make_ff_result(world_points, extrinsics, image_paths)
+def _no_keypoints(image: np.ndarray) -> np.ndarray:
+    """
+    Zero keypoints.
+    """
+    return np.zeros((0, 2))
 
-    def stale_warned(ids):
-        caplog.clear()
-        with caplog.at_level("WARNING", logger="collab_splats.localization.localizer"):
-            CameraLocalizer.from_feedforward(
-                result, ids=ids, extractor=MagicMock(), zarr_path=zarr_path, extractor_name="disk"
-            )
-        return "stale" in caplog.text
 
-    assert not stale_warned([f"frame_{i:03d}.png" for i in range(3)])
-    assert stale_warned([f"frame_{i:03d}.png" for i in (0, 1, 5)])
+def _three_keypoints(image: np.ndarray) -> np.ndarray:
+    """
+    Three keypoints at the origin.
+    """
+    return np.zeros((3, 2))
+
+
+def test_from_pointcloud_cache_miss_builds_and_saves(tmp_path, stub_matcher):
+    wp = np.zeros((3, 8, 8, 3), np.float32)
+    matcher = stub_matcher(_three_keypoints)
+    ids = [f"frame_{i:06d}.png" for i in range(3)]
+
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp),
+        zarr_path=tmp_path / "pc.zarr",
+        images=[np.zeros((8, 8, 3), np.uint8)] * 3,
+        ids=ids,
+        extractor=matcher,
+    )
+
+    assert matcher.n_extract == 3
+    store = zarr.open(str(tmp_path / "pc.zarr"), mode="r")
+    assert "local_features/stub/reconstruction" in store
+
+
+def test_from_pointcloud_miss_without_images_raises(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+
+    with pytest.raises(ValueError, match="needs images"):
+        CameraLocalizer.from_pointcloud(
+            _mock_result(wp), zarr_path=tmp_path / "pc.zarr", ids=["a"], extractor=stub_matcher(_three_keypoints)
+        )
+
+
+def test_load_index_without_global_desc_raises_keyerror(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    loc = CameraLocalizer(
+        wp,
+        np.eye(4, dtype=np.float32)[None],
+        [np.zeros((8, 8, 3), np.uint8)],
+        ["a"],
+        extractor=stub_matcher(_no_keypoints),
+    )
+    loc.save_index(tmp_path / "pc.zarr", "stub")
+    store = zarr.open(str(tmp_path / "pc.zarr"), mode="a")
+    del store["local_features/stub/reconstruction/global_desc"]
+
+    with pytest.raises(KeyError, match="global_desc"):
+        CameraLocalizer.load_index(
+            tmp_path / "pc.zarr", "stub", wp, loc.extrinsics, extractor=stub_matcher(_no_keypoints)
+        )
+
+
+def _lazy_frames(reads: list[int], n: int):
+    """
+    Yield n blank frames, recording each draw in reads.
+    """
+    for _ in range(n):
+        reads.append(1)
+        yield np.zeros((8, 8, 3), np.uint8)
+
+
+def test_from_pointcloud_cache_hit_reads_zero_frames(tmp_path, stub_matcher):
+    wp = np.zeros((2, 8, 8, 3), np.float32)
+    result = _mock_result(wp)
+    ids = ["frame_000000.png", "frame_000001.png"]
+    built = CameraLocalizer.from_pointcloud(
+        result,
+        zarr_path=tmp_path / "pc.zarr",
+        images=[np.zeros((8, 8, 3), np.uint8)] * 2,
+        ids=ids,
+        extractor=stub_matcher(_three_keypoints),
+    )
+    reads = []
+
+    hit = CameraLocalizer.from_pointcloud(
+        result,
+        zarr_path=tmp_path / "pc.zarr",
+        images=_lazy_frames(reads, 2),
+        ids=ids,
+        extractor=stub_matcher(_three_keypoints),
+    )
+
+    assert reads == [] and hit.image_paths == built.image_paths
+
+
+def test_from_pointcloud_stale_ids_rebuild(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    result = _mock_result(wp)
+    CameraLocalizer.from_pointcloud(
+        result,
+        zarr_path=tmp_path / "pc.zarr",
+        images=[np.zeros((8, 8, 3), np.uint8)],
+        ids=["frame_000000.jpg"],
+        extractor=stub_matcher(_three_keypoints),
+    )
+    matcher = stub_matcher(_three_keypoints)
+
+    CameraLocalizer.from_pointcloud(
+        result,
+        zarr_path=tmp_path / "pc.zarr",
+        images=[np.zeros((8, 8, 3), np.uint8)],
+        ids=["frame_000000.png"],
+        extractor=matcher,
+    )
+
+    assert matcher.n_extract == 1
+
+
+def test_update_index_one_write_per_array(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    loc = CameraLocalizer(
+        wp,
+        np.eye(4, dtype=np.float32)[None],
+        [np.zeros((8, 8, 3), np.uint8)],
+        ["a"],
+        extractor=stub_matcher(_three_keypoints),
+    )
+    loc.save_index(tmp_path / "pc.zarr", "stub")
+
+    loc.update_index([np.zeros((8, 8, 3), np.uint8)] * 5, [f"n{i}" for i in range(5)], tmp_path / "pc.zarr", "stub")
+
+    feats, paths, _ = read_localization_db(tmp_path / "pc.zarr", "stub")
+    assert paths == ["a", "n0", "n1", "n2", "n3", "n4"] and len(feats) == 6
+    store = zarr.open(str(tmp_path / "pc.zarr"), mode="r")
+    assert store["local_features/stub/reconstruction/global_desc"].shape[0] == 6
+
+
+def test_add_localized_frame_exact_id_guard(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    loc = CameraLocalizer(
+        wp,
+        np.eye(4, dtype=np.float32)[None],
+        [np.zeros((8, 8, 3), np.uint8)],
+        ["q.png"],
+        extractor=stub_matcher(_three_keypoints),
+    )
+    loc.add_localized_frame("q.png", np.eye(4))
+    loc.add_localized_frame("q.jpg", np.eye(4))
+
+    assert loc.image_paths == ["q.png", "q.jpg"]
+
+
+def _blank_frames(n: int) -> list[np.ndarray]:
+    """
+    n blank 8x8 RGB frames.
+    """
+    return [np.zeros((8, 8, 3), np.uint8)] * n
+
+
+def test_rebuild_drops_stale_localized_frames(tmp_path, stub_matcher):
+    wp = np.zeros((2, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    loc = CameraLocalizer.from_pointcloud(
+        _mock_result(wp),
+        zarr_path=zp,
+        ids=["a", "b"],
+        images=_blank_frames(2),
+        extractor=stub_matcher(_three_keypoints),
+    )
+    loc.add_localized_frame("q", np.eye(4), zarr_path=zp, extractor_name="stub")
+
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp),
+        zarr_path=zp,
+        ids=["c", "d"],
+        images=_blank_frames(2),
+        extractor=stub_matcher(_three_keypoints),
+    )
+    reloaded = CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["c", "d"], extractor=stub_matcher(_three_keypoints)
+    )
+
+    assert reloaded.image_paths == ["c", "d"]
+    assert reloaded.frame_sources == ["reconstruction"] * 2
+
+
+def test_localized_then_update_index_round_trip(tmp_path, stub_matcher):
+    wp = np.zeros((2, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    loc = CameraLocalizer.from_pointcloud(
+        _mock_result(wp),
+        zarr_path=zp,
+        ids=["a", "b"],
+        images=_blank_frames(2),
+        extractor=stub_matcher(_three_keypoints),
+    )
+    pose = np.eye(4, dtype=np.float32)
+    pose[0, 3] = 7.0
+    loc.add_localized_frame("q", pose, zarr_path=zp, extractor_name="stub")
+
+    loc.update_index(_blank_frames(1), ["e"], zp, "stub")
+
+    assert loc.image_paths == ["a", "b", "q"]
+    assert len(loc.image_paths) == loc.extrinsics.shape[0] == len(loc.frame_sources)
+    rec_feats, rec_ids, _ = read_localization_db(zp, "stub")
+    assert rec_ids == ["a", "b", "e"]
+    assert [len(f.keypoints) for f in rec_feats] == [3, 3, 3]
+    wp3 = np.zeros((3, 8, 8, 3), np.float32)
+    reloaded = CameraLocalizer.from_pointcloud(
+        _mock_result(wp3), zarr_path=zp, ids=["a", "b", "e"], extractor=stub_matcher(_three_keypoints)
+    )
+    assert reloaded.image_paths == ["a", "b", "e", "q"]
+    assert reloaded.frame_sources == ["reconstruction"] * 3 + ["localized"]
+    assert reloaded._global_desc.shape[0] == len(reloaded._frame_features) == 3
+    np.testing.assert_allclose(reloaded.extrinsics[3], pose)
+
+
+def test_update_index_without_db_writes_then_appends(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    loc = CameraLocalizer(
+        wp, np.eye(4, dtype=np.float32)[None], _blank_frames(1), ["a"], extractor=stub_matcher(_three_keypoints)
+    )
+
+    loc.update_index(_blank_frames(1), ["e"], tmp_path / "pc.zarr", "stub")
+
+    _, rec_ids, _ = read_localization_db(tmp_path / "pc.zarr", "stub")
+    assert rec_ids == ["a", "e"]
+    assert loc.image_paths == ["a"]
+
+
+def test_from_pointcloud_rebuilds_when_commit_marker_missing(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["a"], images=_blank_frames(1), extractor=stub_matcher(_three_keypoints)
+    )
+    group = zarr.open(str(zp), mode="a")["local_features/stub/reconstruction"]
+    del group.attrs["image_paths"]
+    matcher = stub_matcher(_three_keypoints)
+
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["a"], images=_blank_frames(1), extractor=matcher
+    )
+
+    assert matcher.n_extract == 1
+
+
+def test_from_pointcloud_rebuilds_inconsistent_db(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["a"], images=_blank_frames(1), extractor=stub_matcher(_three_keypoints)
+    )
+    group = zarr.open(str(zp), mode="a")["local_features/stub/reconstruction"]
+    localizer_mod._append_rows(group, "global_desc", group["global_desc"][:])
+    matcher = stub_matcher(_three_keypoints)
+
+    with pytest.raises(KeyError, match="inconsistent"):
+        read_localization_db(zp, "stub")
+
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["a"], images=_blank_frames(1), extractor=matcher
+    )
+
+    assert matcher.n_extract == 1
+
+
+def test_from_pointcloud_rebuilds_on_keypoint_cap_change(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["a"], images=_blank_frames(1), extractor=stub_matcher(_three_keypoints)
+    )
+    matcher = stub_matcher(_three_keypoints)
+    matcher.max_num_keypoints = 512
+
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["a"], images=_blank_frames(1), extractor=matcher
+    )
+
+    assert matcher.n_extract == 1
+
+
+def test_from_pointcloud_rebuilds_on_resolution_change(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    CameraLocalizer.from_pointcloud(
+        _mock_result(wp), zarr_path=zp, ids=["a"], images=_blank_frames(1), extractor=stub_matcher(_three_keypoints)
+    )
+    result = _mock_result(wp)
+    result.original_coords = np.array([[0, 0, 16, 16, 16, 16]], np.float32)
+    matcher = stub_matcher(_three_keypoints)
+
+    CameraLocalizer.from_pointcloud(
+        result, zarr_path=zp, ids=["a"], images=[np.zeros((16, 16, 3), np.uint8)], extractor=matcher
+    )
+
+    assert matcher.n_extract == 1
+
+
+def test_from_pointcloud_refuses_misaligned_result(tmp_path, stub_matcher):
+    result = _mock_result(np.zeros((2, 8, 8, 3), np.float32))
+    result.extrinsics = result.extrinsics[:1]
+
+    with pytest.raises(ValueError, match="align"):
+        CameraLocalizer.from_pointcloud(
+            result, zarr_path=tmp_path / "pc.zarr", ids=["a", "b"], extractor=stub_matcher(_three_keypoints)
+        )
+
+
+def test_load_index_refuses_geometry_short_of_db(tmp_path, stub_matcher):
+    wp = np.zeros((2, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    loc = CameraLocalizer(
+        wp,
+        np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
+        _blank_frames(2),
+        ["a", "b"],
+        extractor=stub_matcher(_three_keypoints),
+    )
+    loc.save_index(zp, "stub")
+    loc.update_index(_blank_frames(1), ["c"], zp, "stub")
+
+    with pytest.raises(ValueError, match="3 frames"):
+        CameraLocalizer.load_index(zp, "stub", wp, loc.extrinsics, extractor=stub_matcher(_three_keypoints))
+
+
+def test_from_pointcloud_refuses_ids_length_mismatch(tmp_path, stub_matcher):
+    result = _mock_result(np.zeros((2, 8, 8, 3), np.float32))
+
+    with pytest.raises(ValueError, match="align"):
+        CameraLocalizer.from_pointcloud(
+            result, zarr_path=tmp_path / "pc.zarr", ids=["a"], extractor=stub_matcher(_three_keypoints)
+        )
+
+
+def test_localized_append_after_crash_stays_aligned(tmp_path, stub_matcher):
+    wp = np.zeros((1, 8, 8, 3), np.float32)
+    zp = tmp_path / "pc.zarr"
+    loc = CameraLocalizer(
+        wp, np.eye(4, dtype=np.float32)[None], _blank_frames(1), ["a"], extractor=stub_matcher(_three_keypoints)
+    )
+    loc.save_index(zp, "stub")
+    loc.add_localized_frame("q1", np.eye(4), zarr_path=zp, extractor_name="stub")
+
+    # A crashed append: extrinsics grew, image_paths never did
+    group = zarr.open(str(zp), mode="a")["local_features/stub/localized"]
+    localizer_mod._append_rows(group, "extrinsics", np.full((1, 4, 4), 9.0))
+    pose = np.eye(4)
+    pose[0, 3] = 2.0
+    loc.add_localized_frame("q2", pose, zarr_path=zp, extractor_name="stub")
+
+    group = zarr.open(str(zp), mode="r")["local_features/stub/localized"]
+    assert group.attrs["image_paths"] == ["q1", "q2"]
+    assert group["extrinsics"].shape == (2, 4, 4)
+    np.testing.assert_allclose(group["extrinsics"][1], pose)
+
+
+def test_write_csr_row_chunks_round_trip(tmp_path):
+    feats = [
+        LocalFeatures(
+            keypoints=torch.rand(n, 2),
+            descriptors=torch.rand(n, 4),
+            keypoints_normalized=torch.rand(n, 2),
+            image_size=(8, 8),
+        )
+        for n in (5, 7, 3)
+    ]
+    group = zarr.open_group(str(tmp_path / "db.zarr"), mode="w")
+
+    localizer_mod._write_csr(group, feats, chunk_rows=4)
+
+    # Every per-keypoint array splits into chunk_rows-row chunks
+    for name in ("keypoints", "descriptors", "keypoints_normalized"):
+        assert group[name].chunks[0] == 4
+
+    # Round trip returns the written features exactly
+    got = localizer_mod._features_from_csr(group, [(8, 8)] * 3)
+
+    for want, have in zip(feats, got):
+        np.testing.assert_array_equal(have.keypoints.numpy(), want.keypoints.numpy())
+        np.testing.assert_array_equal(have.descriptors.numpy(), want.descriptors.numpy())
+        np.testing.assert_array_equal(have.keypoints_normalized.numpy(), want.keypoints_normalized.numpy())
+
+
+def test_write_csr_small_db_is_one_chunk(tmp_path):
+    feats = [LocalFeatures(keypoints=torch.rand(5, 2), descriptors=torch.rand(5, 4), image_size=(8, 8))]
+    group = zarr.open_group(str(tmp_path / "db.zarr"), mode="w")
+
+    localizer_mod._write_csr(group, feats)
+
+    assert group["descriptors"].chunks == (5, 4)

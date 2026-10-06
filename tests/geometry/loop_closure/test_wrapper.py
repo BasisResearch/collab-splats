@@ -1,5 +1,6 @@
 # tests/pointcloud/test_wrappers.py
 import dataclasses
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,9 +11,14 @@ import torch
 from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.map import GraphMap
 from collab_splats.geometry.loop_closure.submap import Submap
-from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+from collab_splats.geometry.loop_closure.wrapper import (
+    LoopClosure,
+    LoopClosureConfig,
+)
 from collab_splats.geometry.transforms import transform_points
 from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.utils import subsample_points
+from collab_splats.preproc.frames import frame_paths
 from tests.geometry.loop_closure._helpers import record_driven_submaps
 from tests.pointcloud.conftest import _frame_files, _frames
 
@@ -180,7 +186,7 @@ def test_loop_closure_forwards_setup_inference():
 
 
 def test_loop_closure_run_inference_falls_back_to_base_when_too_few_frames():
-    """When fewer frames than submap_size, falls back to base.run_inference()."""
+    """When fewer frames than submap_size, one whole-scene forward sets base.raw_outputs."""
     from collab_splats.geometry.loop_closure import LoopClosureConfig
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
@@ -190,7 +196,9 @@ def test_loop_closure_run_inference_falls_back_to_base_when_too_few_frames():
     cfg = LoopClosureConfig(submap_size=20)
     lc = LoopClosure(mock_base, config=cfg)
     lc.run_inference()
-    mock_base.run_inference.assert_called_once()
+    mock_base._forward.assert_called_once_with(mock_base.model, mock_base.views)
+    assert mock_base.raw_outputs is mock_base._forward.return_value
+    mock_base.run_inference.assert_not_called()
 
 
 ########################################################
@@ -208,6 +216,9 @@ def test_loop_closure_create_pointcloud_returns_the_base_postprocess(tmp_path):
     mock_base._postprocess.return_value = result
     mock_base.clean = False
     mock_base.max_points = len(result.points)
+
+    # The delegated frame listing reads the directory, as a creator without a handoff does
+    mock_base._list_frames.side_effect = frame_paths
     paths = _frame_files(_frames([(8, 8), (8, 8)]), tmp_path / "images")
 
     lc = LoopClosure(mock_base)
@@ -279,6 +290,7 @@ def test_lc_loop_passes_k_plus_overlap_to_forward():
     wrapper.base = base
     wrapper.config = cfg
     wrapper.viz = None  # no live viewer: hooks are guarded no-ops
+    wrapper.ba = None
 
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
@@ -317,6 +329,7 @@ def test_lc_loop_rejects_a_window_not_normalized_to_frame_0():
     wrapper.base = base
     wrapper.config = LoopClosureConfig(submap_size=3, submap_overlap=1)
     wrapper.viz = None
+    wrapper.ba = None
 
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
@@ -363,6 +376,7 @@ def test_lc_loop_populates_dense_points_and_map():
     wrapper.base = base
     wrapper.config = cfg
     wrapper.viz = None  # no live viewer: hooks are guarded no-ops
+    wrapper.ba = None
 
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
@@ -495,6 +509,7 @@ def test_self_graph_matches_incremental_drive():
     wrapper.map = None
     wrapper.graph = None
     wrapper.viz = None  # no live viewer: hooks are guarded no-ops
+    wrapper.ba = None
 
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
@@ -572,6 +587,7 @@ def test_conf_percentile_reaches_window_and_loop_submaps():
     wrapper.map = None
     wrapper.graph = None
     wrapper.viz = None
+    wrapper.ba = None
 
     with (
         patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
@@ -591,10 +607,10 @@ def test_conf_percentile_reaches_window_and_loop_submaps():
 
 
 def test_lc_output_assembled_from_graphmap():
-    """LC output (lc.outputs) is assembled from the GraphMap dense cloud, not the old merge.
+    """LC output (lc.outputs) is assembled from the graph-corrected submap reads, not the old merge.
 
     Uses the strengthened harness (non-identity geometry, dense depth, >=1 driven loop).
-    Asserts points/colors == map.get_world_pointcloud, extrinsics == graph.extract_extrinsics,
+    Asserts points/colors == the submaps' masked world reads, extrinsics == graph.extract_extrinsics,
     intrinsics (N,3,3), and len(image_paths) == N.
     """
     from collab_splats.geometry.loop_closure.matching import LoopMatch
@@ -666,14 +682,16 @@ def test_lc_output_assembled_from_graphmap():
     out = lc.outputs
     assert isinstance(out, PointcloudResult)
 
-    # points/colors are exactly the GraphMap dense cloud (float32/uint8, aligned, non-empty).
-    # overlap-deduped, matching _assemble_result's call (leading overlap frames dropped).
-    exp_pts, exp_cols = lc.map.get_world_pointcloud(lc.graph, overlap=lc.config.submap_overlap)
+    # points/colors are each window submap's masked world read, a non-first submap's overlap frames dropped
+    subs = [s for s in lc.map.ordered_submaps_by_key() if not s.is_lc_submap and s.points is not None]
+    skips = [lc.config.submap_overlap if s.frame_start > 0 else 0 for s in subs]
+    exp_pts = np.vstack([s.get_points_in_world_frame(lc.graph, skip_first=k) for s, k in zip(subs, skips)])
+    exp_cols = np.vstack([s.get_points_colors(skip_first=k) for s, k in zip(subs, skips)])
     assert out.points.shape[0] > 0
     assert out.points.dtype == np.float32 and out.points.shape[1] == 3
     assert out.colors.dtype == np.uint8 and out.colors.shape[1] == 3
     assert out.points.shape[0] == out.colors.shape[0]
-    np.testing.assert_allclose(out.points, exp_pts)
+    np.testing.assert_allclose(out.points, exp_pts, rtol=1e-5, atol=1e-5)
     np.testing.assert_array_equal(out.colors, exp_cols)
 
     # extrinsics == the graph-corrected (N,4,4); intrinsics/image_paths sized to N.
@@ -760,11 +778,11 @@ def test_assemble_result_intrinsics_first_occurrence_dedup():
     assert out.model_height == 3 and out.model_width == 4
 
 
-def test_assemble_result_carries_depth_confidence_world_points(tmp_path):
+def test_assemble_result_carries_depth_and_confidence_without_world_points(tmp_path):
     """
-    LC result carries per-frame depth, confidence and world points consistent with its poses.
+    LC result carries per-frame depth and confidence consistent with its poses, and no world points.
 
-    - depth is the z of world_points under the corrected extrinsics
+    - depth is the z of the corrected world grid under the corrected extrinsics
     - overlap frame 2 comes from s0, the first submap to cover it
     - depth survives a zarr round trip
     """
@@ -792,16 +810,17 @@ def test_assemble_result_carries_depth_confidence_world_points(tmp_path):
 
     # Per-pixel fields cover every frame on the model grid
     assert out.depth.shape == (n_frames, 3, 4)
-    assert out.world_points.shape == (n_frames, 3, 4, 3)
     assert tuple(out.confidence.shape) == (n_frames, 3, 4)
+    assert out.world_points is None
 
-    # Depth is camera-frame z of the corrected world points
-    for g in range(n_frames):
-        cam = transform_points(out.world_points[g].astype(np.float64), out.extrinsics[g].astype(np.float64))
+    # Depth is camera-frame z of the corrected world grid; overlap frame 2 takes s0's grid
+    grid0, grid1 = s0.get_world_grid(pg), s1.get_world_grid(pg)
+
+    for g, frame in enumerate([grid0[0], grid0[1], grid0[2], grid1[1], grid1[2]]):
+        cam = transform_points(frame.astype(np.float64), out.extrinsics[g].astype(np.float64))
         np.testing.assert_allclose(out.depth[g], cam[..., 2], rtol=1e-5, atol=1e-5)
 
-    # Overlap frame takes s0's grid and confidence, not s1's
-    np.testing.assert_allclose(out.world_points[2], s0.get_world_grid(pg)[2], rtol=1e-6)
+    # Overlap frame takes s0's confidence, not s1's
     np.testing.assert_array_equal(np.asarray(out.confidence[2]), s0.conf[2])
 
     # Depth round-trips through zarr
@@ -843,12 +862,93 @@ def test_assemble_result_caps_cloud_to_max_points():
     lc.graph = pg
 
     # The uncapped cloud must exceed the budget, else the test proves nothing.
-    full_pts, _ = lc.map.get_world_pointcloud(lc.graph)
+    full_pts = np.vstack([s0.get_points_in_world_frame(lc.graph), s1.get_points_in_world_frame(lc.graph, 1)])
+    full_cols = np.vstack([s0.get_points_colors(), s1.get_points_colors(1)])
     assert full_pts.shape[0] > 4
 
     out = lc._assemble_result(n_frames)
     assert out.points.shape[0] == 4
     assert out.colors.shape[0] == 4  # colors stay index-aligned with points
+
+    # The kept rows are subsample_points' default-seed draw over the whole overlap-deduped cloud
+    all_kept = np.ones(full_pts.shape[0], dtype=bool)
+    keep = subsample_points(all_kept, 4)
+    np.testing.assert_array_equal(out.points, full_pts[keep])
+    np.testing.assert_array_equal(out.colors, full_cols[keep])
+
+
+def _assemble_two_submaps_plus(extra, cap):
+    """
+    _assemble_result over s0, s1 and an optional extra submap; graph built from s0, s1 only.
+    """
+    n_frames = 5
+    s0 = _dense_submap_with_fx(0, frame_start=0, fx_values=[100.0, 101.0, 102.0])
+    s1 = _dense_submap_with_fx(1, frame_start=2, fx_values=[202.0, 203.0, 204.0])
+
+    # Two-submap graph, one optimize per add as the wrapper does
+    pg = PoseGraph()
+
+    for s in (s0, s1):
+        pg.add_submap(s, overlap_frames=1)
+        pg.optimize()
+
+    base = MagicMock()
+    base.max_points = cap
+    base.image_paths = [f"img_{i}.png" for i in range(n_frames)]
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))
+    lc = LoopClosure(base)
+    lc.map = GraphMap()
+
+    for s in (s0, s1) if extra is None else (s0, s1, extra):
+        lc.map.add_submap(s)
+
+    lc.graph = pg
+    return lc._assemble_result(n_frames)
+
+
+@pytest.mark.parametrize("cap", [500_000, 7])
+def test_assemble_result_adds_no_points_from_loop_carriers(cap):
+    """
+    A dense loop-carrier submap leaves the assembled cloud and its capped draw unchanged.
+
+    - the carrier covers graph frames 0-1, so lifting it would succeed and add points
+    """
+    carrier = _dense_submap_with_fx(2, frame_start=0, fx_values=[300.0, 301.0])
+    carrier.is_lc_submap = True
+
+    without = _assemble_two_submaps_plus(None, cap)
+    with_carrier = _assemble_two_submaps_plus(carrier, cap)
+
+    assert with_carrier.points.shape == without.points.shape
+    np.testing.assert_array_equal(with_carrier.points, without.points)
+    np.testing.assert_array_equal(with_carrier.colors, without.colors)
+
+
+@pytest.mark.parametrize("cap", [500_000, 7])
+def test_assemble_result_adds_no_points_from_pointless_submaps(cap):
+    """
+    A submap without dense points (MapAnything degraded path) leaves the cloud unchanged.
+    """
+    degraded = _dense_submap_with_fx(2, frame_start=3, fx_values=[300.0, 301.0])
+    degraded.points = degraded.colors = degraded.conf = None
+
+    without = _assemble_two_submaps_plus(None, cap)
+    with_degraded = _assemble_two_submaps_plus(degraded, cap)
+
+    assert with_degraded.points.shape == without.points.shape
+    np.testing.assert_array_equal(with_degraded.points, without.points)
+    np.testing.assert_array_equal(with_degraded.colors, without.colors)
+
+
+def test_assemble_result_raises_on_dense_submap_without_conf():
+    """
+    A window submap with dense points but no conf raises instead of failing on a None index.
+    """
+    broken = _dense_submap_with_fx(2, frame_start=3, fx_values=[300.0, 301.0])
+    broken.conf = None
+
+    with pytest.raises(ValueError, match="Submap 2 has no conf"):
+        _assemble_two_submaps_plus(broken, 500_000)
 
 
 def test_lc_submaps_keep_frames_after_unproject():
@@ -926,17 +1026,21 @@ def test_lc_submaps_keep_frames_after_unproject():
     assert lc.outputs.points.shape[0] > 0
 
 
-def _run_one_window(raw: dict, window):
-    """Drive LoopClosure.run_predictions over one window with a stub forward."""
+def _run_one_window(raw: dict, window, extractor=None):
+    """
+    Drive LoopClosure.run_predictions over one window's forward outputs.
+
+    - extractor: retrieval stub; None returns zero descriptors
+    """
     from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 
     base = MagicMock()
-    base._forward = lambda model, views, **kwargs: raw
     base.image_paths = [f"img_{i}.png" for i in range(3)]
     # Full-frame box per frame
     base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (len(base.image_paths), 1))
     lc = LoopClosure(base)
-    return lc.run_predictions(window, 0, 0, [], [], lambda frames: torch.zeros(frames.shape[0], 8), MagicMock())
+    extractor = extractor or (lambda frames: torch.zeros(frames.shape[0], 8))
+    return lc.run_predictions(window, raw, 0, 0, [], [], extractor, MagicMock())
 
 
 def test_run_predictions_requires_intrinsics_key():
@@ -949,6 +1053,47 @@ def test_run_predictions_requires_intrinsics_key():
 def test_run_predictions_rejects_unknown_window_shape():
     with pytest.raises(TypeError, match="LC window"):
         _run_one_window(_make_raw_nontrivial(3, 8, 8), [0, 1, 2])
+
+
+def _recording_extractor(seen: list):
+    """
+    Retrieval stub that records each input batch and returns zero descriptors.
+    """
+
+    def extract(frames: torch.Tensor) -> torch.Tensor:
+        seen.append(frames)
+        return torch.zeros(frames.shape[0], 8)
+
+    return extract
+
+
+def test_run_predictions_retrieves_on_a_tensor_window_as_given():
+    """
+    A tensor window reaches the retrieval extractor unchanged.
+    """
+    seen = []
+    window = torch.rand(3, 3, 8, 8)
+    _run_one_window(_make_raw_nontrivial(3, 8, 8), window, _recording_extractor(seen))
+
+    assert len(seen) == 1
+    assert torch.equal(seen[0], window)
+
+
+def test_run_predictions_retrieves_on_raw_images_for_a_view_dict_window():
+    """
+    A view-dict window retrieves on the forward's raw [0, 1] images, not the normalized views.
+    """
+    # dinov2-normalized views fall outside [0, 1]; the forward's raw images are the RGB
+    seen = []
+    images = np.random.default_rng(0).random((3, 3, 8, 8), dtype=np.float32)
+    window = [{"img": torch.from_numpy((images[i : i + 1] - 0.45) / 0.225)} for i in range(3)]
+    raw = _make_raw_nontrivial(3, 8, 8)
+    raw["images"] = images
+    _run_one_window(raw, window, _recording_extractor(seen))
+
+    assert len(seen) == 1
+    assert torch.equal(seen[0], torch.from_numpy(images))
+    assert seen[0].min() >= 0.0 and seen[0].max() <= 1.0
 
 
 def test_assemble_result_raises_on_empty_cloud():
@@ -1389,3 +1534,88 @@ def test_loop_edge_timing_deferred_vs_live_both_valid():
         # Extrinsics are (N, 4, 4) and finite.
         assert result.extrinsics.shape == (n_frames, 4, 4)
         assert np.isfinite(result.extrinsics).all()
+
+
+def _lc_wrapper(n_frames: int = 9) -> LoopClosure:
+    """Bare LoopClosure over n_frames tensor views with a stub forward and no viewer."""
+    cfg = LoopClosureConfig(submap_size=3, submap_overlap=1, lc_retrieval_threshold=0.0, verify_match_ratio=0.5)
+
+    base = MagicMock()
+    base.max_points = 500_000
+    base.views = torch.zeros(n_frames, 3, 4, 4)
+    base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
+    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))
+    base._forward = lambda model, views, **kwargs: _make_raw(views.shape[0])
+
+    wrapper = LoopClosure.__new__(LoopClosure)
+    wrapper.base = base
+    wrapper.config = cfg
+    wrapper.viz = None
+    wrapper.ba = None
+    return wrapper
+
+
+def test_lc_loop_skips_retrieval_at_zero_threshold():
+    wrapper = _lc_wrapper()
+
+    with (
+        patch("collab_splats.geometry.loop_closure.wrapper.BaseRetrievalExtractor") as mock_retrieval,
+        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures") as mock_find,
+    ):
+        wrapper._run_lc_loop()
+
+    assert wrapper.base.n_loops_applied == 0
+    mock_retrieval.get.assert_not_called()
+    mock_find.assert_not_called()
+    assert wrapper.outputs is not None
+
+
+def test_lc_loop_launches_next_forward_before_recording_the_window():
+    wrapper = _lc_wrapper(n_frames=12)
+    events, second_started = [], threading.Event()
+
+    # Forward on the worker: under no_grad; the 2nd call flags that it has started
+    def fake_forward(model, views, **kwargs):
+        assert not torch.is_grad_enabled()
+        events.append("fwd")
+
+        if events.count("fwd") == 2:
+            second_started.set()
+
+        return _make_raw(views.shape[0])
+
+    wrapper.base._forward = fake_forward
+    add_window_submap = LoopClosure._add_window_submap
+
+    # Window 0 is recorded only once forward 2 runs; a serial loop times out here
+    def spy(self, submap, *args):
+        if submap.submap_id == 0:
+            assert second_started.wait(5)
+
+        events.append(f"add{submap.submap_id}")
+        return add_window_submap(self, submap, *args)
+
+    with patch.object(LoopClosure, "_add_window_submap", spy):
+        wrapper._run_lc_loop()
+
+    assert [e for e in events if e.startswith("add")] == ["add0", "add1", "add2", "add3"]
+    assert events.count("fwd") == 4
+
+
+def test_lc_loop_reraises_a_pipelined_forward_error():
+    wrapper = _lc_wrapper(n_frames=12)
+    calls = []
+
+    # The 3rd forward raises on the worker thread
+    def fake_forward(model, views, **kwargs):
+        calls.append(views.shape[0])
+
+        if len(calls) == 3:
+            raise RuntimeError("forward 2 failed")
+
+        return _make_raw(views.shape[0])
+
+    wrapper.base._forward = fake_forward
+
+    with pytest.raises(RuntimeError, match="forward 2 failed"):
+        wrapper._run_lc_loop()

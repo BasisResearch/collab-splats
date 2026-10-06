@@ -434,6 +434,21 @@ class PoseGraph:
         self.add_between_factor(nid_lc0, nid_lc1, H_inner_lc)
         self.add_between_factor(nid_lc1, nid_d, H_rel_b)
 
+    def submap_node_ids(self, submap_id: int) -> list[int]:
+        """
+        Graph node ids of one submap's frames, in frame order.
+
+        - node ids are allocated per submap frame, overlap frames included, then 2 per loop carrier
+        - so a frame's node id is not its global frame index
+
+        Args:
+            submap_id: id of a submap already added with add_submap.
+
+        Returns:
+            One node id per submap frame.
+        """
+        return list(self._submap_node_ids[submap_id])
+
     def extract_extrinsics(self, total_frames: int) -> np.ndarray:
         """
         Optimized homographies as a (total_frames, 4, 4) world-to-cam array.

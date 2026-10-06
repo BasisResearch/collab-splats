@@ -1,7 +1,17 @@
+from unittest.mock import MagicMock, patch
+
+import numpy as np
 import pytest
 import torch
+import torchvision.transforms as T
+from PIL import Image
 
-from collab_splats.localization import BaseRetrievalExtractor, DinoSaladExtractor
+from collab_splats.localization import (
+    BaseRetrievalExtractor,
+    DinoSaladExtractor,
+    PECLIPExtractor,
+)
+from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
 
 
 def test_registry_get_dino_salad():
@@ -25,21 +35,12 @@ def test_base_extractor_forward_abstract():
 
 
 def test_registry_get_pe_clip():
-    from collab_splats.localization import BaseRetrievalExtractor, PECLIPExtractor
-
     cls = BaseRetrievalExtractor.get("pe-clip")
     assert cls is PECLIPExtractor
 
 
 def test_pe_clip_forward_shape_and_norm():
     """forward() returns (1, 1024) unit-norm tensor without loading real weights."""
-    from unittest.mock import MagicMock, patch
-
-    import torch
-    from PIL import Image
-
-    from collab_splats.localization import PECLIPExtractor
-
     fake_img_emb = torch.randn(1, 1024)
     fake_img_emb = fake_img_emb / fake_img_emb.norm(dim=-1, keepdim=True)
 
@@ -64,12 +65,6 @@ def test_pe_clip_forward_shape_and_norm():
 
 def test_pe_clip_encode_text_shape_and_norm():
     """encode_text() returns (2, 1024) unit-norm tensor."""
-    from unittest.mock import MagicMock, patch
-
-    import torch
-
-    from collab_splats.localization import PECLIPExtractor
-
     fake_text_emb = torch.randn(2, 1024)
     fake_text_emb = fake_text_emb / fake_text_emb.norm(dim=-1, keepdim=True)
 
@@ -88,3 +83,24 @@ def test_pe_clip_encode_text_shape_and_norm():
     assert result.shape == (2, 1024)
     norms = result.norm(dim=-1)
     torch.testing.assert_close(norms, torch.ones(2), atol=1e-5, rtol=0)
+
+
+def test_dino_salad_tensor_input_matches_pil_input():
+    """A [0, 1] tensor batch reaches the backbone normalized exactly like the PIL path."""
+    # Extractor without weights; the backbone records what it receives
+    extractor = DinoSaladExtractor.__new__(DinoSaladExtractor)
+    torch.nn.Module.__init__(extractor)
+    extractor._device = "cpu"
+    extractor._transform = T.Compose(
+        [T.Resize((224, 224)), T.ToTensor(), T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)]
+    )
+    seen = []
+    extractor.backbone = lambda x: seen.append(x) or x
+    extractor.aggregator = lambda x: x.flatten(1)
+
+    # Same 224x224 image as PIL and as a [0, 1] tensor
+    rgb = np.random.default_rng(0).integers(0, 256, (224, 224, 3), dtype=np.uint8)
+    extractor([Image.fromarray(rgb)])
+    extractor(torch.as_tensor(rgb).permute(2, 0, 1)[None].float() / 255.0)
+
+    torch.testing.assert_close(seen[1], seen[0], atol=1e-5, rtol=0)

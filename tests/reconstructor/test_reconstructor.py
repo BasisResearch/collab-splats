@@ -107,8 +107,10 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
     )
     rec.preproc()
     quality = rec.config["preproc"]["quality"]
+    workers = rec.config["preproc"]["n_workers"]
     assert calls == {
         "sampler": "fps",
+        "workers": workers,
         "fps": 2.0,
         "min_frames": 5,
         "max_frames": 50,
@@ -120,7 +122,7 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
     # uniform: max_frames is the count, with no fps and no floor
     rec = _video_reconstructor(tmp_path / "b", {"frame_selection": "uniform", "min_frames": 5, "max_frames": 50})
     rec.preproc()
-    assert calls == {"sampler": "uniform", "max_frames": 50, "report": report, "quality": quality}
+    assert calls == {"sampler": "uniform", "workers": workers, "max_frames": 50, "report": report, "quality": quality}
 
     # optical_flow: max_frames caps the selector
     rec = _video_reconstructor(tmp_path / "c", {"frame_selection": "optical_flow", "min_frames": 5, "max_frames": 50})
@@ -338,7 +340,7 @@ def test_pointcloud_stage_feedforward_vggtx(tmp_path):
     with patch("collab_splats.reconstructor.get_creator", return_value=creator_cls) as mock_get:
         rec.pointcloud()
 
-    # Creator built from the shared knobs plus the backend block, then run on the scene dirs
+    # Creator built from the shared knobs, preproc's frames (none without preproc) and the backend block
     mock_get.assert_called_once_with("vggtx")
     pc = rec.config["pointcloud"]
     assert creator_cls.call_args.kwargs == {
@@ -346,6 +348,7 @@ def test_pointcloud_stage_feedforward_vggtx(tmp_path):
         "min_views": pc["min_views"],
         "mv_rel_thresh": pc["mv_rel_thresh"],
         "clean": False,
+        "frames": None,
         **pc["vggtx"],
     }
     creator_cls.return_value.create_pointcloud.assert_called_once_with(
@@ -854,7 +857,7 @@ def test_run_calls_stages_in_order(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preproc = lambda: calls.append("preproc") or rec.images_dir
+    rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
     rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.semantics = lambda: calls.append("semantics") or tmp_path
     rec.mesh = lambda: calls.append("mesh") or tmp_path
@@ -868,7 +871,7 @@ def test_run_subset(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preproc = lambda: calls.append("preproc") or rec.images_dir
+    rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
     rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
 
     rec.run(["preproc", "pointcloud"])
@@ -920,7 +923,7 @@ def test_run_default_uses_config_enabled(tmp_path):
     rec = Reconstructor(config)
     calls = []
 
-    rec.preproc = lambda: calls.append("preprocess") or rec.images_dir
+    rec.preproc = lambda **kwargs: calls.append("preprocess") or rec.images_dir
     rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
     rec.semantics = lambda: calls.append("semantics") or tmp_path
     # report is always on and has no config flag, so a config-derived run always includes it
@@ -991,7 +994,7 @@ def test_run_refuses_localize_when_db_exists(tmp_path):
     _seed_pointcloud_markers(rec)
 
     with (
-        patch.object(R, "_localization_db_exists", return_value=True),
+        patch.object(R, "localization_db_exists", return_value=True),
         patch.object(R, "_build_localization_db") as build,
         pytest.raises(ValueError, match="already exists"),
     ):
@@ -1031,7 +1034,7 @@ def test_pointcloud_stage_attaches_viewer_when_lc_and_viz_enabled(tmp_path):
     ):
         rec.pointcloud()
 
-    mock_lc_cls.assert_called_once_with(base=creator_cls.return_value, config=None)
+    mock_lc_cls.assert_called_once_with(base=creator_cls.return_value, config=None, ba=None)
     mock_viewer_cls.assert_called_once_with(port=9001)
     assert mock_lc_instance.viz is mock_viewer_cls.return_value
     assert mock_lc_instance.config.loop_edge_timing == "live"
@@ -1049,6 +1052,52 @@ def test_reconstructor_viewer_none_when_viz_disabled(tmp_path):
         rec.pointcloud()
 
     assert rec.viewer is None
+
+
+def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
+    """BA + LC: LoopClosure gets a BA config with the window_ba cache dir; the zarr records window_ba."""
+    config = _make_config(
+        tmp_path,
+        {"pointcloud": {"loop_closure": {"submap_size": 32}, "bundle_adjustment": {"enabled": True, "dtype": "float64"}}},
+    )
+    rec = Reconstructor(config)
+    creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
+    mock_lc_instance = MagicMock()
+    result = _make_mock_pointcloud_result(tmp_path)
+    mock_lc_instance.create_pointcloud.return_value = result
+    mock_lc_instance.window_ba = [{"start": 0, "focal": np.float32(368.5), "loss_final": float("nan")}]
+
+    with (
+        patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
+        patch("collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+    ):
+        rec.pointcloud()
+
+    ba_cfg = mock_lc_cls.call_args.kwargs["ba"]
+    assert ba_cfg.dtype == "float64"
+    assert ba_cfg.tracks_cache_dir == rec.backend_dir / "window_ba"
+
+    attrs = result.save_zarr.call_args.kwargs["extra_attrs"]
+    assert attrs["window_ba"] == [{"start": 0, "focal": 368.5, "loss_final": None}]
+
+
+def test_pointcloud_stage_lc_without_ba_passes_none(tmp_path):
+    """LC alone: LoopClosure gets ba=None and the zarr attrs carry no window_ba."""
+    config = _make_config(tmp_path, {"pointcloud": {"loop_closure": True}})
+    rec = Reconstructor(config)
+    creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
+    mock_lc_instance = MagicMock()
+    result = _make_mock_pointcloud_result(tmp_path)
+    mock_lc_instance.create_pointcloud.return_value = result
+
+    with (
+        patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
+        patch("collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+    ):
+        rec.pointcloud()
+
+    assert mock_lc_cls.call_args.kwargs["ba"] is None
+    assert "window_ba" not in result.save_zarr.call_args.kwargs["extra_attrs"]
 
 
 def test_pointcloud_stage_builds_lc_config_from_dict(tmp_path):
@@ -1128,12 +1177,11 @@ def test_localize_stage_builds_the_db(tmp_path):
     pc_zarr = rec.backend_dir / "pointcloud.zarr"
     pc_zarr.mkdir(parents=True)
     with (
-        patch.object(R, "_localization_db_exists", return_value=False),
+        patch.object(R, "localization_db_exists", return_value=False),
         patch.object(R, "_build_localization_db") as build,
     ):
         rec.localize()
-    # top_k comes from base.yaml's localization.top_k default (pairwise/vismatch fan-out)
-    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, top_k=8)
+    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir)
 
 
 ########################################
@@ -1221,12 +1269,12 @@ def test_done_semantics_is_per_extractor(tmp_path):
 def test_done_localize(tmp_path):
     config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
     rec = Reconstructor(config)
-    # No zarr at all: absent, and _localization_db_exists must not even be consulted.
+    # No zarr at all: absent, and localization_db_exists must not even be consulted.
     assert rec.done("localize") is False
     (rec.backend_dir / "pointcloud.zarr").mkdir(parents=True)
-    with patch.object(R, "_localization_db_exists", return_value=True):
+    with patch.object(R, "localization_db_exists", return_value=True):
         assert rec.done("localize") is True
-    with patch.object(R, "_localization_db_exists", return_value=False):
+    with patch.object(R, "localization_db_exists", return_value=False):
         assert rec.done("localize") is False
 
 
@@ -1303,7 +1351,7 @@ def test_run_named_upstream_stages_resume_instead_of_refusing(tmp_path):
     rec.images_dir.mkdir(parents=True, exist_ok=True)
     _seed_pointcloud_markers(rec)
     calls = []
-    rec.preproc = lambda: calls.append("preproc")
+    rec.preproc = lambda **kwargs: calls.append("preproc")
     rec.pointcloud = lambda: calls.append("pointcloud")
     rec.localize = lambda: calls.append("localize")
 
@@ -1319,7 +1367,7 @@ def test_run_config_derived_stages_still_skip_silently(tmp_path):
     _seed_pointcloud_markers(rec)
     (rec.backend_dir / "mesh.ply").touch()
     calls = []
-    rec.preproc = lambda: calls.append("preproc") or rec.images_dir
+    rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
     rec.pointcloud = lambda: calls.append("pointcloud")
     rec.mesh = lambda: calls.append("mesh")
     rec.reconstruction_quality_report = lambda: calls.append("reconstruction_quality_report")
@@ -1371,7 +1419,7 @@ def test_report_is_appended_with_no_config_boolean_to_turn_it_off(tmp_path):
     )
     rec = Reconstructor(config)
     calls = []
-    rec.preproc = lambda: calls.append("preproc") or rec.images_dir
+    rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
     rec.pointcloud = lambda: calls.append("pointcloud")
     rec.reconstruction_quality_report = lambda: calls.append("reconstruction_quality_report")
 

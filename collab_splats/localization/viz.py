@@ -1,12 +1,18 @@
-"""Visualization helpers for localization results."""
+"""
+Visualization helpers for localization results.
+"""
 
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
+
+if TYPE_CHECKING:
+    from collab_splats.localization.localizer import LocalizationResult
 
 logger = logging.getLogger(__name__)
 
@@ -16,22 +22,34 @@ logger = logging.getLogger(__name__)
 ########################################################################
 
 
-def correspondences_for_ref(loc, ref_idx: int, ref_image_hw: "tuple[int, int] | None" = None):
-    """(query_px, ref_px, inlier_mask) for one reference frame, from any object
-    exposing pts2d / pts2d_ref / ref_frame_indices / inlier_mask arrays.
+def correspondences_for_ref(
+    loc: LocalizationResult,
+    ref_idx: int,
+    ref_image_hw: tuple[int, int] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    """
+    Query px, ref px and inlier mask of the correspondences against one reference frame.
 
-    ref_px lives in the pixel space the localizer indexed (loc.ref_hw). Pass
-    ref_image_hw=(H, W) of the image you will draw on to rescale ref_px into its
-    space when the display resolution differs.
+    - ref_px lives in the pixel space the localizer indexed (loc.ref_hw)
+
+    Args:
+        loc: localization result holding the correspondence arrays.
+        ref_idx: reference frame index to slice out.
+        ref_image_hw: (H, W) of the image to draw on; ref_px is rescaled into it when it differs from loc.ref_hw.
+
+    Returns:
+        (query_px, ref_px, inlier_mask) for that frame; the mask is None when loc has none.
     """
     sel = loc.ref_frame_indices == ref_idx
     mask = loc.inlier_mask[sel] if loc.inlier_mask is not None else None
     ref_px = loc.pts2d_ref[sel]
+    ref_hw = loc.ref_hw
+
     # Rescale ref pixels from the result's native space to the display image's space
-    ref_hw = getattr(loc, "ref_hw", None)
     if ref_image_hw is not None and ref_hw is not None and tuple(ref_image_hw) != tuple(ref_hw):
         scale = np.array([ref_image_hw[1] / ref_hw[1], ref_image_hw[0] / ref_hw[0]], dtype=np.float32)
         ref_px = ref_px * scale
+
     return loc.pts2d[sel], ref_px, mask
 
 
@@ -40,51 +58,70 @@ def correspondences_for_ref(loc, ref_idx: int, ref_image_hw: "tuple[int, int] | 
 ########################################################################
 
 
+def _draw_quad(image: np.ndarray, corners: np.ndarray, color: tuple[int, int, int]) -> None:
+    """
+    Draw a closed 4-corner polygon on an RGB image in place.
+    """
+    for i in range(4):
+        start = corners[i - 1][0].astype(int)
+        end = corners[i][0].astype(int)
+        cv2.line(image, tuple(start), tuple(end), color, 4)
+
+
+def _image_corners(image: np.ndarray) -> np.ndarray:
+    """
+    The four pixel-center corners of an image, as cv2.perspectiveTransform input (4, 1, 2).
+    """
+    h, w = image.shape[:2]
+    corners = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+    return corners.reshape(-1, 1, 2)
+
+
 def plot_correspondences(
     query_image: np.ndarray,
     ref_image: np.ndarray,
     query_px: np.ndarray,
     ref_px: np.ndarray,
-    inlier_mask: "np.ndarray | None" = None,
+    inlier_mask: np.ndarray | None = None,
     max_pairs: int = 200,
     warp_corners: bool = False,
     show: bool = True,
-) -> "plt.Figure | None":
-    """Side-by-side query + reference image with inlier/outlier connecting lines.
+) -> plt.Figure | None:
+    """
+    Side-by-side query and reference image with inlier/outlier connecting lines.
 
-    Lines are green for inliers, red for outliers. White dots mark each keypoint.
-    When warp_corners=True, draws both warped boundaries under the inlier homography:
-    cyan quad on the reference side (query corners → reference space) and yellow quad
-    on the query side (reference corners → query space via H⁻¹). Both are always drawn
-    so whichever fits inside its image is visible regardless of relative image sizes.
+    - green lines for inliers, red for outliers
+    - warp_corners: cyan quad = query corners on the ref, yellow quad = ref corners on the query
 
     Args:
-        query_image:  HxWx3 uint8 RGB query image.
-        ref_image:    HxWx3 uint8 RGB reference image (caller-resolved).
-        query_px:     (K, 2) pixel coordinates in the query image.
-        ref_px:       (K, 2) pixel coordinates in the reference image. Use
-                      correspondences_for_ref() to slice a localizer result per frame.
-        inlier_mask:  (K,) bool; None draws every pair as an inlier.
-        max_pairs:    Cap on lines drawn — random subsample if exceeded.
-        warp_corners: Draw homography-warped boundaries on both sides.
-        show:         Call plt.show() (notebook behaviour). Dashboard passes False.
+        query_image: HxWx3 uint8 RGB query image.
+        ref_image: HxWx3 uint8 RGB reference image (caller-resolved).
+        query_px: (K, 2) pixel coordinates in the query image.
+        ref_px: (K, 2) pixel coordinates in the reference image; correspondences_for_ref slices them per frame.
+        inlier_mask: (K,) bool inlier flags; None draws every pair as an inlier.
+        max_pairs: cap on lines drawn; a random subsample is drawn beyond it.
+        warp_corners: draw homography-warped boundaries on both sides.
+        show: call plt.show() (notebook behavior); the dashboard passes False.
 
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
     """
-    # Nothing to draw without correspondences
     kpts0 = np.asarray(query_px)
     kpts1 = np.asarray(ref_px)
+
+    # Nothing to draw without correspondences
     if len(kpts0) == 0:
         logger.warning("plot_correspondences: no correspondences to plot")
         return None
-    inliers = np.ones(len(kpts0), dtype=bool) if inlier_mask is None else np.asarray(inlier_mask, dtype=bool)
 
-    # Compute homography from all inliers before subsampling — subsampled set degrades H
+    inliers = np.ones(len(kpts0), dtype=bool) if inlier_mask is None else np.asarray(inlier_mask, dtype=bool)
     H = None
+
+    # Homography from all inliers before subsampling; a subsampled set degrades H
     if warp_corners:
         inlier_kpts0 = kpts0[inliers]
         inlier_kpts1 = kpts1[inliers]
+
         if len(inlier_kpts0) >= 4:
             H, _ = cv2.findHomography(
                 inlier_kpts0,
@@ -94,14 +131,13 @@ def plot_correspondences(
                 maxIters=1_000,
                 confidence=0.999,
             )
+
             if H is None:
                 logger.debug("plot_correspondences: homography degenerate — skipping corner warp")
         else:
-            logger.debug(
-                "plot_correspondences: only %d inliers — need ≥4 for corner warp",
-                len(inlier_kpts0),
-            )
+            logger.debug("plot_correspondences: only %d inliers — need ≥4 for corner warp", len(inlier_kpts0))
 
+    # Random subsample beyond max_pairs
     if len(kpts0) > max_pairs:
         rng = np.random.default_rng(0)
         idx = rng.choice(len(kpts0), max_pairs, replace=False)
@@ -110,84 +146,65 @@ def plot_correspondences(
     W = query_image.shape[1]
     query_image_disp = query_image.copy()
     ref_image_disp = ref_image.copy()
-    if warp_corners and H is not None:
-        # Query corners → reference space: cyan quad on reference side
-        h_q, w_q = query_image.shape[:2]
-        corners_q = np.array(
-            [[0, 0], [w_q - 1, 0], [w_q - 1, h_q - 1], [0, h_q - 1]],
-            dtype=np.float32,
-        ).reshape(-1, 1, 2)
-        warped_q = cv2.perspectiveTransform(corners_q, H)
-        for i in range(4):
-            cv2.line(
-                ref_image_disp,
-                tuple(warped_q[i - 1][0].astype(int)),
-                tuple(warped_q[i][0].astype(int)),
-                (0, 255, 255),
-                4,
-            )  # cyan (RGB)
 
-        # Reference corners → query space via H⁻¹: yellow quad on query side
-        h_r, w_r = ref_image.shape[:2]
-        corners_r = np.array(
-            [[0, 0], [w_r - 1, 0], [w_r - 1, h_r - 1], [0, h_r - 1]],
-            dtype=np.float32,
-        ).reshape(-1, 1, 2)
+    # Query corners onto the reference via H, reference corners onto the query via H⁻¹
+    if warp_corners and H is not None:
+        corners_q = _image_corners(query_image)
+        warped_q = cv2.perspectiveTransform(corners_q, H)
+        _draw_quad(ref_image_disp, warped_q, (0, 255, 255))
+        corners_r = _image_corners(ref_image)
         H_inv = np.linalg.inv(H)
         warped_r = cv2.perspectiveTransform(corners_r, H_inv)
-        for i in range(4):
-            cv2.line(
-                query_image_disp,
-                tuple(warped_r[i - 1][0].astype(int)),
-                tuple(warped_r[i][0].astype(int)),
-                (255, 255, 0),
-                4,
-            )  # yellow (RGB)
-    # Query and reference may have different resolutions (e.g. 2988p GoPro query vs
-    # 1080p reconstruction frames): rescale the reference side to the query height and
-    # scale its keypoints identically, otherwise the side-by-side concat raises.
-    ref_scale = query_image_disp.shape[0] / ref_image_disp.shape[0]
-    if ref_scale != 1.0:
-        new_w = max(1, int(round(ref_image_disp.shape[1] * ref_scale)))
-        ref_image_disp = cv2.resize(ref_image_disp, (new_w, query_image_disp.shape[0]))
-    combined = np.concatenate([query_image_disp, ref_image_disp], axis=1)
+        _draw_quad(query_image_disp, warped_r, (255, 255, 0))
 
+    # Rescale the reference to the query height; the heights differ and np.concatenate would raise
+    ref_scale = query_image_disp.shape[0] / ref_image_disp.shape[0]
+
+    if ref_scale != 1.0:
+        new_w = round(ref_image_disp.shape[1] * ref_scale)
+        ref_image_disp = cv2.resize(ref_image_disp, (new_w, query_image_disp.shape[0]))
+
+    combined = np.concatenate([query_image_disp, ref_image_disp], axis=1)
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.imshow(combined)
+
+    # Lines per pair, then keypoint dots on both sides
     for (x0, y0), (x1, y1), ok in zip(kpts0, kpts1, inliers):
         color = "lime" if ok else "red"
         ax.plot([x0, x1 * ref_scale + W], [y0, y1 * ref_scale], color=color, linewidth=0.8, alpha=0.6)
+
     ax.scatter(kpts0[:, 0], kpts0[:, 1], s=8, c="white", zorder=3, linewidths=0)
     ax.scatter(kpts1[:, 0] * ref_scale + W, kpts1[:, 1] * ref_scale, s=8, c="white", zorder=3, linewidths=0)
     ax.axvline(W, color="white", linewidth=1, alpha=0.5)
     ax.axis("off")
     ax.set_title(f"query ↔ reference — {inliers.sum()}/{len(inliers)} inliers shown")
     fig.tight_layout()
+
     if show:
         plt.show()
+
     return fig
 
 
 def plot_inlier_distribution(
-    ref_frame_indices: "np.ndarray | None",
-    inlier_mask: "np.ndarray | None",
-    n_frames: "int | None" = None,
-    frame_sources: "list[str] | None" = None,
-) -> "plt.Figure | None":
-    """Per-reference-image inlier bars with total-correspondence markers.
+    ref_frame_indices: np.ndarray | None,
+    inlier_mask: np.ndarray | None,
+    n_frames: int | None = None,
+    frame_sources: list[str] | None = None,
+) -> plt.Figure | None:
+    """
+    Per-reference-image inlier bars with total-correspondence markers.
 
-    Bars are coloured viridis by frame index (frame order == time) so this plot
-    cross-reads with the 3D camera view. Each bar gets a black tick at that
-    image's total correspondence count; when totals are uniform across images
-    the ticks collapse to a single dashed horizontal line. Frames whose source
-    is 'localized' get a red bar edge.
+    - bars are colored viridis by frame index (frame order == time), matching the 3D camera view
+    - each bar gets a black tick at that image's total correspondence count
+    - uniform totals collapse the ticks to one dashed horizontal line
+    - frames whose source is 'localized' get a red bar edge
 
     Args:
         ref_frame_indices: (M,) reference frame index per correspondence.
-        inlier_mask:       (M,) bool inlier flag per correspondence.
-        n_frames:          Total reference frames (bars include zero-match frames);
-                           defaults to max(ref_frame_indices) + 1.
-        frame_sources:     Per-frame provenance list ('reconstruction' | 'localized').
+        inlier_mask: (M,) bool inlier flags per correspondence.
+        n_frames: total reference frames, so bars include zero-match frames; defaults to max(ref_frame_indices) + 1.
+        frame_sources: per-frame provenance, 'reconstruction' or 'localized'.
 
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
@@ -196,8 +213,7 @@ def plot_inlier_distribution(
         logger.warning("plot_inlier_distribution: no correspondence data to plot")
         return None
 
-    # Clamp: bincount(minlength=n) never truncates, so a stale/short n_frames would
-    # desync bar x-positions from counts — grow n to cover every referenced frame
+    # Grow n to cover every referenced frame; bincount never truncates to a short n_frames
     idx = np.asarray(ref_frame_indices).astype(np.intp)
     inlier_mask = np.asarray(inlier_mask, dtype=bool)
     n_used = int(idx.max()) + 1 if len(idx) else 0
@@ -205,9 +221,10 @@ def plot_inlier_distribution(
     totals = np.bincount(idx, minlength=n)
     inliers = np.bincount(idx[inlier_mask], minlength=n)
 
-    # Viridis by frame index — matches the time colouring of the 3D camera plot
+    # Viridis by frame index — matches the time coloring of the 3D camera plot
     cmap = plt.get_cmap("viridis")
-    colors = cmap(np.linspace(0, 1, max(n, 2)))[:n]
+    stops = np.linspace(0, 1, max(n, 2))
+    colors = cmap(stops)[:n]
     edge = [
         "red" if frame_sources is not None and i < len(frame_sources) and frame_sources[i] == "localized" else "none"
         for i in range(n)
@@ -219,6 +236,7 @@ def plot_inlier_distribution(
 
     # Totals: single dashed line when uniform, per-bar ticks otherwise
     nonzero = totals[totals > 0]
+
     if len(nonzero) and (nonzero == nonzero[0]).all():
         ax.axhline(int(nonzero[0]), linestyle="--", color="0.4", linewidth=1)
     else:
@@ -232,7 +250,7 @@ def plot_inlier_distribution(
     ax.set_xlabel("reference image (time →)")
     ax.set_ylabel("inliers")
     ax.set_title(
-        f"{n_inliers}/{n_correspondences} inliers " f"({100 * n_inliers / max(n_correspondences, 1):.0f}%)",
+        f"{n_inliers}/{n_correspondences} inliers ({100 * n_inliers / max(n_correspondences, 1):.0f}%)",
         fontsize=10,
     )
     fig.tight_layout()

@@ -1,141 +1,149 @@
-"""Stage 2 — Local feature matching: vismatch-backed LocalMatcher is the sole provider."""
+"""
+Stage 2 local matching: vismatch features, cached once, matched pair by pair.
+
+- xfeat and loma only: vismatch supports_batches, so match() reads cached features
+- LocalFeatures is one cache row; MatchResult carries native keypoint-table indices
+"""
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import torch
 
-from collab_splats.utils.torch_utils import get_device
+import vismatch
+
+from collab_splats.utils.torch_utils import get_device, to_numpy
 
 logger = logging.getLogger(__name__)
 
 
+########################################
+# Containers
+########################################
+
+
 @dataclass
 class LocalFeatures:
-    """Container for local feature extraction output.
+    """
+    Keypoints and descriptors of one image, as the feature cache stores them.
 
-    `scores`/`scales` are optional per-keypoint extras some models produce
-    (saliency scores, extraction scales); consumers that don't need them
-    leave them as None.
+    - keypoints_normalized: loma's model-grid coords, which its matcher consumes
+    - image_size: (W, H) of the image the keypoints were detected in
     """
 
-    keypoints: torch.Tensor  # (N, 2) float32 pixel [x, y]
+    keypoints: torch.Tensor  # (N, 2) float32 pixel xy
     descriptors: torch.Tensor  # (N, D) float32
-    scores: torch.Tensor | None = None  # (N,) float32 — optional saliency
-    scales: torch.Tensor | None = None  # (N,) — optional extraction scale
-    keypoints_normalized: torch.Tensor | None = None  # (N, 2) loma model-grid coords its matcher consumes
-    image_size: tuple[int, int] | None = None  # (W, H) of the image the keypoints were detected in
+    keypoints_normalized: torch.Tensor | None = None  # (N, 2)
+    image_size: tuple[int, int] | None = None  # (W, H)
 
 
 @dataclass
 class MatchResult:
-    """Matched pixel coordinates between a query and one reference image.
+    """
+    Matched pixels between a query and one reference image, with their keypoint rows.
 
-    idx_q/idx_db are the keypoint-table indices behind the pixel pairs — COLMAP's match
-    format (its consumer, geometry verification, was removed 2026-09-27). None when the matcher cannot provide
-    stable indices (per-pair subpixel refinement moves the same keypoint to different
-    coordinates in different pairs, so no single table row describes it).
+    - idx_q / idx_db index the two keypoint tables, COLMAP's match format
     """
 
-    query_px: np.ndarray  # (K, 2) float32 xy in query image
-    ref_px: np.ndarray  # (K, 2) float32 xy in reference image
-    idx_q: np.ndarray | None = None  # (K,) int64 into the query keypoint table
-    idx_db: np.ndarray | None = None  # (K,) int64 into the reference keypoint table
+    query_px: np.ndarray  # (K, 2) float32 xy in the query image
+    ref_px: np.ndarray  # (K, 2) float32 xy in the reference image
+    idx_q: np.ndarray  # (K,) int64 into the query keypoint table
+    idx_db: np.ndarray  # (K,) int64 into the reference keypoint table
 
     def __len__(self) -> int:
+        """
+        Number of matches.
+        """
         return len(self.query_px)
 
 
 def _empty_match() -> MatchResult:
-    """Zero-length MatchResult (with empty index arrays — a zero match is indexable)."""
-    z = np.zeros((0, 2), dtype=np.float32)
-    zi = np.zeros(0, dtype=np.int64)
-    return MatchResult(query_px=z, ref_px=z, idx_q=zi, idx_db=zi)
+    """
+    Zero-length MatchResult with empty index arrays.
+    """
+    query_px = np.zeros((0, 2), dtype=np.float32)
+    ref_px = np.zeros((0, 2), dtype=np.float32)
+    idx_q = np.zeros(0, dtype=np.int64)
+    idx_db = np.zeros(0, dtype=np.int64)
+    return MatchResult(query_px=query_px, ref_px=ref_px, idx_q=idx_q, idx_db=idx_db)
 
 
 ########################################
-# VisMatch-backed matcher
+# Matcher
 ########################################
-
-# Models whose base deps we override away — vismatch would crash at model load.
-_VISMATCH_DEP_BLOCKLIST = {
-    "ufm": "requires uniception==0.1.1; this project pins 0.1.7 for MapAnything",
-    "edm": "requires lightning==2.3.3; this project resolves lightning>=2.6",
-}
-
-# Upstream model licenses that forbid commercial use. Verified 2026-08-17 against
-# upstream LICENSE files / READMEs (GitHub); vismatch's own wrapper is BSD-3 but does
-# not relicense the models it wraps. Names match vismatch.available_models exactly.
-_VISMATCH_LICENSE_BLOCKLIST = {
-    "superglue": "Magic Leap academic/non-profit research-only license",
-    "superpoint-lightglue": "SuperPoint weights: Magic Leap research-only license",
-    "superpoint-lightglue-subpx": "SuperPoint weights: Magic Leap research-only license",
-    "superpoint-sphereglue": "SuperPoint weights: Magic Leap research-only license",
-    "minima-superpoint-lightglue": "SuperPoint weights: Magic Leap research-only license",
-    "lisrd": "default detector is SuperPoint (Magic Leap research-only weights)",
-    "lisrd-superpoint": "SuperPoint weights: Magic Leap research-only license",
-    "duster": "DUSt3R: CC BY-NC-SA 4.0 (non-commercial)",
-    "master": "MASt3R: CC BY-NC-SA 4.0 (non-commercial)",
-    "gim-lightglue": "GIM: repo MIT but README restricts model/content to research use only",
-    "gim-dkm": "GIM: repo MIT but README restricts model/content to research use only",
-    "r2d2": "R2D2: CC BY-NC-SA 3.0 (non-commercial)",
-    "aspanformer": "ASpanFormer: Apple license, non-commercial purposes only",
-    "ripe": "RIPE: Fraunhofer Software Copyright License for Academic Use",
-    "silk": "SiLK: GPL-3.0 (copyleft) — legal review before commercial use",
-    "liftfeat": "LiftFeat: no license published (all rights reserved)",
-    "matchanything-eloftr": "MatchAnything: license unverified — audit before commercial use",
-    "matchanything-roma": "MatchAnything: license unverified — audit before commercial use",
-}
-
-
-def _to_numpy(x) -> np.ndarray:
-    """torch.Tensor (any device) or array-like -> float32 numpy array."""
-    if isinstance(x, torch.Tensor):
-        return x.detach().cpu().numpy().astype(np.float32)
-    return np.asarray(x, dtype=np.float32)
 
 
 class LocalMatcher:
-    """Stage-2 local matcher backed by the vismatch model zoo.
+    """
+    One vismatch model: extract() fills the feature cache, match() pairs two cached frames.
 
-    One class for every vismatch model; the model name is data, not a subclass.
-    extract() fills the zarr feature cache; match() matches cached features (xfeat, loma);
-    match_images() is the pairwise path.
+    - the model name is data, not a subclass
+    - models without vismatch supports_batches are refused: they cannot match cached features
     """
 
-    def __init__(self, model_name: str, device: str | None = None, probe: bool = True):
-        # Refuse blocked models before touching vismatch (dep conflicts / licenses).
-        for blocklist, kind in ((_VISMATCH_DEP_BLOCKLIST, "dependency"), (_VISMATCH_LICENSE_BLOCKLIST, "license")):
-            if model_name in blocklist:
-                raise ValueError(f"vismatch model '{model_name}' blocked ({kind}): {blocklist[model_name]}")
-        # Heavy optional dep: vismatch pulls the full model zoo machinery.
-        import vismatch
+    def __init__(self, model_name: str, device: str | None = None, *, max_num_keypoints: int = 2048) -> None:
+        """
+        Load the vismatch model; refuse one that cannot match cached features.
 
+        Args:
+            model_name: vismatch model name, "xfeat" or "loma".
+            device: torch device; None picks CUDA when available.
+            max_num_keypoints: per-image keypoint cap, forwarded to vismatch unchanged.
+
+        Raises:
+            ValueError: the model lacks vismatch supports_batches.
+        """
         self._model_name = model_name
         self._device = device or get_device()
-        self._matcher = vismatch.get_matcher(model_name, device=self._device)
+        self._max_num_keypoints = max_num_keypoints
+        self._matcher = vismatch.get_matcher(model_name, device=self._device, max_num_keypoints=max_num_keypoints)
+
+        # Cached-feature matching runs on vismatch's batch path only
+        if not self._matcher.supports_batches:
+            raise ValueError(
+                f"LocalMatcher: vismatch '{model_name}' cannot match cached features "
+                "(supports_batches is False); use xfeat or loma"
+            )
+
         # Callers verify geometry with pycolmap; vismatch's homography RANSAC is wasted work
         self._matcher.skip_ransac = True
-        # Set by _probe_index_stability(); None until probed.
-        self.has_stable_indices: bool | None = None
-        if probe:
-            self._probe_index_stability()
 
     @property
     def model_name(self) -> str:
+        """
+        vismatch model name; also the feature-cache key.
+
+        Returns:
+            The name passed at construction.
+        """
         return self._model_name
 
+    @property
+    def max_num_keypoints(self) -> int:
+        """
+        Per-image keypoint cap; stamped into the feature cache so a changed cap rebuilds it.
+
+        Returns:
+            The cap passed at construction.
+        """
+        return self._max_num_keypoints
+
     def _to_tensor(self, image: np.ndarray) -> torch.Tensor:
-        """HxWx3 RGB (uint8, or float in [0, 1]) -> (3,H,W) on device, dtype kept; vismatch scales uint8."""
-        # Upload as-is and convert on device: uint8 is 4x fewer bytes, and no max() sync
-        return torch.from_numpy(np.ascontiguousarray(image)).to(self._device).permute(2, 0, 1)
+        """
+        HxWx3 RGB to (3, H, W) on device, dtype kept; vismatch scales uint8 itself.
+        """
+        array = np.ascontiguousarray(image)
+        tensor = torch.from_numpy(array).to(self._device)
+        return tensor.permute(2, 0, 1)
 
     @staticmethod
     def _check_pixel_frame(kpts: np.ndarray, hw: tuple[int, int], what: str) -> None:
-        """Guard the 92f2e4a bug class: keypoints must be in the INPUT image's pixel frame."""
+        """
+        Refuse keypoints outside the input image's pixel frame.
+        """
         if len(kpts) and (kpts.min() < -0.5 or kpts[:, 0].max() > hw[1] - 0.5 or kpts[:, 1].max() > hw[0] - 0.5):
             raise ValueError(
                 f"vismatch '{what}' keypoints outside input pixel frame {hw}: "
@@ -145,133 +153,113 @@ class LocalMatcher:
             )
 
     def extract(self, images: np.ndarray | list[np.ndarray]) -> LocalFeatures | list[LocalFeatures]:
-        """Keypoints+descriptors for one HxWx3 RGB image, or for each image of a list in one vismatch call."""
+        """
+        Keypoints and descriptors for one image, or for every image of a list in one vismatch call.
+
+        Args:
+            images: HxWx3 RGB uint8 (or float in [0, 1]), or a list of them.
+
+        Returns:
+            One LocalFeatures for one image; a list, in order, for a list. Tensors on CPU.
+
+        Raises:
+            ValueError: the model returned keypoints outside an input image.
+        """
         batch = isinstance(images, list)
         images = images if batch else [images]
-        with torch.inference_mode():
-            outs = self._matcher.extract([self._to_tensor(image) for image in images])
+        tensors = [self._to_tensor(image) for image in images]
 
-        # vismatch may hand back numpy or on-device tensors depending on the model
+        with torch.inference_mode():
+            outs = self._matcher.extract(tensors)
+
+        # vismatch returns numpy; to_numpy also tolerates tensors
         feats = []
+
         for image, out in zip(images, outs):
-            kpts = _to_numpy(out["all_kpts0"])
+            kpts = to_numpy(out["all_kpts0"])
+            kpts = kpts.astype(np.float32, copy=False)
             self._check_pixel_frame(kpts, image.shape[:2], self._model_name)
+            desc = to_numpy(out["all_desc0"])
+            desc = desc.astype(np.float32, copy=False)
             norm = out.get("kpts_normalized")
+
+            if norm is not None:
+                norm = to_numpy(norm)
+                norm = norm.astype(np.float32, copy=False)
+                norm = torch.from_numpy(norm)
+
             feats.append(
                 LocalFeatures(
                     keypoints=torch.from_numpy(kpts),
-                    descriptors=torch.from_numpy(_to_numpy(out["all_desc0"])),
-                    keypoints_normalized=None if norm is None else torch.from_numpy(_to_numpy(norm)),
+                    descriptors=torch.from_numpy(desc),
+                    keypoints_normalized=norm,
                     image_size=(image.shape[1], image.shape[0]),
                 )
             )
+
         return feats if batch else feats[0]
 
-    def match(self, query: LocalFeatures, db: LocalFeatures) -> MatchResult:
-        """Match precomputed features via vismatch match(); rows are native keypoint-table indices.
-
-        Only for models with vismatch supports_batches (xfeat, loma) — no _recover_indices.
+    def to_device(self, features: LocalFeatures) -> LocalFeatures:
         """
-        if not self._matcher.supports_batches:
-            raise NotImplementedError(
-                f"LocalMatcher('{self._model_name}') cannot match precomputed features "
-                "(vismatch supports_batches is False). Use match_images()."
-            )
+        The same features on the matcher's device, so vismatch's per-match upload is a no-op.
+
+        Args:
+            features: features from extract() or the cache.
+
+        Returns:
+            A copy whose tensors sit on the matcher's device.
+        """
+        moved = {}
+
+        for name in ("keypoints", "descriptors", "keypoints_normalized"):
+            value = getattr(features, name)
+            moved[name] = None if value is None else value.to(self._device)
+
+        return replace(features, **moved)
+
+    def match(self, query: LocalFeatures, db: LocalFeatures) -> MatchResult:
+        """
+        Match two cached frames; index rows are native keypoint-table indices.
+
+        Args:
+            query: query image features.
+            db: reference image features.
+
+        Returns:
+            Pre-RANSAC matches; empty when either side has no keypoints.
+        """
         if len(query.descriptors) == 0 or len(db.descriptors) == 0:
             return _empty_match()
-        out = self._matcher.match(self._vismatch_features(query), self._vismatch_features(db))
+
+        query_in = self._vismatch_features(query)
+        db_in = self._vismatch_features(db)
+
+        with torch.inference_mode():
+            out = self._matcher.match(query_in, db_in)
+
         if len(out["matched_idxs0"]) == 0:
             return _empty_match()
-        return MatchResult(
-            query_px=_to_numpy(out["matched_kpts0"]),
-            ref_px=_to_numpy(out["matched_kpts1"]),
-            idx_q=out["matched_idxs0"].astype(np.int64),
-            idx_db=out["matched_idxs1"].astype(np.int64),
-        )
+
+        query_px = to_numpy(out["matched_kpts0"])
+        ref_px = to_numpy(out["matched_kpts1"])
+        idx_q = to_numpy(out["matched_idxs0"])
+        idx_db = to_numpy(out["matched_idxs1"])
+
+        # MatchResult dtypes: float32 pixels, int64 keypoint indices
+        query_px = query_px.astype(np.float32, copy=False)
+        ref_px = ref_px.astype(np.float32, copy=False)
+        idx_q = idx_q.astype(np.int64, copy=False)
+        idx_db = idx_db.astype(np.int64, copy=False)
+        return MatchResult(query_px=query_px, ref_px=ref_px, idx_q=idx_q, idx_db=idx_db)
 
     @staticmethod
     def _vismatch_features(feats: LocalFeatures) -> dict:
-        """LocalFeatures -> vismatch extract() dict; keypoints_normalized feeds loma's matcher."""
+        """
+        LocalFeatures as a vismatch extract() dict; keypoints_normalized feeds loma.
+        """
         out = {"all_kpts0": feats.keypoints, "all_desc0": feats.descriptors, "image_size": feats.image_size}
+
         if feats.keypoints_normalized is not None:
             out["kpts_normalized"] = feats.keypoints_normalized
+
         return out
-
-    @staticmethod
-    def _recover_indices(matched: np.ndarray, table: np.ndarray) -> np.ndarray | None:
-        """Map matched coordinates to exact rows of the keypoint table; None if any miss.
-
-        Exact float equality on purpose: a coordinate a matcher refined off its table
-        row must fail here, not silently map to the nearest row. Duplicate table rows:
-        argmax picks the FIRST matching row, so two matches at the same coordinate map
-        to the same index.
-        """
-        if len(table) == 0:
-            return None
-        # (K, N) exact row-equality; argmax over N gives the row per match
-        eq = (matched[:, None, :] == table[None, :, :]).all(axis=2)
-        if not eq.any(axis=1).all():
-            return None
-        return eq.argmax(axis=1).astype(np.int64)
-
-    def match_images(self, query_image: np.ndarray, ref_image: np.ndarray) -> MatchResult:
-        """Pairwise match two HxWx3 uint8 RGB images. Pre-RANSAC matches.
-
-        vismatch's homography RANSAC is skipped in __init__ (wrong model for 3D scenes);
-        PnP LO-RANSAC / epipolar verification do the filtering.
-        """
-        q_hw, r_hw = query_image.shape[:2], ref_image.shape[:2]
-        with torch.inference_mode():
-            out = self._matcher(self._to_tensor(query_image), self._to_tensor(ref_image))
-        q_px = _to_numpy(out["matched_kpts0"])
-        r_px = _to_numpy(out["matched_kpts1"])
-        if len(q_px) == 0:
-            return _empty_match()
-        self._check_pixel_frame(q_px, q_hw, self._model_name)
-        self._check_pixel_frame(r_px, r_hw, self._model_name)
-
-        # Recover COLMAP keypoint-table row indices when the probe proved stability
-        idx_q = idx_db = None
-        if self.has_stable_indices:
-            idx_q = self._recover_indices(q_px, _to_numpy(out["all_kpts0"]))
-            idx_db = self._recover_indices(r_px, _to_numpy(out["all_kpts1"]))
-            if idx_q is None or idx_db is None:
-                logger.warning(
-                    "LocalMatcher(%s): index recovery failed on a pair despite passing the "
-                    "probe — treating this pair as index-less",
-                    self._model_name,
-                )
-                idx_q = idx_db = None
-        return MatchResult(query_px=q_px, ref_px=r_px, idx_q=idx_q, idx_db=idx_db)
-
-    def _probe_index_stability(self) -> None:
-        """One synthetic pair through the model: are matched kpts exact keypoint-table rows?
-
-        Two conditions must BOTH hold for verify-compatibility:
-          (a) within-call: matched_kpts are exact rows of all_kpts (no per-pair refinement);
-          (b) cross-call: extract() keypoints reproduce (deterministic detection),
-              so cache-time and match-time tables agree.
-        """
-        rng = np.random.default_rng(7)
-        img = rng.uniform(0, 255, (256, 320, 3)).astype(np.uint8)
-        img2 = np.roll(img, 8, axis=1)  # shifted copy — guarantees some matches for most models
-        with torch.inference_mode():
-            out = self._matcher(self._to_tensor(img), self._to_tensor(img2))
-            ext = self._matcher.extract(self._to_tensor(img))
-        # (a) within-call index recovery on both sides
-        within = (
-            len(out["matched_kpts0"]) > 0
-            and self._recover_indices(_to_numpy(out["matched_kpts0"]), _to_numpy(out["all_kpts0"])) is not None
-            and self._recover_indices(_to_numpy(out["matched_kpts1"]), _to_numpy(out["all_kpts1"])) is not None
-        )
-        # (b) cross-call detection determinism: extract table must equal pair-call table
-        # (np.array_equal covers the shape mismatch case)
-        cross = np.array_equal(_to_numpy(out["all_kpts0"]), _to_numpy(ext["all_kpts0"]))
-        self.has_stable_indices = bool(within and cross)
-        logger.info(
-            "LocalMatcher(%s): index probe — within-call %s, cross-call %s -> stable_indices=%s",
-            self._model_name,
-            within,
-            cross,
-            self.has_stable_indices,
-        )

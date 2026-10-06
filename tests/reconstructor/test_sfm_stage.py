@@ -217,22 +217,41 @@ def test_localization_db_pairs_zarr_rows_with_their_own_frames(tmp_path):
     recon = _seed_subset_scene(tmp_path)
     seen = {}
 
-    def spy_from_feedforward(result, *, images, ids, **kwargs):
-        seen["ids"] = ids
+    def spy_from_pointcloud(result, *, zarr_path, images, **kwargs):
         seen["pixels"] = [int(image[0, 0, 0]) for image in images]
 
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
-        patch("collab_splats.localization.extractors.LocalMatcher"),
-        patch(
-            "collab_splats.localization.localizer.CameraLocalizer.from_feedforward", side_effect=spy_from_feedforward
-        ),
+        patch(f"{RECONSTRUCTOR}.LocalMatcher"),
+        patch("collab_splats.localization.localizer.CameraLocalizer.from_pointcloud", side_effect=spy_from_pointcloud),
     ):
-        _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir, top_k=8)
+        _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir)
 
-    # from_feedforward pairs image i with geometry row i: M ids, M frames, zarr order
-    assert seen["ids"] == [f"frame_{i:06d}.png" for i in KEPT_IDX]
+    # from_pointcloud pairs image i with geometry row i: M frames, in zarr order
     assert seen["pixels"] == list(KEPT_IDX)
+
+
+def test_localization_db_reads_full_res_store_frames_not_model_images(tmp_path):
+    recon = _seed_subset_scene(tmp_path)
+    seen = {}
+
+    # Model grid 4x6 against 8x8 store frames: only a store read yields 8x8
+    model_res = minimal_feedforward_result(n=len(KEPT_IDX), h=4, w=6)
+    model_res.image_paths = [Path(f"frame_{i:06d}") for i in KEPT_IDX]
+    load_zarr = MagicMock(return_value=model_res)
+
+    def spy_from_pointcloud(result, *, zarr_path, images, **kwargs):
+        seen["shapes"] = [image.shape for image in images]
+
+    with (
+        patch.object(PointcloudResult, "load_zarr", load_zarr),
+        patch(f"{RECONSTRUCTOR}.LocalMatcher"),
+        patch("collab_splats.localization.localizer.CameraLocalizer.from_pointcloud", side_effect=spy_from_pointcloud),
+    ):
+        _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir)
+
+    assert seen["shapes"] == [(8, 8, 3)] * len(KEPT_IDX)
+    assert not load_zarr.call_args.kwargs.get("load_images", False)
 
 
 def test_mesh_fuses_the_frames_the_zarr_rows_came_from(tmp_path):

@@ -21,7 +21,7 @@ import pycolmap
 import torch
 import zarr
 
-from collab_splats.geometry.projection import unproject
+from collab_splats.geometry.projection import unproject_frames
 from collab_splats.geometry.transforms import (
     extract_intrinsics,
     rescale_intrinsics,
@@ -31,37 +31,9 @@ from collab_splats.pointcloud.utils import clean_pointcloud
 from collab_splats.preproc import frames
 from collab_splats.utils.colmap import write_colmap_reconstruction
 from collab_splats.utils.io import LZ4
-from collab_splats.utils.torch_utils import get_device, to_numpy
+from collab_splats.utils.torch_utils import to_numpy
 
 logger = logging.getLogger(__name__)
-
-
-########################################################################
-# Helpers
-########################################################################
-
-
-def _unproject_frames(
-    depth: np.ndarray, extrinsics: np.ndarray, intrinsics: np.ndarray, batch_size: int = 100
-) -> np.ndarray:
-    """
-    World point of every depth pixel, unprojected on the GPU when one is present.
-
-    - frames go through in batches of batch_size, bounding device memory
-    - returns (N, H, W, 3) float32
-    """
-    device = get_device()
-    world_points = np.empty((*depth.shape, 3), dtype=np.float32)
-
-    # Unproject each batch on device, copy it back into the host array
-    for start in range(0, len(depth), batch_size):
-        stop = start + batch_size
-        batch_depth = torch.as_tensor(depth[start:stop], dtype=torch.float32, device=device)
-        world_to_cam = torch.as_tensor(extrinsics[start:stop], dtype=torch.float32, device=device)
-        K = torch.as_tensor(intrinsics[start:stop], dtype=torch.float32, device=device)
-        world_points[start:stop] = unproject(batch_depth, world_to_cam, K).cpu().numpy()
-
-    return world_points
 
 
 ########################################################################
@@ -242,7 +214,7 @@ class PointcloudResult:
         # Rebuild world points from depth, then drop depth if it was read only for them
         world_points = None
         if load_world_points and depth is not None:
-            world_points = _unproject_frames(depth, extrinsics, model_intrinsics)
+            world_points = unproject_frames(depth, extrinsics, model_intrinsics)
 
         if not load_depth:
             depth = None
@@ -293,7 +265,7 @@ class PointcloudResult:
             raise ValueError(f"depth must be (N, H, W), got {self.depth.shape}")
 
         # Unproject every frame under the current poses, then read each point's source pixel
-        world_points = _unproject_frames(self.depth, self.extrinsics, self.model_intrinsics)
+        world_points = unproject_frames(self.depth, self.extrinsics, self.model_intrinsics)
         frame, row, col = self.pixel_indices.T
         points = world_points[frame, row, col]
 
@@ -418,9 +390,9 @@ class BasePointcloudCreator(ABC):
             The cleaned and capped PointcloudResult.
 
         Raises:
-            FileNotFoundError: images_dir is missing or holds no images.
+            FileNotFoundError: no frames to reconstruct, handed off or in images_dir.
         """
-        paths = frames.frame_paths(images_dir)
+        paths = self._list_frames(images_dir)
 
         if not paths:
             raise FileNotFoundError(f"no images in {images_dir}")
@@ -443,6 +415,12 @@ class BasePointcloudCreator(ABC):
             write_colmap_reconstruction(self._colmap_model(result), Path(model_dir))
 
         return result
+
+    def _list_frames(self, images_dir: Path) -> list[Path]:
+        """
+        Frame image paths to reconstruct, in filename order, listed from images_dir.
+        """
+        return frames.frame_paths(images_dir)
 
     def _colmap_model(self, result: PointcloudResult) -> pycolmap.Reconstruction:
         """

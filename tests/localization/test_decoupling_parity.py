@@ -15,7 +15,18 @@ class _ContentExtractor:
     than direct extraction — a content-independent stub would pass vacuously.
     """
 
-    def extract(self, image):
+    model_name = "content"
+    max_num_keypoints = 2048
+
+    def extract(self, images):
+        if isinstance(images, list):
+            return [self._one(im) for im in images]
+        return self._one(images)
+
+    def to_device(self, features):
+        return features
+
+    def _one(self, image):
         img = image.astype(np.float32)
         h, w = img.shape[:2]
         # 8 keypoints whose coordinates hash local pixel intensity
@@ -26,7 +37,7 @@ class _ContentExtractor:
         desc = torch.from_numpy(
             np.stack([img[int(y) % h, int(x) % w] / 255.0 for x, y in zip(xs, ys)]).astype(np.float32)
         )
-        return LocalFeatures(keypoints=kpts, descriptors=desc)
+        return LocalFeatures(keypoints=kpts, descriptors=desc, image_size=(w, h))
 
 
 def test_index_features_match_direct_extraction():

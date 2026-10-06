@@ -16,6 +16,12 @@ import numpy as np
 import torch
 
 from collab_splats.geometry.transforms import decompose_camera, intrinsics_4x4
+from collab_splats.utils.torch_utils import (
+    batch_iterator,
+    full_fp32_matmul,
+    get_device,
+    to_numpy,
+)
 
 if TYPE_CHECKING:
     from collab_splats.geometry.loop_closure.graph import PoseGraph
@@ -35,7 +41,7 @@ class Submap:
         submap_id: key in the GraphMap; windows first, then loop carriers.
         poses: world-to-cam homogeneous poses, (K, 4, 4) float32.
         intrinsics: camera intrinsics, (K, 3, 3) float32.
-        retrieval_vectors: DINO-SALAD global descriptors, (K, D) float32.
+        retrieval_vectors: DINO-SALAD global descriptors, (K, D) float32; None when retrieval is off.
         image_paths: one source image per frame.
         frames: raw image tensors on CPU, (K, 3, H, W).
         is_lc_submap: True for a 2-frame loop carrier.
@@ -50,7 +56,7 @@ class Submap:
     submap_id: int
     poses: np.ndarray
     intrinsics: np.ndarray
-    retrieval_vectors: torch.Tensor
+    retrieval_vectors: torch.Tensor | None
     image_paths: list[Path]
     frames: torch.Tensor | None = None
     is_lc_submap: bool = False
@@ -89,36 +95,62 @@ class Submap:
     # Graph-corrected world reads
     ####################################################################
 
-    def get_world_grid(self, graph: PoseGraph) -> np.ndarray:
+    def get_world_grid(self, graph: PoseGraph, chunk: int = 64) -> np.ndarray:
         """
         Dense per-pixel points in the world frame, corrected by the pose graph, unmasked.
 
-        - frame i uses the optimized SL(4) homography of node `frame_start + i`
+        - points are stored in the submap frame: move frame i's into its own camera with poses[i]
+        - then apply frame i's optimized SL(4) homography (camera to world), found by its graph node id
+        - float32 on get_device(), in frame chunks
+        - the float64 homography is rounded to float32 as well, not only the points
 
         Args:
             graph: optimized PoseGraph holding one homography per frame.
+            chunk: frames per device batch.
 
         Returns:
             World-frame grid, (K, H, W, 3) float32.
 
         Raises:
-            ValueError: if the submap has no dense points.
+            ValueError: if the submap has no dense points, or its graph node count differs from its frame count.
         """
         if self.points is None:
             raise ValueError(f"Submap {self.submap_id} has no dense points")
 
-        out = np.empty(self.points.shape, dtype=np.float32)
-        for i in range(self.points.shape[0]):
-            # Lift the frame's points to homogeneous and apply its homography
-            H = graph.get_homography(self.frame_start + i).astype(np.float64)
-            flat = self.points[i].reshape(-1, 3).astype(np.float64)  # (H*W, 3)
-            hom = np.hstack([flat, np.ones((flat.shape[0], 1), dtype=np.float64)])
-            out_hom = (H @ hom.T).T  # (H*W, 4)
+        # One graph node per frame, for the poses and the point grid alike
+        node_ids = graph.submap_node_ids(self.submap_id)
 
-            # Dehomogenize by w, guarding near-zero w (plane at infinity)
-            w = out_hom[:, 3:4]
-            w = np.where(np.abs(w) < 1e-10, 1e-10, w)
-            out[i] = (out_hom[:, :3] / w).reshape(self.points.shape[1:])
+        if len(node_ids) != len(self.poses) or len(node_ids) != self.points.shape[0]:
+            raise ValueError(
+                f"Submap {self.submap_id}: {len(node_ids)} graph nodes, {len(self.poses)} poses, "
+                f"{self.points.shape[0]} point frames"
+            )
+
+        # Stack every frame's camera-to-world map: its node homography after its submap pose, in float64
+        H_node = np.stack([graph.get_homography(nid) for nid in node_ids])
+        H = H_node @ self.poses.astype(np.float64)
+
+        # Lift the grid on get_device() in float32
+        device = get_device()
+        H = torch.as_tensor(H, dtype=torch.float32, device=device)
+        out = np.empty(self.points.shape, dtype=np.float32)
+        offset = 0
+
+        # Full fp32 matmul, one chunk of frames at a time to bound device memory
+        with full_fp32_matmul():
+            for pts, H_chunk in batch_iterator(chunk, self.points, H):
+                pts = torch.as_tensor(pts, dtype=torch.float32, device=device)
+                ones = torch.ones_like(pts[..., :1])
+                hom = torch.cat([pts, ones], dim=-1)
+                mapped = torch.einsum("cij,chwj->chwi", H_chunk, hom)
+
+                # Dehomogenize by w, guarding near-zero w (plane at infinity)
+                w = mapped[..., 3:]
+                near_zero = w.abs() < 1e-10
+                w = w.masked_fill(near_zero, 1e-10)
+                world = mapped[..., :3] / w
+                out[offset : offset + len(pts)] = to_numpy(world)
+                offset += len(pts)
 
         return out
 
@@ -182,12 +214,23 @@ class Submap:
 
         Returns:
             World-to-cam poses, (N, 4, 4) float32.
+
+        Raises:
+            ValueError: if the submap's graph node count differs from its frame count.
         """
+        # One graph node per frame
+        node_ids = graph.submap_node_ids(self.submap_id)
+
+        if len(node_ids) != len(self.poses):
+            raise ValueError(f"Submap {self.submap_id}: {len(node_ids)} graph nodes, {len(self.poses)} poses")
+
         poses = []
         for i in range(self.poses.shape[0]):
             # Projection K @ inv(H_opt), normalized so its last entry is 1
             K_4x4 = intrinsics_4x4(self.intrinsics[i].astype(np.float64))
-            proj = K_4x4 @ np.linalg.inv(graph.get_homography(self.frame_start + i))
+            H_opt = graph.get_homography(node_ids[i])
+            H_inv = np.linalg.inv(H_opt)
+            proj = K_4x4 @ H_inv
             proj = proj / proj[-1, -1]
 
             # Decompose, then store as world-to-cam; see transforms.decompose_camera

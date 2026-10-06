@@ -9,7 +9,9 @@ Keyframe selection from a quality report.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 import cv2
@@ -272,24 +274,44 @@ def _decode_selection(
     report: dict,
     on_progress,
     desc: str,
+    workers: int = 1,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
-    Decode exactly the selected frames, in one pass, as RGB.
+    Decode exactly the selected frames as RGB, in contiguous ranges on a thread pool.
 
-    Args:
-        video_path: source video.
-        chosen: ascending source frame indices.
-        report: the quality report the blur_score column is read from.
-        on_progress: optional (done, total) callback.
-        desc: progress-bar label.
-
-    Returns:
-        (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
+    - each thread seeks to its range's first frame and keeps only the chosen ones
+    - PyAV releases the GIL in decode, so threads scale without pickling frames
+    - one decode thread per container: the pool is the parallelism, AUTO oversubscribes
+    - returns (frames, records): (H, W, 3) uint8 RGB arrays and {frame_idx, blur_score} rows
     """
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
-    # One decode pass over exactly the frames we keep
-    decoded = dict(iter_frames(video_path, indices=list(chosen)))
+    if workers < 1:
+        raise ValueError(f"workers must be >= 1, got {workers}")
+
+    if not chosen:
+        return [], []
+
+    # Split the selection into one contiguous group per worker
+    chosen = list(chosen)
+    size = math.ceil(len(chosen) / workers)
+    groups = [chosen[i : i + size] for i in range(0, len(chosen), size)]
+
+    # Each group decodes its own window and keeps only its chosen frames
+    def _decode_group(group: list[int]) -> dict[int, np.ndarray]:
+        """
+        Chosen frames of one group, from one seek and one window decode.
+        """
+        keep = set(group)
+        window = iter_frames(video_path, start=group[0], count=group[-1] - group[0] + 1, threads=1)
+        return {idx: bgr for idx, bgr in window if idx in keep}
+
+    decoded: dict[int, np.ndarray] = {}
+
+    with ThreadPoolExecutor(len(groups)) as pool:
+        for part in pool.map(_decode_group, groups):
+            decoded.update(part)
+
     missing = sorted(set(chosen) - decoded.keys())
     if missing:
         raise ValueError(
@@ -317,6 +339,7 @@ def sample_uniform(
     report: dict,
     quality: dict | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    workers: int = 1,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
     Exactly max_frames evenly-spaced picks from the eligible pool.
@@ -327,6 +350,7 @@ def sample_uniform(
         report: a quality report from qa.compute_video_quality or qa.load_video_quality.
         quality: overrides for filter_frame_quality's thresholds.
         on_progress: optional (done, total) callback.
+        workers: selection decode threads; 1 is one seek and one window decode.
 
     Returns:
         (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
@@ -345,7 +369,9 @@ def sample_uniform(
         logger.warning("max_frames=%d but only %d eligible frames; keeping the whole pool", max_frames, pool.size)
     chosen = _spread(pool, max_frames)
 
-    return _decode_selection(video_path, chosen, report=report, on_progress=on_progress, desc="Uniform sampling")
+    return _decode_selection(
+        video_path, chosen, report=report, on_progress=on_progress, desc="Uniform sampling", workers=workers
+    )
 
 
 def sample_fps(
@@ -358,6 +384,7 @@ def sample_fps(
     quality: dict | None = None,
     on_empty_slot: str = "rescue",
     on_progress: Callable[[int, int], None] | None = None,
+    workers: int = 1,
 ) -> tuple[list[np.ndarray], list[dict]]:
     """
     One frame every 1/fps seconds, each the sharpest eligible frame in its slot.
@@ -375,6 +402,7 @@ def sample_fps(
         quality: overrides for filter_frame_quality's thresholds.
         on_empty_slot: "rescue" keeps an all-ineligible slot's sharpest frame; "drop" skips it.
         on_progress: optional (done, total) callback.
+        workers: selection decode threads; 1 is one seek and one window decode.
 
     Returns:
         (frames, records) — (H, W, 3) uint8 RGB arrays and their {frame_idx, blur_score} rows.
@@ -442,7 +470,9 @@ def sample_fps(
     # Two targets either side of an excised stretch can land on the same survivor
     chosen = sorted(set(chosen))
 
-    return _decode_selection(video_path, chosen, report=report, on_progress=on_progress, desc="fps sampling")
+    return _decode_selection(
+        video_path, chosen, report=report, on_progress=on_progress, desc="fps sampling", workers=workers
+    )
 
 
 def sample_optical_flow(

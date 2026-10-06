@@ -7,6 +7,7 @@ VGGT-X feedforward backend: crop-mode preprocessing and creator.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
@@ -14,6 +15,7 @@ from typing import Any, ClassVar
 import numpy as np
 import torch
 from PIL import Image
+from torchvision.transforms.functional import to_tensor
 
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
@@ -23,6 +25,7 @@ from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 from collab_splats.pointcloud.feedforward.base import (
     BaseFeedforwardCreator,
     _decode_depth_head,
+    _frame_sizes,
     capture_qk,
     center_crop_coords,
 )
@@ -83,26 +86,44 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
     def _preprocess(self, paths: list[Path]) -> tuple[Any, np.ndarray]:
         """
-        Frame files through upstream VGGT crop mode, the preprocessing it trained on.
+        Frames through upstream VGGT crop mode, the preprocessing it trained on.
 
         - returns (N, 3, H, 518) images, H <= 518, and (N, 6) original_coords
         """
-        # Compute each frame's crop box the same way upstream crop mode does
-        rows = []
+        # Take the handed-off arrays only when they cover every path
+        arrays = self._get_path_frames(paths)
 
-        for p in paths:
-            w, h = Image.open(p).size
-            new_h = round(h * (518 / w) / 14) * 14
-            crop_h = min(new_h, 518)
-            box = center_crop_coords((w, h), (518, new_h), (518, crop_h), (518 / w, new_h / h))
-            rows.append(box)
+        # Read the files when nothing was handed off, else preprocess the arrays
+        if arrays is None:
+            files = [str(p) for p in paths]
+            images = load_and_preprocess_images(files, mode="crop")
+        else:
+            images = self._preprocess_arrays(arrays)
 
-        original_coords = np.array(rows, dtype=np.float32)
-
-        # Load and crop the images with upstream's own preprocessing
-        images = load_and_preprocess_images([str(p) for p in paths], mode="crop")
+        # Each frame's crop box from its original size
+        sizes = _frame_sizes(paths, arrays)
+        original_coords = _crop_boxes(sizes)
 
         return images, original_coords
+
+    def _preprocess_arrays(self, arrays: list[np.ndarray], *, workers: int = 8) -> torch.Tensor:
+        """
+        RGB arrays through upstream crop mode on a thread pool, minus the file open.
+
+        - upstream's alpha blend is a no-op on (H, W, 3) uint8: no alpha, already RGB
+        - upstream does the steps inline with no reusable helper; the bit-exact test guards drift
+        """
+        # Resize, tensorize and crop every frame
+        with ThreadPoolExecutor(workers) as pool:
+            images = list(pool.map(_preprocess_frame, arrays))
+
+        # Mixed shapes get upstream's white padding to a common size
+        shapes = {(im.shape[1], im.shape[2]) for im in images}
+
+        if len(shapes) > 1:
+            images = _pad_to_largest(images, shapes)
+
+        return torch.stack(images)
 
     def _forward(self, model: Any, views: Any) -> dict:
         """
@@ -166,3 +187,64 @@ class VGGTXCreator(BaseFeedforwardCreator):
         captured["conf"] = raw["depth_conf"]
 
         return captured
+
+
+########################################################################
+# Helpers
+########################################################################
+
+
+def _crop_boxes(sizes: list[tuple[int, int]]) -> np.ndarray:
+    """
+    (N, 6) float32 crop boxes for (w, h) frames, the way upstream crop mode resizes and crops.
+    """
+    rows = []
+
+    for w, h in sizes:
+        new_h = round(h * (518 / w) / 14) * 14
+        crop_h = min(new_h, 518)
+        box = center_crop_coords((w, h), (518, new_h), (518, crop_h), (518 / w, new_h / h))
+        rows.append(box)
+
+    return np.array(rows, dtype=np.float32)
+
+
+def _preprocess_frame(rgb: np.ndarray) -> torch.Tensor:
+    """
+    One frame resized to width 518 (height a multiple of 14), then center-cropped to 518 tall.
+    """
+    # Bicubic resize to width 518, height snapped to the 14 px patch
+    image = Image.fromarray(rgb)
+    width, height = image.size
+    new_height = round(height * (518 / width) / 14) * 14
+    resized = image.resize((518, new_height), Image.Resampling.BICUBIC)
+    tensor = to_tensor(resized)
+
+    # Center crop the height down to 518
+    if new_height > 518:
+        start_y = (new_height - 518) // 2
+        tensor = tensor[:, start_y : start_y + 518, :]
+
+    return tensor
+
+
+def _pad_to_largest(images: list[torch.Tensor], shapes: set[tuple[int, int]]) -> list[torch.Tensor]:
+    """
+    (3, H, W) images padded white, centered, to the largest of shapes' heights and widths.
+    """
+    # Pad each smaller image evenly on both sides, the extra pixel going after
+    max_h = max(h for h, _ in shapes)
+    max_w = max(w for _, w in shapes)
+    padded = []
+
+    for im in images:
+        pad_h = max_h - im.shape[1]
+        pad_w = max_w - im.shape[2]
+
+        if pad_h > 0 or pad_w > 0:
+            pad = (pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2)
+            im = torch.nn.functional.pad(im, pad, mode="constant", value=1.0)
+
+        padded.append(im)
+
+    return padded

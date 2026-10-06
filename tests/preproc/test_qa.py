@@ -393,7 +393,7 @@ def test_compute_video_quality_pairs_use_the_default_stride(tiny_video):
     report = compute_video_quality(tiny_video)
     pairs = report["pairs"]
     assert set(pairs) == {"frame_idx_a", "frame_idx_b", "translation_px", "parallax", "n_matches"}
-    # 30 fps rounds to a stride of 30, leaving 60 - 30 = 30 pairs
+    # 30 fps rounds to a stride of 30; tiled pairs on 60 frames leave only (0, 30)
     assert report["params"] == {
         "motion_stride": 30,
         "analysis_width": 480,
@@ -401,16 +401,15 @@ def test_compute_video_quality_pairs_use_the_default_stride(tiny_video):
         "n_features": 1000,
         "ransac_thresh_px": 3.0,
     }
-    assert {len(v) for v in pairs.values()} == {30}
-    assert pairs["frame_idx_a"][:3] == [0, 1, 2]
-    assert pairs["frame_idx_b"][:3] == [30, 31, 32]
+    assert {len(v) for v in pairs.values()} == {1}
+    assert (pairs["frame_idx_a"], pairs["frame_idx_b"]) == ([0], [30])
 
 
 def test_compute_video_quality_honours_motion_stride(tiny_video):
     report = compute_video_quality(tiny_video, motion_stride=5)
     assert report["params"]["motion_stride"] == 5
-    assert len(report["pairs"]["frame_idx_a"]) == 55
-    assert report["pairs"]["frame_idx_b"][0] - report["pairs"]["frame_idx_a"][0] == 5
+    assert report["pairs"]["frame_idx_a"] == list(range(0, 55, 5))
+    assert report["pairs"]["frame_idx_b"] == list(range(5, 60, 5))
 
 
 def test_compute_video_quality_keeps_n_matches_integral(tiny_video):
@@ -437,9 +436,9 @@ def test_compute_video_quality_serializes_unmatched_pairs_as_null(tmp_path):
 
     out = tmp_path / "flat.json"
     report = load_video_quality(path, out, motion_stride=5)
-    assert report["pairs"]["n_matches"] == [0] * 15
-    assert report["pairs"]["translation_px"] == [None] * 15
-    assert report["pairs"]["parallax"] == [None] * 15
+    assert report["pairs"]["n_matches"] == [0] * 3
+    assert report["pairs"]["translation_px"] == [None] * 3
+    assert report["pairs"]["parallax"] == [None] * 3
     # A frame of pure black is fully clipped low
     assert report["frames"]["clipped_low_frac"][0] == 1.0
     assert "NaN" not in out.read_text()
@@ -457,6 +456,15 @@ def test_compute_video_quality_raises_when_nothing_decodes(tiny_video, monkeypat
     monkeypatch.setattr(qa, "iter_frames", lambda *a, **k: iter(()))
     with pytest.raises(ValueError, match="no frames decoded"):
         compute_video_quality(tiny_video)
+
+
+def test_compute_video_quality_decodes_each_range_on_one_thread(tiny_video, monkeypatch):
+    # Each worker process decoding on every core oversubscribes the machine
+    calls = []
+    real = qa.iter_frames
+    monkeypatch.setattr(qa, "iter_frames", lambda *a, **k: calls.append(k) or real(*a, **k))
+    compute_video_quality(tiny_video)
+    assert calls and all(k["threads"] == 1 for k in calls)
 
 
 def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, caplog):
@@ -583,6 +591,17 @@ def test_video_quality_workers_produce_an_identical_report(tiny_video):
     assert parallel["pairs"] == serial["pairs"]
 
 
+def test_video_quality_workers_keep_the_global_pair_grid(tiny_video):
+    """
+    Range boundaries at 20 and 40 are off the stride-7 grid; pairs must not shift.
+    """
+    serial = compute_video_quality(tiny_video, motion_stride=7)
+    parallel = compute_video_quality(tiny_video, motion_stride=7, workers=3)
+
+    assert parallel["pairs"] == serial["pairs"]
+    assert serial["pairs"]["frame_idx_b"] == list(range(7, 60, 7))
+
+
 def test_video_quality_rejects_a_bad_worker_count(tiny_video):
     with pytest.raises(ValueError, match="workers"):
         compute_video_quality(tiny_video, workers=0)
@@ -603,7 +622,7 @@ def test_measure_photometry_and_motion_emits_only_the_frames_it_owns(tiny_video)
 
     # But they do produce the boundary pair, which no other range can emit
     assert (pairs[0]["frame_idx_a"], pairs[0]["frame_idx_b"]) == (18, 20)
-    assert [row["frame_idx_b"] for row in pairs] == list(range(20, 60))
+    assert [row["frame_idx_b"] for row in pairs] == list(range(20, 60, 2))
 
 
 def test_video_quality_refuses_non_contiguous_ranges(tiny_video, monkeypatch):

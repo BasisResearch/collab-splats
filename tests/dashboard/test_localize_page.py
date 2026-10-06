@@ -482,7 +482,7 @@ def test_build_result_figures_is_pure(tmp_path, monkeypatch):
         ref_extrinsics=np.eye(4, dtype=np.float32)[None],
         frame_sources=[],
     )
-    figs = page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"))
+    figs = page._build_result_figures(out, LocalizationConfig(matcher="xfeat"))
     assert set(figs) == {"dist_fig", "match_figs", "stats_html"}
     assert figs["match_figs"] == []  # no ref indices -> no correspondence figures
 
@@ -527,6 +527,7 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
         ref_frame_indices=np.array([0, 0, 1], np.int32),
         inlier_mask=np.array([True, False, True]),
         ranked_ref_frames=[0, 1],
+        ref_hw=None,
     )
     out = SimpleNamespace(
         result=loc,
@@ -537,7 +538,7 @@ def test_build_result_figures_resolves_ref_arrays(tmp_path, monkeypatch):
         ref_extrinsics=np.eye(4, dtype=np.float32)[None],
         frame_sources=["reconstruction", "localized"],
     )
-    figs = page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"), images_dir=images_dir)
+    figs = page._build_result_figures(out, LocalizationConfig(matcher="xfeat"), images_dir=images_dir)
 
     # Both ranked refs produced a figure with per-frame pre-sliced correspondence arrays
     assert len(figs["match_figs"]) == 2
@@ -585,6 +586,7 @@ def test_build_result_figures_decodes_localized_ref_ignoring_exif_orientation(tm
         ref_frame_indices=np.array([0], np.int32),
         inlier_mask=np.array([True]),
         ranked_ref_frames=[0],
+        ref_hw=None,
     )
     out = SimpleNamespace(
         result=loc,
@@ -595,7 +597,7 @@ def test_build_result_figures_decodes_localized_ref_ignoring_exif_orientation(tm
         ref_extrinsics=np.eye(4, dtype=np.float32)[None],
         frame_sources=["localized"],
     )
-    page._build_result_figures(out, LocalizationConfig(matcher="disk-lightglue"))
+    page._build_result_figures(out, LocalizationConfig(matcher="xfeat"))
 
     (ref_image,) = calls
     assert ref_image.shape == (20, 40, 3)

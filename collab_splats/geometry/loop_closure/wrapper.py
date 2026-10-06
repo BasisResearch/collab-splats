@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import math
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,12 +23,15 @@ import torch
 from rich.console import Console
 from tqdm.auto import tqdm
 
-from vggt.utils.geometry import unproject_depth_map_to_point_map
-
+from collab_splats.geometry.bundle_adjustment import (
+    BundleAdjustment,
+    BundleAdjustmentConfig,
+)
 from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.map import GraphMap
 from collab_splats.geometry.loop_closure.matching import find_loop_closures
 from collab_splats.geometry.loop_closure.submap import Submap
+from collab_splats.geometry.projection import unproject_frames
 from collab_splats.geometry.transforms import (
     extrinsics_to_homogeneous,
     invert_poses,
@@ -34,6 +40,7 @@ from collab_splats.geometry.transforms import (
 from collab_splats.localization import BaseRetrievalExtractor
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.utils import subsample_points
+from collab_splats.utils.torch_utils import hold_matmul_precision, pytorch_gc, to_numpy
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +65,7 @@ class LoopClosureConfig:
             Owned by the earlier submap: dense reads and viewer pushes skip a non-first
             submap's leading overlap frames, else every seam counts twice.
         lc_retrieval_threshold: max L2 distance between unit DINO-SALAD descriptors, range
-            [0, 2]; 0.0 disables retrieval.
+            [0, 2]; <= 0 disables retrieval and skips the DINO-SALAD load.
         max_loops_per_submap: candidates kept per query submap.
         verify_match_ratio: None takes the creator's default_verify_match_ratio; an
             explicit float wins.
@@ -107,16 +114,20 @@ class LoopClosure:
         result = lc.create_pointcloud(Path("scene/images"), Path("scene/out"))
     """
 
-    def __init__(self, base: Any, config: LoopClosureConfig | None = None) -> None:
+    def __init__(
+        self, base: Any, config: LoopClosureConfig | None = None, ba: BundleAdjustmentConfig | None = None
+    ) -> None:
         """
         Wrap a creator, resolving the config against its per-model defaults.
 
         Args:
             base: feedforward creator whose forward pass the LC loop drives.
             config: loop-closure settings; None uses LoopClosureConfig().
+            ba: bundle adjustment run inside each window after its forward; None runs none.
         """
         self.base = base
         self.config = config if config is not None else LoopClosureConfig()
+        self.ba = ba
 
         # None resolves to the creator's per-model calibration
         if self.config.verify_match_ratio is None:
@@ -136,6 +147,10 @@ class LoopClosure:
         # - _reconstruct then returns it as is, so base._postprocess does not overwrite it
         # - cleared at the start of each _run_lc_loop
         self.outputs: PointcloudResult | None = None
+
+        # Per-window BA records and the focal later windows hold; reset by run_inference
+        self.window_ba: list[dict] = []
+        self._ba_focal: float | None = None
 
     ####################################################################
     # Delegation to self.base
@@ -185,16 +200,21 @@ class LoopClosure:
 
     def run_inference(self) -> None:
         """
-        Run the LC loop, or fall back to the creator's own forward pass.
+        Run the LC loop, or fall back to one whole-scene forward.
 
         - LC loop: sets outputs to the assembled PointcloudResult
-        - fewer than submap_size frames: the creator's run_inference
+        - under submap_size frames: one window, refined as window 0
         - DINO-SALAD fails to load: sets base.raw_outputs only; outputs is not assembled
         """
+        # Fresh per-window BA state for this run
+        self.window_ba = []
+        self._ba_focal = None
+
         if self._enough_frames():
             self._run_lc_loop()
         else:
-            self.base.run_inference()
+            self.base.raw_outputs = self._forward_window(self.base.views, 0)
+            pytorch_gc()
 
     def _n_views(self) -> int:
         """
@@ -214,38 +234,38 @@ class LoopClosure:
     def run_predictions(
         self,
         window: Any,
+        raw: dict,
         wi: int,
         start: int,
         submaps: list[Submap],
         lc_submaps: list[Submap],
-        retrieval_extractor: Any,
+        retrieval_extractor: Callable[[torch.Tensor], torch.Tensor] | None,
         console: Console,
-    ) -> "tuple[Submap, list[Submap], list]":
+    ) -> "tuple[Submap, list[Submap], list, Callable[[], None]]":
         """
-        Forward one window, build its Submap, then find and verify loop candidates.
+        Build one forwarded window's Submap, then find and verify loop candidates.
+
+        - dense points are unprojected here; colors and conf attach in the returned finish
 
         Args:
             window: the window's model inputs (tensor or list of view dicts).
+            raw: the window's forward outputs.
             wi: window index, used as the new submap_id.
             start: global index of the window's first frame.
             submaps: window submaps built so far.
             lc_submaps: loop submaps accepted so far.
-            retrieval_extractor: DINO-SALAD extractor for the window's descriptors.
+            retrieval_extractor: DINO-SALAD extractor for the window's descriptors; None skips retrieval.
             console: console for loop accept/reject lines.
 
         Returns:
-            (submap, window_lc_submaps, loop_matches): the window's Submap, its verified
-            loop carriers (see _run_lc_loop), and every post-NMS candidate.
+            (submap, window_lc_submaps, loop_matches, finish): the window's Submap, its verified
+            loop carriers (see _run_lc_loop), every post-NMS candidate, and the CPU post that
+            attaches the dense fields; call finish before recording the submap.
         """
-        # Forward the window, then free the cached activations
+        # Window frame range
         cfg = self.config
         k = window.shape[0] if hasattr(window, "shape") else len(window)
         end = start + k  # window == views[start:start+k]; matches the driver's slice bound
-
-        with torch.no_grad():
-            raw = self.base._forward(self.base.model, window)
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         # Window poses; the graph reads each submap's local frame as frame 0's camera
         ext_3x4 = raw["extrinsic"]  # (k, 3, 4)
@@ -260,15 +280,20 @@ class LoopClosure:
         # - list of {"img": ...} view dicts: MapAnything
         if hasattr(window, "cpu"):
             frames_cpu = window.cpu()
+            retrieval_frames = frames_cpu
+            raw.pop("images", None)  # unused here; drops raw's reference to the forward's images
         elif isinstance(window, list) and window and isinstance(window[0], dict) and "img" in window[0]:
             frames_cpu = torch.cat([v["img"].cpu() for v in window], dim=0)
+
+            # Retrieval takes [0, 1] RGB; MapAnything's views are dinov2-normalized, its raw images are not
+            retrieval_frames = torch.from_numpy(raw["images"])
         else:
             raise TypeError(
                 f"LC window must be a tensor or a list of {{'img': ...}} dicts, got {type(window).__name__}"
             )
 
-        # Retrieval descriptors, then the window's Submap
-        ret_vecs = retrieval_extractor(frames_cpu)  # (k, D)
+        # Retrieval descriptors, then the window's Submap; None when retrieval is off
+        ret_vecs = retrieval_extractor(retrieval_frames) if retrieval_extractor is not None else None  # (k, D)
         submap = Submap(
             submap_id=wi,
             frames=frames_cpu,
@@ -280,35 +305,28 @@ class LoopClosure:
             conf_percentile=cfg.conf_percentile,
         )
 
-        # Dense per-pixel data (fat Submap, VGGT-SLAM data path)
-        # - points: full-res depth unprojection
-        # - colors and conf: per pixel
+        # Dense per-pixel points (fat Submap, VGGT-SLAM data path): full-res depth unprojection
+        dense_points = None
+
         if "depth" in raw and "depth_conf" in raw:
-            dense_points = unproject_depth_map_to_point_map(raw["depth"], ext_3x4, intrinsics).astype(np.float32)
+            depth = raw["depth"].reshape(raw["depth"].shape[:3])
+            dense_points = unproject_frames(depth, ext_3x4, intrinsics)
 
-            # Frames (k, C, H, W) -> (k, H, W, 3) uint8 RGB
-            # - VGGT-SLAM scales [0, 1] frames by 255
-            # - MapAnything view dicts are dinov2-normalized: its raw [0, 1] images instead
-            # - guard: some backends already give [0, 255]
-            if hasattr(window, "cpu"):
-                frames_hw3 = frames_cpu.float().numpy().transpose(0, 2, 3, 1)
-            else:
-                frames_hw3 = raw["images"].transpose(0, 2, 3, 1)
-            if frames_hw3.size and frames_hw3.max() > 1.0:
-                dense_colors = frames_hw3.astype(np.uint8)
-            else:
-                dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
-            submap.set_dense_points(dense_points, dense_colors, raw["depth_conf"].astype(np.float32))
+        # CPU post: dense colors and the conf percentile; runs while the next window's forward does
+        finish = partial(self._attach_dense, submap, window, frames_cpu, raw, dense_points)
 
-        # Query retrieval index for loop candidates against prior submaps
-        past_for_lc = submaps[: max(0, len(submaps) - cfg.min_submap_gap)]
-        loop_matches = find_loop_closures(
-            submap,
-            past_for_lc,
-            cfg.lc_retrieval_threshold,
-            cfg.max_loops_per_submap,
-            nms_frame_distance=cfg.nms_frame_distance,
-        )
+        # Query retrieval index for loop candidates against prior submaps; none when retrieval is off
+        loop_matches = []
+
+        if retrieval_extractor is not None:
+            past_for_lc = submaps[: max(0, len(submaps) - cfg.min_submap_gap)]
+            loop_matches = find_loop_closures(
+                submap,
+                past_for_lc,
+                cfg.lc_retrieval_threshold,
+                cfg.max_loops_per_submap,
+                nms_frame_distance=cfg.nms_frame_distance,
+            )
 
         # Verify each candidate on the query and detected frames
         window_lc_submaps: list[Submap] = []
@@ -378,7 +396,129 @@ class LoopClosure:
                         )
                     )
 
-        return submap, window_lc_submaps, loop_matches
+        return submap, window_lc_submaps, loop_matches, finish
+
+    def _attach_dense(
+        self,
+        submap: Submap,
+        window: Any,
+        frames_cpu: torch.Tensor,
+        raw: dict,
+        dense_points: np.ndarray | None,
+    ) -> None:
+        """
+        Attach a window's dense colors, points and conf to its Submap.
+
+        - no-op when the forward gave no dense depth
+        """
+        if dense_points is None:
+            return
+
+        # Frames (k, C, H, W) -> (k, H, W, 3); MapAnything's views are dinov2-normalized, so use its raw images
+        if hasattr(window, "cpu"):
+            frames_f32 = frames_cpu.float()
+            frames_hw3 = to_numpy(frames_f32).transpose(0, 2, 3, 1)
+        else:
+            frames_hw3 = raw["images"].transpose(0, 2, 3, 1)
+
+        # uint8 RGB: VGGT-SLAM scales [0, 1] frames by 255; some backends already give [0, 255]
+        if frames_hw3.size and frames_hw3.max() > 1.0:
+            dense_colors = frames_hw3.astype(np.uint8)
+        else:
+            dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
+
+        submap.set_dense_points(dense_points, dense_colors, raw["depth_conf"].astype(np.float32))
+
+    def _forward_window(self, window: Any, start: int) -> dict:
+        """
+        One window's forward under no_grad, then its bundle adjustment when ba is set.
+
+        - runs on the pipeline worker thread; no_grad is thread-local, so it is entered here
+        - BA enters enable_grad itself; worker order makes window 0's focal known before window 1's solve
+        - the first refined window's focal is held fixed in every later window (refine_focal only)
+        - a solve raising ValueError keeps the feedforward poses; its record has ok False
+        """
+        with hold_matmul_precision(), torch.no_grad():
+            raw = self.base._forward(self.base.model, window)
+
+            if self.ba is None:
+                return raw
+
+            # Peak GPU memory counted from here
+            t0 = time.perf_counter()
+            k = raw["extrinsic"].shape[0]
+
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
+
+            # Model-grid frames in [0, 1]: the window tensor, or MapAnything's raw images
+            frames = raw["images"]
+
+            if isinstance(window, torch.Tensor):
+                window_f32 = window.float()
+                frames = to_numpy(window_f32)
+
+            # Hold the first refined window's focal
+            intrinsics = raw["intrinsics"].copy()
+            cfg = self.ba
+
+            if self._ba_focal is not None:
+                intrinsics[:, 0, 0] = self._ba_focal
+                intrinsics[:, 1, 1] = self._ba_focal
+                cfg = dataclasses.replace(cfg, refine_focal=False)
+
+            # One track cache per window
+            if cfg.tracks_cache_dir is not None:
+                cache_dir = Path(cfg.tracks_cache_dir) / f"w{start:06d}"
+                cfg = dataclasses.replace(cfg, tracks_cache_dir=cache_dir)
+
+            # Solve inputs: (k, H, W) depth, world points under the solve's K, 4x4 poses, window paths
+            depth = raw["depth"].reshape(raw["depth"].shape[:3])
+            world_points = unproject_frames(depth, raw["extrinsic"], intrinsics)
+            poses = extrinsics_to_homogeneous(raw["extrinsic"])
+            confidence = torch.from_numpy(raw["depth_conf"])
+            paths = list(self.base.image_paths[start : start + k])
+
+            # Solve; a ValueError keeps the feedforward poses
+            ba = BundleAdjustment(cfg)
+            ok = True
+
+            try:
+                refined, refined_intrinsics = ba.refine(
+                    frames, confidence, world_points, poses, intrinsics, paths, depth=depth
+                )
+            except ValueError as e:
+                logger.warning("Window BA at frame %d failed (%s); keeping feedforward poses", start, e)
+                ok = False
+
+            # Back to frame 0's camera, as run_predictions expects
+            if ok:
+                refined = refined.astype(np.float64)
+                frame0_inv = invert_poses(refined[:1])[0]
+                local = refined @ frame0_inv
+                raw["extrinsic"] = local[:, :3, :].astype(np.float32)
+                raw["intrinsics"] = refined_intrinsics.astype(np.float32)
+
+                # Window 0's refined focal is held by every later window
+                if self._ba_focal is None and self.ba.refine_focal:
+                    self._ba_focal = float(refined_intrinsics[0, 0, 0])
+
+            # Window record
+            record = {
+                "start": start,
+                "n_frames": k,
+                "ok": ok,
+                "alignment_scale": ba.alignment_scale,
+                "loss_final": ba.loss_history[-1][-1] if ba.loss_history and ba.loss_history[-1] else None,
+                "focal": float(raw["intrinsics"][0, 0, 0]),
+                "seconds": time.perf_counter() - t0,
+                "gpu_max_mib": torch.cuda.max_memory_allocated() >> 20 if torch.cuda.is_available() else None,
+            }
+            self.window_ba.append(record)
+            logger.info(
+                "Window BA at frame %d: ok %s, focal %.1f, %.0f s", start, ok, record["focal"], record["seconds"]
+            )
+            return raw
 
     def _add_window_submap(
         self,
@@ -500,7 +640,8 @@ class LoopClosure:
           the creator's verify step; poses in the pair's local frame
         - a carrier only adds a loop edge to the pose graph; not added to GraphMap, no cloud
         - carrier ids follow the window submaps; loop_edge_timing sets when edges land
-        - DINO-SALAD failing to load sets base.raw_outputs from one full forward pass
+        - DINO-SALAD load failure: one _forward_window pass sets base.raw_outputs, as window 0
+        - with a viewer, each push waits for the running forward (precision lock)
         """
         console = Console()
 
@@ -519,36 +660,58 @@ class LoopClosure:
         N = self._n_views()
         device = str(next(self.base.model.parameters()).device)
 
-        # Load DINO-SALAD retrieval extractor; fall back to full-sequence inference if unavailable
-        try:
-            retrieval_cls = BaseRetrievalExtractor.get("dino-salad")
-            retrieval_extractor = retrieval_cls(device=device)
-        except (ImportError, OSError, RuntimeError) as e:
-            logger.warning("DINO-SALAD failed to load (%s) — skipping loop closure", e)
-            self.base.raw_outputs = self.base._forward(self.base.model, views)
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            return
+        # Load DINO-SALAD only when a candidate can pass; dist < threshold admits none at threshold <= 0
+        retrieval_extractor = None
+
+        if cfg.lc_retrieval_threshold > 0:
+            try:
+                retrieval_cls = BaseRetrievalExtractor.get("dino-salad")
+                retrieval_extractor = retrieval_cls(device=device)
+            except (ImportError, OSError, RuntimeError) as e:
+                logger.warning("DINO-SALAD failed to load (%s) — skipping loop closure", e)
+                self.base.raw_outputs = self._forward_window(views, 0)
+                pytorch_gc()
+                return
 
         # Driver state: window submaps, loop carriers, loop count
         submaps: list[Submap] = []
         lc_submaps: list[Submap] = []
-        n_submaps = math.ceil(max(1, N - O) / step)
         loops = 0
 
+        # Window bounds: K+O frames each, as VGGT-SLAM main.py:109; overlap: see LoopClosureConfig
+        bounds = []
+
+        for start in range(0, N, step):
+            end = min(start + K + O, N)
+            bounds.append((start, end))
+
+            if end >= N:
+                break
+
+        n_submaps = len(bounds)
         console.log(f"Loop closure: {N} frames → {n_submaps} submaps (size={K}, overlap={O})")
 
-        # Slide the window across frames; overlap: see LoopClosureConfig
-        with tqdm(total=n_submaps, desc="Loop closure", unit="submap") as pbar:
-            for wi, start in enumerate(range(0, N, step)):
-                # Each window = K+O frames, as VGGT-SLAM main.py:109 submap_size+overlapping_window_size
-                end = min(start + K + O, N)
-                window = views[start:end]
+        # Slice each window once; the forward submits and the loop share it
+        windows = [views[s:e] for s, e in bounds]
 
-                # Forward + detect (vggt_slam/solver.py:Solver.run_predictions), then record the submaps
-                submap, window_lc_submaps, loop_matches = self.run_predictions(
-                    window, wi, start, submaps, lc_submaps, retrieval_extractor, console
+        # Window k+1's forward runs on one worker while window k's CPU post runs here
+        with ThreadPoolExecutor(1) as pool, tqdm(total=n_submaps, desc="Loop closure", unit="submap") as pbar:
+            pending = pool.submit(self._forward_window, windows[0], bounds[0][0])
+
+            for wi, ((start, _), window) in enumerate(zip(bounds, windows)):
+                raw = pending.result()
+
+                # GPU post before launch: unproject takes the precision lock the next forward holds
+                submap, window_lc_submaps, loop_matches, finish = self.run_predictions(
+                    window, raw, wi, start, submaps, lc_submaps, retrieval_extractor, console
                 )
+
+                # Launch the next window's forward, then the CPU post overlaps it
+                if wi + 1 < len(windows):
+                    pending = pool.submit(self._forward_window, windows[wi + 1], bounds[wi + 1][0])
+
+                # Record the submaps
+                finish()
                 self._add_window_submap(submap, window_lc_submaps, submaps, lc_submaps)
 
                 # Live timing: add this window's loop edges now and re-solve
@@ -568,8 +731,10 @@ class LoopClosure:
                 loops += len(window_lc_submaps)
                 pbar.update(1)
                 pbar.set_postfix(loops=loops)
-                if end >= N:
-                    break
+
+        # One cache release after the loop
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # Number of accepted loop-closure submaps applied (user-visible summary)
         self.base.n_loops_applied = len(lc_submaps)
@@ -593,39 +758,71 @@ class LoopClosure:
 
         - VGGT-SLAM correction-at-read: poses and points from the optimized graph
         - one pose and intrinsics row per frame of the full n_frames sequence
-        - raises ValueError on an empty cloud or zero model dims
+        - each submap is lifted once; the cloud keeps only the capped draw, never the dense stack
+        - world_points is None: the lean store re-derives it from depth
+        - raises ValueError on an empty cloud or zero model dims, or a dense submap without conf
         """
-        # Dense world cloud + corrected extrinsics come straight from the graph-corrected map
-        points, colors = self.map.get_world_pointcloud(self.graph, overlap=self.config.submap_overlap)
         extrinsics = self.graph.extract_extrinsics(n_frames)
+        overlap = self.config.submap_overlap
+        kept = {}
 
-        # Cap the dense cloud to the creator's max_points
-        # - to_colmap turns every point into a pycolmap Point3D and runs out of memory
-        # - the create_pointcloud cap then binds on nothing
-        # - cap before the clean, unlike creator postprocess: SOR over ~1e8 dense points would OOM
-        all_points = np.ones(len(points), dtype=bool)
-        keep = subsample_points(all_points, self.base.max_points)
-        points = points[keep]
-        colors = colors[keep]
+        # Confidence-kept pixels of each dense window submap, as get_points_in_world_frame masks them
+        for s in self.map.ordered_submaps_by_key():
+            if s.is_lc_submap or s.points is None:
+                continue
 
-        # One intrinsics row per global frame; model dims from a dense grid
-        # - first submap to cover a frame wins, as for poses
+            if s.conf is None:
+                raise ValueError(f"Submap {s.submap_id} has no conf; cannot compute world-frame points")
+
+            skip = overlap if s.frame_start > 0 else 0
+            mask = s.conf[skip:] > s.conf_threshold
+            kept[s.submap_id] = (skip, mask, int(mask.sum()))
+
+        # Draw the max_points cap over the whole cloud before lifting; to_colmap and SOR OOM on it
+        total = sum(count for _, _, count in kept.values())
+        all_kept = np.ones(total, dtype=bool)
+        keep = subsample_points(all_kept, self.base.max_points)
+
+        # Split the draw into each submap's share, in submap order
+        share = {}
+        a = 0
+
+        for submap_id, (skip, mask, count) in kept.items():
+            b = a + count
+            share[submap_id] = (skip, mask, keep[a:b])
+            a = b
+
+        # One intrinsics row per global frame; first submap to cover a frame wins, as for poses
         intrinsics = np.tile(np.eye(3, dtype=np.float32), (n_frames, 1, 1))
         assigned = np.zeros(n_frames, dtype=bool)
         model_height = model_width = None
-        world_points = depth = confidence = None
+        depth = confidence = None
+        pts_chunks, col_chunks = [], []
+
         for s in self.map.ordered_submaps_by_key():
             if s.is_lc_submap:
                 continue
 
-            # Size the per-pixel arrays from the first dense grid
-            if model_height is None and s.points is not None:
-                model_height, model_width = int(s.points.shape[1]), int(s.points.shape[2])
-                world_points = np.zeros((n_frames, model_height, model_width, 3), dtype=np.float32)
-                depth = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
-                confidence = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
+            # Lift a dense submap once; keep only its share of the capped draw
+            grid = None
 
-            grid = s.get_world_grid(self.graph) if s.points is not None else None
+            if s.submap_id in share:
+                skip, mask, sub_keep = share[s.submap_id]
+                grid = s.get_world_grid(self.graph)
+
+                # Flat pixel index of each kept point: one gather, not a mask copy then a subsample copy
+                idx = np.flatnonzero(mask)[sub_keep]
+                grid_flat = grid[skip:].reshape(-1, 3)
+                colors_flat = s.colors[skip:].reshape(-1, 3)
+                pts_chunks.append(grid_flat[idx])
+                col_chunks.append(colors_flat[idx])
+
+                # Size the per-pixel arrays from the first dense grid
+                if model_height is None:
+                    model_height, model_width = int(s.points.shape[1]), int(s.points.shape[2])
+                    depth = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
+                    confidence = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
+
             for local_i in range(s.intrinsics.shape[0]):
                 g = s.frame_start + local_i
                 if not 0 <= g < n_frames or assigned[g]:
@@ -634,11 +831,14 @@ class LoopClosure:
                 intrinsics[g] = s.intrinsics[local_i].astype(np.float32)
                 assigned[g] = True
 
-                # Per-pixel world points, depth under the corrected pose, and confidence
+                # Depth under the corrected pose, and confidence
                 if grid is not None:
-                    world_points[g] = grid[local_i]
                     depth[g] = transform_points(grid[local_i], extrinsics[g])[..., 2]
                     confidence[g] = s.conf[local_i]
+
+        # Stack the kept points; an empty map gives empty arrays
+        points = np.vstack(pts_chunks) if pts_chunks else np.zeros((0, 3), dtype=np.float32)
+        colors = np.vstack(col_chunks) if col_chunks else np.zeros((0, 3), dtype=np.uint8)
 
         # Fail fast on an empty cloud or zero model dims
         # - every submap lacked dense points or was fully confidence-masked
@@ -660,6 +860,6 @@ class LoopClosure:
             model_width=model_width,
             model_height=model_height,
             confidence=torch.from_numpy(confidence),
-            world_points=world_points,
+            world_points=None,
             depth=depth,
         )

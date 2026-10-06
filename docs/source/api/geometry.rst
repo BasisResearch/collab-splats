@@ -28,9 +28,10 @@ on the model grid.
 Projection
 ----------
 
-Pinhole unprojection and projection, the cross-view depth residual, and
-``multiview_depth_confidence``, the per-pixel agree/seen counts the feedforward
-multiview filter thresholds.
+Pinhole unprojection and projection, ``unproject_frames`` (batched numpy
+unprojection on the device), the cross-view depth residual, and
+``multiview_depth_confidence``, the per-pixel agree/seen counts the
+feedforward multiview filter thresholds.
 
 .. automodule:: collab_splats.geometry.projection
    :members:

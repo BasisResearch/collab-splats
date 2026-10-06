@@ -19,7 +19,7 @@ def _recon(tmp_path, monkeypatch, done=()):
     calls = []
 
     for stage in STAGES:
-        monkeypatch.setattr(r, stage, lambda s=stage: calls.append(s))
+        monkeypatch.setattr(r, stage, lambda s=stage, **kwargs: calls.append(s))
 
     monkeypatch.setattr(r, "done", lambda s: s in done)
     return r, calls

@@ -82,12 +82,10 @@ class _FakeLocalizer:
             inlier_mask=np.ones(m, bool),
             pts2d_ref=np.zeros((m, 2), np.float32),
             ref_frame_indices=np.zeros(m, np.int32),
-            query_features=object(),
+            query_intrinsics=K,
         )
 
-    def add_localized_frame(
-        self, image_path, pose, intrinsics, features, zarr_path=None, extractor_name=None, provenance=None
-    ):
+    def add_localized_frame(self, image_path, pose, zarr_path=None, extractor_name=None, provenance=None):
         self.appended = provenance
 
 
@@ -109,13 +107,9 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(
         pipeline,
         "_load_feedforward_result",
-        lambda out_dir, load_world_points=False, load_images=False: _FakeResult(),
+        lambda out_dir, load_world_points=False: _FakeResult(),
     )
-    # MagicMock (not a lambda) so tests can assert on call_args — in particular that
-    # images_dir is threaded through to the real from_feedforward call site.
-    build_localizer_mock = MagicMock(return_value=fake_localizer)
-    monkeypatch.setattr(pipeline, "_build_localizer", build_localizer_mock)
-    fake_localizer.build_localizer_mock = build_localizer_mock
+    monkeypatch.setattr(pipeline, "_build_localizer", MagicMock(return_value=fake_localizer))
     monkeypatch.setattr(pipeline, "_stamp_db_provenance", lambda zarr_path, extractor, out_dir: None)
     monkeypatch.setattr(pipeline, "extract_frame", lambda video, idx: np.zeros((48, 64, 3), np.uint8))
     monkeypatch.setattr(pipeline, "_resolve_query_intrinsics", lambda cfg: np.eye(3, dtype=np.float32))
@@ -206,28 +200,22 @@ def test_pull_targets_the_scene_id_and_its_local_dir(tmp_path, wired):
     assert source.pull_args == (SCENE, tmp_path / SCENE)
 
 
-def test_build_localizer_receives_scene_images_dir(tmp_path, wired):
-    """images_dir must be threaded into _build_localizer (-> from_feedforward) as the
-    scene's own images/ directory, not dropped or left implicit — this is what lets a cache
-    miss read pixels from the store instead of a possibly-stale ff.image_paths."""
-    out_dir = tmp_path / SCENE
-    # Present locally, as it would be for a scene that ran preprocessing on this machine.
-    (out_dir / "images").mkdir(parents=True)
+def test_build_localizer_refuses_a_scene_without_an_images_store(tmp_path, monkeypatch):
+    """A scene with no images/ raises before the matcher loads or a frame is read."""
+    matcher = MagicMock()
+    monkeypatch.setattr(pipeline, "LocalMatcher", matcher)
+    result = MagicMock(image_paths=["frame_000000"])
 
-    _run(tmp_path, wired)
+    with pytest.raises(FileNotFoundError, match="scene has no images/ store"):
+        pipeline._build_localizer(
+            result,
+            LocalizationConfig(matcher="xfeat"),
+            tmp_path / "db.zarr",
+            OperationLog(),
+            images_dir=tmp_path / "images",
+        )
 
-    wired.build_localizer_mock.assert_called_once()
-    kwargs = wired.build_localizer_mock.call_args.kwargs
-    assert kwargs["images_dir"] == out_dir / "images"
-
-
-def test_build_localizer_gets_no_images_dir_when_absent(tmp_path, wired):
-    """Pulled scenes have no local images/ (excluded from PULL_EXCLUDES) — must pass
-    None, not a dangling path frame_paths() would silently read as empty."""
-    _run(tmp_path, wired)
-
-    kwargs = wired.build_localizer_mock.call_args.kwargs
-    assert kwargs["images_dir"] is None
+    matcher.assert_not_called()
 
 
 def test_stamp_db_provenance_writes_attrs(tmp_path):
@@ -254,16 +242,34 @@ def test_stamp_db_provenance_writes_attrs(tmp_path):
     assert g.attrs["extractor"] == "loma-g"
 
 
-def test_ref_paths_resolve_jpg_ids_to_png_store_files(tmp_path, wired):
-    """Reconstruction ids end in .jpg; images/ holds .png. The resolved path must exist."""
-    images_dir = tmp_path / SCENE / "images"
-    images_dir.mkdir(parents=True)
-    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images_dir / "00000.png")
+def test_stem_ids_resolve_to_store_files(tmp_path):
+    """Reconstruction ids are the zarr's stems; each resolves to the images/ file of that stem."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images_dir / "frame_000042.png")
 
-    out, _ = _run(tmp_path, wired)
+    (resolved,) = pipeline._local_ref_paths(tmp_path, ["frame_000042"], ["reconstruction"])
 
-    assert out.ref_image_paths[0] == images_dir / "00000.png"
-    assert out.ref_image_paths[1] == images_dir / "00001.jpg"  # no file on disk: label kept
+    assert resolved == images_dir / "frame_000042.png"
+
+
+def test_ids_not_on_disk_keep_their_name(tmp_path):
+    """A reconstruction id with no images/ file, or a non-numeric stem tail, keeps its own name."""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images_dir / "frame_000042.png")
+
+    resolved = pipeline._local_ref_paths(
+        tmp_path,
+        ["/remote/images/frame_000007.jpg", "/remote/images/frame_abc.jpg", "/remote/q/query.png"],
+        ["reconstruction", "reconstruction", "localized"],
+    )
+
+    assert resolved == [
+        images_dir / "frame_000007.jpg",
+        images_dir / "frame_abc.jpg",
+        tmp_path / "localized_frames" / "query.png",
+    ]
 
 
 def test_appended_query_frame_is_lossless_png(tmp_path, wired, monkeypatch):
@@ -279,9 +285,11 @@ def test_appended_query_frame_is_lossless_png(tmp_path, wired, monkeypatch):
 
 
 def test_build_localizer_decodes_ref_frames_ignoring_exif_orientation(tmp_path, monkeypatch):
-    """DB ref frames decode through read_image in stored-pixel order, as the feedforward loaders do."""
-    # 20x40 JPEG tagged EXIF orientation 6: an EXIF-following decode would give 40x20
-    jpg = tmp_path / "rotated.jpg"
+    """DB ref frames decode through read_frames in stored-pixel order, as the feedforward loaders do."""
+    # 20x40 JPEG store frame tagged EXIF orientation 6: an EXIF-following decode would give 40x20
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    jpg = images_dir / "frame_000000.jpg"
     pixels = np.zeros((20, 40, 3), np.uint8)
     pixels[:, :10] = 255
     im = Image.fromarray(pixels)
@@ -289,25 +297,62 @@ def test_build_localizer_decodes_ref_frames_ignoring_exif_orientation(tmp_path, 
     exif[0x0112] = 6
     im.save(jpg, exif=exif, quality=95)
 
-    # Capture the images genexpr handed to from_feedforward; the matcher is never built for real
+    # Capture the images genexpr handed to from_pointcloud; the matcher is never built for real
     seen = {}
 
     class _Capture:
         @staticmethod
-        def from_feedforward(result, *, images, ids, **kwargs):
+        def from_pointcloud(result, *, zarr_path, images, **kwargs):
             seen["images"] = list(images)
-            seen["ids"] = ids
             return MagicMock()
 
-    monkeypatch.setattr("collab_splats.localization.CameraLocalizer", _Capture)
-    monkeypatch.setattr("collab_splats.localization.extractors.LocalMatcher", MagicMock())
+    monkeypatch.setattr(pipeline, "CameraLocalizer", _Capture)
+    monkeypatch.setattr(pipeline, "LocalMatcher", MagicMock())
 
-    result = MagicMock(image_paths=[str(jpg)])
+    result = MagicMock(image_paths=["frame_000000"])
     pipeline._build_localizer(
-        result, LocalizationConfig(matcher="disk-lightglue"), tmp_path / "db.zarr", OperationLog()
+        result, LocalizationConfig(matcher="xfeat"), tmp_path / "db.zarr", OperationLog(), images_dir=images_dir
     )
 
     (decoded,) = seen["images"]
     assert decoded.shape == (20, 40, 3)
     np.testing.assert_array_equal(decoded, read_image(jpg))
-    assert seen["ids"] == ["rotated.jpg"]
+
+
+def test_build_localizer_reads_store_frames_lazily_in_zarr_order(tmp_path, monkeypatch):
+    """images/ frames pair with zarr rows by frame index, and none is read until the localizer draws."""
+    # Four store frames, each a constant equal to its frame index; the zarr keeps three, reordered
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+
+    for idx in (0, 3, 5, 9):
+        Image.fromarray(np.full((4, 6, 3), idx, np.uint8)).save(images_dir / f"frame_{idx:06d}.png")
+
+    # Count decodes, and capture the genexpr before and after it is drawn
+    reads = []
+    real_read_frames = pipeline.fr.read_frames
+
+    def counting_read_frames(dir, idxs=None, **kwargs):
+        reads.append(list(idxs))
+        return real_read_frames(dir, idxs, **kwargs)
+
+    monkeypatch.setattr(pipeline.fr, "read_frames", counting_read_frames)
+    seen = {}
+
+    class _Capture:
+        @staticmethod
+        def from_pointcloud(result, *, zarr_path, images, **kwargs):
+            seen["reads_before"] = len(reads)
+            seen["pixels"] = [int(image[0, 0, 0]) for image in images]
+            return MagicMock()
+
+    monkeypatch.setattr(pipeline, "CameraLocalizer", _Capture)
+    monkeypatch.setattr(pipeline, "LocalMatcher", MagicMock())
+
+    result = MagicMock(image_paths=["frame_000009", "frame_000000", "frame_000005"])
+    pipeline._build_localizer(
+        result, LocalizationConfig(matcher="xfeat"), tmp_path / "db.zarr", OperationLog(), images_dir=images_dir
+    )
+
+    assert seen["reads_before"] == 0
+    assert seen["pixels"] == [9, 0, 5]

@@ -663,6 +663,7 @@ def _tutorial_frames() -> np.ndarray:
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="loads LoGeR onto cuda")
 @pytest.mark.skipif(not _LOGER_ROOT.exists(), reason="vendored tree absent (setup/loger.sh)")
 @pytest.mark.skipif(not _PARITY_VIDEO.exists(), reason="tutorial video absent (data/tutorial/)")
 def test_pinhole_residual_against_logers_native_pointcloud(record_property):

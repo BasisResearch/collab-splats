@@ -45,18 +45,22 @@ with a torch error that does not name the setting.
 - `collab_splats.reconstructor` and `collab_splats.pointcloud` do not import on a CPU-only
   machine: VGGT-X (`Linketic/VGGT-X` @ `26d1b956`, `vggt/layers/mlp.py:33`) runs
   `warmup_gelu_fused()` at import, which allocates on `device="cuda"`
-- so `tests/reconstructor/test_reconstructor.py` cannot be collected with
-  `CUDA_VISIBLE_DEVICES=""`; the new reconstructor test is verified on the GPU run only
+- resolved by the follow-up below
 - `collab_splats.mesh` imports and runs on CPU
 
-## Follow-up decision (2026-10-06): the pipeline requires a GPU
+## Follow-up decision (2026-10-06): guard VGGT-X only
 
-- options weighed: fork VGGT-X to make the warmup lazy (rejected: no fork), allow
-  COLMAP-only on CPU (rejected: lazy vggt imports in vggtx, BA and the LC wrapper, and the
-  sfm path still needs VDA depth, a ViT-L on CPU), require a GPU (chosen)
-- README system requirements already say a GPU is needed at runtime
-- `collab_splats/pointcloud/__init__.py` raises `ImportError("collab_splats.pointcloud needs
-  a CUDA GPU; ...")` before the feedforward imports; it sits on the import path of
-  `reconstructor`, the CLI and `evals`
-- `collab_splats.mesh` stays importable on CPU, untested beyond import + tests/mesh
-- `setup.sh`'s GPU-less build-stage check catches `Exception`, so it still warns, not fails
+- options weighed: fork VGGT-X to make the warmup lazy (rejected: no fork); a package-wide
+  `ImportError` in `pointcloud/__init__.py` (tried in `210547f3`, reverted: it also blocked
+  sfm, depth, mesh via the CLI and localization, none of which crash on CPU); guard the
+  VGGT-X backend only (chosen)
+- measured: with `vggt.models.vggt` stubbed, `pointcloud`, `sfm`, `depth`, `reconstructor`,
+  the CLI, `evals.eval` and `localization` all import on CPU; `vggt.utils.geometry`,
+  `vggt.dependency.track_predict`, `vggt_omega.models` and `mapanything.models` import on CPU
+- `VGGTXCreator._load_model` raises `RuntimeError("the vggtx backend needs a CUDA GPU; ...")`
+  and only then imports `vggt.models.vggt` (the CLAUDE.md heavy-dependency exception; LoGeR
+  defers its vendored import the same way)
+- GPU-only remains: vggtx, splats (gsplat), mesh texture (nvdiffrast); other backends and
+  stages import on CPU but are not tested end to end there
+- CPU-only gate also found `preproc.undistort.calibrate_camera` crashing: the pycolmap CUDA
+  wheel's default device errors with no GPU; it now passes `device=` chosen as in `sift_db.py`

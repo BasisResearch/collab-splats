@@ -14,6 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pycolmap
+import torch
 
 from collab_splats.preproc.frames import frame_paths
 
@@ -59,6 +60,10 @@ def calibrate_camera(
     idxs = np.unique(np.linspace(0, len(paths) - 1, min(max_frames, len(paths))).round().astype(int))
     names = [paths[int(i)].name for i in idxs]
 
+    # GPU SIFT only when pycolmap has CUDA and a device exists; the CUDA wheel errors on auto otherwise
+    use_gpu = pycolmap.has_cuda and torch.cuda.is_available()
+    device = pycolmap.Device.cuda if use_gpu else pycolmap.Device.cpu
+
     # The database and sparse output are scratch; the images are read from images_dir
     # in place, so nothing stages a second copy of the pixels
     with tempfile.TemporaryDirectory(prefix="calibrate_camera_") as tmp:
@@ -75,10 +80,12 @@ def calibrate_camera(
             camera_mode=pycolmap.CameraMode.SINGLE,
             reader_options=pycolmap.ImageReaderOptions(camera_model="OPENCV"),
             extraction_options=pycolmap.FeatureExtractionOptions(num_threads=num_threads),
+            device=device,
         )
         pycolmap.match_exhaustive(
             database,
             matching_options=pycolmap.FeatureMatchingOptions(num_threads=num_threads),
+            device=device,
         )
         reconstructions = pycolmap.incremental_mapping(database, images_dir, sparse)
 

@@ -2,6 +2,7 @@
 VGGT-X feedforward backend: crop-mode preprocessing and creator.
 
 - crop box follows https://github.com/Linketic/VGGT-X @ 26d1b95, vggt/utils/load_fn.py:211-251
+- CUDA only: vggt.models runs a CUDA warmup at import, so _load_model imports it after a CUDA check
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ import numpy as np
 import torch
 from PIL import Image
 
-from vggt.models.vggt import VGGT
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
@@ -58,7 +58,15 @@ class VGGTXCreator(BaseFeedforwardCreator):
     def _load_model(self, device: str) -> Any:
         """
         VGGT-X from HuggingFace in eval mode, bf16 on Ampere+ and fp16 otherwise.
+
+        - imports vggt.models here: its import-time CUDA warmup would break CPU-only imports of the package
         """
+        # VGGT-X's mlp.py compiles gelu on CUDA at import; refuse first with a clear message
+        if not torch.cuda.is_available():
+            raise RuntimeError("the vggtx backend needs a CUDA GPU; VGGT-X runs CUDA kernels at import")
+
+        from vggt.models.vggt import VGGT
+
         # Use bfloat16 on Ampere or newer GPUs, float16 otherwise
         dtype = (
             torch.bfloat16

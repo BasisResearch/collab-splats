@@ -803,6 +803,7 @@ def _run_prepared_mesh(tmp_path, monkeypatch, texture):
     monkeypatch.setattr(R, "prepare_mesh", prepare)
     texture_mesh = MagicMock()
     monkeypatch.setattr(R, "create_texture_mesh", texture_mesh)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
 
     rec.mesh()
 

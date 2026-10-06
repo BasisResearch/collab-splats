@@ -5,23 +5,23 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def _import_without_gpu(module):
-    """Import `module` in a fresh interpreter with every GPU hidden; return the finished process."""
+def _run_without_gpu(code):
+    """Run `code` in a fresh interpreter with every GPU hidden; return the finished process."""
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "PYTHONPATH": REPO}
-    return subprocess.run([sys.executable, "-c", f"import {module}"], env=env, cwd=REPO, capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-c", code], env=env, cwd=REPO, capture_output=True, text=True)
 
 
-def test_pointcloud_import_without_gpu_names_the_requirement():
-    """No GPU: a clear ImportError from our package, not VGGT-X's CUDA warmup traceback."""
-    proc = _import_without_gpu("collab_splats.pointcloud")
-
-    assert proc.returncode != 0
-    assert "ImportError: collab_splats.pointcloud needs a CUDA GPU" in proc.stderr
-    assert "warmup_gelu_fused" not in proc.stderr
-
-
-def test_mesh_imports_without_gpu():
-    """The mesh package stays importable on CPU; only texturing needs CUDA."""
-    proc = _import_without_gpu("collab_splats.mesh")
+def test_pipeline_imports_without_gpu():
+    """No GPU: pointcloud, the reconstructor and mesh import; VGGT-X's CUDA warmup is not reached."""
+    proc = _run_without_gpu("import collab_splats.pointcloud, collab_splats.reconstructor, collab_splats.mesh")
 
     assert proc.returncode == 0, proc.stderr
+
+
+def test_vggtx_load_without_gpu_names_the_requirement():
+    """No GPU: loading the VGGT-X model raises our clear error, not VGGT-X's warmup traceback."""
+    proc = _run_without_gpu("from collab_splats.pointcloud import VGGTXCreator; VGGTXCreator()._load_model('cpu')")
+
+    assert proc.returncode != 0
+    assert "RuntimeError: the vggtx backend needs a CUDA GPU" in proc.stderr
+    assert "warmup_gelu_fused" not in proc.stderr

@@ -25,7 +25,7 @@ def test_vggtx_missing_image_dir_raises(tmp_path):
         c.create_pointcloud(tmp_path / "nonexistent", tmp_path / "out", tmp_path / "model")
 
 
-@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="VGGT-X needs CUDA")
 def test_vggtx_reconstruct_smoke(tmp_path):
     from PIL import Image as PILImage
 

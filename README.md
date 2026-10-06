@@ -78,7 +78,7 @@ repo. It configures the `collab-data` remote and verifies access:
 
 You provide these; `setup.sh` never installs system packages.
 
-- **NVIDIA driver + GPU** at runtime (model warmup loads CUDA kernels at import).
+- **NVIDIA driver + GPU** at runtime for the VGGT-X and LoGeR backends, splats (gsplat) and mesh texturing (nvdiffrast); without one, VGGT-X refuses at model load and texturing at the mesh stage. Other stages fall back to CPU, untested end to end and slow for model inference.
 - **build-essential** (gcc/g++) + a CUDA toolkit at build time for the source extensions.
 - Optional: `ffmpeg`, `rclone` for the video and data pipelines.
 

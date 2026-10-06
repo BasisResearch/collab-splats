@@ -60,6 +60,8 @@ with a torch error that does not name the setting.
 - `VGGTXCreator._load_model` raises `RuntimeError("the vggtx backend needs a CUDA GPU; ...")`
   and only then imports `vggt.models.vggt` (the CLAUDE.md heavy-dependency exception; LoGeR
   defers its vendored import the same way)
+- LoGeR needs no guard: a 10-frame, `window_size=4` forward runs with `CUDA_VISIBLE_DEVICES=""`
+  (xformers absent, so attention is SDPA; RoPE2D falls back to its PyTorch version)
 - GPU-only remains: vggtx, splats (gsplat), mesh texture (nvdiffrast); other backends and
   stages import on CPU but are not tested end to end there
 - CPU-only gate also found `preproc.undistort.calibrate_camera` crashing: the pycolmap CUDA

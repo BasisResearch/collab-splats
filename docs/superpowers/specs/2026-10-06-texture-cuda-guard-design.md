@@ -39,3 +39,12 @@ with a torch error that does not name the setting.
 ## Docs
 
 - `configs/base.yaml` texture comment and both docstrings' `Raises:` say CUDA-only
+
+## Found while gating (not fixed here)
+
+- `collab_splats.reconstructor` and `collab_splats.pointcloud` do not import on a CPU-only
+  machine: VGGT-X (`Linketic/VGGT-X` @ `26d1b956`, `vggt/layers/mlp.py:33`) runs
+  `warmup_gelu_fused()` at import, which allocates on `device="cuda"`
+- so `tests/reconstructor/test_reconstructor.py` cannot be collected with
+  `CUDA_VISIBLE_DEVICES=""`; the new reconstructor test is verified on the GPU run only
+- `collab_splats.mesh` imports and runs on CPU

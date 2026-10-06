@@ -121,7 +121,7 @@ mesh:
                            # mesh sources. Unlike conf_percentile it does NOT mask the splats
                            # stage's depth targets — see docs/mesh.md.
   smooth_iterations: 0     # Taubin smoothing passes on mesh.ply after repair, before texturing; 0 = off
-  texture: false           # UV atlas + project the fused views onto mesh.ply; writes texture/
+  texture: false           # UV atlas + project the fused views onto mesh.ply; writes texture/; CUDA only
   use_convex_hull: true    # trim the ragged outer edge, patch the ground out to a rounded hull;
                            # ground-dominated height-field scenes only; set false indoors and for objects (raises)
 

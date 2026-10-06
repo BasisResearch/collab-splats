@@ -74,7 +74,14 @@ def create_texture_mesh(
 
     Returns:
         Path to out_dir/mesh.obj.
+
+    Raises:
+        RuntimeError: no CUDA device; nvdiffrast rasterizes on CUDA only.
     """
+    # nvdiffrast has no CPU rasterizer; refuse before touching the views
+    if not torch.cuda.is_available():
+        raise RuntimeError("create_texture_mesh needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines")
+
     rgbs, c2w, K, _ = validate_views(rgbs, c2w, K)
 
     # Exposure gains solved on the occluder, divided out of a copy of the views

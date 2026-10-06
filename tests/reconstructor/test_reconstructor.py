@@ -831,6 +831,23 @@ def test_mesh_textures_the_prepared_mesh_behind_the_cleaned_occluder(tmp_path, m
     assert texture_mesh.call_args.kwargs == {"voxel_size": 0.01}
 
 
+def test_mesh_texture_without_cuda_raises_before_fusion(tmp_path, monkeypatch):
+    """texture on a CPU-only machine fails at stage start, not after fusing and cleaning."""
+    mesh_cfg = {"enabled": True, "source": "feedforward", "voxel_size": 0.01, "texture": True}
+    rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    load = MagicMock()
+    fuse = MagicMock()
+    monkeypatch.setattr(PointcloudResult, "load_zarr", load)
+    monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
+
+    with pytest.raises(RuntimeError, match="mesh.texture"):
+        rec.mesh()
+
+    load.assert_not_called()
+    fuse.assert_not_called()
+
+
 def test_run_calls_stages_in_order(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)

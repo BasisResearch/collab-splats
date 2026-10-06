@@ -799,9 +799,14 @@ class Reconstructor:
         Raises:
             FileNotFoundError: the splats source has no ckpt.pt on disk.
             ValueError: mesh.source is neither feedforward nor splats, or sky masks mismatch the depths.
+            RuntimeError: mesh.texture is on but no CUDA device is available.
         """
         cfg = self.config["mesh"]
         source = cfg["source"]
+
+        # Texturing is CUDA-only; refuse before fusion rather than after it
+        if cfg["texture"] and not torch.cuda.is_available():
+            raise RuntimeError("mesh.texture needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines")
 
         # Splats source: renders at frame resolution, with the poses they were rendered from
         if source == "splats":

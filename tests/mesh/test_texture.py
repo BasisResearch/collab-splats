@@ -1,6 +1,7 @@
 import numpy as np
 import open3d as o3d
 import pytest
+import torch
 import trimesh
 
 pytest.importorskip("meshoptimizer")
@@ -14,6 +15,9 @@ from collab_splats.mesh.texture import (  # noqa: E402
     project_images_to_texture,
     unwrap_view_charts,
 )
+
+# nvdiffrast rasterizes on CUDA only
+cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="nvdiffrast needs CUDA")
 
 ######## Fixtures
 
@@ -99,6 +103,7 @@ def _gain_views(gains, n=40):
     return verts, np.asarray(plane.triangles), np.stack(images), np.stack(poses), np.repeat(K, len(gains), 0)
 
 
+@cuda
 def test_solve_view_gains_recovers_injected_gains():
     truth = np.array([[1.0, 1.0, 1.0], [1.2, 0.9, 1.1], [0.85, 1.1, 0.95], [1.1, 1.15, 0.8], [0.95, 0.85, 1.2]])
     verts, faces, rgbs, c2w, K = _gain_views(truth)
@@ -107,12 +112,14 @@ def test_solve_view_gains_recovers_injected_gains():
     assert np.abs(error - np.median(error, 0)).max() < 1e-2  # gains are only defined up to one shared scale
 
 
+@cuda
 def test_solve_view_gains_single_view_is_unity():
     verts, faces, rgbs, c2w, K = _gain_views(np.ones((1, 3)))
     gains = _solve_view_gains(verts, faces, rgbs, c2w, K, n_points=1_000)
     assert np.array_equal(gains, np.ones((1, 3)))
 
 
+@cuda
 def test_apply_view_gains_divides_below_knee_and_rolls_off_above():
     rgbs = np.array([[[[100, 100, 100], [250, 250, 250]]]], dtype=np.uint8)
     out = _apply_view_gains(rgbs, np.array([[0.8, 0.8, 0.5]]))
@@ -134,6 +141,7 @@ def _two_planes(n=10):
     return top + bottom
 
 
+@cuda
 def test_unwrap_view_charts_uvs_in_unit_square_at_one_texel_density():
     mesh = _two_planes()
     c2w, K = _camera()
@@ -151,6 +159,7 @@ def test_unwrap_view_charts_uvs_in_unit_square_at_one_texel_density():
     assert np.abs(ratio / np.median(ratio) - 1).max() < 0.02
 
 
+@cuda
 def test_unwrap_view_charts_faces_never_share_texels():
     mesh = _two_planes()
     c2w, K = _camera()
@@ -168,6 +177,7 @@ def test_unwrap_view_charts_faces_never_share_texels():
 ######## project_images_to_texture
 
 
+@cuda
 def test_project_images_to_texture_constant_view_gives_constant_albedo():
     mesh = _squares([(0.0, (1, 1), (0, 0), (1, 1), False)])
     c2w, K = _camera()
@@ -198,6 +208,7 @@ def _floor_and_occluder():
     return verts, faces, normals, uvs
 
 
+@cuda
 def test_project_images_to_texture_occluded_texels_take_fill_not_occluder_color():
     c2w, K = _camera()
     albedo = project_images_to_texture(
@@ -208,6 +219,7 @@ def test_project_images_to_texture_occluded_texels_take_fill_not_occluder_color(
     assert albedo[:, :16, 2].min() > 0  # hidden floor: filled, never the red it would sample
 
 
+@cuda
 def test_project_images_to_texture_separate_occluder_replaces_mesh():
     floor = (np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], float), np.array([[0, 1, 2], [0, 2, 3]]))
     c2w, K = _camera()
@@ -217,6 +229,7 @@ def test_project_images_to_texture_separate_occluder_replaces_mesh():
     assert (albedo[:, :16] == [255, 0, 0]).all(axis=-1).mean() > 0.9  # floor under the square now seen
 
 
+@cuda
 def test_project_images_to_texture_back_faces_get_nothing():
     mesh = _squares([(0.0, (1, 1), (0, 0), (1, 1), True)])  # winding flipped: normal points away
     c2w, K = _camera()
@@ -227,6 +240,7 @@ def test_project_images_to_texture_back_faces_get_nothing():
 ######## create_texture_mesh
 
 
+@cuda
 def test_create_texture_mesh_writes_obj_mtl_and_albedo(tmp_path):
     plane = _dense_plane(30)
     c2w, K = _camera()
@@ -244,3 +258,14 @@ def test_create_texture_mesh_writes_obj_mtl_and_albedo(tmp_path):
     albedo = np.asarray(loaded.visual.material.image)
     assert albedo.shape[:2] == (64, 64) and np.abs(albedo[..., :3].astype(int) - [51, 128, 204]).max() <= 2
     assert len(plane.triangles) == 2 * 29 * 29  # the cleaned mesh is never modified
+
+
+def test_create_texture_mesh_refuses_without_cuda(tmp_path, monkeypatch):
+    """No GPU: raises naming mesh.texture before touching the views, and writes nothing."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    mesh = _dense_plane(n=4)
+
+    with pytest.raises(RuntimeError, match="mesh.texture"):
+        create_texture_mesh(mesh, mesh, tmp_path / "tex", None, None, None, voxel_size=0.01)
+
+    assert not (tmp_path / "tex").exists()

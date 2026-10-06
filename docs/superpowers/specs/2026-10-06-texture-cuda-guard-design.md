@@ -48,3 +48,15 @@ with a torch error that does not name the setting.
 - so `tests/reconstructor/test_reconstructor.py` cannot be collected with
   `CUDA_VISIBLE_DEVICES=""`; the new reconstructor test is verified on the GPU run only
 - `collab_splats.mesh` imports and runs on CPU
+
+## Follow-up decision (2026-10-06): the pipeline requires a GPU
+
+- options weighed: fork VGGT-X to make the warmup lazy (rejected: no fork), allow
+  COLMAP-only on CPU (rejected: lazy vggt imports in vggtx, BA and the LC wrapper, and the
+  sfm path still needs VDA depth, a ViT-L on CPU), require a GPU (chosen)
+- README system requirements already say a GPU is needed at runtime
+- `collab_splats/pointcloud/__init__.py` raises `ImportError("collab_splats.pointcloud needs
+  a CUDA GPU; ...")` before the feedforward imports; it sits on the import path of
+  `reconstructor`, the CLI and `evals`
+- `collab_splats.mesh` stays importable on CPU, untested beyond import + tests/mesh
+- `setup.sh`'s GPU-less build-stage check catches `Exception`, so it still warns, not fails

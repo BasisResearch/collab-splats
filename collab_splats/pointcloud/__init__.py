@@ -3,10 +3,20 @@ Pointcloud reconstruction: feedforward creator lookup and the shared result type
 
 - get_creator resolves the feedforward backbones by name
 - every creator returns a PointcloudResult; see base.py
+- needs a CUDA GPU: VGGT-X runs CUDA kernels at import, so refuse before it loads
 """
 
-from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
-from collab_splats.pointcloud.feedforward import (
+import torch
+
+# Clear error instead of VGGT-X's import-time CUDA traceback
+if not torch.cuda.is_available():
+    raise ImportError("collab_splats.pointcloud needs a CUDA GPU; VGGT-X runs CUDA kernels at import")
+
+from collab_splats.pointcloud.base import (  # noqa: E402
+    BasePointcloudCreator,
+    PointcloudResult,
+)
+from collab_splats.pointcloud.feedforward import (  # noqa: E402
     BaseFeedforwardCreator,
     MapAnythingCreator,
     VGGTXCreator,

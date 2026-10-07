@@ -9,7 +9,7 @@ Browser 3D scene viewer over viser: arrays in, named scene nodes out.
 import logging
 import threading
 import zlib
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import matplotlib
 import numpy as np
@@ -188,23 +188,28 @@ class Viewer:
         self.server.scene.add_mesh_trimesh(name, shown)
 
     def add_label_list(
-        self, name: str, labels: np.ndarray, top_n: int = 20, color: tuple[int, int, int] = (255, 80, 0)
+        self,
+        name: str,
+        words: Sequence[str],
+        weights: np.ndarray,
+        on_select: Callable[[Optional[str]], None],
+        top_n: int = 20,
     ) -> None:
         """
-        GUI buttons for a mesh's most common labels; each highlights its vertices, "Clear" removes it.
+        GUI buttons for a mesh's heaviest words; a click hands the word to `on_select`.
 
-        - re-adding replaces the mesh's earlier list
+        - "Clear" hands None; re-adding replaces the mesh's earlier list
+        - each button shows its weight rounded, e.g. `grass (~28.7k)`
 
         Args:
-            name: mesh node name, already added with add_mesh.
-            labels: (V,) str per vertex; "" is unlabeled.
-            top_n: labels listed, most common first.
-            color: RGB 0-255 of the highlight.
+            name: mesh node name; titles the folder.
+            words: candidate words.
+            weights: (len(words),) weight per word, e.g. summed probability over vertices.
+            on_select: called with the clicked word, or None from "Clear".
+            top_n: words listed, heaviest first.
         """
-        # Most common labels first, unlabeled vertices skipped
-        named = labels[labels != ""]
-        values, counts = np.unique(named, return_counts=True)
-        order = np.argsort(-counts, kind="stable")[:top_n]
+        # Heaviest words first
+        order = np.argsort(-np.asarray(weights), kind="stable")[:top_n]
 
         # Replace an earlier list for this mesh
         if name in self.label_lists:
@@ -214,13 +219,13 @@ class Viewer:
 
         with folder:
             clear = self.server.gui.add_button("Clear")
-            clear.on_click(lambda _: self.highlight(name, None, color))
+            clear.on_click(lambda _: on_select(None))
             buttons = [clear]
 
             for i in order:
-                label = str(values[i])
-                button = self.server.gui.add_button(f"{label} ({counts[i]})")
-                button.on_click(lambda _, label=label: self.highlight(name, labels == label, color))
+                word = str(words[i])
+                button = self.server.gui.add_button(f"{word} (~{_compact_count(float(weights[i]))})")
+                button.on_click(lambda _, word=word: on_select(word))
                 buttons.append(button)
 
         self.label_lists[name] = (folder, buttons)
@@ -427,3 +432,18 @@ class Viewer:
         rng = np.random.default_rng(zlib.crc32(name.encode()))
         color = rng.integers(0, 256, size=3, dtype=np.uint8)
         return np.tile(color, (n, 1))
+
+
+########################################################################
+# Helpers
+########################################################################
+
+
+def _compact_count(value: float) -> str:
+    """
+    Short count for a button label: 950 -> "950", 28718 -> "28.7k".
+    """
+    if value < 1000:
+        return f"{value:.0f}"
+
+    return f"{value / 1000:.1f}k"

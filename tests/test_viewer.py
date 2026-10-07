@@ -191,18 +191,25 @@ def test_show_heat_replaces_clears_and_sends_nothing_below_the_floor(viewer, mon
     assert "quad" not in viewer.heats
 
 
-def test_add_label_list_counts_labels_most_common_first_and_skips_empty(viewer):
+def test_add_label_list_ranks_by_weight_and_hands_words_to_on_select(viewer):
     viewer.add_mesh("quad", *_quad())
-    labels = np.array(["rock", "tree", "tree", ""], dtype=object)
+    selected = []
+    words = ["rock", "tree", "sky"]
+    weights = np.array([12.0, 28_718.4, 950.0])
 
-    viewer.add_label_list("quad", labels, top_n=5)
+    viewer.add_label_list("quad", words, weights, selected.append, top_n=5)
     _, buttons = viewer.label_lists["quad"]
-    assert [b.label for b in buttons] == ["Clear", "tree (2)", "rock (1)"]
+    assert [b.label for b in buttons] == ["Clear", "tree (~28.7k)", "sky (~950)", "rock (~12)"]
+
+    # Word buttons hand their word over; Clear hands None
+    buttons[1]._impl.update_cb[0](None)
+    buttons[0]._impl.update_cb[0](None)
+    assert selected == ["tree", None]
 
     # Re-adding replaces the list rather than stacking a second one
-    viewer.add_label_list("quad", labels, top_n=1)
+    viewer.add_label_list("quad", words, weights, selected.append, top_n=1)
     _, buttons = viewer.label_lists["quad"]
-    assert [b.label for b in buttons] == ["Clear", "tree (2)"]
+    assert [b.label for b in buttons] == ["Clear", "tree (~28.7k)"]
 
 
 def test_on_click_registers_one_scene_handler_and_the_nearest_mesh_wins(viewer, monkeypatch):

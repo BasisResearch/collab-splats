@@ -69,7 +69,7 @@ Measured for this design:
 | 2D codes | `<scene>/semantics/<extractor>_codes.zarr` | `features` (N, latent, H_p, W_p) fp16, `autoencoder.pt`; attrs `extractor`, `patch_size`, `n_frames`, `extractor_kwargs`, `latent_dim` |
 | 2D states (temporary) | `<scene>/semantics/<extractor>.zarr` | full-width `features`; deleted once encoded |
 | point store | `<scene>/<backend>/semantics/<extractor>_lifted.zarr` | `features` (P, latent) fp16, `autoencoder.pt` |
-| vertex store (ocr_lens only) | `<scene>/<backend>/semantics/<extractor>_vertices.zarr` | word arrays only; no codes, nothing reads them |
+| vertex store (every extractor, when `mesh.ply` exists) | `<scene>/<backend>/semantics/<extractor>_vertices.zarr` | fp16 codes + `autoencoder.pt`, attrs `extractor`, `extractor_kwargs`; ocr_lens adds the word arrays. Codes added 2026-10-07 for the [scene viewer](2026-10-07-scene-viewer-design.md)'s text queries |
 
 - word arrays, in the point store (ocr_lens) and the vertex store: `word_ids` (T, 64) uint16,
   `word_probs` (T, 64) fp16, `dropped_mass` (T,) fp16, attrs `words` (the vocabulary list)

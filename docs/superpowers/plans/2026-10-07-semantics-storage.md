@@ -4,7 +4,7 @@
 
 **Goal:** Cut semantics storage from ~20 GB to under 1 GB per scene and store OCR-lens word probabilities so the viewer never decodes them.
 
-**Architecture:** The semantics stage extracts full-width states to a temporary store, trains the AE on every frame by streaming, encodes each frame to fp16 codes in `<extractor>_codes.zarr`, and deletes the states. Codes lift onto points as before. For ocr_lens, each frame's codes decode to word probabilities, which lift onto the points and the mesh vertices; only the top-64 per target are stored. `lift_features` samples visible points only.
+**Architecture:** The semantics stage extracts full-width states to a temporary store, trains the AE on every frame by streaming, encodes each frame to fp16 codes in `<extractor>_codes.zarr`, and deletes the states. Codes lift onto the points, and onto the mesh vertices when `mesh.ply` exists (vertex store, every extractor). For ocr_lens, each frame's codes also decode to word probabilities, which lift onto both targets; only the top-64 per row are stored. `lift_features` samples visible points only.
 
 **Tech Stack:** torch, zarr v3, open3d (mesh read), viser viewer, pytest.
 
@@ -35,7 +35,7 @@
 | `collab_splats/semantics/__init__.py` | export rename |
 | `collab_splats/semantics/compression.py` | `FeatureAutoencoder.fit` streams any (N, D, ...) array |
 | `collab_splats/utils/torch_utils.py` | delete `load_features` |
-| `collab_splats/reconstructor.py` | `STAGES` order; `semantics()` flow; new `_word_frame` |
+| `collab_splats/reconstructor.py` | `STAGES` order; `semantics()` flow incl. vertex store for every extractor; new `_word_frame` |
 | `docs/examples/ocr_lens_viewer.py` | read the vertex store; no decoder |
 | `docs/semantics.md`, `configs/base.yaml`, `CLAUDE.md` | docs |
 | `tests/semantics/test_lifting.py`, `test_store.py`, `test_compression_target.py`, `features/test_extract_from_zarr.py` | tests |
@@ -317,7 +317,7 @@ def test_valid_feature_cache_propagates_unexpected_errors(tmp_path, monkeypatch)
         store.valid_feature_cache(tmp_path / "fake_codes.zarr", "fake", images, {}, None)
 ```
 
-Before deleting `test_extract_feature_cache_propagates_unexpected_errors`, check that `open_valid` really calls `zarr.open` through `store.zarr`. If it imports zarr in `utils/io.py`, patch `collab_splats.utils.io.zarr.open` instead. The test's intent stays the same.
+`store.zarr` is the same module object `open_valid` (in `utils/io.py`) calls, so patching `store.zarr.open` reaches the validity check.
 
 In `tests/semantics/features/test_extract_from_zarr.py`, delete the `# extract_feature_cache` section and its four tests, and remove the `extract_feature_cache` import. The `features_to_rgb` tests stay. Update the module docstring's first line to `Tests for BaseFeatureExtractor.features_to_rgb.`
 
@@ -566,7 +566,11 @@ def write_point_features(
     tmp.rename(store_path)
 ```
 
-Check `read_point_features`: it must cast to float32 before normalizing (the spec says it already does). If it normalizes the raw fp16 array, insert `.astype(np.float32)` at the read.
+In `read_point_features`, read the codes as float32. Today it does `codes = np.asarray(store["features"])`; on an fp16 store the no-AE branch would return `F.normalize` of an fp16 tensor, i.e. float16, against its float32 contract (the AE branch is safe: `iter_decode` casts). Replace that line with:
+
+```python
+    codes = np.asarray(store["features"], dtype=np.float32)
+```
 
 - [ ] **Step 4: Run the store tests**
 
@@ -907,7 +911,7 @@ def _stub_extraction(dim=32):
     """
     Extractor, image decode and lift stubbed; frame k's map is constant k + 1 over (dim, 2, 2).
 
-    - lift returns frame 0's first cell repeated per point (6 points), so its width is the loader's
+    - lift returns frame 0's first cell repeated per target row, so its width is the loader's
     """
     calls = []
 
@@ -917,7 +921,7 @@ def _stub_extraction(dim=32):
         return [torch.full((dim, 2, 2), float(first + j + 1)) for j in range(len(frames))]
 
     def lift(frame_features, result):
-        return frame_features(0)[:, 0, 0].float().cpu().repeat(6, 1)
+        return frame_features(0)[:, 0, 0].float().cpu().repeat(len(result.points), 1)
 
     with (
         patch.object(R, "BaseFeatureExtractor") as extractor_base,
@@ -956,7 +960,7 @@ def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
     assert rec.done("semantics")
     assert (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").is_file()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
-    assert store["features"].shape == (6, 8) and store["features"].dtype == np.float16
+    assert store["features"].shape == (1, 8) and store["features"].dtype == np.float16
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8}
     assert "word_ids" not in store
 
@@ -1026,8 +1030,7 @@ Add `import contextlib` to the test imports.
 (h) In `tests/reconstructor/test_sfm_stage.py`, `test_semantics_lifts_only_the_rows_the_pointcloud_holds`:
 - seed the cache at `recon.semantics_cache_dir / "dinov2_codes.zarr"` via `write_feature_cache`, with attrs `{"extractor": "dinov2", "patch_size": 14, "n_frames": len(FRAME_IDX), "extractor_kwargs": {}, "latent_dim": None}`
 - drop the `extract_feature_cache` patch
-
-Check that `_seed_subset_scene` touches all `FRAME_IDX` frames in `images/` (validity counts them). If it does not, patch `valid_feature_cache` to return the seeded path instead.
+- `_sfm_reconstructor` builds a real `images/` holding every `FRAME_IDX` frame, so the seeded store reads valid
 
 - [ ] **Step 2: Run them; they fail**
 
@@ -1167,13 +1170,15 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: OCR-lens word arrays on points and mesh vertices
+### Task 6: Vertex store for every extractor; OCR-lens word arrays on points and vertices
 
 **Files:**
 - Modify: `collab_splats/reconstructor.py`:
   - imports
   - new `_word_frame` next to `_load_frame` (~line 141)
-  - `semantics()`, at the Task 5 marker
+  - `semantics()`, from the codes lift to the end
+
+Why every extractor: the scene-viewer spec ([2026-10-07-scene-viewer-design.md](../specs/2026-10-07-scene-viewer-design.md)) queries maskclip / talk2dino on the mesh from the vertex store's codes, and rejects lifting at viewer start-up. Codes are narrow, so the extra lift per target is cheap.
 - Test: `tests/reconstructor/test_reconstructor.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1258,7 +1263,8 @@ def test_semantics_ocr_lens_writes_top_k_words_on_points_and_vertices(tmp_path, 
     np.testing.assert_array_equal(vertices["word_ids"][1], top.indices.numpy())
     np.testing.assert_allclose(vertices["word_probs"][1], top.values.numpy(), atol=1e-3)
     np.testing.assert_allclose(vertices["dropped_mass"][1], float(row.sum() - top.values.sum()), atol=1e-3)
-    assert "features" not in vertices
+    assert vertices["features"].shape == (len(mesh.vertices), 4)
+    assert vertices.attrs["extractor"] == "ocr_lens" and vertices.attrs["extractor_kwargs"] == {}
 
     # The vertex lift has no source pixels: unseen vertices stay zero
     assert targets[-1].pixel_indices is None
@@ -1280,9 +1286,29 @@ def test_semantics_ocr_lens_without_mesh_writes_no_vertex_store(tmp_path):
 
     assert "word_ids" in zarr.open(str(rec.outputs["semantics"]), mode="r")
     assert not (rec.backend_dir / "semantics" / "ocr_lens_vertices.zarr").exists()
+
+
+def test_semantics_writes_a_vertex_code_store_for_any_extractor(tmp_path):
+    """
+    mesh.ply present: dinov2 codes lift onto its vertices too, AE and extractor attrs beside them.
+    """
+    rec = _semantics_rec(tmp_path, {**COMPRESSED, "extractor_kwargs": {"layer": 20}})
+    mesh = o3d.geometry.TriangleMesh.create_tetrahedron()
+    rec.backend_dir.mkdir(parents=True, exist_ok=True)
+    o3d.io.write_triangle_mesh(str(rec.outputs["mesh"]), mesh)
+
+    with _stub_extraction():
+        rec.semantics()
+
+    vertex_path = rec.backend_dir / "semantics" / "dinov2_vertices.zarr"
+    store = zarr.open(str(vertex_path), mode="r")
+    assert store["features"].shape == (len(mesh.vertices), 8) and store["features"].dtype == np.float16
+    assert (vertex_path / "autoencoder.pt").is_file()
+    assert store.attrs["extractor"] == "dinov2" and store.attrs["extractor_kwargs"] == {"layer": 20}
+    assert "word_ids" not in store
 ```
 
-The dinov2 run in `test_semantics_writes_weights_inside_the_lifted_store` (Task 5) already asserts `"word_ids" not in store`, which covers "word arrays only for ocr_lens".
+The dinov2 runs in `test_semantics_writes_weights_inside_the_lifted_store` (Task 5) and `test_semantics_writes_a_vertex_code_store_for_any_extractor` assert `"word_ids" not in store`, which covers "word arrays only for ocr_lens".
 
 - [ ] **Step 2: Run them; they fail**
 
@@ -1329,64 +1355,80 @@ def _word_frame(
     return probs.reshape(-1, height, width)
 ```
 
-In `semantics()`, replace the Task 5 marker block:
+In `semantics()`, replace everything from the codes lift to the end of the method:
 
 ```python
+        lifted = lift_features(partial(_load_frame, codes, rows, None), pointcloud)
+
         # Word arrays for the points and mesh vertices (ocr_lens only); Task 6
         point_words = {}
         word_attrs = {}
+
+        # Write the per-point codes beside the lifted-store marker
+        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae, arrays=point_words, attrs=word_attrs)
 ```
 
 with:
 
 ```python
-        # OCR lens: top-64 word probabilities per point, and per mesh vertex when mesh.ply exists
-        point_words = {}
+        # Lift targets: points, plus mesh.ply's vertices (no source pixel, so unseen stays zero)
+        targets = {"points": pointcloud}
+
+        if self.outputs["mesh"].exists():
+            mesh = o3d.io.read_triangle_mesh(str(self.outputs["mesh"]))
+            vertices = np.asarray(mesh.vertices, dtype=np.float32)
+            targets["vertices"] = dataclasses.replace(pointcloud, points=vertices, pixel_indices=None)
+
+        # OCR lens: each frame's codes decode to word probabilities
+        word_frame = None
         word_attrs = {}
 
         if name == "ocr_lens":
-            model_id = extractor_kwargs.get("model_id", inspect.signature(OCRLensExtractor).parameters["model_id"].default)
+            params = inspect.signature(OCRLensExtractor).parameters
+            model_id = extractor_kwargs.get("model_id", params["model_id"].default)
             decoder = load_decoder(model_id)
             vocab = word_vocabulary(load_processor(model_id).tokenizer)
             word_frame = partial(_word_frame, codes, rows, ae, decoder, vocab)
             word_attrs = {"words": vocab.words}
-            targets = {"points": pointcloud}
 
-            # Vertices have no source pixel: no fallback, unseen stays zero
-            if self.outputs["mesh"].exists():
-                mesh = o3d.io.read_triangle_mesh(str(self.outputs["mesh"]))
-                vertices = np.asarray(mesh.vertices, dtype=np.float32)
-                targets["vertices"] = dataclasses.replace(pointcloud, points=vertices, pixel_indices=None)
+        lifted = {}
+        words = {key: {} for key in targets}
 
-            words = {}
+        for key, target in targets.items():
+            # Codes lifted onto every target
+            lifted[key] = to_numpy(lift_features(partial(_load_frame, codes, rows, None), target))
 
-            for key, target in targets.items():
-                # Decode each frame, lift the full vocabulary, keep each row's top-k
-                probs = lift_features(word_frame, target)
-                top = probs.topk(min(64, probs.shape[1]), dim=1)
-                dropped = probs.sum(1) - top.values.sum(1)
-                words[key] = {
-                    "word_ids": top.indices.numpy().astype(np.uint16),
-                    "word_probs": top.values.half().numpy(),
-                    "dropped_mass": dropped.clamp_min(0).half().numpy(),
-                }
-                del probs
+            if word_frame is None:
+                continue
 
-            point_words = words["points"]
+            # Full vocabulary lifted, each row's top-64 kept with the mass it drops
+            probs = lift_features(word_frame, target)
+            top = probs.topk(min(64, probs.shape[1]), dim=1)
+            dropped = probs.sum(1) - top.values.sum(1)
+            words[key] = {
+                "word_ids": top.indices.numpy().astype(np.uint16),
+                "word_probs": top.values.half().numpy(),
+                "dropped_mass": dropped.clamp_min(0).half().numpy(),
+            }
+            del probs
 
-            if "vertices" in words:
-                vertex_path = self.backend_dir / "semantics" / f"{name}_vertices.zarr"
-                write_point_features(vertex_path, None, None, arrays=words["vertices"], attrs=word_attrs)
-
-            del decoder
+        # Free the lens decoder before writing
+        if word_frame is not None:
+            del word_frame, decoder
             pytorch_gc()
+
+        # Vertex store first; the lifted store is the stage's done marker, so it lands last
+        if "vertices" in targets:
+            vertex_path = self.backend_dir / "semantics" / f"{name}_vertices.zarr"
+            vertex_attrs = {"extractor": name, "extractor_kwargs": extractor_kwargs, **word_attrs}
+            write_point_features(vertex_path, lifted["vertices"], ae, arrays=words["vertices"], attrs=vertex_attrs)
+
+        write_point_features(self.outputs["semantics"], lifted["points"], ae, arrays=words["points"], attrs=word_attrs)
 ```
 
-`dataclasses.replace(pointcloud, points=vertices, ...)` keeps `colors` at the point count. Check that `lift_features` never reads `colors` (it does not today). If `PointcloudResult.__post_init__` validates `colors` against `points`, also pass `colors=np.zeros((len(vertices), 3), np.uint8)`.
+`lift_features` never reads `colors`, and `PointcloudResult` has no `__post_init__`, so `dataclasses.replace` with vertex points and the points' `colors` is safe.
 
 `dropped.clamp_min(0)` stops float rounding from storing tiny negative masses. On a zero row, `sum - sum` is `0`.
-
-Wrap the `model_id` line to stay within 120 characters (two statements: `params = inspect.signature(OCRLensExtractor).parameters`, then the `get`).
 
 - [ ] **Step 4: Run the reconstructor tests**
 
@@ -1401,11 +1443,12 @@ Expected: `exit=0`, with no failures beyond the baseline.
 
 ```bash
 git add collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py
-git commit --only collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py -m "feat(semantics): store OCR-lens top-64 word probabilities on points and mesh vertices
+git commit --only collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py -m "feat(semantics): vertex store for every extractor; OCR-lens top-64 words on points and vertices
 
-Each frame's codes decode to word probabilities, lift onto the points
-(into the lifted store) and mesh.ply's vertices (<extractor>_vertices.zarr):
-word_ids uint16, word_probs fp16, dropped_mass fp16, attrs words.
+When mesh.ply exists, codes also lift onto its vertices into
+<extractor>_vertices.zarr (codes, autoencoder.pt, attrs extractor and
+extractor_kwargs) for the scene viewer. ocr_lens adds word_ids uint16,
+word_probs fp16, dropped_mass fp16 and attrs words to both stores.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1416,6 +1459,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `docs/examples/ocr_lens_viewer.py` (whole file)
+
+Stopgap: the scene-viewer effort deletes this script and moves its word mode into `collab_splats/viewer.py`. This rewrite keeps the viewer working on the new stores until then and is the code scene-viewer moves.
 
 - [ ] **Step 1: Rewrite the viewer**
 
@@ -1617,7 +1662,7 @@ Replace everything from `## On-disk layout` up to the next `---` with:
 | `<scene>/semantics/<extractor>_codes.zarr` | `features` (N, latent, H_p, W_p) fp16, one chunk per frame; `autoencoder.pt`; attrs `extractor`, `patch_size`, `n_frames`, `extractor_kwargs`, `latent_dim` | `write_feature_cache` |
 | `<scene>/semantics/<extractor>.zarr` | full-width states, (N, D, H_p, W_p) fp16; temporary, deleted once encoded | `write_feature_cache` |
 | `<scene>/<backend>/semantics/<extractor>_lifted.zarr` | `features` (P, latent) fp16, `autoencoder.pt`; ocr_lens adds the word arrays | `write_point_features` |
-| `<scene>/<backend>/semantics/<extractor>_vertices.zarr` | ocr_lens only: word arrays per `mesh.ply` vertex | `write_point_features` |
+| `<scene>/<backend>/semantics/<extractor>_vertices.zarr` | when `mesh.ply` exists: `features` (V, latent) fp16 per `mesh.ply` vertex, `autoencoder.pt`, attrs `extractor`, `extractor_kwargs`; ocr_lens adds the word arrays | `write_point_features` |
 
 - `n_components: null`: `_codes.zarr` holds full-width features, `latent_dim` null, no AE, no temporary store
 - the AE trains once on every frame (streamed); changing `n_components` re-runs the extractor

@@ -1,13 +1,11 @@
 """Tests for collab_splats.semantics.store — the 2D patch cache and the lifted per-point store."""
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 import torch
 import zarr
-from PIL import Image
 
 import collab_splats.semantics.store as store
 from collab_splats.semantics.compression import FeatureAutoencoder
@@ -18,170 +16,110 @@ from collab_splats.semantics.store import read_point_features, write_point_featu
 ########################################################################
 
 
-def _one_frame_scene(tmp_path: Path, n: int = 1) -> Path:
+def _frames_dir(tmp_path: Path, n: int) -> Path:
     images = tmp_path / "images"
     images.mkdir()
+
     for i in range(n):
-        Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / f"frame_{i:06d}.png")
+        (images / f"frame_{i:06d}.png").touch()
+
     return images
 
 
-def _fake_extractor(n_calls_before_crash: int | None = None) -> MagicMock:
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    calls = []
-
-    def forward(frames):
-        calls.append(1)
-        if n_calls_before_crash is not None and len(calls) > n_calls_before_crash:
-            raise RuntimeError("crash mid-extraction")
-        return [torch.full((3, 2, 2), 0.5) for _ in frames]
-
-    extractor.forward.side_effect = forward
-    return extractor
+def _maps(n: int, dim: int = 3) -> list[torch.Tensor]:
+    return [torch.full((dim, 2, 2), float(i)) for i in range(n)]
 
 
-def test_extract_feature_cache_propagates_unexpected_errors(tmp_path, monkeypatch):
-    """A bug inside the validity check must surface, not trigger a silent re-extract."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / "frame_000000.png")
-    (tmp_path / "fake.zarr").mkdir()
+ATTRS = {"extractor": "fake", "patch_size": 2, "n_frames": 2, "extractor_kwargs": {"layer": 17}, "latent_dim": 3}
+
+
+def test_write_feature_cache_writes_fp16_one_chunk_per_frame(tmp_path):
+    path = tmp_path / "fake_codes.zarr"
+    store.write_feature_cache(path, iter(_maps(2)), 2, ATTRS)
+
+    arr = zarr.open(str(path), mode="r")["features"]
+    assert arr.dtype == np.float16
+    assert arr.shape == (2, 3, 2, 2) and arr.chunks == (1, 3, 2, 2)
+    assert float(arr[1, 0, 0, 0]) == 1.0
+    assert dict(zarr.open(str(path), mode="r").attrs) == ATTRS
+
+
+def test_write_feature_cache_saves_the_autoencoder_before_the_attrs(tmp_path, monkeypatch):
+    """A store whose AE never landed must read invalid."""
+    path = tmp_path / "fake_codes.zarr"
+
+    def boom(self, target):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(FeatureAutoencoder, "save", boom)
+
+    with pytest.raises(OSError):
+        store.write_feature_cache(path, iter(_maps(2)), 2, ATTRS, ae=FeatureAutoencoder(8, 3))
+
+    assert "extractor" not in zarr.open(str(path), mode="r").attrs
+
+
+def test_write_feature_cache_crash_mid_frames_reads_invalid(tmp_path):
+    images = _frames_dir(tmp_path, 2)
+    path = tmp_path / "fake_codes.zarr"
+
+    def crashing():
+        yield _maps(1)[0]
+        raise RuntimeError("crash mid-extraction")
+
+    with pytest.raises(RuntimeError):
+        store.write_feature_cache(path, crashing(), 2, ATTRS)
+
+    assert store.valid_feature_cache(path, "fake", images, {"layer": 17}, 3) is None
+
+
+def test_write_feature_cache_rejects_a_short_frame_stream(tmp_path):
+    with pytest.raises(ValueError, match="1 of 2"):
+        store.write_feature_cache(tmp_path / "fake_codes.zarr", iter(_maps(1)), 2, ATTRS)
+
+
+def test_write_feature_cache_rejects_a_long_frame_stream(tmp_path):
+    with pytest.raises(ValueError, match="more than 1"):
+        store.write_feature_cache(tmp_path / "fake_codes.zarr", iter(_maps(2)), 1, ATTRS)
+
+
+def test_write_feature_cache_rejects_zero_frames(tmp_path):
+    with pytest.raises(ValueError, match="no frames"):
+        store.write_feature_cache(tmp_path / "fake_codes.zarr", iter([]), 0, ATTRS)
+
+
+def test_valid_feature_cache_checks_name_kwargs_frames_and_latent_dim(tmp_path):
+    images = _frames_dir(tmp_path, 2)
+    path = tmp_path / "fake_codes.zarr"
+    store.write_feature_cache(path, iter(_maps(2)), 2, ATTRS)
+
+    assert store.valid_feature_cache(path, "fake", images, {"layer": 17}, 3) == path
+    assert store.valid_feature_cache(path, "other", images, {"layer": 17}, 3) is None
+    assert store.valid_feature_cache(path, "fake", images, {"layer": 18}, 3) is None
+    assert store.valid_feature_cache(path, "fake", images, {"layer": 17}, 8) is None
+    assert store.valid_feature_cache(path, "fake", images, {"layer": 17}, None) is None
+
+
+def test_valid_feature_cache_rejects_a_frame_count_mismatch(tmp_path):
+    images = _frames_dir(tmp_path, 3)
+    path = tmp_path / "fake_codes.zarr"
+    store.write_feature_cache(path, iter(_maps(2)), 2, ATTRS)
+
+    assert store.valid_feature_cache(path, "fake", images, {"layer": 17}, 3) is None
+
+
+def test_valid_feature_cache_propagates_unexpected_errors(tmp_path, monkeypatch):
+    """A bug inside the validity check must surface, not read as a miss."""
+    images = _frames_dir(tmp_path, 1)
+    (tmp_path / "fake_codes.zarr").mkdir()
 
     def boom(*args, **kwargs):
         raise RuntimeError("not a store error")
 
     monkeypatch.setattr(store.zarr, "open", boom)
-    extractor = MagicMock()
-    extractor.name = "fake"
+
     with pytest.raises(RuntimeError, match="not a store error"):
-        store.extract_feature_cache(extractor, images, tmp_path)
-
-
-def test_extract_feature_cache_reextracts_corrupt_store(tmp_path):
-    """A store with unreadable metadata is an expected stale cache: re-extract."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / "frame_000000.png")
-    store_path = tmp_path / "fake.zarr"
-    store_path.mkdir()
-    (store_path / "zarr.json").write_text("{not json")
-
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
-    store.extract_feature_cache(extractor, images, tmp_path)
-    assert zarr.open(str(store_path), mode="r").attrs["n_frames"] == 1
-
-
-def test_extract_feature_cache_hands_the_extractor_rgb_arrays(tmp_path):
-    """Frames reach forward() as decoded RGB ndarrays, not lazily-decoded PIL handles."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.full((4, 4, 3), (200, 10, 10), dtype=np.uint8)).save(images / "frame_000000.png")
-
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
-    store.extract_feature_cache(extractor, images, tmp_path)
-
-    [frame] = extractor.forward.call_args.args[0]
-    assert isinstance(frame, np.ndarray)
-    np.testing.assert_array_equal(frame[0, 0], [200, 10, 10])
-
-
-def test_extract_feature_cache_reextracts_on_frame_count_mismatch(tmp_path):
-    """A store whose n_frames disagrees with the directory is stale: re-extract."""
-    images = tmp_path / "images"
-    images.mkdir()
-    Image.fromarray(np.zeros((4, 4, 3), dtype=np.uint8)).save(images / "frame_000000.png")
-    stale = zarr.open(str(tmp_path / "fake.zarr"), mode="w")
-    stale.attrs.update({"extractor": "fake", "n_frames": 7})
-
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    extractor.forward.return_value = [torch.zeros(3, 2, 2)]
-    store.extract_feature_cache(extractor, images, tmp_path)
-
-    assert extractor.forward.called
-    assert zarr.open(str(tmp_path / "fake.zarr"), mode="r").attrs["n_frames"] == 1
-
-
-def test_extract_feature_cache_writes_float16(tmp_path):
-    images = _one_frame_scene(tmp_path)
-    path = store.extract_feature_cache(_fake_extractor(), images, tmp_path)
-    arr = zarr.open(str(path), mode="r")["features"]
-    assert arr.dtype == np.float16
-    np.testing.assert_array_equal(np.asarray(arr[0]), np.full((3, 2, 2), 0.5, np.float16))
-
-
-def test_extract_feature_cache_valid_hit_skips_extraction(tmp_path):
-    images = _one_frame_scene(tmp_path)
-    store.extract_feature_cache(_fake_extractor(), images, tmp_path, {"layer": 17})
-    again = _fake_extractor()
-    store.extract_feature_cache(again, images, tmp_path, {"layer": 17})
-    assert not again.forward.called
-
-
-def test_extract_feature_cache_overwrite_reextracts_a_valid_store(tmp_path):
-    images = _one_frame_scene(tmp_path)
-    store.extract_feature_cache(_fake_extractor(), images, tmp_path, {"layer": 17})
-    again = _fake_extractor()
-    store.extract_feature_cache(again, images, tmp_path, {"layer": 17}, overwrite=True)
-    assert again.forward.called
-
-
-def test_extract_feature_cache_changed_kwargs_reextract(tmp_path):
-    images = _one_frame_scene(tmp_path)
-    store.extract_feature_cache(_fake_extractor(), images, tmp_path, {"layer": 17})
-    other_layer = _fake_extractor()
-    path = store.extract_feature_cache(other_layer, images, tmp_path, {"layer": 20})
-    assert other_layer.forward.called
-    assert zarr.open(str(path), mode="r").attrs["extractor_kwargs"] == {"layer": 20}
-
-
-def test_extract_feature_cache_crash_leaves_invalid_store(tmp_path):
-    images = _one_frame_scene(tmp_path, n=2)
-    with pytest.raises(RuntimeError, match="crash mid-extraction"):
-        store.extract_feature_cache(_fake_extractor(n_calls_before_crash=1), images, tmp_path, batch_size=1)
-    assert (tmp_path / "fake.zarr").exists()
-    assert store.valid_feature_cache(tmp_path, "fake", images) is None
-
-
-def test_extract_feature_cache_batches_keep_frame_order(tmp_path):
-    """Batched forward: ragged last batch, every frame lands in its own row, in order."""
-    images = _one_frame_scene(tmp_path, n=5)
-    extractor = MagicMock()
-    extractor.name = "fake"
-    extractor.patch_size = 2
-    counter = iter(range(5))
-    extractor.forward.side_effect = lambda frames: [torch.full((3, 2, 2), float(next(counter))) for _ in frames]
-
-    path = store.extract_feature_cache(extractor, images, tmp_path, batch_size=2)
-
-    sizes = [len(call.args[0]) for call in extractor.forward.call_args_list]
-    assert sizes == [2, 2, 1]
-    features = zarr.open(str(path), mode="r")["features"][:]
-    np.testing.assert_array_equal(features[:, 0, 0, 0], [0, 1, 2, 3, 4])
-
-
-def test_valid_feature_cache_returns_path_on_match(tmp_path):
-    images = _one_frame_scene(tmp_path)
-    path = store.extract_feature_cache(_fake_extractor(), images, tmp_path, {"layer": 17})
-    assert store.valid_feature_cache(tmp_path, "fake", images, {"layer": 17}) == path
-    assert store.valid_feature_cache(tmp_path, "fake", images, {"layer": 18}) is None
-    assert store.valid_feature_cache(tmp_path, "other", images, {"layer": 17}) is None
-
-
-def test_valid_feature_cache_rejects_legacy_store_without_kwargs_attr(tmp_path):
-    images = _one_frame_scene(tmp_path)
-    group = zarr.open(str(tmp_path / "fake.zarr"), mode="w")
-    group.attrs.update({"extractor": "fake", "n_frames": 1})
-    assert store.valid_feature_cache(tmp_path, "fake", images) is None
+        store.valid_feature_cache(tmp_path / "fake_codes.zarr", "fake", images, {}, None)
 
 
 ########################################################################
@@ -215,7 +153,7 @@ def test_read_point_features_full_dim_store_needs_no_weights(tmp_path):
 
     assert not (store_path / "autoencoder.pt").exists()
     out = read_point_features(store_path)
-    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-6)
+    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-3)
 
 
 def test_write_point_features_replaces_the_store_whole(tmp_path):
@@ -227,7 +165,7 @@ def test_write_point_features_replaces_the_store_whole(tmp_path):
 
     assert not (store_path / "autoencoder.pt").exists()
     out = read_point_features(store_path)
-    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-6)
+    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-3)
 
 
 def test_write_point_features_killed_before_rename_leaves_no_store(tmp_path, monkeypatch):
@@ -277,7 +215,7 @@ def test_read_point_features_decodes_in_batches_matching_the_unbatched_result(tm
     _write_lifted(store_path, n_points=37, latent=8, input_dim=32)
 
     # Reference: decode every code in one call through the same weights
-    codes = torch.from_numpy(np.asarray(zarr.open(str(store_path), mode="r")["features"]))
+    codes = torch.from_numpy(np.asarray(zarr.open(str(store_path), mode="r")["features"], dtype=np.float32))
     ae = FeatureAutoencoder.load(store_path / "autoencoder.pt")
 
     with torch.no_grad():
@@ -296,3 +234,14 @@ def test_read_point_features_decodes_in_batches_matching_the_unbatched_result(tm
 
     np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
     assert len(sizes) == 8 and max(sizes) <= 5  # 37 = 7*5 + 2; never the whole array at once
+
+
+def test_write_point_features_stores_fp16_and_reads_float32_unit_rows(tmp_path):
+    store_path = tmp_path / "talk2dino_lifted.zarr"
+    feats = np.random.default_rng(0).random((6, 5), dtype=np.float32)
+    write_point_features(store_path, feats, None)
+
+    assert zarr.open(str(store_path), mode="r")["features"].dtype == np.float16
+    out = read_point_features(store_path)
+    assert out.dtype == np.float32
+    np.testing.assert_allclose(np.linalg.norm(out, axis=1), 1.0, rtol=1e-5)

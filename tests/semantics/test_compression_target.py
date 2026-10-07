@@ -1,7 +1,9 @@
 """target_cosine early-stop and persisted reconstruction metrics."""
 
+import numpy as np
 import pytest
 import torch
+import zarr
 
 from collab_splats.semantics.compression import FeatureAutoencoder
 
@@ -126,3 +128,50 @@ def test_load_raises_without_metric_keys(tmp_path):
     torch.save(payload, weights)
     with pytest.raises(KeyError, match="recon_cosine"):
         FeatureAutoencoder.load(weights)
+
+
+def _patch_maps(n=6, d=16, h=2, w=3):
+    """
+    (n, d, h, w) maps whose frame k holds only feature k: a fit that skips a frame never sees it.
+    """
+    maps = np.zeros((n, d, h, w), dtype=np.float32)
+
+    for k in range(n):
+        maps[k, k] = 1.0 + k
+
+    return maps
+
+
+def test_fit_streams_every_frame_of_a_zarr_in_blocks(tmp_path):
+    """read_gb small enough for 1-frame blocks: every frame still reaches the loss."""
+    maps = _patch_maps()
+    arr = zarr.open(str(tmp_path / "m.zarr"), mode="w", shape=maps.shape, chunks=(1, *maps.shape[1:]), dtype="float16")
+    arr[:] = maps
+    seen = []
+    ae = FeatureAutoencoder(input_dim=16, latent_dim=4)
+    hook = ae.encoder.register_forward_pre_hook(lambda module, args: seen.append(args[0].detach().cpu()))
+    ae.fit(arr, epochs=1, batch_size=4, read_gb=1e-9)
+    hook.remove()
+
+    rows = torch.cat(seen)
+    assert rows.shape == (6 * 2 * 3, 16)
+    assert set(rows.argmax(1).tolist()) == set(range(6))
+
+
+def test_fit_tensor_and_zarr_inputs_both_train(tmp_path):
+    maps = _patch_maps()
+    arr = zarr.open(str(tmp_path / "m.zarr"), mode="w", shape=maps.shape, dtype="float32")
+    arr[:] = maps
+
+    for source in (torch.from_numpy(maps), arr):
+        ae = FeatureAutoencoder(input_dim=16, latent_dim=4)
+        ae.fit(source, epochs=2, read_gb=1e-9)
+        assert ae.epochs_run == 2
+        assert -1.0 <= ae.recon_cosine <= 1.0
+
+
+def test_fit_rejects_empty_zarr(tmp_path):
+    arr = zarr.open(str(tmp_path / "m.zarr"), mode="w", shape=(0, 16, 2, 2), dtype="float16")
+
+    with pytest.raises(ValueError, match="at least one sample"):
+        FeatureAutoencoder(input_dim=16, latent_dim=4).fit(arr, epochs=1)

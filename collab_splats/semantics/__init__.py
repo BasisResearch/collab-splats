@@ -30,9 +30,9 @@ from collab_splats.semantics.segmentation import (
     sky_masks,
 )
 from collab_splats.semantics.store import (
-    extract_feature_cache,
     read_point_features,
     valid_feature_cache,
+    write_feature_cache,
     write_point_features,
 )
 from collab_splats.semantics.utils import cluster_points, compute_semantic_contrast
@@ -50,7 +50,7 @@ __all__ = [
     "compute_semantic_contrast",
     "cluster_points",
     # stores
-    "extract_feature_cache",
+    "write_feature_cache",
     "valid_feature_cache",
     "write_point_features",
     "read_point_features",

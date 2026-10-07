@@ -1,3 +1,4 @@
+import contextlib
 import json
 import re
 import weakref
@@ -24,6 +25,7 @@ from collab_splats.preproc import frames as fr
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.reconstructor import STAGES, Reconstructor
 from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.store import write_feature_cache
 from tests.reconstructor._stubs import minimal_feedforward_result, stub_creator_cls
 
 
@@ -407,59 +409,54 @@ def _touch_frames(rec, frame_idxs):
         (rec.images_dir / f"frame_{fi:06d}.png").touch()
 
 
-def test_semantics_valid_cache_skips_the_extractor(tmp_path):
-    """
-    A 2D cache valid for this extractor + kwargs is lifted without building the extractor.
+def _seed_codes(rec, name, maps, latent_dim=None, extractor_kwargs=None):
+    """A valid <name>_codes.zarr over rec's images/, as a finished extract + encode leaves it."""
+    path = rec.semantics_cache_dir / f"{name}_codes.zarr"
+    attrs = {
+        "extractor": name,
+        "patch_size": 14,
+        "n_frames": len(maps),
+        "extractor_kwargs": extractor_kwargs or {},
+        "latent_dim": latent_dim,
+    }
+    write_feature_cache(path, iter(torch.from_numpy(m) for m in maps), len(maps), attrs)
+    return path
 
-    - validity (name, frame count, kwargs) is valid_feature_cache's; a stale cache fails it
-    """
+
+def test_semantics_valid_cache_skips_the_extractor(tmp_path):
+    """A codes store valid for this extractor, kwargs and width is lifted without building the extractor."""
     config = _make_config(tmp_path, {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}})
     rec = Reconstructor(config)
-    cache_path = rec.semantics_cache_dir / "dinov2.zarr"
-    cache = zarr.open(str(cache_path), mode="w")
-    cache["features"] = np.zeros((2, 4, 2, 2), dtype=np.float16)
     _touch_frames(rec, [0, 1])
     _seed_disk_reconstruction(rec, [0, 1])
+    codes_path = _seed_codes(rec, "dinov2", [np.zeros((4, 2, 2), np.float16)] * 2)
 
     with (
-        patch.object(R, "valid_feature_cache", return_value=cache_path) as valid,
         patch.object(R, "BaseFeatureExtractor") as extractor_base,
-        patch.object(R, "extract_feature_cache") as extract,
+        patch.object(R, "write_feature_cache") as write,
         patch.object(R, "lift_features", return_value=torch.zeros(1, 4)),
         patch.object(R, "write_point_features"),
     ):
         rec.semantics()
 
-    valid.assert_called_once_with(rec.semantics_cache_dir, "dinov2", rec.images_dir, {})
     extractor_base.get.assert_not_called()
-    extract.assert_not_called()
+    write.assert_not_called()
+    assert codes_path.exists()
 
 
 def test_semantics_invalid_cache_extracts_with_extractor_kwargs(tmp_path):
-    """semantics.extractor_kwargs reaches the validity check, the extractor build and the cache key."""
-    semantics = {"enabled": True, "extractor": "ocr_lens", "extractor_kwargs": {"layer": 20}, "n_components": None}
-    config = _make_config(tmp_path, {"semantics": semantics})
-    rec = Reconstructor(config)
-    cache_path = rec.semantics_cache_dir / "ocr_lens.zarr"
-    cache = zarr.open(str(cache_path), mode="w")
-    cache["features"] = np.zeros((2, 4, 2, 2), dtype=np.float16)
-    _touch_frames(rec, [0, 1])
-    _seed_disk_reconstruction(rec, [0, 1])
+    """semantics.extractor_kwargs reaches the extractor build and the codes store's attrs."""
+    semantics = {"enabled": True, "extractor": "dinov2", "extractor_kwargs": {"layer": 20}, "n_components": None}
+    rec = _semantics_rec(tmp_path, semantics)
 
-    with (
-        patch.object(R, "valid_feature_cache", return_value=None) as valid,
-        patch.object(R, "BaseFeatureExtractor") as extractor_base,
-        patch.object(R, "extract_feature_cache", return_value=cache_path) as extract,
-        patch.object(R, "lift_features", return_value=torch.zeros(1, 4)),
-        patch.object(R, "write_point_features"),
-    ):
+    with _stub_extraction() as extractor_base:
         rec.semantics()
 
-    assert valid.call_args.args[-1] == {"layer": 20}
-    extractor_base.get.assert_called_once_with("ocr_lens")
+    extractor_base.get.assert_called_once_with("dinov2")
     extractor_base.get.return_value.assert_called_once_with(layer=20)
-    extractor = extractor_base.get.return_value.return_value
-    extract.assert_called_once_with(extractor, rec.images_dir, rec.semantics_cache_dir, {"layer": 20})
+    attrs = dict(zarr.open(str(rec.semantics_cache_dir / "dinov2_codes.zarr"), mode="r").attrs)
+    assert attrs["extractor_kwargs"] == {"layer": 20}
+    assert attrs["latent_dim"] is None
 
 
 def test_run_refuses_semantics_if_lifted_exists(tmp_path):
@@ -471,85 +468,143 @@ def test_run_refuses_semantics_if_lifted_exists(tmp_path):
     (lifted_dir / "dinov2_lifted.zarr").mkdir()
 
     with (
-        patch.object(R, "extract_feature_cache") as extract,
+        patch.object(R, "write_feature_cache") as write,
         patch.object(R, "lift_features") as lift,
         pytest.raises(ValueError, match="already exists"),
     ):
         rec.run(["semantics"])
 
-    extract.assert_not_called()
+    write.assert_not_called()
     lift.assert_not_called()
 
 
-def _run_semantics(tmp_path, n_components, dim=32, n_points=6):
-    """Drive the real semantics stage with extraction and lifting stubbed. Returns the Reconstructor."""
-    # max_epochs 1 and no early stop: these tests assert file layout
-    semantics = {"extractor": "dinov2", "n_components": n_components, "max_epochs": 1, "target_cosine": None}
-    config = _make_config(tmp_path, {"semantics": semantics})
-    rec = Reconstructor(config)
+def _semantics_rec(tmp_path, semantics):
+    """A Reconstructor over two images/ frames and a one-point reconstruction."""
+    rec = Reconstructor(_make_config(tmp_path, {"semantics": semantics}))
     _touch_frames(rec, [0, 1])
     _seed_disk_reconstruction(rec, [0, 1])
-
-    # 2D feature cache the stage reads back: (N, D, H_p, W_p); kept across runs so its AE copy survives
-    if not (tmp_path / "dinov2.zarr").exists():
-        cache = zarr.open(str(tmp_path / "dinov2.zarr"), mode="w")
-        cache["features"] = np.random.default_rng(0).random((2, dim, 2, 2)).astype(np.float16)
-
-    # Stub lift: one row per point from frame 0's first cell, so the width is the loader's
-    with (
-        patch.object(R, "BaseFeatureExtractor"),
-        patch.object(R, "extract_feature_cache", return_value=tmp_path / "dinov2.zarr"),
-        patch.object(
-            R,
-            "lift_features",
-            side_effect=lambda frame_features, result: frame_features(0)[:, 0, 0].repeat(n_points, 1),
-        ),
-    ):
-        rec.semantics()
-
     return rec
 
 
+@contextlib.contextmanager
+def _stub_extraction(dim=32):
+    """
+    Extractor, image decode and lift stubbed; frame k's map is constant k + 1 over (dim, 2, 2).
+
+    - lift returns frame 0's first cell repeated per target row, so its width is the loader's
+    """
+    calls = []
+
+    def forward(frames):
+        first = len(calls)
+        calls.extend(frames)
+        return [torch.full((dim, 2, 2), float(first + j + 1)) for j in range(len(frames))]
+
+    def lift(frame_features, result):
+        return frame_features(0)[:, 0, 0].float().cpu().repeat(len(result.points), 1)
+
+    with (
+        patch.object(R, "BaseFeatureExtractor") as extractor_base,
+        patch.object(R, "read_image", return_value=np.zeros((4, 4, 3), np.uint8)),
+        patch.object(R, "lift_features", side_effect=lift),
+    ):
+        extractor = extractor_base.get.return_value.return_value
+        extractor.forward.side_effect = forward
+        extractor.patch_size = 14
+        yield extractor_base
+
+
+COMPRESSED = {"extractor": "dinov2", "n_components": 8, "max_epochs": 1, "target_cosine": None}
+
+
+def test_semantics_encodes_every_frame_and_deletes_the_features(tmp_path, monkeypatch):
+    rec = _semantics_rec(tmp_path, COMPRESSED)
+    written = []
+    real_write = R.write_feature_cache
+    monkeypatch.setattr(
+        R, "write_feature_cache", lambda path, *a, **k: (written.append(path), real_write(path, *a, **k))
+    )
+
+    with _stub_extraction():
+        rec.semantics()
+
+    features_path = rec.semantics_cache_dir / "dinov2_features.zarr"
+    codes_path = rec.semantics_cache_dir / "dinov2_codes.zarr"
+    assert written == [features_path, codes_path]
+    assert not features_path.exists()
+
+    codes = zarr.open(str(codes_path), mode="r")["features"]
+    assert codes.shape == (2, 8, 2, 2) and codes.dtype == np.float16
+    assert (codes_path / "autoencoder.pt").is_file()
+
+    # Row k holds frame k's encoding; the stub's frame k is constant k + 1
+    ae = FeatureAutoencoder.load(codes_path / "autoencoder.pt").cpu()
+
+    for k in range(2):
+        with torch.no_grad():
+            expected = ae.encode(torch.full((32, 2, 2), float(k + 1))).numpy()
+
+        np.testing.assert_allclose(codes[k].astype(np.float32), expected, rtol=1e-2, atol=1e-3)
+
+
 def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
-    """
-    The real writer lands <extractor>_lifted.zarr/autoencoder.pt — not a compressor.pt directory.
+    rec = _semantics_rec(tmp_path, COMPRESSED)
 
-    - FeatureAutoencoder.save() takes the weights FILE path and mkdirs its parent
-    """
-    rec = _run_semantics(tmp_path, n_components=8)
+    with _stub_extraction():
+        rec.semantics()
+
     out_dir = rec.backend_dir / "semantics"
-
     assert rec.done("semantics")
     assert (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").is_file()
-    assert not (out_dir / "compressor.pt").exists()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
-    assert np.asarray(store["features"]).shape == (6, 8)
+    assert store["features"].shape == (1, 8) and store["features"].dtype == np.float16
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8}
 
 
-def test_semantics_reuses_the_ae_stored_with_the_cache(tmp_path):
-    """A second lift over the same 2D cache loads its stored AE instead of refitting."""
-    rec = _run_semantics(tmp_path, n_components=8)
-    lifted = rec.backend_dir / "semantics" / "dinov2_lifted.zarr"
-    first = zarr.open(str(lifted), mode="r")["features"][:]
+def test_semantics_second_run_neither_extracts_nor_fits(tmp_path):
+    rec = _semantics_rec(tmp_path, COMPRESSED)
 
-    with patch.object(FeatureAutoencoder, "fit") as fit:
-        _run_semantics(tmp_path, n_components=8)
+    with _stub_extraction():
+        rec.semantics()
 
-    second = zarr.open(str(lifted), mode="r")["features"][:]
-    assert not fit.called
-    np.testing.assert_array_equal(second, first)
+    with _stub_extraction() as extractor_base, patch.object(FeatureAutoencoder, "fit") as fit:
+        rec.semantics()
+
+    extractor_base.get.assert_not_called()
+    fit.assert_not_called()
 
 
-def test_semantics_refits_when_n_components_changes(tmp_path):
-    """A stored AE of another width is replaced by a fresh fit."""
-    _run_semantics(tmp_path, n_components=8)
-    rec = _run_semantics(tmp_path, n_components=4)
+def test_semantics_n_components_change_re_extracts(tmp_path):
+    rec = _semantics_rec(tmp_path, COMPRESSED)
 
-    stored = FeatureAutoencoder.load(tmp_path / "dinov2.zarr" / "autoencoder.pt")
-    codes = zarr.open(str(rec.backend_dir / "semantics" / "dinov2_lifted.zarr"), mode="r")["features"]
+    with _stub_extraction():
+        rec.semantics()
+
+    rec.config["semantics"]["n_components"] = 4
+
+    with _stub_extraction() as extractor_base:
+        rec.semantics()
+
+    extractor_base.get.assert_called_once()
+    stored = FeatureAutoencoder.load(rec.semantics_cache_dir / "dinov2_codes.zarr" / "autoencoder.pt")
     assert stored.latent_dim == 4
-    assert codes.shape == (6, 4)
+
+
+def test_semantics_uncompressed_writes_full_width_codes_without_features(tmp_path, monkeypatch):
+    rec = _semantics_rec(tmp_path, {"extractor": "dinov2", "n_components": None})
+    written = []
+    real_write = R.write_feature_cache
+    monkeypatch.setattr(
+        R, "write_feature_cache", lambda path, *a, **k: (written.append(path), real_write(path, *a, **k))
+    )
+
+    with _stub_extraction():
+        rec.semantics()
+
+    codes_path = rec.semantics_cache_dir / "dinov2_codes.zarr"
+    assert written == [codes_path]
+    assert zarr.open(str(codes_path), mode="r")["features"].shape == (2, 32, 2, 2)
+    assert not (codes_path / "autoencoder.pt").exists()
 
 
 def test_load_frame_maps_pointcloud_frame_to_store_row(tmp_path):
@@ -576,12 +631,15 @@ def test_load_frame_maps_pointcloud_frame_to_store_row(tmp_path):
 
 def test_semantics_uncompressed_writes_full_dim_and_no_weights(tmp_path):
     """n_components: null is supported: full-dim codes, no autoencoder, attrs say so."""
-    rec = _run_semantics(tmp_path, n_components=None)
-    out_dir = rec.backend_dir / "semantics"
+    rec = _semantics_rec(tmp_path, {"extractor": "dinov2", "n_components": None})
 
+    with _stub_extraction():
+        rec.semantics()
+
+    out_dir = rec.backend_dir / "semantics"
     assert not (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").exists()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
-    assert np.asarray(store["features"]).shape == (6, 32)
+    assert np.asarray(store["features"]).shape == (1, 32)
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 32}
 
 
@@ -1325,14 +1383,11 @@ def test_semantics_reads_pointcloud_zarr_from_disk(tmp_path):
     _touch_frames(rec, [0, 1, 2])
     _seed_disk_reconstruction(rec, [2, 0])
 
-    # Scene cache row r is constant r; extraction and the writer stubbed so only the pick runs
-    cache_path = rec.semantics_cache_dir / "dinov2.zarr"
-    cache = zarr.open(str(cache_path), mode="w")
-    cache["features"] = np.stack([np.full((4, 2, 2), r, np.float16) for r in range(3)])
+    # Scene codes row r is constant r; the writer stubbed so only the pick runs
+    _seed_codes(rec, "dinov2", [np.full((4, 2, 2), r, np.float16) for r in range(3)])
 
     with (
         patch.object(R, "BaseFeatureExtractor"),
-        patch.object(R, "extract_feature_cache", return_value=cache_path),
         patch.object(R, "lift_features", return_value=torch.zeros(1, 4)) as lift,
         patch.object(R, "write_point_features"),
     ):

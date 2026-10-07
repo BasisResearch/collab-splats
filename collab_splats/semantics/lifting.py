@@ -9,7 +9,7 @@ Lift dense per-frame feature maps onto a reconstruction's points.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
@@ -29,32 +29,43 @@ if TYPE_CHECKING:
 
 
 def lift_features(
-    frame_features: Callable[[int], torch.Tensor],
+    frame_features: Callable[[int], torch.Tensor | tuple[torch.Tensor, torch.Tensor]],
     result: PointcloudResult,
     *,
     depth_tol: float = 0.05,
+    num_classes: Optional[int] = None,
 ) -> torch.Tensor:
     """
     Multi-view confidence-weighted lift of dense feature maps to per-point features.
 
-    - each point in result.points projects into every frame
+    - each point in result.points projects into every frame; only visible points are sampled,
+      so each frame costs its visible count, not P
     - masked by depth_residual's in-bounds + depth consistency (|residual| / |z_proj| < depth_tol)
     - weighted by confidence at the same rounded pixel the depth test reads, then mean-reduced
     - points visible nowhere fall back to a source-frame sample at their pixel_indices entry
     - without pixel_indices (e.g. mesh vertices) they stay zero: unobserved
+    - indexed maps add each point's bilinear blend of its 4 nearest patches' lists at the id
+      columns: the dense lift's result without the zero columns
 
     Args:
-        frame_features: frame i's (D, H_p, W_p) features, any float dtype; called once per frame,
-            then once per fallback frame; a list passes `maps.__getitem__`.
+        frame_features: frame i's features, called once per frame, then once per fallback frame
+            (dense maps only); a list passes `maps.__getitem__`. Either a dense (D, H_p, W_p) map,
+            any float dtype, or an indexed map: an (ids, values) pair, each (K, H_p, W_p), listing
+            K entries per patch of a num_classes-long vector whose other entries are 0.
         result: points, depth, extrinsics, model_intrinsics and model grid size; `confidence`
             (uniform when absent) and `pixel_indices` (no fallback when absent) are optional.
         depth_tol: relative depth tolerance for the visibility test.
+        num_classes: indexed maps only; number of distinct ids, i.e. the output width. Values at
+            the K listed ids per patch are summed per point; K is never a dimension. None for
+            dense maps.
 
     Returns:
-        (P, D) float32 tensor of per-point features, aligned with result.points.
+        (P, D) or (P, num_classes) float32 tensor of per-point features, aligned with result.points.
 
     Raises:
-        ValueError: when a required field is missing, or extrinsics / depth have the wrong shape.
+        ValueError: when a required field is missing, or extrinsics / depth have the wrong shape;
+            indexed maps without num_classes, with pixel_indices, or with an id outside
+            [0, num_classes); num_classes with dense maps.
     """
     # Required fields — fail loud at function entry, not deep in the kernel
     for name in ("points", "depth", "extrinsics", "model_intrinsics"):
@@ -98,11 +109,22 @@ def lift_features(
 
     for i in range(N):
         fmap = frame_features(i)
-        fmap = fmap.to(device=device, dtype=torch.float32)  # (D, H_p, W_p)
 
-        # Accumulator width comes from the first frame
+        # Accumulator width: num_classes for indexed maps, else the first frame's channels
         if features_sum is None:
-            features_sum = torch.zeros((P, fmap.shape[0]), dtype=torch.float32, device=device)
+            indexed = not isinstance(fmap, torch.Tensor)
+
+            if indexed and num_classes is None:
+                raise ValueError("indexed (ids, values) maps need num_classes, the number of distinct ids")
+
+            if indexed and result.pixel_indices is not None:
+                raise ValueError("indexed maps take no pixel_indices fallback; pass a result without pixel_indices")
+
+            if not indexed and num_classes is not None:
+                raise ValueError("num_classes applies to indexed maps only; dense maps keep their channels")
+
+            width = num_classes if indexed else fmap.shape[0]
+            features_sum = torch.zeros((P, width), dtype=torch.float32, device=device)
 
         # Visibility: in front, in bounds, depth-consistent against frame i's depth map
         # - depth_residual projects all P points and reads the depth map nearest-neighbor
@@ -126,14 +148,23 @@ def lift_features(
         visible = valid & depth_ok
         w = conf[i, v_idx, u_idx] * visible.float()  # (P,)
 
-        # Bilinear sample feature map at projected coords via the shared grid_sample helper
-        sampled = _grid_sample_at_pixels(fmap, v_safe, u_safe, image_size)  # (P, D)
+        # Sample and accumulate visible points only; the rest carry weight 0
+        idx = torch.nonzero(w > 0).squeeze(1)
 
-        features_sum += sampled * w.unsqueeze(-1)
+        if indexed:
+            ids, values = fmap
+            _add_indexed_bilinear(features_sum, ids, values, idx, v_safe[idx], u_safe[idx], w[idx], image_size)
+        else:
+            fmap = fmap.to(device=device, dtype=torch.float32)  # (D, H_p, W_p)
+            sampled = _grid_sample_at_pixels(fmap, v_safe[idx], u_safe[idx], image_size)  # (P_vis, D)
+            sampled *= w[idx].unsqueeze(-1)
+            features_sum.index_add_(0, idx, sampled)
+
         weights_sum += w
 
-    # Weighted mean with eps for numerical safety
-    features = features_sum / (weights_sum.unsqueeze(-1) + 1e-8)
+    # Weighted mean in place, eps for numerical safety
+    features = features_sum
+    features /= weights_sum.unsqueeze(-1) + 1e-8
 
     # Fallback: zero-weight points sample their own source pixel, clipped; loads only frames holding one
     zero_w = weights_sum < 1e-6
@@ -186,6 +217,59 @@ def _grid_sample_at_pixels(
     sampled = sampled.squeeze(0)
     sampled = sampled.squeeze(1)
     return sampled.T
+
+
+def _add_indexed_bilinear(
+    acc: torch.Tensor,
+    ids: torch.Tensor,
+    values: torch.Tensor,
+    idx: torch.Tensor,
+    rows: torch.Tensor,
+    cols: torch.Tensor,
+    weights: torch.Tensor,
+    image_size: tuple[int, int],
+) -> None:
+    """
+    Add each point's bilinear blend of its 4 nearest patches' (id, value) lists into acc, in place.
+
+    - ids, values (K, H_p, W_p); point j's blend goes to row idx[j], each value at column id
+    - same corners and weights as grid_sample (border, align_corners=False), so it equals the
+      dense lift of the same lists scattered to acc's width
+    - raises ValueError on an id < 0 or >= acc width, which would land in another point's row
+    """
+    # An id outside [0, num_classes) would write into another point's row
+    lo, hi = int(ids.min()), int(ids.max())
+
+    if lo < 0 or hi >= acc.shape[1]:
+        raise ValueError(f"ids span [{lo}, {hi}], outside [0, num_classes={acc.shape[1]})")
+
+    # Lists as patch rows: (H_p * W_p, K) ids and values
+    k, height, width = ids.shape
+    ids = ids.to(device=acc.device, dtype=torch.long).reshape(k, -1).T
+    values = values.to(device=acc.device, dtype=torch.float32).reshape(k, -1).T
+    H, W = image_size
+
+    # Patch-grid coords, clamped as border padding clamps them
+    x = (cols + 0.5) * width / W - 0.5
+    y = (rows + 0.5) * height / H - 0.5
+    x = x.clamp(0, width - 1)
+    y = y.clamp(0, height - 1)
+    x0 = x.floor().long()
+    y0 = y.floor().long()
+    x1 = (x0 + 1).clamp(max=width - 1)
+    y1 = (y0 + 1).clamp(max=height - 1)
+    wx = x - x0
+    wy = y - y0
+
+    # Four nearest patches per point, each weighted by its bilinear share times the point weight
+    corners = torch.cat([y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1])
+    corner_w = torch.cat([(1 - wy) * (1 - wx), (1 - wy) * wx, wy * (1 - wx), wy * wx])
+    corner_w *= weights.repeat(4)
+
+    # K entries per patch into the flat accumulator: row * num_classes + id
+    flat = idx.repeat(4).unsqueeze(1) * acc.shape[1] + ids[corners]
+    weighted = values[corners] * corner_w.unsqueeze(1)
+    acc.view(-1).index_add_(0, flat.reshape(-1), weighted.reshape(-1))
 
 
 ########################################################

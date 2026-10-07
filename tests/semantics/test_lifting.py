@@ -6,8 +6,13 @@ import pytest
 import torch
 from scipy.spatial import cKDTree
 
+from collab_splats.geometry.projection import depth_residual
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.semantics.lifting import lift_features, transfer_features
+from collab_splats.semantics.lifting import (
+    _grid_sample_at_pixels,
+    lift_features,
+    transfer_features,
+)
 
 ########################################################
 ########## lift_features (multi-view) ##################
@@ -336,3 +341,133 @@ def test_transfer_features_onto_the_points_themselves_with_k1_is_identity():
     feats = rng.random((30, 4)).astype(np.float32)
     out = transfer_features(pts, pts, feats, k=1)
     np.testing.assert_allclose(out, feats, rtol=1e-6)
+
+
+def _lift_reference(maps, result, depth_tol=0.05):
+    """
+    Today's lift_features loop: every point sampled and weighted, no fallback.
+    """
+    H, W = result.model_height, result.model_width
+    pts = torch.as_tensor(result.points, dtype=torch.float32)
+    ext = torch.as_tensor(result.extrinsics, dtype=torch.float32)
+    intr = torch.as_tensor(result.model_intrinsics, dtype=torch.float32)
+    depth = torch.as_tensor(result.depth, dtype=torch.float32)
+    conf = result.confidence.float()
+    total = torch.zeros(len(pts), maps[0].shape[0])
+    weights = torch.zeros(len(pts))
+
+    for i, fmap in enumerate(maps):
+        residual, expected, _, valid, pixels = depth_residual(pts, ext[i], intr[i], depth[i])
+        ok = valid & (residual.abs() / (expected.abs() + 1e-8) < depth_tol)
+        u = torch.nan_to_num(pixels[:, 0], nan=0.0, posinf=0.0, neginf=0.0)
+        v = torch.nan_to_num(pixels[:, 1], nan=0.0, posinf=0.0, neginf=0.0)
+        ui = torch.round(u).clamp(0, W - 1).long()
+        vi = torch.round(v).clamp(0, H - 1).long()
+        w = conf[i, vi, ui] * ok.float()
+        total += _grid_sample_at_pixels(fmap.float(), v, u, (H, W)) * w.unsqueeze(-1)
+        weights += w
+
+    return total / (weights.unsqueeze(-1) + 1e-8)
+
+
+def _partial_scene(rng, pixel_indices=False, n=3, h=16, w=20, p=200):
+    """
+    Toy scene where some points are visible in some frames only.
+
+    - frame 2's depth map is far behind every point, so no point is visible there
+    - pixel_indices=True gives every point a random source pixel, so the fallback runs
+    """
+    pts = np.stack([rng.uniform(-0.1, 0.1, p), rng.uniform(-0.08, 0.08, p), rng.uniform(1.0, 2.0, p)], axis=1).astype(
+        np.float32
+    )
+    depth = rng.uniform(1.0, 2.0, (n, h, w)).astype(np.float32)
+    depth[2] = 100.0
+    conf = rng.uniform(0.1, 1.0, (n, h, w)).astype(np.float32)
+    pixels = None
+
+    if pixel_indices:
+        pixels = np.stack([rng.integers(0, n, p), rng.integers(0, h, p), rng.integers(0, w, p)], axis=1)
+        pixels = pixels.astype(np.int32)
+
+    return _make_lift_result(pts, pixels, depth, conf, n=n, h=h, w=w)
+
+
+def test_lift_features_matches_the_all_points_reference(monkeypatch):
+    """
+    Sampling only visible points changes nothing: invisible points carried weight 0.
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    rng = np.random.default_rng(0)
+    result = _partial_scene(rng)
+    maps = [torch.from_numpy(rng.standard_normal((5, 4, 5)).astype(np.float32)) for _ in range(3)]
+
+    expected = _lift_reference(maps, result)
+    out = lift_features(maps.__getitem__, result)
+
+    # Partial visibility: some points observed, some not
+    observed = expected.abs().sum(1) > 0
+    assert 0 < int(observed.sum()) < len(observed)
+    torch.testing.assert_close(out, expected, atol=1e-6, rtol=1e-5)
+
+
+def test_indexed_lift_equals_the_dense_lift_of_the_scattered_maps(monkeypatch):
+    """
+    Indexed (ids, probs) maps lift exactly as the same entries scattered to num_classes channels.
+
+    - points visible nowhere stay zero, as in the dense lift without pixel_indices
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    rng = np.random.default_rng(1)
+    result = _partial_scene(rng)
+    num_classes, k = 12, 4
+
+    # Per patch: k distinct class ids with random probabilities, and the same entries dense
+    torch.manual_seed(0)
+    indexed, dense = [], []
+
+    for _ in range(3):
+        ids = torch.rand(num_classes, 4, 5).topk(k, dim=0).indices
+        probs = torch.rand(k, 4, 5)
+        indexed.append((ids, probs))
+        dense.append(torch.zeros(num_classes, 4, 5).scatter_(0, ids, probs))
+
+    out = lift_features(indexed.__getitem__, result, num_classes=num_classes)
+    expected = lift_features(dense.__getitem__, result)
+
+    assert out.shape == (len(result.points), num_classes) and out.dtype == torch.float32
+    torch.testing.assert_close(out, expected, atol=1e-6, rtol=1e-5)
+
+    # Some rows unobserved, and zero
+    assert int((expected.abs().sum(1) == 0).sum()) > 0
+
+
+@pytest.mark.parametrize(
+    "indexed, num_classes, first_id",
+    [(True, None, 0), (True, 1, 0), (True, 4, -1), (False, 5, 0)],
+    ids=["indexed-without-num-classes", "id-past-num-classes", "negative-id", "dense-with-num-classes"],
+)
+def test_num_classes_misuse_raises_instead_of_truncating(monkeypatch, indexed, num_classes, first_id):
+    """
+    num_classes is the id space of indexed maps; any other use raises.
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    result = _partial_scene(np.random.default_rng(2))
+
+    # Indexed maps hold ids first_id and first_id + 1 at every patch; dense maps have 5 channels
+    ids = torch.arange(first_id, first_id + 2).view(2, 1, 1).expand(2, 4, 5)
+    fmap = (ids, torch.ones(2, 4, 5)) if indexed else torch.ones(5, 4, 5)
+
+    with pytest.raises(ValueError, match="num_classes"):
+        lift_features(lambda i: fmap, result, num_classes=num_classes)
+
+
+def test_indexed_maps_refuse_the_pixel_indices_fallback(monkeypatch):
+    """
+    The fallback samples dense maps only, so indexed maps with pixel_indices raise.
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    result = _partial_scene(np.random.default_rng(3), pixel_indices=True)
+    fmap = (torch.zeros(2, 4, 5, dtype=torch.long), torch.ones(2, 4, 5))
+
+    with pytest.raises(ValueError, match="pixel_indices"):
+        lift_features(lambda i: fmap, result, num_classes=4)

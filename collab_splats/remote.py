@@ -27,8 +27,8 @@ SCENE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 # Never pushed: caches, build databases, source video; images/ is pushed, so images/ patterns need a leading slash
 PUSH_EXCLUDES = (
-    # Scene-root 2D patch cache; the leading slash keeps <backend>/semantics pushed
-    "/semantics/**",
+    # Scene-root temporary full-width features; the 2D codes and <backend>/semantics are pushed
+    "/semantics/*_features.zarr/**",
     # Source video, already in the curated bucket; bracketed because rclone globs are case sensitive
     "*.[Mm][Pp]4",
     "*.[Mm][Oo][Vv]",

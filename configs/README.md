@@ -58,7 +58,7 @@ folder name:
   photometric.png              ← the report rendered: blur / laplacian / exposure / clipped fractions
   motion.png                   ←   per-pair translation / parallax (failed pairs = red | at 0) / matches
   semantics/
-    <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
+    <extractor>_codes.zarr     ← fp16 2D codes + autoencoder.pt, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
     run_config.yaml            ← full merged config of this backend's run (exact settings used)
     pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
@@ -668,7 +668,7 @@ A knob the pairing ignores is not recorded, so changing it keeps the DB.
 - `images/` still holds every keyframe; downstream stages (semantics, mesh, localize,
   splats, reconstruction_quality_report) read only the frames `pointcloud.zarr` names in its
   `image_paths` attr, joined on frame index; the unregistered ones are never read
-- the 2D semantics cache `semantics/<extractor>.zarr` stays scene-level (every `images/`
+- the 2D semantics cache `semantics/<extractor>_codes.zarr` stays scene-level (every `images/`
   frame); the lift picks the pointcloud's rows out of it
 
 ### The `hloc` backend (`pointcloud.method: sfm`)
@@ -739,7 +739,7 @@ the mapper database is rebuilt every run.
   video_quality_report.json    ← source-video quality measurements (report-only)
   photometric.png, motion.png  ← the report rendered (two files, written with images/)
   semantics/
-    <extractor>.zarr           ← 2D patch cache, one per extractor (backend-agnostic)
+    <extractor>_codes.zarr     ← fp16 2D codes + autoencoder.pt, one per extractor (backend-agnostic)
   <backend>/                   ← e.g. vggt_omega/ (or instantsfm/ for method: sfm)
     run_config.yaml            ← full merged config of this backend's run (exact settings used)
     pointcloud.zarr            ← depth maps, poses, 3D points (+ confidence when the method produces it)
@@ -817,9 +817,8 @@ this repo reads it; drop it when convenient with
   `tutorial_config.RECON`, which already points at `pointcloud.zarr`; their stored
   *output* cells still print the old path and stay stale until re-executed.
 
-Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote.py`): `/semantics/**` at the
-scene root (raw 2D patch maps, regenerable from frames + extractor — note the leading slash,
-which is what keeps `<backend>/semantics/**` in the push), the source video, which the remote
+Not pushed (`PUSH_EXCLUDES` in `collab_splats/remote.py`): `/semantics/*_features.zarr/**` at the
+scene root (temporary full-width features, deleted once the codes are written; the codes store and `<backend>/semantics/**` are pushed), the source video, which the remote
 driver fetches into the very scene dir it later pushes and which already lives in
 `environments-curated`, and the COLMAP match databases — `<backend>/colmap/instantsfm.db` (instantsfm SIFT),
 `<backend>/colmap/colmap.db` (colmap SIFT) and
@@ -864,7 +863,7 @@ path would orphan them all. Use the viewer or a notebook for published scenes.
 
 The TSDF output is now `<backend>/mesh.ply` (was `mesh/mesh_tsdf.ply`, then `mesh/mesh.ply`),
 so older scenes make the mesh readers raise `FileNotFoundError` and the dashboard show no
-mesh. Semantics moved the same way: the 2D cache is `<scene>/semantics/<extractor>.zarr` (was
+mesh. Semantics moved the same way: the 2D cache is `<scene>/semantics/<extractor>_codes.zarr` (was
 `features/<extractor>/<extractor>.zarr`) and the lifted pair is
 `<backend>/semantics/<extractor>_lifted.zarr` with `autoencoder.pt` inside (was
 `<backend>/semantics/<extractor>/features.zarr` + `autoencoder.pt`). There are deliberately no

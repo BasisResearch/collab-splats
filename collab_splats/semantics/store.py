@@ -1,13 +1,14 @@
 """
 Semantics stores: the 2D patch cache and the lifted per-point store.
 
-- `<extractor>.zarr`: `features` (N, D, H_p, W_p) float16, one chunk per frame
+- `<extractor>_codes.zarr` (`_features.zarr` while extracting): `features` (N, D, H_p, W_p) float16, one chunk per frame
 - `<extractor>_lifted.zarr`: `features` (P, latent), plus `autoencoder.pt` when compressed
 - paths come from `Reconstructor`
 """
 
 import logging
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -16,145 +17,123 @@ import torch
 import torch.nn.functional as F
 import zarr
 
-from collab_splats.preproc.frames import IMAGE_EXTS, frame_paths
+from collab_splats.preproc.frames import frame_paths
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.features.base import BaseFeatureExtractor
-from collab_splats.utils.io import open_valid, read_image, to_json_safe
-from collab_splats.utils.torch_utils import batch_iterator
+from collab_splats.utils.io import open_valid, to_json_safe
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "extract_feature_cache",
     "read_point_features",
     "valid_feature_cache",
+    "write_feature_cache",
     "write_point_features",
 ]
 
 
 ########################################################
-########## 2D patch cache (<extractor>.zarr) ###########
+########## 2D feature cache (<extractor>_codes.zarr) ###
 ########################################################
 
 
 def valid_feature_cache(
-    cache_dir: Path, name: str, images_dir: Path, extractor_kwargs: Optional[dict[str, Any]] = None
+    store_path: Path,
+    name: str,
+    images_dir: Path,
+    extractor_kwargs: Optional[dict[str, Any]],
+    latent_dim: Optional[int],
 ) -> Optional[Path]:
     """
-    Path of a reusable `<name>.zarr` patch cache, or None.
+    The 2D feature cache at store_path when reusable, else None.
 
-    - valid: extractor name, frame count and kwargs match the store attrs
+    - valid: extractor name, frame count, kwargs and code width match the store attrs
+    - attrs are written last, so a crashed write reads invalid
 
     Args:
-        cache_dir: directory holding the patch caches.
+        store_path: the `<extractor>_codes.zarr` path.
         name: extractor registry name.
         images_dir: scene images/ directory.
         extractor_kwargs: constructor kwargs the cache must match.
+        latent_dim: AE code width the cache must hold; None for uncompressed features.
 
     Returns:
-        The store path, or None.
+        store_path, or None.
     """
-    zarr_path = Path(cache_dir) / f"{name}.zarr"
     n_frames = len(frame_paths(images_dir))
-    expected = {"extractor": name, "n_frames": n_frames, "extractor_kwargs": extractor_kwargs or {}}
+    expected = {
+        "extractor": name,
+        "n_frames": n_frames,
+        "extractor_kwargs": extractor_kwargs or {},
+        "latent_dim": latent_dim,
+    }
 
-    if open_valid(zarr_path, expected) is None:
+    if open_valid(store_path, expected) is None:
         return None
 
-    return zarr_path
+    return Path(store_path)
 
 
-def extract_feature_cache(
-    extractor: BaseFeatureExtractor,
-    images_dir: Path,
-    cache_dir: Path,
-    extractor_kwargs: Optional[dict[str, Any]] = None,
-    overwrite: bool = False,
-    batch_size: int = 4,
-) -> Path:
+def write_feature_cache(
+    store_path: Path,
+    maps: Iterable[torch.Tensor],
+    n_frames: int,
+    attrs: dict[str, Any],
+    ae: Optional[FeatureAutoencoder] = None,
+) -> None:
     """
-    Extract patch features from a scene's images/ into `cache_dir/<extractor>.zarr`.
+    Write per-frame (D, H_p, W_p) maps to a zarr store as fp16, one chunk per frame.
 
-    - a valid store is returned untouched unless overwrite
-    - validity attrs written last, so a crashed run is re-extracted
+    - serves extraction (full-width features) and encoding (AE codes)
+    - ae saved as `autoencoder.pt` before the attrs; attrs last, so a crash reads invalid
+    - overwrites whatever is at store_path
 
     Args:
-        extractor: feature extractor to run.
-        images_dir: scene images/ directory.
-        cache_dir: directory to write the store into.
-        extractor_kwargs: constructor kwargs; they key the cache.
-        overwrite: re-extract even when the store is valid.
-        batch_size: frames per `forward` call.
-
-    Returns:
-        Path of the store.
+        store_path: the store to write.
+        maps: frame maps in store-row order, any float dtype and device.
+        n_frames: number of maps expected.
+        attrs: store attrs, written last.
+        ae: autoencoder that decodes the maps, saved inside the store; None for none.
 
     Raises:
-        FileNotFoundError: `images_dir` holds no frame images.
+        ValueError: when n_frames < 1 or maps yields other than n_frames maps.
     """
-    zarr_path = Path(cache_dir) / f"{extractor.name}.zarr"
+    if n_frames < 1:
+        raise ValueError(f"write_feature_cache: no frames to write for {store_path}")
 
-    # Kwargs as JSON-safe values; zarr serializes them into the store attrs
-    extractor_kwargs = to_json_safe(extractor_kwargs or {})
-
-    # Frame paths; decoded one batch at a time below
-    paths = frame_paths(images_dir)
-
-    if not paths:
-        raise FileNotFoundError(f"No frame images ({list(IMAGE_EXTS)}) in {images_dir}")
-
-    N = len(paths)
-
-    # A cache is valid when the extractor name, frame count and kwargs all match
-    if not overwrite and valid_feature_cache(cache_dir, extractor.name, images_dir, extractor_kwargs) is not None:
-        logger.info("Feature cache valid, skipping extraction: %s", zarr_path)
-        return zarr_path
-
-    Path(cache_dir).mkdir(parents=True, exist_ok=True)
-
-    # Open the store; the array is created once the first batch fixes its shape
-    store = zarr.open(str(zarr_path), mode="w")
+    store = zarr.open(str(store_path), mode="w")
     arr = None
-    i = 0
+    n_written = 0
 
-    for (batch,) in batch_iterator(batch_size, paths):
-        # Decode and extract one batch of frames
-        frames = [read_image(path) for path in batch]
+    for fmap in maps:
+        # Too many maps: stop before zarr's out-of-bounds write
+        if n_written == n_frames:
+            raise ValueError(f"write_feature_cache: more than {n_frames} frame maps for {store_path}")
 
-        with torch.no_grad():
-            feats = extractor.forward(frames)
-
-        # First batch fixes (D, H_p, W_p); one chunk per frame, so reading frame i loads 1 chunk
+        # First map fixes (D, H_p, W_p); one chunk per frame, so reading frame i loads 1 chunk
         if arr is None:
-            D, H_p, W_p = feats[0].shape
             arr = store.create_array(
                 "features",
-                shape=(N, D, H_p, W_p),
-                chunks=(1, D, H_p, W_p),
+                shape=(n_frames, *fmap.shape),
+                chunks=(1, *fmap.shape),
                 dtype="float16",
                 fill_value=0,
             )
 
-        # Write each frame's map into its own chunk
-        for feat in feats:
-            feat = feat.cpu()
-            arr[i] = feat.half().numpy()
-            i += 1
+        fmap = fmap.detach().cpu()
+        arr[n_written] = fmap.half().numpy()
+        n_written += 1
 
-        logger.debug("extract_feature_cache: %d/%d frames written", i, N)
+    # Too few maps: leave the store without attrs, so it reads invalid
+    if n_written != n_frames:
+        raise ValueError(f"write_feature_cache: got {n_written} of {n_frames} frame maps for {store_path}")
 
-    # Validity attrs last: a crash mid-loop leaves a store the check above rejects
-    store.attrs.update(
-        {
-            "extractor": extractor.name,
-            "patch_size": extractor.patch_size,
-            "n_frames": N,
-            "extractor_kwargs": extractor_kwargs,
-        }
-    )
+    # Decoder weights beside the codes, before the attrs mark the store valid
+    if ae is not None:
+        ae.save(Path(store_path) / "autoencoder.pt")
 
-    logger.info("Feature cache written: %s  shape=%s", zarr_path, tuple(arr.shape))
-    return zarr_path
+    # Validity attrs last
+    store.attrs.update(to_json_safe(attrs))
+    logger.info("feature cache written: %s  shape=%s", store_path, tuple(arr.shape))
 
 
 ########################################################
@@ -165,6 +144,8 @@ def extract_feature_cache(
 def write_point_features(store_path: Path, codes: np.ndarray, ae: Optional[FeatureAutoencoder]) -> None:
     """
     Write the lifted store atomically via a `.tmp` dir renamed into place.
+
+    - codes stored fp16; read_point_features returns them float32
 
     Args:
         store_path: the lifted store path.
@@ -182,7 +163,7 @@ def write_point_features(store_path: Path, codes: np.ndarray, ae: Optional[Featu
     # Codes, weights, then attrs into the tmp dir; a failure removes it
     try:
         store = zarr.open(str(tmp), mode="w")
-        store["features"] = codes
+        store["features"] = codes.astype(np.float16)
 
         if ae is not None:
             ae.save(tmp / "autoencoder.pt")
@@ -214,7 +195,7 @@ def read_point_features(store_path: Path, batch_size: int = 65_536) -> np.ndarra
     """
     store_path = Path(store_path)
     store = zarr.open(str(store_path), mode="r")
-    codes = np.asarray(store["features"])
+    codes = np.asarray(store["features"], dtype=np.float32)
     codes = torch.from_numpy(codes)
     weights = store_path / "autoencoder.pt"
 

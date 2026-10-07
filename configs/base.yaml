@@ -111,7 +111,7 @@ semantics:
   enabled: true
   extractor: talk2dino        # talk2dino | dinov2 | maskclip | ocr_lens
   extractor_kwargs: {}        # constructor kwargs, e.g. {layer: 20} for ocr_lens; keys the 2D cache
-  n_components: 64            # autoencoder latent dim; null = no compression; 128 for ocr_lens
+  n_components: 64            # AE code width stored in <extractor>_codes.zarr; null = full width; 128 for ocr_lens; changing it re-extracts
   # Stop training once mean reconstruction cosine hits this, with max_epochs as the
   # ceiling. Cross-scene comparison happens in decoded 768-D space, so fidelity is the
   # right stop signal — more epochs cannot align two scenes' 64-D bases.

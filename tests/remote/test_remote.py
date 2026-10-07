@@ -432,11 +432,25 @@ def test_push_outputs_targets_scene_dir_with_excludes(tmp_path):
     assert "--gcs-bucket-policy-only" in extra
 
 
-def test_push_excludes_raw_feature_maps():
-    """The scene-root 2D cache is regenerable from frames + extractor, and is the bulk of the tree."""
-    assert "/semantics/**" in PUSH_EXCLUDES
-    # rclone reads a leading slash as "relative to the transfer root"; strip it to model that
-    assert any(fnmatch.fnmatchcase("semantics/dinov2.zarr/c/0", p.lstrip("/")) for p in PUSH_EXCLUDES)
+def test_push_excludes_only_the_temporary_full_width_features():
+    """
+    The temporary full-width features stay local; the 2D codes and the lifted stores are pushed.
+
+    - rclone reads a leading slash as "relative to the transfer root"; strip it to model that
+    """
+    patterns = [p.lstrip("/") for p in PUSH_EXCLUDES]
+    assert "/semantics/*_features.zarr/**" in PUSH_EXCLUDES
+    assert any(fnmatch.fnmatchcase("semantics/dinov2_features.zarr/features/c/0/0/0/0", p) for p in patterns)
+
+    # Codes store, its AE and the backend's lifted store all travel
+    kept = (
+        "semantics/dinov2_codes.zarr/features/c/0/0/0/0",
+        "semantics/dinov2_codes.zarr/autoencoder.pt",
+        "vggt_omega/semantics/dinov2_lifted.zarr/features/c/0/0",
+    )
+
+    for name in kept:
+        assert not any(fnmatch.fnmatchcase(name, p) for p in patterns), name
 
 
 @pytest.mark.parametrize("name", ("images", "images/frame_000000.png", "images/frame_000123.png"))
@@ -576,10 +590,10 @@ def test_verify_push_keeps_the_content_comparison(tmp_path):
 ########
 
 
-def test_push_excludes_anchor_the_2d_feature_cache_at_the_scene_root():
-    """Unanchored, `semantics/**` would also exclude `<backend>/semantics/**` — the deliverable."""
-    assert "/semantics/**" in PUSH_EXCLUDES
-    assert "semantics/**" not in PUSH_EXCLUDES, "unanchored: rclone matches it at any depth"
+def test_push_excludes_anchor_the_2d_features_at_the_scene_root():
+    """Unanchored, the features pattern could also exclude `<backend>/semantics/**` — the deliverable."""
+    assert "/semantics/*_features.zarr/**" in PUSH_EXCLUDES
+    assert "semantics/*_features.zarr/**" not in PUSH_EXCLUDES, "unanchored: rclone matches it at any depth"
 
     # Nothing may exclude the lifted pair under the backend dir, at any depth
     assert not any("semantics" in p and not p.startswith("/") for p in PUSH_EXCLUDES)

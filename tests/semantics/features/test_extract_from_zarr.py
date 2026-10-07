@@ -1,62 +1,11 @@
-"""Tests for BaseFeatureExtractor.features_to_rgb and semantics.store.extract_feature_cache."""
+"""Tests for BaseFeatureExtractor.features_to_rgb."""
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import numpy as np
-import pytest
 import torch
-import zarr
 
-from collab_splats.preproc import frames as fr
 from collab_splats.semantics.features.base import BaseFeatureExtractor
-from collab_splats.semantics.store import extract_feature_cache
-
-########################################################################
-# Minimal concrete extractor for tests — no model weights needed
-########################################################################
-
-
-@BaseFeatureExtractor.register("_test_extractor")
-class _TestExtractor(BaseFeatureExtractor):
-    """Returns constant (D, H_p, W_p) tensors — no model needed."""
-
-    patch_size = 16
-
-    def __init__(self, **kwargs):
-        super().__init__("max_size", 512, **kwargs)
-        self._D = 8
-        self._H_p = 4
-        self._W_p = 4
-
-    def forward(self, images: list) -> list[torch.Tensor]:
-        return [torch.ones(self._D, self._H_p, self._W_p) for _ in images]
-
-
-def _make_images_dir(n: int, H: int, W: int, tmp_dir: str) -> Path:
-    """
-    Write an images/ directory of n random uint8 frames using the real writer.
-
-    Must go through fr.write_frames, not hand-rolled PNGs: a hand-rolled fixture is free to
-    invent a naming scheme the reader never sees in production, which is how this path once
-    passed its tests while crashing on every real store.
-
-    Args:
-        n: number of frames to write.
-        H: frame height in pixels.
-        W: frame width in pixels.
-        tmp_dir: directory the images/ subdirectory is created under.
-
-    Returns:
-        Path to the written images/ directory.
-    """
-    images_dir = Path(tmp_dir) / "images"
-    frames = [np.random.randint(0, 255, (H, W, 3), dtype=np.uint8) for _ in range(n)]
-    fr.write_frames(images_dir, frames, list(range(n)))
-    return images_dir
-
 
 ########################################################################
 # features_to_rgb
@@ -82,81 +31,3 @@ def test_features_to_rgb_constant_returns_zero():
     feat = torch.ones(16, 4, 4)
     rgb = BaseFeatureExtractor.features_to_rgb(feat)
     assert rgb.max() == 0
-
-
-########################################################################
-# extract_feature_cache
-########################################################################
-
-
-def test_extract_feature_cache_creates_zarr():
-    extractor = _TestExtractor()
-    with tempfile.TemporaryDirectory() as tmp:
-        images_dir = _make_images_dir(n=3, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "semantics"
-        result = extract_feature_cache(extractor, images_dir, cache_dir)
-        assert result == cache_dir / "_test_extractor.zarr"
-        assert result.exists()
-
-
-def test_extract_feature_cache_feature_shape():
-    extractor = _TestExtractor()
-    with tempfile.TemporaryDirectory() as tmp:
-        images_dir = _make_images_dir(n=3, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "semantics"
-        result = extract_feature_cache(extractor, images_dir, cache_dir)
-        store = zarr.open(str(result), mode="r")
-        N, D, H_p, W_p = store["features"].shape
-        assert N == 3
-        assert D == extractor._D
-        assert H_p == extractor._H_p
-        assert W_p == extractor._W_p
-        assert store.attrs["extractor"] == "_test_extractor"
-        assert store.attrs["n_frames"] == 3
-        assert store.attrs["patch_size"] == 16
-        # created_at / feature_dim were dropped — nothing read them
-        assert "created_at" not in store.attrs
-        assert "feature_dim" not in store.attrs
-
-
-def test_extract_feature_cache_reuses_a_matching_cache():
-    extractor = _TestExtractor()
-    with tempfile.TemporaryDirectory() as tmp:
-        images_dir = _make_images_dir(n=2, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "semantics"
-        result1 = extract_feature_cache(extractor, images_dir, cache_dir)
-        mtime = result1.stat().st_mtime_ns
-        result2 = extract_feature_cache(extractor, images_dir, cache_dir)
-        assert result1 == result2
-        assert result2.stat().st_mtime_ns == mtime  # untouched -> extraction was skipped
-
-
-def test_extract_feature_cache_marks_validity_only_after_every_frame_is_written():
-    """A run that dies mid-extraction must not leave a store the validity guard accepts."""
-    extractor = _TestExtractor()
-    real_forward = extractor.forward
-    calls = []
-
-    def dying_forward(images):
-        # One frame per call (batch_size=1): frames 0 and 1 succeed, frame 2 of 4 blows up
-        calls.append(1)
-        if len(calls) > 2:
-            raise RuntimeError("GPU fell over at frame 2")
-        return real_forward(images)
-
-    extractor.forward = dying_forward
-    with tempfile.TemporaryDirectory() as tmp:
-        images_dir = _make_images_dir(n=4, H=64, W=64, tmp_dir=tmp)
-        cache_dir = Path(tmp) / "cache"
-        with pytest.raises(RuntimeError):
-            extract_feature_cache(extractor, images_dir, cache_dir, batch_size=1)
-
-        # The half-written store must not advertise itself as complete
-        store = zarr.open(str(cache_dir / "_test_extractor.zarr"), mode="r")
-        assert "extractor" not in store.attrs
-        assert "n_frames" not in store.attrs
-
-        # ...so the next run re-extracts instead of serving the zero-filled planes
-        extractor.forward = real_forward
-        result = extract_feature_cache(extractor, images_dir, cache_dir)
-        assert zarr.open(str(result), mode="r")["features"][3].max() == 1.0

@@ -8,6 +8,7 @@ Config-driven reconstruction pipeline, one output tree per scene.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import logging
 import shutil
 import warnings
@@ -60,15 +61,15 @@ from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.semantics.lifting import lift_features
 from collab_splats.semantics.segmentation import sky_masks
 from collab_splats.semantics.store import (
-    extract_feature_cache,
     valid_feature_cache,
+    write_feature_cache,
     write_point_features,
 )
 from collab_splats.utils.colmap import write_colmap_reconstruction
-from collab_splats.utils.io import to_json_safe, write_json
+from collab_splats.utils.io import read_image, to_json_safe, write_json
 from collab_splats.utils.torch_utils import (
+    batch_iterator,
     get_device,
-    load_features,
     pytorch_gc,
     to_numpy,
 )
@@ -409,8 +410,9 @@ class Reconstructor:
     @property
     def semantics_cache_dir(self) -> Path:
         """
-        Scene-level 2D feature cache, one `<extractor>.zarr` each.
+        Scene-level 2D feature cache: `<extractor>_codes.zarr`.
 
+        - plus a temporary `<extractor>_features.zarr` of full-width features while the AE trains
         - frames alone determine it, so every backend lifts from the same cache
 
         Returns:
@@ -840,65 +842,73 @@ class Reconstructor:
 
     def semantics(self) -> None:
         """
-        Extract 2D features into the scene cache, compress them per frame, lift the codes onto the points.
+        Extract 2D features, compress every frame to fp16 codes, lift the codes onto the points.
 
-        - the 2D cache is reused when valid (name, frame count, extractor_kwargs); a hit skips the model load
-        - AE stored as `<extractor>.zarr/autoencoder.pt`; re-extraction wipes it, a new n_components refits
-        - lift reads one frame at a time; no all-frames RAM or full-width (P, D)
-        - lifted rows follow the zarr's own frames, which may be a subset of images/
-        - lifted store written atomically with its own autoencoder.pt (pushed; the 2D cache is not)
+        - codes store `<extractor>_codes.zarr` reused when valid (name, frames, kwargs, latent_dim)
+        - a miss extracts full-width features to a temporary `<extractor>_features.zarr`, trains the AE on all
+          of them, encodes every frame, then deletes them; n_components null keeps full width, no AE
+        - lift reads one frame of codes at a time; rows follow the zarr's frames (maybe a subset)
+        - lifted store written atomically with its own autoencoder.pt; codes and lifted stores are pushed
         """
         cfg = self.config["semantics"]
+        name = cfg["extractor"]
         extractor_kwargs = cfg["extractor_kwargs"]
-
-        # 2D features for every images/ frame; the model loads only when the cache is invalid
+        latent_dim = cfg["n_components"]
+        codes_path = self.semantics_cache_dir / f"{name}_codes.zarr"
+        features_path = self.semantics_cache_dir / f"{name}_features.zarr"
         self.semantics_cache_dir.mkdir(parents=True, exist_ok=True)
-        cache = valid_feature_cache(self.semantics_cache_dir, cfg["extractor"], self.images_dir, extractor_kwargs)
 
-        if cache is None:
-            extractor_cls = BaseFeatureExtractor.get(cfg["extractor"])
-            extractor = extractor_cls(**extractor_kwargs)
-            cache = extract_feature_cache(extractor, self.images_dir, self.semantics_cache_dir, extractor_kwargs)
+        # 2D codes for every images/ frame; the model loads only on a miss
+        if valid_feature_cache(codes_path, name, self.images_dir, extractor_kwargs, latent_dim) is None:
+            extractor = BaseFeatureExtractor.get(name)(**extractor_kwargs)
+            paths = frames.frame_paths(self.images_dir)
+            n_frames = len(paths)
+            attrs = {
+                "extractor": name,
+                "patch_size": extractor.patch_size,
+                "n_frames": n_frames,
+                "extractor_kwargs": extractor_kwargs,
+                "latent_dim": latent_dim,
+            }
+
+            # Extractor maps over every frame, decoded and run 4 at a time
+            batches = (extractor.forward([read_image(p) for p in batch]) for (batch,) in batch_iterator(4, paths))
+            maps = itertools.chain.from_iterable(batches)
+
+            # Uncompressed: full-width maps are the codes; else they are temporary features
+            target = codes_path if latent_dim is None else features_path
+
+            with torch.no_grad():
+                write_feature_cache(target, maps, n_frames, attrs if latent_dim is None else {})
 
             # Free the extractor's GPU memory now; a forward hook can hold it in a reference cycle
             del extractor
             pytorch_gc()
 
-        # Scene cache read lazily; pick the zarr's frames, in the zarr's order
-        features = zarr.open(str(cache), mode="r")["features"]
-        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_world_points=False)
-        rows = store_rows(self.images_dir, pointcloud.image_paths)
+            # Train the AE on every frame's features, encode each frame into the codes store, drop the features
+            if latent_dim is not None:
+                features = zarr.open(str(features_path), mode="r")["features"]
+                ae = FeatureAutoencoder(input_dim=features.shape[1], latent_dim=latent_dim)
+                ae.fit(features, epochs=cfg["max_epochs"], target_cosine=cfg["target_cosine"])
+                ae.to(get_device())
+                encoded = map(partial(_load_frame, features, range(n_frames), ae), range(n_frames))
+                write_feature_cache(codes_path, encoded, n_frames, attrs, ae=ae)
+                shutil.rmtree(features_path)
 
-        # Reuse the AE stored with the 2D cache when its width matches, else fit and store it
+        # Codes read lazily; the AE only rides along into the lifted store
+        codes = zarr.open(str(codes_path), mode="r")["features"]
         ae = None
 
-        if cfg["n_components"] is not None:
-            ae_path = cache / "autoencoder.pt"
+        if latent_dim is not None:
+            ae = FeatureAutoencoder.load(codes_path / "autoencoder.pt")
 
-            if ae_path.exists():
-                ae = FeatureAutoencoder.load(ae_path)
+        # Pick the zarr's frames, in the zarr's order, and lift the stored codes onto the points
+        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_world_points=False)
+        rows = store_rows(self.images_dir, pointcloud.image_paths)
+        lifted = lift_features(partial(_load_frame, codes, rows, None), pointcloud)
 
-            if ae is not None and ae.latent_dim == cfg["n_components"]:
-                logger.info("autoencoder cache hit: %s", ae_path)
-            else:
-                samples = load_features(features, get_device())
-                ae = FeatureAutoencoder(input_dim=samples.shape[1], latent_dim=cfg["n_components"])
-                ae.fit(samples, epochs=cfg["max_epochs"], target_cosine=cfg["target_cosine"])
-                ae.save(ae_path)
-
-                # Free the samples before the lift
-                del samples
-                pytorch_gc()
-
-            ae.to(get_device())
-
-        # Lift per-frame codes (or full-width maps when uncompressed) to points
-        frame_features = partial(_load_frame, features, rows, ae)
-        lifted = lift_features(frame_features, pointcloud)
-
-        # Write the per-point codes beside the lifted-store marker
-        codes = to_numpy(lifted)
-        write_point_features(self.outputs["semantics"], codes, ae)
+        # Write the per-point codes; the lifted store is the stage's done marker
+        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae)
 
     def mesh(self) -> None:
         """

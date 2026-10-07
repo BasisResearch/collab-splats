@@ -1,8 +1,8 @@
 """
 Lightweight feature autoencoder for compressing patch features before 3D lifting.
 
-- trained once on keyframe features, then used to cut the dimensionality of the
-  semantic features stored per point
+- trained once on every frame's patch features, streamed in blocks, then used to cut the
+  dimensionality of the semantic features stored per point
 - compression takes either shape, decompression only points
 - encode: spatial patch maps (D, H, W) -> (latent_dim, H, W)
 - per_point_encode / per_point_decode: flat point arrays (P, D) <-> (P, latent_dim)
@@ -11,16 +11,19 @@ Lightweight feature autoencoder for compressing patch features before 3D lifting
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import zarr
 from torch import Tensor
 from tqdm.auto import tqdm
 
-from collab_splats.utils.torch_utils import batch_iterator
+from collab_splats.utils.torch_utils import batch_iterator, get_device
 
 logger = logging.getLogger(__name__)
 
@@ -136,68 +139,94 @@ class FeatureAutoencoder(nn.Module):
 
     def fit(
         self,
-        features: Tensor,
+        features: Tensor | np.ndarray | zarr.Array,
         epochs: int = 10,
         batch_size: int = 1024,
         lr: float = 1e-3,
         on_epoch: Optional[Callable[[int, int, float], None]] = None,
         target_cosine: Optional[float] = None,
+        read_gb: float = 1.0,
     ) -> None:
         """
-        Train in place on MSE(recon, x) + (1 - cosine(recon, x)).
+        Train in place on MSE(recon, x) + (1 - cosine(recon, x)), streaming axis-0 blocks.
 
-        - fit quality lands on `self` as recon_cosine, recon_mse, epochs_run
-        - both metrics are on the training set, so optimistic at small N
+        - axis 1 = features; axis 0 + trailing axes = samples ((N, D) rows or (N, D, H, W) patch maps)
+        - each epoch reads every item: blocks of about read_gb in random order, rows shuffled per block
+        - a zarr never sits in memory whole; a tensor trains on its own device, others on get_device()
+        - fit quality lands on `self` as recon_cosine, recon_mse, epochs_run (training set, optimistic)
 
         Args:
-            features: (N, input_dim) training features.
+            features: tensor, ndarray or zarr array, feature width on axis 1.
             epochs: epoch ceiling.
             batch_size: mini-batch size.
             lr: Adam learning rate.
             on_epoch: callback(epoch, epochs, avg_loss), once per epoch; a progress hook for UIs.
             target_cosine: stop once mean reconstruction cosine reaches this; None runs all epochs.
+            read_gb: float32 size of one axis-0 block, in GiB.
 
         Raises:
             ValueError: if `features` has no samples.
         """
+        n_items, dim = features.shape[:2]
+        per_item = math.prod(features.shape[2:])
+
         # Empty input raises a clear ValueError, not a ZeroDivisionError at the epoch mean
-        if features.shape[0] == 0:
+        if n_items * per_item == 0:
             raise ValueError(f"fit() requires at least one sample; got features with shape {tuple(features.shape)}")
 
-        self.to(features.device)
+        device = features.device if isinstance(features, Tensor) else get_device()
+        self.to(device)
         self.train()
-
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
-        N = features.shape[0]
+
+        # Axis-0 blocks of about read_gb float32
+        item_gb = per_item * dim * 4 / 2**30
+        items_per_block = max(1, math.floor(read_gb / item_gb))
+        starts = list(range(0, n_items, items_per_block))
 
         pbar = tqdm(range(epochs), desc="fit autoencoder", unit="epoch")
+
         for epoch in pbar:
-            # Shuffle patch indices each epoch for unbiased mini-batches
-            perm = torch.randperm(N, device=features.device)
             epoch_loss = 0.0
             epoch_cos = 0.0
             epoch_mse = 0.0
             n_batches = 0
 
-            for start in range(0, N, batch_size):
-                idx = perm[start : start + batch_size]
-                x = features[idx]
+            for b in torch.randperm(len(starts)).tolist():
+                # Read one block as (rows, dim) float32 on device
+                start = starts[b]
+                block = features[start : start + items_per_block]
 
-                recon = self.decoder_out(self.decoder_hidden(self.encoder(x)))
-                mse = F.mse_loss(recon, x)
-                cos = F.cosine_similarity(recon, x).mean()
-                loss = mse + (1 - cos)
+                # zarr and ndarray slices arrive as numpy; tensors stay on their device
+                if not isinstance(block, Tensor):
+                    block = torch.from_numpy(np.asarray(block))
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                block = block.to(device=device, dtype=torch.float32)
+                block = block.reshape(len(block), dim, per_item)
+                block = block.transpose(1, 2)
+                block = block.reshape(-1, dim)
 
-                epoch_loss += loss.item()
-                epoch_cos += cos.item()
-                epoch_mse += mse.item()
-                n_batches += 1
+                # Shuffle rows within the block for unbiased mini-batches
+                perm = torch.randperm(len(block), device=device)
 
-            # N >= 1 (checked above), so n_batches >= 1
+                for first in range(0, len(block), batch_size):
+                    x = block[perm[first : first + batch_size]]
+
+                    recon = self.decoder_out(self.decoder_hidden(self.encoder(x)))
+                    mse = F.mse_loss(recon, x)
+                    cos = F.cosine_similarity(recon, x).mean()
+                    loss = mse + (1 - cos)
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                    epoch_loss += loss.item()
+                    epoch_cos += cos.item()
+                    epoch_mse += mse.item()
+                    n_batches += 1
+
+            # At least one sample (checked above), so n_batches >= 1
             avg_loss = epoch_loss / n_batches
             self.recon_cosine = epoch_cos / n_batches
             self.recon_mse = epoch_mse / n_batches
@@ -205,6 +234,7 @@ class FeatureAutoencoder(nn.Module):
 
             pbar.set_postfix(loss=f"{avg_loss:.6f}", cos=f"{self.recon_cosine:.4f}")
             logger.debug("epoch %d/%d  loss=%.6f  cos=%.4f", epoch + 1, epochs, avg_loss, self.recon_cosine)
+
             if on_epoch is not None:
                 on_epoch(epoch + 1, epochs, avg_loss)
 

@@ -19,6 +19,7 @@ import zarr
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.reconstructor import Reconstructor, _build_localization_db
+from collab_splats.semantics.store import write_feature_cache
 from tests.reconstructor._stubs import minimal_feedforward_result
 
 RECONSTRUCTOR = "collab_splats.reconstructor"
@@ -187,9 +188,16 @@ def test_result_reads_the_subset_the_zarr_holds(tmp_path):
 def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
     recon = _seed_subset_scene(tmp_path)
 
-    # Scene-level 2D cache over all four images/ frames; row r is constant FRAME_IDX[r]
-    cache = tmp_path / "dinov2.zarr"
-    zarr.open(str(cache), mode="w")["features"] = np.stack([np.full((4, 2, 2), i, np.float32) for i in FRAME_IDX])
+    # Scene-level codes store over all four images/ frames; row r is constant FRAME_IDX[r]
+    attrs = {
+        "extractor": "dinov2",
+        "patch_size": 14,
+        "n_frames": len(FRAME_IDX),
+        "extractor_kwargs": {},
+        "latent_dim": None,
+    }
+    maps = (torch.full((4, 2, 2), float(i)) for i in FRAME_IDX)
+    write_feature_cache(recon.semantics_cache_dir / "dinov2_codes.zarr", maps, len(FRAME_IDX), attrs)
 
     lifted = {}
 
@@ -197,13 +205,13 @@ def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
         lifted["rows"] = [float(feature_maps(i)[0, 0, 0]) for i in range(len(KEPT_IDX))]
         return torch.zeros(5, 4)
 
-    # Uncompressed, extractor and writer stubbed: only the row pick and the lift run
+    # Uncompressed dinov2, extractor and writer stubbed: only the row pick and the lift run
+    recon.config["semantics"]["extractor"] = "dinov2"
     recon.config["semantics"]["n_components"] = None
 
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
         patch(f"{RECONSTRUCTOR}.BaseFeatureExtractor"),
-        patch(f"{RECONSTRUCTOR}.extract_feature_cache", return_value=cache),
         patch(f"{RECONSTRUCTOR}.lift_features", side_effect=spy_lift),
         patch(f"{RECONSTRUCTOR}.write_point_features"),
     ):

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Probe a scene's mesh for the OCR lens's words: each vertex labeled by its top-1 word.
+Probe a scene's mesh for the OCR lens's words as a continuous heat overlay.
 
 - needs mesh.ply and pointcloud.zarr under the backend dir, the lens cache in <scene>/semantics
 - each frame decodes to word probabilities, then lifts onto the vertices (cached as ocr_lens_vertices.npy)
-- unseen vertices (depth test) are grey and unlabeled; scene terms are every observed top-10 word
-- smoothing k>1 averages term probabilities over k observed neighbors; the label list tints top-1 words
-- query: comma-separated words, summed probability at or above min p lights up
+- unseen vertices (depth test) are grey and score zero; scene terms are every observed top-10 word
+- label list: words ranked by probability mass (expected vertex count); a click queries that word
+- query: comma-separated words; summed probability draws as heat, faces under min p hidden
 - click a vertex to chart its top-10 words; --textured shows texture/mesh.obj, picks stay on mesh.ply
 
 Usage:
@@ -16,9 +16,9 @@ Usage:
 
 import argparse
 import logging
-import threading
 from dataclasses import replace
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -35,7 +35,7 @@ from collab_splats.semantics.features.ocr_lens import (
     word_probabilities,
     word_vocabulary,
 )
-from collab_splats.semantics.lifting import lift_features, transfer_features
+from collab_splats.semantics.lifting import lift_features
 from collab_splats.viewer import Viewer
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ def _chart(title: str, words: list[str], probs: np.ndarray) -> str:
 
 def main() -> None:
     """
-    Serve the mesh with top-1 OCR-lens word labels, a smoothing slider, a word query and a click probe.
+    Serve the mesh with a mass-ranked word list, a word query drawn as heat and a click probe.
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("backend_dir", type=Path)
@@ -193,7 +193,6 @@ def main() -> None:
     term_probs = seen_full[:, term_rows].astype(np.float32)
     term_probs /= term_probs.sum(axis=1, keepdims=True)
     del seen_full
-    seen = vertices[observed]
 
     # Photo texture, when asked: the corner-split OBJ of this same mesh, downscaled for display
     textured = None
@@ -204,43 +203,20 @@ def main() -> None:
         size = (args.texture_size, args.texture_size)
         material.image = material.image.resize(size, Image.LANCZOS)
 
-    # Scene, probe chart, smoothing slider and query box
+    # Scene, probe chart and query box
     viewer = Viewer(port=args.port)
     viewer.server.gui.configure_theme(control_layout="fixed")
     viewer.add_mesh("mesh", vertices, faces, colors, textured=textured)
     panel = viewer.server.gui.add_html("")
-    smoothing = viewer.server.gui.add_slider("Smoothing k", min=1, max=64, step=1, initial_value=1)
-    apply = viewer.server.gui.add_button("Apply")
     query = viewer.server.gui.add_text("Query", initial_value="")
     min_prob = viewer.server.gui.add_slider("Query min p", min=0.0, max=1.0, step=0.01, initial_value=0.3)
     search_button = viewer.server.gui.add_button("Search")
     query_note = viewer.server.gui.add_markdown("")
     marker_radius = 0.005 * float(np.linalg.norm(np.ptp(vertices, axis=0)))
-    shown_probs = [term_probs]
-
-    # Viser runs callbacks on a thread pool; relabels and probes must not interleave
-    lock = threading.Lock()
-
-    def relabel(_=None) -> None:
-        """
-        Smooth observed vertices' term probabilities over k neighbors, then list each vertex's top-1 word.
-        """
-        with lock:
-            smoothed = term_probs
-
-            # Each observed vertex scatters its probabilities to its k nearest observed vertices
-            if smoothing.value > 1:
-                smoothed = transfer_features(seen, seen, term_probs, k=smoothing.value)
-
-            # Top-1 word per observed vertex; unobserved vertices stay unlabeled
-            labels = np.full(len(vertices), "", dtype=object)
-            labels[observed] = terms[smoothed.argmax(axis=1)]
-            shown_probs[0] = smoothed
-            viewer.add_label_list("mesh", labels)
 
     def search(_=None) -> None:
         """
-        Highlight vertices whose summed raw probability of the query words reaches min p.
+        Draw the summed raw probability of the query words as heat; faces under min p hidden.
         """
         words = [word.strip().lower() for word in query.value.split(",") if word.strip()]
         known = [word for word in words if word in row_of]
@@ -248,14 +224,20 @@ def main() -> None:
         query_note.content = f"not in vocabulary: {', '.join(unknown)}" if unknown else ""
 
         # Empty query clears; unobserved rows are zero so never reach min p
-        mask = None
+        score = None
 
         if known:
             columns = [row_of[word] for word in known]
             score = full[:, columns].astype(np.float32).sum(axis=1)
-            mask = score >= min_prob.value
 
-        viewer.highlight("mesh", mask, (0, 255, 255))
+        viewer.show_heat("mesh", score, min_prob.value)
+
+    def select(word: Optional[str]) -> None:
+        """
+        Put a label-list word in the query box (Clear empties it) and search.
+        """
+        query.value = word or ""
+        search()
 
     def show(vertex: int) -> None:
         """
@@ -269,15 +251,15 @@ def main() -> None:
             panel.content = _chart(f"vertex {vertex}: unobserved", [], np.zeros(0))
             return
 
-        with lock:
-            values = shown_probs[0][observed_row[vertex]]
-
+        values = term_probs[observed_row[vertex]]
         top = np.argsort(-values)[:10]
         panel.content = _chart(f"vertex {vertex}", list(terms[top]), values[top])
 
-    # Label once, then wire the buttons and clicks; block
-    relabel()
-    apply.on_click(relabel)
+    # Words ranked by probability mass: expected vertex count, the total of a click's heat
+    mass = full.sum(axis=0, dtype=np.float64)
+    viewer.add_label_list("mesh", vocab.words, mass, select)
+
+    # Wire the query and clicks; block
     search_button.on_click(search)
     viewer.on_click("mesh", show)
     viewer.serve_forever()

@@ -114,22 +114,81 @@ def test_on_click_hands_the_picked_vertex_to_the_callback(viewer):
     assert picked == [0]
 
 
-def test_highlight_overlays_the_masked_vertices_without_resending_the_mesh(viewer, monkeypatch):
+def _capture_heat(viewer, monkeypatch):
+    """Record (name, mesh) for every add_mesh_trimesh; handles get a no-op remove."""
+    sent = []
+
+    def add(name, mesh):
+        sent.append((name, mesh))
+        return SimpleNamespace(remove=lambda: None)
+
+    monkeypatch.setattr(viewer.server.scene, "add_mesh_trimesh", add)
+    return sent
+
+
+def test_show_heat_keeps_faces_reaching_the_floor_on_their_used_vertices(viewer, monkeypatch):
     vertices, faces, colors = _quad()
     viewer.add_mesh("quad", vertices, faces, colors)
-    uploads = []
-    monkeypatch.setattr(viewer.server.scene, "add_mesh_trimesh", lambda name, mesh: uploads.append(name))
-    labels = np.array(["tree", "tree", "rock", ""], dtype=object)
+    sent = _capture_heat(viewer, monkeypatch)
 
-    viewer.highlight("quad", labels == "tree", (255, 80, 0))
-    _, points, shown, _ = viewer.points["quad/highlight"]
-    assert points.tolist() == vertices[:2].tolist()
-    assert shown.tolist() == [[255, 80, 0]] * 2
-    assert uploads == []
+    # Only vertex 3 reaches the floor: face [1, 3, 2] stays, face [0, 1, 2] goes
+    viewer.show_heat("quad", np.array([0.0, 0.1, 0.2, 0.9]), floor=0.5)
 
-    # None clears the overlay
-    viewer.highlight("quad", None, (255, 80, 0))
-    assert "quad/highlight" not in viewer.points
+    assert [name for name, _ in sent] == ["quad/heat"]
+    heat = sent[0][1]
+    assert heat.vertices.tolist() == vertices[[1, 2, 3]].tolist()
+    assert heat.faces.tolist() == [[0, 2, 1]]
+
+
+def test_show_heat_colors_follow_the_score_with_opacity_alpha(viewer, monkeypatch):
+    viewer.add_mesh("quad", *_quad())
+    sent = _capture_heat(viewer, monkeypatch)
+
+    viewer.show_heat("quad", np.array([0.6, 0.7, 0.8, 0.9]), floor=0.5, opacity=0.5)
+
+    rgba = sent[0][1].visual.vertex_colors
+    # Viridis runs dark purple to yellow: brightness rises with the score
+    assert np.all(np.diff(rgba[:, :3].astype(int).sum(axis=1)) > 0)
+    assert rgba[:, 3].tolist() == [128] * 4
+
+
+def test_show_heat_offset_lifts_along_normals(viewer, monkeypatch):
+    vertices, faces, colors = _quad()
+    viewer.add_mesh("quad", vertices, faces, colors)
+    sent = _capture_heat(viewer, monkeypatch)
+
+    viewer.show_heat("quad", np.ones(4), floor=0.5, offset=0.5)
+
+    # Flat quad, normals along +z, median edge 1: every vertex moves 0.5 in z
+    assert np.allclose(np.abs(sent[0][1].vertices[:, 2]), 0.5)
+    assert np.allclose(sent[0][1].vertices[:, :2], vertices[:, :2])
+
+
+def test_show_heat_replaces_clears_and_sends_nothing_below_the_floor(viewer, monkeypatch):
+    viewer.add_mesh("quad", *_quad())
+    viewer.heats.pop("quad", None)
+    removed = []
+
+    def add(name, mesh):
+        return SimpleNamespace(remove=lambda: removed.append(name))
+
+    monkeypatch.setattr(viewer.server.scene, "add_mesh_trimesh", add)
+
+    # A second call drops the first overlay
+    viewer.show_heat("quad", np.ones(4), floor=0.5)
+    viewer.show_heat("quad", np.ones(4), floor=0.5)
+    assert removed == ["quad/heat"]
+
+    # All below the floor: previous overlay gone, nothing new kept
+    viewer.show_heat("quad", np.zeros(4), floor=0.5)
+    assert removed == ["quad/heat"] * 2
+    assert "quad" not in viewer.heats
+
+    # None clears
+    viewer.show_heat("quad", np.ones(4), floor=0.5)
+    viewer.show_heat("quad", None, floor=0.5)
+    assert removed == ["quad/heat"] * 3
+    assert "quad" not in viewer.heats
 
 
 def test_add_label_list_counts_labels_most_common_first_and_skips_empty(viewer):
@@ -173,15 +232,15 @@ def test_on_click_registers_one_scene_handler_and_the_nearest_mesh_wins(viewer, 
     assert picked == [("top", 3)]
 
 
-def test_clicks_still_pick_after_a_highlight(viewer, monkeypatch):
+def test_clicks_still_pick_after_show_heat(viewer, monkeypatch):
     monkeypatch.setattr(viewer, "mesh_clicks", {})
     vertices, faces, colors = _quad()
-    labels = np.array(["tree", "tree", "rock", ""], dtype=object)
     picked = []
 
     viewer.add_mesh("quad", vertices, faces, colors)
     viewer.on_click("quad", picked.append)
-    viewer.highlight("quad", labels == "tree", (255, 80, 0))
+    _capture_heat(viewer, monkeypatch)
+    viewer.show_heat("quad", np.ones(4), floor=0.5)
 
     event = SimpleNamespace(ray_origin=(0.9, 0.9, 1.0), ray_direction=(0.0, 0.0, -1.0))
     viewer._dispatch_click(event)

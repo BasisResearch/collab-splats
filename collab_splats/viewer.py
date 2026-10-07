@@ -2,7 +2,7 @@
 Browser 3D scene viewer over viser: arrays in, named scene nodes out.
 
 - nodes upsert by name: re-adding a name replaces the node, which is how callers refresh one
-- point clouds, camera frusta, line sets and meshes; meshes add vertex picking and label lists
+- point clouds, camera frusta, line sets and meshes; meshes add vertex picking, label lists and a heat overlay
 - served at http://<host>:<port> over a websocket; no display needed on the host
 """
 
@@ -11,6 +11,7 @@ import threading
 import zlib
 from typing import Callable, Optional
 
+import matplotlib
 import numpy as np
 import open3d as o3d
 import trimesh
@@ -43,6 +44,7 @@ class Viewer:
         self.meshes: dict[str, tuple[np.ndarray, np.ndarray, o3d.t.geometry.RaycastingScene]] = {}
         self.mesh_clicks: dict[str, Callable[[int], None]] = {}
         self.label_lists: dict[str, tuple[viser.GuiFolderHandle, list[viser.GuiButtonHandle]]] = {}
+        self.heats: dict[str, viser.GlbHandle] = {}
         self._stop = threading.Event()
 
         # Camera visibility and flat per-node colors (shows node boundaries)
@@ -161,7 +163,7 @@ class Viewer:
         textured: Optional[trimesh.Trimesh] = None,
     ) -> None:
         """
-        Upsert a named mesh; picking, labels and highlights index its vertices.
+        Upsert a named mesh; picking, labels and the heat overlay index its vertices.
 
         Args:
             name: scene node name.
@@ -223,31 +225,60 @@ class Viewer:
 
         self.label_lists[name] = (folder, buttons)
 
-    def highlight(self, name: str, mask: Optional[np.ndarray], color: tuple[int, int, int]) -> None:
+    def show_heat(
+        self,
+        name: str,
+        scores: Optional[np.ndarray],
+        floor: float,
+        *,
+        opacity: float = 0.6,
+        offset: float = 0.0,
+    ) -> None:
         """
-        Overlay a mesh's masked vertices as a `<name>/highlight` point cloud.
+        Overlay a per-vertex score on a mesh as a vertex-colored `<name>/heat` sub-mesh.
 
-        - the mesh itself is never re-sent: only the masked vertices go over the wire
+        - faces with any vertex at or above `floor` are drawn; colors blend across each face
+        - viridis over the drawn vertices' scores, min-max normalized
+        - the mesh itself is never re-sent: only the drawn sub-mesh goes over the wire
 
         Args:
             name: mesh node name, already added with add_mesh.
-            mask: (V,) bool, vertices to highlight; None clears the overlay.
-            color: RGB 0-255 of the overlay.
+            scores: (V,) score per mesh vertex; None clears the overlay.
+            floor: score a face needs on one vertex to be drawn.
+            opacity: overlay alpha, 0-1.
+            offset: shift along vertex normals, in median edge lengths, against z-fighting.
         """
-        overlay = f"{name}/highlight"
-
         # Drop the previous overlay
-        if overlay in self.points:
-            self.points.pop(overlay)[0].remove()
+        if name in self.heats:
+            self.heats.pop(name).remove()
 
-        if mask is None:
+        if scores is None:
             return
 
-        # Masked vertices in one color, at the slider's point size
-        hits = self.meshes[name][0][mask]
-        rgb = np.asarray(color, dtype=np.uint8)
-        colors = np.tile(rgb, (len(hits), 1))
-        self.add_points(overlay, hits, colors, point_size=self.point_size.value)
+        # Faces reaching the floor, remapped onto the vertices they use
+        vertices, faces, _ = self.meshes[name]
+        keep = (scores[faces] >= floor).any(axis=1)
+
+        if not keep.any():
+            return
+
+        used, inverse = np.unique(faces[keep], return_inverse=True)
+        sub_faces = inverse.reshape(-1, 3)
+
+        # Viridis over the drawn scores, alpha at opacity
+        values = scores[used].astype(np.float64)
+        span = values.max() - values.min()
+        normalized = (values - values.min()) / span if span > 0 else np.zeros_like(values)
+        rgba = (matplotlib.colormaps["viridis"](normalized) * 255).astype(np.uint8)
+        rgba[:, 3] = round(255 * opacity)
+        heat = trimesh.Trimesh(vertices[used], sub_faces, vertex_colors=rgba, process=False)
+
+        # Lift off the base surface along vertex normals
+        if offset > 0:
+            shift = offset * np.median(heat.edges_unique_length) * heat.vertex_normals
+            heat.vertices = heat.vertices + shift
+
+        self.heats[name] = self.server.scene.add_mesh_trimesh(f"{name}/heat", heat)
 
     ########################################################################
     # Picking

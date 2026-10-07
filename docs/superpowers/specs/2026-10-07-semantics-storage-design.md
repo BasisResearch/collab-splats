@@ -1,11 +1,12 @@
 # Semantics storage — design
 
-Date: 2026-10-07 · Branch: off `clean/final` · Status: approved in brainstorm, spec under review
+Date: 2026-10-07 · Branch: off `clean/final` · Status: approved in brainstorm; revised 2026-10-07 to option B (codes only)
 
 ## Goal
 
 - Keep only what querying, segmentation, continuous maps and re-lifting need.
-- Store OCR-lens word probabilities so a viewer never decodes them.
+- Store codes only: fp16 per-frame codes and per-point codes, each with its AE. Words and
+  mesh-vertex values are derived by the viewer at start-up, never stored.
 
 ## Measured today (GH010229, 1039 frames, vggt_omega, A40)
 
@@ -29,6 +30,7 @@ Measured for this design:
 - where today's per-frame time goes (20 frames): read full-state frame 86 ms, decode 22 ms,
   visibility 2 ms, sample all points 65 ms, accumulate all points 175 ms; ~12% of points are
   visible in a median frame (max 38%)
+
 - top-k mass kept per vertex (97k observed vertices of the `.npy`):
 
 | k | median | p10 | worst |
@@ -40,49 +42,74 @@ Measured for this design:
 - a median vertex has 12 words above 0.015; median top-1 p is 0.25
 - scene probability of the 50 most common words, from top-64 vs full: 0.987 to 0.996
 
+Measured for B (codes only), GH010229 `ocr_viewer`, 294 frames, 545k vertices, 500k points, A40:
+- full states → fp16 codes: 22.9 s; codes store 101 MB (vs 4.5 GB full states)
+- decode codes → per-patch top-64 words, all frames: 3.9 s
+- indexed lift (below) of those words onto 545k vertices: 2.4 s, 9.1 GiB peak; onto points 3.6 s
+  vs 66.8 s for the dense lift of full-vocabulary maps
+- indexed vs dense lift, same top-64 patch inputs: top-1 equal on 99.9998% of vertices, 100% of
+  points; top-10 sets equal on 99.999%; max p difference 0.0019
+- codes lift onto vertices: 2.8 s
+- per-patch top-64 truncation vs the full-vocabulary lift (indexed prototype, all 1039 frames of
+  `2026_07_15` onto 486k points, full-state frames): top-1 identical on every point; top-10
+  overlap 0.9996; top-64 L1 median 0.001, p99 0.007; 67 s, 9.3 GiB vs 264 s, 21.5 GiB
+- per-frame top-64 held for the lift: ids int64 + probs fp32, ~1 MB per frame (~300 MB at 294
+  frames, ~1 GB at 1039)
+- lifting codes then decoding each vertex instead (route 2) is rejected: softmax of averaged codes
+  is winner-take-all (mean max p 0.76 vs 0.31), loses minority words such as "line" (the tracks);
+  top-1 agrees on 70% of vertices only
+
 ## Decisions (from brainstorm)
 
-- **The 2D cache exists to re-lift.** Querying and word probabilities go through the lifted stores.
+- **Codes only (option B).** On disk: the 2D codes store and the point store, both codes + AE.
+  No word arrays, no vertex store.
+  - the viewer decodes words and lifts onto mesh vertices at start-up, on the GPU (~7 s at 294
+    frames, decoder load excluded); talk2dino text queries need the GPU anyway
+  - storing per-frame top-64 words in the codes store later (B+) needs no migration
+- **The 2D codes are pushed.** The viewer reads them, and a re-lift after a mesh or pointcloud
+  re-run never re-extracts, local or remote.
 - **The full-width states are temporary.** Extract, train the AE once on all frames, encode, delete.
   - changing `n_components` re-runs the extractor; accepted, the AE is not expected to be retrained
 - **The AE trains on all frames.** `fit` streams frame blocks from the store instead of an 8 GiB sample.
 - **Codes are fp16 on disk**, in both the 2D cache and the lifted stores.
-- **Word probabilities: per-target top-64**, each target its own 64 words.
-  - exact for top-1 and top-10, so select-by-label and the probe chart are unchanged
-  - label-list mass (sum of p over vertices) from top-64: 0.987 to 0.996 of the full sum for the
-    50 most common words
-  - every word with p > 1/65 is kept; fainter words read as 0
-  - `dropped_mass` records what top-64 left out, per target
-- **Decode, then lift.** Word probabilities are computed per frame and then lifted, as the OCR-lens spec requires.
-- **Points and mesh vertices both get stores** ([decision 021](../decisions/021-lift-features-onto-displayed-geometry.md)).
-  - lifted from the 2D cache straight onto each, no k-NN hop for display
-  - mesh vertices: `pixel_indices=None`, so vertices no view sees stay zero (unobserved)
-- **Semantics runs after mesh.** `STAGES` order puts `mesh` before `semantics`; no new dependency.
-  - semantics writes the vertex store when `mesh.ply` exists and the extractor is ocr_lens
-  - a mesh re-run alone leaves the vertex store stale; the viewer refuses a vertex-count mismatch
-- **No legacy fallback.** Old `<extractor>.zarr` caches and `ocr_lens_vertices.npy` go unread.
+- **Word probabilities: top-64 per patch, per frame, in the viewer.** Each patch keeps its own 64
+  words; the indexed lift adds them at their id columns; each vertex then keeps its own top-64 in memory.
+  - top-1 identical and top-10 overlap 0.9996 vs the full-vocabulary lift (measured above), so
+    select-by-label and the probe chart are unchanged
+  - every word with p > 1/65 per patch is kept; fainter words read as 0
+- **Decode, then lift.** Word probabilities are computed per frame and then lifted, as the OCR-lens
+  spec requires; lifting codes and decoding per vertex loses minority words (measured above).
+- **Mesh vertices lift straight from the 2D codes** ([decision 021](../decisions/021-lift-features-onto-displayed-geometry.md)),
+  in the viewer: no k-NN hop, `pixel_indices=None`, so vertices no view sees stay zero (unobserved).
+  A mesh re-run cannot leave a vertex store stale: there is none.
+- **Stage order unchanged.** Semantics no longer reads the mesh.
+- **No legacy fallback.** Old `<extractor>.zarr` caches, `ocr_lens_vertices.npy` and `_ae.pt` go
+  unread. The real run deletes them by hand once the new stores exist; an old `<extractor>.zarr`
+  left on disk would otherwise be pushed.
 
 ## Layout
 
 | store | path (spelled by `Reconstructor`) | contents |
 |---|---|---|
 | 2D codes | `<scene>/semantics/<extractor>_codes.zarr` | `features` (N, latent, H_p, W_p) fp16, `autoencoder.pt`; attrs `extractor`, `patch_size`, `n_frames`, `extractor_kwargs`, `latent_dim` |
-| 2D states (temporary) | `<scene>/semantics/<extractor>.zarr` | full-width `features`; deleted once encoded |
+| 2D states (temporary) | `<scene>/semantics/<extractor>_states.zarr` | full-width `features`; deleted once encoded |
 | point store | `<scene>/<backend>/semantics/<extractor>_lifted.zarr` | `features` (P, latent) fp16, `autoencoder.pt` |
-| vertex store (every extractor, when `mesh.ply` exists) | `<scene>/<backend>/semantics/<extractor>_vertices.zarr` | fp16 codes + `autoencoder.pt`, attrs `extractor`, `extractor_kwargs`; ocr_lens adds the word arrays. Codes added 2026-10-07 for the [scene viewer](2026-10-07-scene-viewer-design.md)'s text queries |
 
-- word arrays, in the point store (ocr_lens) and the vertex store: `word_ids` (T, 64) uint16,
-  `word_probs` (T, 64) fp16, `dropped_mass` (T,) fp16, attrs `words` (the vocabulary list)
+- every path is keyed by extractor: two extractors (e.g. ocr_lens, talk2dino) are two runs with
+  `semantics.extractor` changed, each writing its own `_codes` and `_lifted` store with its own AE;
+  the stage marker is the configured extractor's point store
+- every backend lifts from the one scene-level codes store into its own `<backend>/semantics/`
 - `n_components: null`: `<extractor>_codes.zarr` holds full-width features, `latent_dim` null, no AE,
-  no temporary store.
-- the 2D codes store stays local (`PUSH_EXCLUDES`); the point and vertex stores are pushed.
+  no temporary store; it is pushed at full width
+- `PUSH_EXCLUDES`: `/semantics/**` becomes `/semantics/*_states.zarr/**`; codes and point stores are
+  pushed, the temporary states never
 
-Expected sizes, GH010229: 2D codes ~360 MB; point store ~250 MB (codes + words); vertex store ~140 MB.
-Was ~20 GB.
+Expected sizes, GH010229 (1039 frames): 2D codes ~360 MB; point store ~125 MB. Was ~20 GB.
 
 ## Stage flow (`Reconstructor.semantics`)
 
-1. Cache check: `valid_feature_cache(codes_path, ...)` with `latent_dim`; a hit skips 2-5.
+1. Cache check: `valid_feature_cache(codes_path, ...)` with `latent_dim`; a hit loads the codes
+   store's `autoencoder.pt` and skips 2-5.
 2. Extract every frame to the temporary states store: `write_feature_cache` over the extractor's
    per-frame maps (images decoded and batched in `semantics()`).
 3. Train the AE on all frames: `FeatureAutoencoder.fit(states["features"], ...)` streams.
@@ -90,22 +117,14 @@ Was ~20 GB.
    `partial(_load_frame, states, range(N), ae)`; save `autoencoder.pt`; validity attrs last.
 5. Delete the states store.
 6. Lift codes onto points → point store.
-7. ocr_lens only, one loop over the targets (points; vertices when `mesh.ply` exists):
-   - `lift_features(partial(_word_frame, codes, rows, ae, decoder, vocab), target)` → (T, n_words)
-   - vertices: `target = replace(cloud, points=vertices, pixel_indices=None)`
-   - `topk(64)`, `dropped_mass = observed sum - top-64 sum`
-   - points: into the point store's atomic write; vertices: the vertex store
 
 A crash between 2 and 4 leaves the states store; the next run overwrites it.
-
-Measured on GH010229 (A40): the word lift onto 486k points takes 74 s at 12.2 GiB peak GPU with the
-`lift_features` change below; vertices (545k) ~85 s, scaled, unmeasured.
 
 ## API changes
 
 Net: no public function added; one removed (`load_features`), one renamed and generalized
-(`extract_feature_cache` → `write_feature_cache`), one sped up (`lift_features`); one private
-helper added (`_word_frame`).
+(`extract_feature_cache` → `write_feature_cache`), one sped up and given an indexed-map input
+(`lift_features`).
 
 ### `collab_splats/semantics/store.py`
 
@@ -113,7 +132,7 @@ helper added (`_word_frame`).
 |---|---|---|
 | `valid_feature_cache` | change | takes `store_path` and `latent_dim`; checks `latent_dim` too |
 | `extract_feature_cache` | rename → `write_feature_cache` | `(store_path, maps, n_frames, attrs)`: writes an iterable of per-frame (D, H_p, W_p) maps as fp16, one chunk per frame, attrs last; serves both extraction and encoding; no extractor, no validity check, no `overwrite` (`Reconstructor` checks first) |
-| `write_point_features` | change | casts codes to fp16; `codes` may be None (vertex store); `arrays` and `attrs` keyword args go into the same atomic write |
+| `write_point_features` | change | casts codes to fp16 |
 | `read_point_features` | keep | already casts to float32 and normalizes |
 
 ### `collab_splats/semantics/compression.py`
@@ -127,6 +146,7 @@ helper added (`_word_frame`).
 | name | verdict | change |
 |---|---|---|
 | `lift_features` | change | samples only visible points (`w > 0`) and accumulates them with `features_sum.index_add_`; weights multiply in place; the mean divides in place. Same output: invisible points carried weight 0. Every lift gets it, codes included |
+| `lift_features(..., num_classes=)` | change | indexed maps: `frame_features(i)` may return `(ids, values)`, each (K, H_p, W_p), listing K entries per patch of a `num_classes`-long vector whose other entries are 0. `num_classes` is the id space and the output width, never K: nothing is truncated by it. Private `_add_indexed_bilinear` adds each visible point's bilinear blend of its 4 nearest patches' lists into a (P, num_classes) accumulator at the id columns, with `index_add_`. Same bilinear weights as the dense `grid_sample` (border, `align_corners=False`); output (P, num_classes) float32, as dense. Same visibility, weights and mean; no `pixel_indices` fallback for indexed maps. `ValueError` on indexed maps without `num_classes` or with `pixel_indices`, an id outside `[0, num_classes)` (it would land in another point's row), or `num_classes` with dense maps |
 
 ### `collab_splats/utils/torch_utils.py`
 
@@ -142,17 +162,28 @@ No change: `word_probabilities`, `load_decoder` and `word_vocabulary` are reused
 
 | name | verdict | change |
 |---|---|---|
-| `STAGES` | change | `mesh` before `semantics` |
 | `semantics()` | change | flow above |
 | `_load_frame` | keep | its AE branch now feeds the encode step; the lift reads stored codes with `ae=None` |
-| `_word_frame` | new, private | frame i's codes → AE decode → `word_probabilities` → (n_words, H_p, W_p); the word lift's `lift_features` callable via `partial`, next to `_load_frame` |
+
+### `collab_splats/remote.py`
+
+| name | verdict | change |
+|---|---|---|
+| `PUSH_EXCLUDES` | change | `/semantics/**` → `/semantics/*_states.zarr/**` |
 
 ### `docs/examples/ocr_lens_viewer.py`
 
 Built on the viewer as `mesh-query-heat` left it (heat overlay, mass-ranked labels, no smoothing).
 
-- reads the vertex store: `word_ids`, `word_probs`, `words`; no decoder, no `--model-id`
-- refuses when the store's row count differs from `mesh.ply`'s vertex count: re-run semantics
+- start-up, on the GPU: reads `ocr_lens_codes.zarr` + its AE (None when `n_components` is null,
+  passed through to `word_probabilities`), `pointcloud.zarr` (depth, poses)
+  and `mesh.ply`; maps cloud frames to codes rows with `store_rows`, as the stage does; decodes
+  each frame once: codes → `word_probabilities` → top-64 per patch, held on the GPU as indexed maps;
+  `lift_features(..., num_classes=n_words)` onto `replace(cloud, points=vertices, pixel_indices=None)`, in
+  vertex chunks of `chunk` rows, each its own `lift_features` call (a (V, 3512) fp32 accumulator
+  is 7.6 GB at 545k); keeps vertex top-64
+  (`word_ids`, `word_probs`) in memory
+- the decoder and vocabulary load as today (`--model_id` stays)
 - observed: `word_probs[:, 0] > 0`
 - label-list mass: `np.bincount(word_ids, weights=word_probs, minlength=n_words)`
 - query heat: per vertex, the sum of `word_probs` where `word_ids` is a query word; floor `min p` unchanged
@@ -171,38 +202,43 @@ Built on the viewer as `mesh-query-heat` left it (heat overlay, mass-ranked labe
   shuffling runs on a zarr and a tensor; empty input still raises.
 - validity: `latent_dim` mismatch, crash before the attrs, and wrong frame count each read invalid.
 - `n_components: null`: full-width features in the codes store, no AE, no temporary store.
-- `write_point_features`: fp16 on disk; `arrays`/`attrs` land in the same store; a failed write
-  leaves no store; `read_point_features` returns float32 unit rows.
-- word arrays from `semantics()` (toy decoder + vocabulary): match a dense lift followed by top-k;
-  `dropped_mass == observed sum - sum(top-k)`; k capped at the vocabulary size; unobserved
-  vertices have zero probabilities.
-- `Reconstructor.semantics`: stage order (mesh before semantics); vertex store written only for
-  ocr_lens with `mesh.ply`; word arrays only for ocr_lens.
+- indexed `lift_features`: on the toy scene, equals the dense lift of the same indexed maps
+  scattered to `num_classes` channels (visible-in-some-frames points, confidence weights); indexed maps with `pixel_indices` raise; unobserved
+  targets without `pixel_indices` stay zero. Each `num_classes` misuse raises `ValueError`.
+- `write_point_features`: fp16 on disk; a failed write leaves no store; `read_point_features`
+  returns float32 unit rows.
+- `PUSH_EXCLUDES`: `semantics/x_states.zarr/...` excluded; `semantics/x_codes.zarr/...` and
+  `<backend>/semantics/x_lifted.zarr/...` pushed.
 - Removed with their code: `load_features` tests.
 - Gate: `tests/semantics tests/reconstructor tests/utils tests/test_docstring_contract.py
   tests/test_import_style.py`, in the worktree, printing `collab_splats.__file__`.
 
-Real run on GH010229 (tmux), numbers reported, no thresholds:
+Real run on `ocr_viewer/GH010229` (294 frames, has `mesh.ply`; tmux), numbers reported, no thresholds:
 - disk size of each store
-- stage time: extract, AE fit, encode, point lift, word probabilities (points, vertices)
+- stage time: extract, AE fit, encode, point lift
 - peak GPU and RSS
+- viewer start-up time: decode, vertex lift, peak GPU
 - top-1 vertex label agreement vs the old `.npy` (cost of decoding from codes)
-- viewer start-up time
+- then, asked first: delete the old `semantics/ocr_lens.zarr`, `<backend>/ocr_lens_vertices.npy`
+  and `<backend>/semantics/ocr_lens_ae.pt` in `ocr_viewer/GH010229` and
+  `2026_07_15-Goprosplat-GH010229` (the latter has no mesh; its semantics are re-run when needed)
 
 ## Docs
 
 - `docs/semantics.md`: layout table (it already says fp32 and `_ae.pt`, both stale)
+- `configs/README.md`: output tree (`<extractor>.zarr` → `_codes.zarr`) and the not-pushed list
+  (`/semantics/**` → `/semantics/*_states.zarr/**`)
+- `remote.py`: the `PUSH_EXCLUDES` comment (codes pushed, states not)
 - `configs/base.yaml`: `n_components` comment (changing it re-extracts)
-- CLAUDE.md in-flight entry; CHANGELOG on completion
+- CLAUDE.md in-flight entry: rewritten to B (codes only, words derived by the viewer, codes
+  pushed); it still says words stored on points and vertices and semantics after mesh; CHANGELOG on
+  completion
 
 ## Out of scope
 
-- a sparse lift: top-64 per patch in each frame, scatter-added onto targets; a word-probability-only
-  function, and the visible-only dense lift matches its speed exactly. A/B on GH010229, all 1039
-  frames, 486k points, A40, both reading full-state frames:
-  - today's dense lift 264 s, 21.5 GiB peak; sparse prototype 67 s, 9.3 GiB peak
-  - top-1 identical on every point; top-10 overlap 0.9996; top-64 L1 vs dense median 0.001, p99 0.007
-  - would only buy memory now (9.3 vs 12.2 GiB)
+- stored word probabilities, on points, vertices or per frame (B+); addable without migration
+- a vertex store; the [scene viewer](2026-10-07-scene-viewer-design.md) spec, which reads
+  `*_vertices.zarr`, moves to lifting codes at start-up — its owner updates it
+- HDF5 (collab-data's `talk2dino_lifted.h5`); zarr stays, an exporter on their side if needed
 - dashboard (its imports are already broken pending its own cleanup)
 - one pretrained AE shared across scenes
-- deleting old caches on disk: done by hand

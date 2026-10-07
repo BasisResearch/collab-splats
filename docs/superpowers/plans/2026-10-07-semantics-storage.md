@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Cut semantics storage from ~20 GB to under 1 GB per scene and store OCR-lens word probabilities so the viewer never decodes them.
+**Goal:** Cut semantics storage from ~20 GB to under 1 GB per scene by keeping fp16 AE codes only (option B: no stored words, no vertex store).
 
-**Architecture:** The semantics stage extracts full-width states to a temporary store, trains the AE on every frame by streaming, encodes each frame to fp16 codes in `<extractor>_codes.zarr`, and deletes the states. Codes lift onto the points, and onto the mesh vertices when `mesh.ply` exists (vertex store, every extractor). For ocr_lens, each frame's codes also decode to word probabilities, which lift onto both targets; only the top-64 per row are stored. `lift_features` samples visible points only.
+**Architecture:** The semantics stage extracts full-width states to a temporary `<extractor>_states.zarr`, trains the AE on every frame by streaming, encodes each frame to fp16 codes in `<extractor>_codes.zarr`, and deletes the states. Codes lift onto the points into `<backend>/semantics/<extractor>_lifted.zarr`. Codes stores are pushed; states never. The OCR-lens viewer decodes each frame's codes to top-64 words per patch at start-up and lifts them onto the mesh vertices with `lift_features(..., num_classes=len(vocab))` over indexed `(ids, probs)` maps. `lift_features` samples visible points only.
 
-**Tech Stack:** torch, zarr v3, open3d (mesh read), viser viewer, pytest.
+**Tech Stack:** torch, zarr v3, trimesh (viewer mesh read), viser viewer, pytest.
 
 **Spec:** [2026-10-07-semantics-storage-design.md](../specs/2026-10-07-semantics-storage-design.md)
 
@@ -30,20 +30,19 @@
 
 | file | change |
 |---|---|
-| `collab_splats/semantics/lifting.py` | `lift_features`: sample and `index_add_` visible points only; in-place weight and mean |
-| `collab_splats/semantics/store.py` | `valid_feature_cache(store_path, name, images_dir, extractor_kwargs, latent_dim)`; `extract_feature_cache` → `write_feature_cache(store_path, maps, n_frames, attrs, ae=None)`; `write_point_features` fp16, `codes` optional, `arrays`/`attrs` |
+| `collab_splats/semantics/lifting.py` | `lift_features`: sample and `index_add_` visible points only; in-place weight and mean; indexed `(ids, values)` maps with `num_classes=` (misuse raises; no fallback for them); private `_add_indexed_bilinear`, the indexed sibling of `_grid_sample_at_pixels` |
+| `collab_splats/semantics/store.py` | `valid_feature_cache(store_path, name, images_dir, extractor_kwargs, latent_dim)`; `extract_feature_cache` → `write_feature_cache(store_path, maps, n_frames, attrs, ae=None)`; `write_point_features` casts to fp16 |
 | `collab_splats/semantics/__init__.py` | export rename |
 | `collab_splats/semantics/compression.py` | `FeatureAutoencoder.fit` streams any (N, D, ...) array |
 | `collab_splats/utils/torch_utils.py` | delete `load_features` |
-| `collab_splats/reconstructor.py` | `STAGES` order; `semantics()` flow incl. vertex store for every extractor; new `_word_frame` |
-| `docs/examples/ocr_lens_viewer.py` | read the vertex store; no decoder |
-| `docs/semantics.md`, `configs/base.yaml`, `CLAUDE.md` | docs |
+| `collab_splats/reconstructor.py` | `semantics()` flow; `STAGES` unchanged |
+| `collab_splats/remote.py` | `PUSH_EXCLUDES`: `/semantics/**` → `/semantics/*_states.zarr/**` |
+| `docs/examples/ocr_lens_viewer.py` | start-up: decode codes to top-64 per patch, indexed lift onto vertices in chunks; no `.npy` cache |
+| `docs/semantics.md`, `configs/README.md`, `configs/base.yaml`, `CLAUDE.md` | docs |
 | `tests/semantics/test_lifting.py`, `test_store.py`, `test_compression_target.py`, `features/test_extract_from_zarr.py` | tests |
-| `tests/reconstructor/test_reconstructor.py`, `test_sfm_stage.py`, `tests/utils/test_torch_utils.py` | tests |
+| `tests/reconstructor/test_reconstructor.py`, `test_sfm_stage.py`, `tests/utils/test_torch_utils.py`, `tests/remote/test_remote.py` | tests |
 
 One deviation from the spec's signature table: `write_feature_cache` takes `ae=None` and saves `autoencoder.pt` before the validity attrs. Without it, a crash between writing the attrs and saving the AE leaves a "valid" codes store with no decoder. This mirrors `write_point_features(store_path, codes, ae)`.
-
-`PUSH_EXCLUDES` already holds `/semantics/**`, which keeps the scene-level codes store local. No change is needed.
 
 ---
 
@@ -67,7 +66,7 @@ Expected: a path under `.worktrees/semantics-storage/collab_splats/`.
 
 ```bash
 cd /workspace/collab-splats/.worktrees/semantics-storage
-PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/semantics tests/reconstructor tests/utils tests/test_docstring_contract.py tests/test_import_style.py -q -p no:cacheprovider > /tmp/claude-0/ss_baseline.log 2>&1; echo exit=$?
+PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/semantics tests/reconstructor tests/utils tests/remote tests/test_docstring_contract.py tests/test_import_style.py -q -p no:cacheprovider > /tmp/claude-0/ss_baseline.log 2>&1; echo exit=$?
 grep -E "passed|failed" /tmp/claude-0/ss_baseline.log | tail -1
 ```
 
@@ -75,15 +74,15 @@ Record the pass/fail counts. Any failure that is listed in `docs/known-test-fail
 
 ---
 
-### Task 1: `lift_features` samples visible points only
+### Task 1: `lift_features` samples visible points only; indexed-map input
 
 **Files:**
-- Modify: `collab_splats/semantics/lifting.py` (the per-frame accumulate and the mean, in `lift_features`)
+- Modify: `collab_splats/semantics/lifting.py` (`lift_features`; new private `_add_indexed_bilinear` after `_grid_sample_at_pixels`)
 - Test: `tests/semantics/test_lifting.py`
 
 - [ ] **Step 1: Write the equality test against a reference copy of today's loop**
 
-Append to `tests/semantics/test_lifting.py`. Add `from collab_splats.geometry.projection import depth_residual` and `from collab_splats.semantics.lifting import _grid_sample_at_pixels` to the imports (keep isort order).
+Append to `tests/semantics/test_lifting.py`. Add `from collab_splats.geometry.projection import depth_residual` and `_grid_sample_at_pixels` to the `collab_splats.semantics.lifting` import (keep isort order).
 
 ```python
 def _lift_reference(maps, result, depth_tol=0.05):
@@ -113,30 +112,43 @@ def _lift_reference(maps, result, depth_tol=0.05):
     return total / (weights.unsqueeze(-1) + 1e-8)
 
 
-def test_lift_features_matches_the_all_points_reference(monkeypatch):
+def _partial_scene(rng, pixel_indices=False, n=3, h=16, w=20, p=200):
     """
-    Sampling only visible points changes nothing: invisible points carried weight 0.
+    Toy scene where some points are visible in some frames only.
 
     - frame 2's depth map is far behind every point, so no point is visible there
+    - pixel_indices=True gives every point a random source pixel, so the fallback runs
     """
-    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
-    rng = np.random.default_rng(0)
-    n, h, w, p = 3, 16, 20, 200
     pts = np.stack(
         [rng.uniform(-0.1, 0.1, p), rng.uniform(-0.08, 0.08, p), rng.uniform(1.0, 2.0, p)], axis=1
     ).astype(np.float32)
     depth = rng.uniform(1.0, 2.0, (n, h, w)).astype(np.float32)
     depth[2] = 100.0
     conf = rng.uniform(0.1, 1.0, (n, h, w)).astype(np.float32)
-    result = _make_lift_result(pts, None, depth, conf, n=n, h=h, w=w)
-    maps = [torch.from_numpy(rng.standard_normal((5, 4, 5)).astype(np.float32)) for _ in range(n)]
+    pixels = None
+
+    if pixel_indices:
+        pixels = np.stack([rng.integers(0, n, p), rng.integers(0, h, p), rng.integers(0, w, p)], axis=1)
+        pixels = pixels.astype(np.int32)
+
+    return _make_lift_result(pts, pixels, depth, conf, n=n, h=h, w=w)
+
+
+def test_lift_features_matches_the_all_points_reference(monkeypatch):
+    """
+    Sampling only visible points changes nothing: invisible points carried weight 0.
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    rng = np.random.default_rng(0)
+    result = _partial_scene(rng)
+    maps = [torch.from_numpy(rng.standard_normal((5, 4, 5)).astype(np.float32)) for _ in range(3)]
 
     expected = _lift_reference(maps, result)
     out = lift_features(maps.__getitem__, result)
 
     # Partial visibility: some points observed, some not
     observed = expected.abs().sum(1) > 0
-    assert 0 < int(observed.sum()) < p
+    assert 0 < int(observed.sum()) < len(observed)
     torch.testing.assert_close(out, expected, atol=1e-6, rtol=1e-5)
 ```
 
@@ -147,11 +159,125 @@ cd /workspace/collab-splats/.worktrees/semantics-storage
 PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/semantics/test_lifting.py -q -p no:cacheprovider > /tmp/claude-0/ss_t1.log 2>&1; echo exit=$?
 ```
 
-Expected: `exit=0`. If the "partial visibility" assert fails, widen `depth`'s uniform range so that some points fail the 5% depth test, then rerun. This test is the refactor's safety net, so it must pass before any change.
+Expected: `exit=0`. If the "partial visibility" assert fails, widen `depth`'s uniform range in `_partial_scene` so that some points fail the 5% depth test, then rerun. This test is the refactor's safety net, so it must pass before any change.
 
-- [ ] **Step 3: Change the accumulate and the mean**
+- [ ] **Step 3: Write the indexed-equals-dense and misuse tests**
 
-In `lift_features`, replace this block:
+Append to `tests/semantics/test_lifting.py`:
+
+```python
+def test_indexed_lift_equals_the_dense_lift_of_the_scattered_maps(monkeypatch):
+    """
+    Indexed (ids, probs) maps lift exactly as the same entries scattered to num_classes channels.
+
+    - points visible nowhere stay zero, as in the dense lift without pixel_indices
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    rng = np.random.default_rng(1)
+    result = _partial_scene(rng)
+    num_classes, k = 12, 4
+
+    # Per patch: k distinct class ids with random probabilities, and the same entries dense
+    torch.manual_seed(0)
+    indexed, dense = [], []
+
+    for _ in range(3):
+        ids = torch.rand(num_classes, 4, 5).topk(k, dim=0).indices
+        probs = torch.rand(k, 4, 5)
+        indexed.append((ids, probs))
+        dense.append(torch.zeros(num_classes, 4, 5).scatter_(0, ids, probs))
+
+    out = lift_features(indexed.__getitem__, result, num_classes=num_classes)
+    expected = lift_features(dense.__getitem__, result)
+
+    assert out.shape == (len(result.points), num_classes) and out.dtype == torch.float32
+    torch.testing.assert_close(out, expected, atol=1e-6, rtol=1e-5)
+
+    # Some rows unobserved, and zero
+    assert int((expected.abs().sum(1) == 0).sum()) > 0
+
+
+@pytest.mark.parametrize(
+    "indexed, num_classes, first_id",
+    [(True, None, 0), (True, 1, 0), (True, 4, -1), (False, 5, 0)],
+    ids=["indexed-without-num-classes", "id-past-num-classes", "negative-id", "dense-with-num-classes"],
+)
+def test_num_classes_misuse_raises_instead_of_truncating(monkeypatch, indexed, num_classes, first_id):
+    """
+    num_classes is the id space of indexed maps; any other use raises.
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    result = _partial_scene(np.random.default_rng(2))
+
+    # Indexed maps hold ids first_id and first_id + 1 at every patch; dense maps have 5 channels
+    ids = torch.arange(first_id, first_id + 2).view(2, 1, 1).expand(2, 4, 5)
+    fmap = (ids, torch.ones(2, 4, 5)) if indexed else torch.ones(5, 4, 5)
+
+    with pytest.raises(ValueError, match="num_classes"):
+        lift_features(lambda i: fmap, result, num_classes=num_classes)
+
+
+def test_indexed_maps_refuse_the_pixel_indices_fallback(monkeypatch):
+    """
+    The fallback samples dense maps only, so indexed maps with pixel_indices raise.
+    """
+    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    result = _partial_scene(np.random.default_rng(3), pixel_indices=True)
+    fmap = (torch.zeros(2, 4, 5, dtype=torch.long), torch.ones(2, 4, 5))
+
+    with pytest.raises(ValueError, match="pixel_indices"):
+        lift_features(lambda i: fmap, result, num_classes=4)
+```
+
+- [ ] **Step 4: Run it; it fails**
+
+Run the Step 2 command. Expected: `exit=1`; every new test fails with `TypeError: lift_features() got an unexpected keyword argument 'num_classes'`.
+
+- [ ] **Step 5: Implement visible-only accumulation and the indexed input**
+
+Add `num_classes: Optional[int] = None` after `depth_tol` in the `lift_features` signature (add `from typing import Optional`; the module already imports `TYPE_CHECKING` from `typing`). Docstring changes:
+- `frame_features` arg: `frame i's features, called once per frame, then once per fallback frame (dense maps only); a list passes maps.__getitem__. Either a dense (D, H_p, W_p) map, any float dtype, or an indexed map: an (ids, values) pair, each (K, H_p, W_p), listing K entries per patch of a num_classes-long vector whose other entries are 0.`
+- new arg `num_classes: indexed maps only; number of distinct ids, i.e. the output width. Values at the K listed ids per patch are summed per point; K is never a dimension. None for dense maps.`
+- bullets: `- only visible points are sampled; each frame costs its visible count, not P` and `- indexed maps add each point's bilinear blend of its 4 nearest patches' lists at the id columns: the dense lift's result without the zero columns`
+- `Raises:` `ValueError: indexed maps without num_classes, with pixel_indices, or with an id outside [0, num_classes); num_classes with dense maps.`
+- `Returns:` `(P, D) or (P, num_classes) float32 tensor ...`
+
+In the main loop, replace:
+
+```python
+    for i in range(N):
+        fmap = frame_features(i)
+        fmap = fmap.to(device=device, dtype=torch.float32)  # (D, H_p, W_p)
+
+        # Accumulator width comes from the first frame
+        if features_sum is None:
+            features_sum = torch.zeros((P, fmap.shape[0]), dtype=torch.float32, device=device)
+```
+
+with:
+
+```python
+    for i in range(N):
+        fmap = frame_features(i)
+
+        # Accumulator width: num_classes for indexed maps, else the first frame's channels
+        if features_sum is None:
+            indexed = not isinstance(fmap, torch.Tensor)
+
+            if indexed and num_classes is None:
+                raise ValueError("indexed (ids, values) maps need num_classes, the number of distinct ids")
+
+            if indexed and result.pixel_indices is not None:
+                raise ValueError("indexed maps take no pixel_indices fallback; pass a result without pixel_indices")
+
+            if not indexed and num_classes is not None:
+                raise ValueError("num_classes applies to indexed maps only; dense maps keep their channels")
+
+            width = num_classes if indexed else fmap.shape[0]
+            features_sum = torch.zeros((P, width), dtype=torch.float32, device=device)
+```
+
+Replace:
 
 ```python
         visible = valid & depth_ok
@@ -175,9 +301,16 @@ with:
 
         # Sample and accumulate visible points only; the rest carry weight 0
         idx = torch.nonzero(w > 0).squeeze(1)
-        sampled = _grid_sample_at_pixels(fmap, v_safe[idx], u_safe[idx], image_size)  # (P_vis, D)
-        sampled *= w[idx].unsqueeze(-1)
-        features_sum.index_add_(0, idx, sampled)
+
+        if indexed:
+            ids, values = fmap
+            _add_indexed_bilinear(features_sum, ids, values, idx, v_safe[idx], u_safe[idx], w[idx], image_size)
+        else:
+            fmap = fmap.to(device=device, dtype=torch.float32)  # (D, H_p, W_p)
+            sampled = _grid_sample_at_pixels(fmap, v_safe[idx], u_safe[idx], image_size)  # (P_vis, D)
+            sampled *= w[idx].unsqueeze(-1)
+            features_sum.index_add_(0, idx, sampled)
+
         weights_sum += w
 
     # Weighted mean in place, eps for numerical safety
@@ -185,21 +318,86 @@ with:
     features /= weights_sum.unsqueeze(-1) + 1e-8
 ```
 
-Add a bullet to the docstring: `- only visible points are sampled; each frame costs its visible count, not P`.
+The fallback loop stays as it is: it runs on dense maps only, since indexed maps with `pixel_indices` raised above.
 
-- [ ] **Step 4: Run the lifting tests**
+Add after `_grid_sample_at_pixels`:
 
-Run the same command as Step 2. Expected: `exit=0`, with every `test_lifting.py` test passing.
+```python
+def _add_indexed_bilinear(
+    acc: torch.Tensor,
+    ids: torch.Tensor,
+    values: torch.Tensor,
+    idx: torch.Tensor,
+    rows: torch.Tensor,
+    cols: torch.Tensor,
+    weights: torch.Tensor,
+    image_size: tuple[int, int],
+) -> None:
+    """
+    Add each point's bilinear blend of its 4 nearest patches' (id, value) lists into acc, in place.
 
-- [ ] **Step 5: Commit**
+    - ids, values (K, H_p, W_p); point j's blend goes to row idx[j], each value at column id
+    - same corners and weights as grid_sample (border, align_corners=False), so it equals the
+      dense lift of the same lists scattered to acc's width
+    - raises ValueError on an id < 0 or >= acc width, which would land in another point's row
+    """
+    # An id outside [0, num_classes) would write into another point's row
+    lo, hi = int(ids.min()), int(ids.max())
+
+    if lo < 0 or hi >= acc.shape[1]:
+        raise ValueError(f"ids span [{lo}, {hi}], outside [0, num_classes={acc.shape[1]})")
+
+    # Lists as patch rows: (H_p * W_p, K) ids and values
+    k, height, width = ids.shape
+    ids = ids.to(device=acc.device, dtype=torch.long).reshape(k, -1).T
+    values = values.to(device=acc.device, dtype=torch.float32).reshape(k, -1).T
+    H, W = image_size
+
+    # Patch-grid coords, clamped as border padding clamps them
+    x = (cols + 0.5) * width / W - 0.5
+    y = (rows + 0.5) * height / H - 0.5
+    x = x.clamp(0, width - 1)
+    y = y.clamp(0, height - 1)
+    x0 = x.floor().long()
+    y0 = y.floor().long()
+    x1 = (x0 + 1).clamp(max=width - 1)
+    y1 = (y0 + 1).clamp(max=height - 1)
+    wx = x - x0
+    wy = y - y0
+
+    # Four nearest patches per point, each weighted by its bilinear share times the point weight
+    corners = torch.cat([y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1])
+    corner_w = torch.cat([(1 - wy) * (1 - wx), (1 - wy) * wx, wy * (1 - wx), wy * wx])
+    corner_w *= weights.repeat(4)
+
+    # K entries per patch into the flat accumulator: row * num_classes + id
+    flat = idx.repeat(4).unsqueeze(1) * acc.shape[1] + ids[corners]
+    weighted = values[corners] * corner_w.unsqueeze(1)
+    acc.view(-1).index_add_(0, flat.reshape(-1), weighted.reshape(-1))
+```
+
+`grid_sample` with `align_corners=False` unnormalizes `x_n = (2c + 1) / W - 1` to `((x_n + 1) * w - 1) / 2 = (c + 0.5) * w / W - 0.5`, and border padding clamps that to `[0, w - 1]`. `_add_indexed_bilinear` uses the same coordinate, so a dense map scattered from `(ids, values)` samples identically.
+
+Bilinear is required, not nearest: on GH010229 (top-64 per patch), reading only the nearest patch kept the bilinear top-1 word on 82.4% of vertices and 89.9% of points (`nearest_lift.py` in the session scratchpad).
+
+- [ ] **Step 6: Run the lifting tests**
+
+Run the Step 2 command. Expected: `exit=0`, with every `test_lifting.py` test passing (the reference test, the indexed-equals-dense test, all four misuse cases, the fallback refusal).
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add tests/semantics/test_lifting.py collab_splats/semantics/lifting.py
-git commit --only tests/semantics/test_lifting.py collab_splats/semantics/lifting.py -m "perf(semantics): lift_features samples visible points only
+git commit --only tests/semantics/test_lifting.py collab_splats/semantics/lifting.py -m "perf(semantics): lift_features samples visible points only; indexed-map input
 
 index_add_ over visible points; in-place weight and mean. Same output:
-invisible points carried weight 0. GH010229 word lift 264 s / 21.5 GiB
--> 74 s / 12.2 GiB.
+invisible points carried weight 0. frame_features may return indexed
+(ids, values) maps with num_classes=, the id space and output width;
+_add_indexed_bilinear adds each point's bilinear blend of its 4 nearest
+patches' lists at the id columns, equal to the dense lift. Misusing
+num_classes raises instead of writing into other rows; indexed maps
+take no pixel_indices fallback. GH010229 word lift 264 s / 21.5 GiB
+-> 74 s / 12.2 GiB dense; vertex top-64 lift 2.4 s / 9.1 GiB indexed.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -452,13 +650,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: `write_point_features` fp16, optional codes, word arrays
+### Task 3: `write_point_features` stores fp16
 
 **Files:**
-- Modify: `collab_splats/semantics/store.py` (`write_point_features`)
+- Modify: `collab_splats/semantics/store.py` (`write_point_features`, one line of `read_point_features`)
 - Test: `tests/semantics/test_store.py` (the lifted-store section)
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing test**
 
 Append to the lifted-store section of `tests/semantics/test_store.py`:
 
@@ -472,99 +670,25 @@ def test_write_point_features_stores_fp16_and_reads_float32_unit_rows(tmp_path):
     out = read_point_features(store_path)
     assert out.dtype == np.float32
     np.testing.assert_allclose(np.linalg.norm(out, axis=1), 1.0, rtol=1e-5)
-
-
-def test_write_point_features_lands_arrays_and_attrs_in_the_same_store(tmp_path):
-    store_path = tmp_path / "ocr_lens_lifted.zarr"
-    feats = np.ones((4, 5), dtype=np.float32)
-    ids = np.arange(8, dtype=np.uint16).reshape(4, 2)
-    write_point_features(store_path, feats, None, arrays={"word_ids": ids}, attrs={"words": ["a", "b"]})
-
-    store = zarr.open(str(store_path), mode="r")
-    np.testing.assert_array_equal(store["word_ids"][:], ids)
-    assert store["word_ids"].dtype == np.uint16
-    assert store.attrs["words"] == ["a", "b"]
-    assert store.attrs["latent_dim"] == 5
-
-
-def test_write_point_features_without_codes_writes_arrays_only(tmp_path):
-    store_path = tmp_path / "ocr_lens_vertices.zarr"
-    write_point_features(store_path, None, None, arrays={"word_probs": np.zeros((3, 2), np.float16)})
-
-    store = zarr.open(str(store_path), mode="r")
-    assert "features" not in store
-    assert "latent_dim" not in store.attrs
-    assert store["word_probs"].shape == (3, 2)
 ```
 
-- [ ] **Step 2: Run them; they fail**
+- [ ] **Step 2: Run it; it fails**
 
 ```bash
 PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/semantics/test_store.py -q -p no:cacheprovider > /tmp/claude-0/ss_t3.log 2>&1; echo exit=$?
 ```
 
-Expected: `exit=1`. The fp16 test fails on dtype (`float32`), and the others fail with `TypeError: ... unexpected keyword argument 'arrays'` or on `None.shape`.
+Expected: `exit=1`; the dtype assert sees `float32`.
 
 - [ ] **Step 3: Implement**
 
-Replace `write_point_features` with:
+In `write_point_features`, replace `store["features"] = codes` with:
 
 ```python
-def write_point_features(
-    store_path: Path,
-    codes: Optional[np.ndarray],
-    ae: Optional[FeatureAutoencoder],
-    *,
-    arrays: Optional[dict[str, np.ndarray]] = None,
-    attrs: Optional[dict[str, Any]] = None,
-) -> None:
-    """
-    Write a lifted store atomically via a `.tmp` dir renamed into place.
-
-    - codes stored fp16; read_point_features returns them float32
-    - arrays (e.g. ocr_lens word_ids / word_probs / dropped_mass) land as given, same atomic write
-
-    Args:
-        store_path: the lifted store path.
-        codes: (P, latent) codes, (P, D) when `ae` is None, or None for an arrays-only store.
-        ae: autoencoder that decodes `codes`, or None.
-        arrays: extra named per-row arrays, stored in their own dtype.
-        attrs: extra store attrs.
-    """
-    store_path = Path(store_path)
-    tmp = store_path.with_name(f"{store_path.name}.tmp")
-
-    store_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.rmtree(tmp, ignore_errors=True)
-
-    # Codes, extra arrays, weights, then attrs into the tmp dir; a failure removes it
-    try:
-        store = zarr.open(str(tmp), mode="w")
-        store_attrs = dict(attrs or {})
-
-        if codes is not None:
-            codes = np.asarray(codes)
-            store["features"] = codes.astype(np.float16)
-            width = int(codes.shape[1])
-            store_attrs["input_dim"] = int(ae.input_dim) if ae is not None else width
-            store_attrs["latent_dim"] = width
-
-        for name, array in (arrays or {}).items():
-            store[name] = array
-
-        if ae is not None:
-            ae.save(tmp / "autoencoder.pt")
-
-        store.attrs.update(to_json_safe(store_attrs))
-
-    except Exception:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise
-
-    # Swap the finished store in under its real name
-    shutil.rmtree(store_path, ignore_errors=True)
-    tmp.rename(store_path)
+        store["features"] = codes.astype(np.float16)
 ```
+
+Add the docstring bullet `- codes stored fp16; read_point_features returns them float32`.
 
 In `read_point_features`, read the codes as float32. Today it does `codes = np.asarray(store["features"])`; on an fp16 store the no-AE branch would return `F.normalize` of an fp16 tensor, i.e. float16, against its float32 contract (the AE branch is safe: `iter_decode` casts). Replace that line with:
 
@@ -574,16 +698,16 @@ In `read_point_features`, read the codes as float32. Today it does `codes = np.a
 
 - [ ] **Step 4: Run the store tests**
 
-Run the same command as Step 2. Expected: `exit=0`. `test_write_point_features_puts_the_autoencoder_inside_the_store` still sees attrs `{"input_dim": 32, "latent_dim": 8}`. The `assert_allclose` round-trip tests compare fp16-stored values at `rtol=1e-6`; loosen those to `rtol=1e-3` (fp16 has an 11-bit mantissa), because the precision change is intended.
+Run the same command as Step 2. Expected: `exit=0`. `test_write_point_features_puts_the_autoencoder_inside_the_store` still sees attrs `{"input_dim": 32, "latent_dim": 8}`. The `assert_allclose` round-trip tests compare fp16-stored values at `rtol=1e-6`; loosen those to `rtol=1e-3` (fp16 has an 11-bit mantissa), because the precision change is intended. A failed write leaving no store is already covered by the existing atomic-write test; check it still passes.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add collab_splats/semantics/store.py tests/semantics/test_store.py
-git commit --only collab_splats/semantics/store.py tests/semantics/test_store.py -m "feat(semantics): lifted stores hold fp16 codes plus optional named arrays
+git commit --only collab_splats/semantics/store.py tests/semantics/test_store.py -m "feat(semantics): lifted stores hold fp16 codes
 
-write_point_features: codes cast to fp16 and optional (vertex store);
-arrays/attrs ride the same atomic write.
+write_point_features casts codes to fp16; read_point_features reads them
+back as float32.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -810,12 +934,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Semantics stage: extract → fit → encode → delete → lift; mesh before semantics
+### Task 5: Semantics stage: extract → fit → encode → delete → lift
 
 **Files:**
 - Modify: `collab_splats/reconstructor.py`:
   - imports (lines ~16-75)
-  - `STAGES` (~line 86)
   - `semantics_cache_dir` docstring (~line 419)
   - `semantics()` (~lines 841-901)
 - Test: `tests/reconstructor/test_reconstructor.py` (semantics tests, lines ~400-575 and ~1320-1345)
@@ -825,14 +948,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 In `tests/reconstructor/test_reconstructor.py`:
 
-(a) Add a stage-order test near the other `STAGES` tests (~line 943):
-
-```python
-def test_mesh_runs_before_semantics():
-    """Semantics lifts word probabilities onto mesh.ply's vertices, so mesh comes first."""
-    order = list(STAGES)
-    assert order.index("mesh") < order.index("semantics")
-```
+(a) `STAGES` stays as it is: semantics needs only `pointcloud` and never reads the mesh.
 
 (b) Add a codes-store seeding helper beside `_touch_frames`:
 
@@ -947,7 +1063,7 @@ def test_semantics_encodes_every_frame_and_deletes_the_states(tmp_path):
     codes = zarr.open(str(codes_path), mode="r")["features"]
     assert codes.shape == (2, 8, 2, 2) and codes.dtype == np.float16
     assert (codes_path / "autoencoder.pt").is_file()
-    assert not (rec.semantics_cache_dir / "dinov2.zarr").exists()
+    assert not (rec.semantics_cache_dir / "dinov2_states.zarr").exists()
 
 
 def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
@@ -962,7 +1078,6 @@ def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert store["features"].shape == (1, 8) and store["features"].dtype == np.float16
     assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8}
-    assert "word_ids" not in store
 
 
 def test_semantics_second_run_neither_extracts_nor_fits(tmp_path):
@@ -1048,24 +1163,9 @@ Imports in `collab_splats/reconstructor.py`:
 - `from collab_splats.utils.io import read_image, to_json_safe, write_json`
 - torch_utils import: drop `load_features`, add `batch_iterator`
 
-`STAGES`:
+`semantics_cache_dir` docstring: "Scene-level 2D feature cache: `<extractor>_codes.zarr`, plus a temporary `<extractor>_states.zarr` of full-width states while the AE trains."
 
-```python
-STAGES: dict[str, tuple[str, ...]] = {
-    "preproc": (),
-    "pointcloud": ("preproc",),
-    "refine": ("pointcloud",),
-    "splats": ("pointcloud",),
-    "mesh": ("pointcloud",),
-    "semantics": ("pointcloud",),
-    "localize": ("pointcloud",),
-    "reconstruction_quality_report": ("pointcloud",),
-}
-```
-
-`semantics_cache_dir` docstring: "Scene-level 2D feature cache: `<extractor>_codes.zarr`, plus a temporary `<extractor>.zarr` of full-width states while the AE trains."
-
-Replace `semantics()` (Task 6 adds the ocr_lens word arrays at the marked spot):
+Replace `semantics()`:
 
 ```python
     def semantics(self) -> None:
@@ -1073,17 +1173,17 @@ Replace `semantics()` (Task 6 adds the ocr_lens word arrays at the marked spot):
         Extract 2D features, compress every frame to fp16 codes, lift the codes onto the points.
 
         - codes store `<extractor>_codes.zarr` reused when valid (name, frames, kwargs, latent_dim)
-        - a miss extracts full-width states to a temporary `<extractor>.zarr`, trains the AE on all of
+        - a miss extracts full-width states to a temporary `<extractor>_states.zarr`, trains the AE on all of
           them, encodes every frame, then deletes the states; n_components null keeps full width, no AE
         - lift reads one frame of codes at a time; rows follow the zarr's frames (maybe a subset)
-        - lifted store written atomically with its own autoencoder.pt (pushed; the 2D cache is not)
+        - lifted store written atomically with its own autoencoder.pt; codes and lifted stores are pushed
         """
         cfg = self.config["semantics"]
         name = cfg["extractor"]
         extractor_kwargs = cfg["extractor_kwargs"]
         latent_dim = cfg["n_components"]
         codes_path = self.semantics_cache_dir / f"{name}_codes.zarr"
-        states_path = self.semantics_cache_dir / f"{name}.zarr"
+        states_path = self.semantics_cache_dir / f"{name}_states.zarr"
         self.semantics_cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 2D codes for every images/ frame; the model loads only on a miss
@@ -1136,12 +1236,8 @@ Replace `semantics()` (Task 6 adds the ocr_lens word arrays at the marked spot):
         rows = store_rows(self.images_dir, pointcloud.image_paths)
         lifted = lift_features(partial(_load_frame, codes, rows, None), pointcloud)
 
-        # Word arrays for the points and mesh vertices (ocr_lens only); Task 6
-        point_words = {}
-        word_attrs = {}
-
-        # Write the per-point codes beside the lifted-store marker
-        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae, arrays=point_words, attrs=word_attrs)
+        # Write the per-point codes; the lifted store is the stage's done marker
+        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae)
 ```
 
 `partial(_load_frame, states, range(n_frames), ae)` indexes `range` like a list (`rows[i]` = `i`), so the encode reads store row `i` for frame `i`. `_load_frame` already runs under `no_grad`.
@@ -1153,314 +1249,110 @@ PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/reconstructo
 grep -E "passed|failed" /tmp/claude-0/ss_t5.log | tail -1
 ```
 
-Expected: `exit=0`, with no failures beyond the Task 0 baseline. If a test elsewhere relied on `semantics` preceding `mesh` in `STAGES` (for example a full-run call order), update its expected order. That reorder is the spec's decision.
+Expected: `exit=0`, with no failures beyond the Task 0 baseline.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py tests/reconstructor/test_sfm_stage.py
-git commit --only collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py tests/reconstructor/test_sfm_stage.py -m "feat(reconstructor): semantics keeps fp16 codes only; AE on all frames; mesh runs first
+git commit --only collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py tests/reconstructor/test_sfm_stage.py -m "feat(reconstructor): semantics keeps fp16 codes only; AE on all frames
 
 Extract to a temporary full-width store, fit the AE streaming every frame,
 encode into <extractor>_codes.zarr, delete the states. Codes lift onto the
-points. STAGES puts mesh before semantics for the vertex word store.
+points.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 6: Vertex store for every extractor; OCR-lens word arrays on points and vertices
+### Task 6: Push the codes store; exclude only the temporary states
 
 **Files:**
-- Modify: `collab_splats/reconstructor.py`:
-  - imports
-  - new `_word_frame` next to `_load_frame` (~line 141)
-  - `semantics()`, from the codes lift to the end
+- Modify: `collab_splats/remote.py:29-31` (`PUSH_EXCLUDES` and its comment)
+- Test: `tests/remote/test_remote.py` (`test_push_excludes_raw_feature_maps`)
 
-Why every extractor: the scene-viewer spec ([2026-10-07-scene-viewer-design.md](../specs/2026-10-07-scene-viewer-design.md)) queries maskclip / talk2dino on the mesh from the vertex store's codes, and rejects lifting at viewer start-up. Codes are narrow, so the extra lift per target is cheap.
-- Test: `tests/reconstructor/test_reconstructor.py`
+The viewer and any re-lift (local, or remote after a pull) read `<scene>/semantics/<extractor>_codes.zarr`, so it is pushed. Only `<extractor>_states.zarr`, which exists while the AE trains, stays local.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Rewrite the test**
 
-Add to `tests/reconstructor/test_reconstructor.py`. Add `from collab_splats.semantics.features.ocr_lens import WordVocab, word_probabilities` to the imports.
+Replace `test_push_excludes_raw_feature_maps` in `tests/remote/test_remote.py` with:
 
 ```python
-def _toy_lens(n_words, dim=4):
-    """A fp32 linear 'lm_head' over one token per word."""
-    torch.manual_seed(0)
-    decoder = torch.nn.Linear(dim, n_words)
-    vocab = WordVocab(
-        words=[f"w{j}" for j in range(n_words)],
-        token_ids=torch.arange(n_words),
-        word_index=torch.arange(n_words),
+def test_push_excludes_only_the_temporary_feature_states():
+    """
+    The temporary full-width states stay local; the 2D codes and the lifted stores are pushed.
+
+    - rclone reads a leading slash as "relative to the transfer root"; strip it to model that
+    """
+    patterns = [p.lstrip("/") for p in PUSH_EXCLUDES]
+    assert "/semantics/*_states.zarr/**" in PUSH_EXCLUDES
+    assert any(fnmatch.fnmatchcase("semantics/dinov2_states.zarr/features/c/0/0/0/0", p) for p in patterns)
+
+    # Codes store, its AE and the backend's lifted store all travel
+    kept = (
+        "semantics/dinov2_codes.zarr/features/c/0/0/0/0",
+        "semantics/dinov2_codes.zarr/autoencoder.pt",
+        "vggt_omega/semantics/dinov2_lifted.zarr/features/c/0/0",
     )
-    return decoder, vocab
 
-
-def test_word_frame_decodes_one_store_row_to_word_maps(tmp_path):
-    decoder, vocab = _toy_lens(5)
-    data = np.random.default_rng(0).standard_normal((2, 4, 2, 3)).astype(np.float16)
-    codes = zarr.open(str(tmp_path / "c.zarr"), mode="w")
-    codes["features"] = data
-
-    out = R._word_frame(codes["features"], [1, 0], None, decoder, vocab, 0)
-
-    states = torch.from_numpy(data[1]).reshape(4, -1).T
-    expected = torch.cat([p for p, _ in word_probabilities(states, decoder, vocab)]).T.reshape(5, 2, 3)
-    assert out.shape == (5, 2, 3)
-    torch.testing.assert_close(out.cpu(), expected.cpu())
-
-
-@pytest.mark.parametrize("n_words", [3, 70])
-def test_semantics_ocr_lens_writes_top_k_words_on_points_and_vertices(tmp_path, n_words):
-    """
-    Top-min(64, n_words) word ids/probs plus dropped_mass, on the points and on mesh.ply's vertices.
-
-    - lift stubbed: frame 0's first cell per target row; row 0 zeroed (unobserved)
-    """
-    decoder, vocab = _toy_lens(n_words)
-    rec = _semantics_rec(tmp_path, {"extractor": "ocr_lens", "n_components": None})
-    _seed_codes(rec, "ocr_lens", [np.random.default_rng(r).standard_normal((4, 2, 2)).astype(np.float16) for r in range(2)])
-    mesh = o3d.geometry.TriangleMesh.create_tetrahedron()
-    rec.backend_dir.mkdir(parents=True, exist_ok=True)
-    o3d.io.write_triangle_mesh(str(rec.outputs["mesh"]), mesh)
-    targets = []
-
-    def lift(frame_features, target):
-        targets.append(target)
-        out = frame_features(0)[:, 0, 0].float().cpu().repeat(len(target.points), 1)
-        out[0] = 0
-        return out
-
-    with (
-        patch.object(R, "lift_features", side_effect=lift),
-        patch.object(R, "load_decoder", return_value=decoder),
-        patch.object(R, "load_processor"),
-        patch.object(R, "word_vocabulary", return_value=vocab),
-    ):
-        rec.semantics()
-
-    k = min(64, n_words)
-
-    # Expected row: frame 0's first cell decoded, as the stub lifts it
-    codes = zarr.open(str(rec.semantics_cache_dir / "ocr_lens_codes.zarr"), mode="r")["features"]
-    row = R._word_frame(codes, [0, 1], None, decoder, vocab, 0)[:, 0, 0].float().cpu()
-    top = row.topk(k)
-
-    for store_name, n_rows in (("ocr_lens_lifted.zarr", 1), ("ocr_lens_vertices.zarr", len(mesh.vertices))):
-        store = zarr.open(str(rec.backend_dir / "semantics" / store_name), mode="r")
-        assert store.attrs["words"] == vocab.words
-        assert store["word_ids"].dtype == np.uint16 and store["word_ids"].shape == (n_rows, k)
-        assert store["word_probs"].dtype == np.float16
-        assert store["dropped_mass"].shape == (n_rows,)
-
-        # Row 0 unobserved: zero probabilities and nothing dropped
-        assert not store["word_probs"][0].any() and store["dropped_mass"][0] == 0
-
-    # Observed vertex rows: the top-k of the dense row, and the mass top-k left out
-    vertices = zarr.open(str(rec.backend_dir / "semantics" / "ocr_lens_vertices.zarr"), mode="r")
-    np.testing.assert_array_equal(vertices["word_ids"][1], top.indices.numpy())
-    np.testing.assert_allclose(vertices["word_probs"][1], top.values.numpy(), atol=1e-3)
-    np.testing.assert_allclose(vertices["dropped_mass"][1], float(row.sum() - top.values.sum()), atol=1e-3)
-    assert vertices["features"].shape == (len(mesh.vertices), 4)
-    assert vertices.attrs["extractor"] == "ocr_lens" and vertices.attrs["extractor_kwargs"] == {}
-
-    # The vertex lift has no source pixels: unseen vertices stay zero
-    assert targets[-1].pixel_indices is None
-    assert len(targets[-1].points) == len(mesh.vertices)
-
-
-def test_semantics_ocr_lens_without_mesh_writes_no_vertex_store(tmp_path):
-    decoder, vocab = _toy_lens(3)
-    rec = _semantics_rec(tmp_path, {"extractor": "ocr_lens", "n_components": None})
-    _seed_codes(rec, "ocr_lens", [np.ones((4, 2, 2), np.float16)] * 2)
-
-    with (
-        patch.object(R, "lift_features", side_effect=lambda ff, target: ff(0)[:, 0, 0].float().cpu().repeat(1, 1)),
-        patch.object(R, "load_decoder", return_value=decoder),
-        patch.object(R, "load_processor"),
-        patch.object(R, "word_vocabulary", return_value=vocab),
-    ):
-        rec.semantics()
-
-    assert "word_ids" in zarr.open(str(rec.outputs["semantics"]), mode="r")
-    assert not (rec.backend_dir / "semantics" / "ocr_lens_vertices.zarr").exists()
-
-
-def test_semantics_writes_a_vertex_code_store_for_any_extractor(tmp_path):
-    """
-    mesh.ply present: dinov2 codes lift onto its vertices too, AE and extractor attrs beside them.
-    """
-    rec = _semantics_rec(tmp_path, {**COMPRESSED, "extractor_kwargs": {"layer": 20}})
-    mesh = o3d.geometry.TriangleMesh.create_tetrahedron()
-    rec.backend_dir.mkdir(parents=True, exist_ok=True)
-    o3d.io.write_triangle_mesh(str(rec.outputs["mesh"]), mesh)
-
-    with _stub_extraction():
-        rec.semantics()
-
-    vertex_path = rec.backend_dir / "semantics" / "dinov2_vertices.zarr"
-    store = zarr.open(str(vertex_path), mode="r")
-    assert store["features"].shape == (len(mesh.vertices), 8) and store["features"].dtype == np.float16
-    assert (vertex_path / "autoencoder.pt").is_file()
-    assert store.attrs["extractor"] == "dinov2" and store.attrs["extractor_kwargs"] == {"layer": 20}
-    assert "word_ids" not in store
+    for name in kept:
+        assert not any(fnmatch.fnmatchcase(name, p) for p in patterns), name
 ```
 
-The dinov2 runs in `test_semantics_writes_weights_inside_the_lifted_store` (Task 5) and `test_semantics_writes_a_vertex_code_store_for_any_extractor` assert `"word_ids" not in store`, which covers "word arrays only for ocr_lens".
-
-- [ ] **Step 2: Run them; they fail**
+- [ ] **Step 2: Run it; it fails**
 
 ```bash
-PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/reconstructor/test_reconstructor.py -q -p no:cacheprovider -k "word or ocr_lens" > /tmp/claude-0/ss_t6.log 2>&1; echo exit=$?
+PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/remote/test_remote.py -q -p no:cacheprovider > /tmp/claude-0/ss_t6.log 2>&1; echo exit=$?
 ```
 
-Expected: `exit=1`: `AttributeError: module 'collab_splats.reconstructor' has no attribute '_word_frame'`.
+Expected: `exit=1`; the `"/semantics/*_states.zarr/**" in PUSH_EXCLUDES` assert fails.
 
 - [ ] **Step 3: Implement**
 
-Imports in `collab_splats/reconstructor.py`:
-- `from dataclasses import replace`: the module already has `import dataclasses`, so use `dataclasses.replace` instead and add nothing
-- `import inspect` (stdlib)
-- `from collab_splats.semantics.features.ocr_lens import OCRLensExtractor, WordVocab, load_decoder, load_processor, word_probabilities, word_vocabulary`
-
-Add after `_load_frame`:
+In `collab_splats/remote.py`, replace:
 
 ```python
-def _word_frame(
-    codes: zarr.Array,
-    rows: list[int],
-    ae: FeatureAutoencoder | None,
-    decoder: torch.nn.Module,
-    vocab: WordVocab,
-    i: int,
-) -> torch.Tensor:
-    """
-    Pointcloud frame i's codes decoded to OCR-lens word probabilities, (n_words, H_p, W_p).
-
-    - store row rows[i]; ae decodes codes to lens states, None when the store holds states
-    - lives on the decoder's device; lift_features moves it on
-    """
-    # Patch codes as rows, (H_p * W_p, latent)
-    fmap = torch.from_numpy(codes[rows[i]])
-    dim, height, width = fmap.shape
-    states = fmap.reshape(dim, -1)
-    states = states.T
-
-    # Word probabilities per patch, back onto the patch grid
-    blocks = [probs for probs, _ in word_probabilities(states, decoder, vocab, ae=ae)]
-    probs = torch.cat(blocks)
-    probs = probs.T
-    return probs.reshape(-1, height, width)
-```
-
-In `semantics()`, replace everything from the codes lift to the end of the method:
-
-```python
-        lifted = lift_features(partial(_load_frame, codes, rows, None), pointcloud)
-
-        # Word arrays for the points and mesh vertices (ocr_lens only); Task 6
-        point_words = {}
-        word_attrs = {}
-
-        # Write the per-point codes beside the lifted-store marker
-        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae, arrays=point_words, attrs=word_attrs)
+    # Scene-root 2D patch cache; the leading slash keeps <backend>/semantics pushed
+    "/semantics/**",
 ```
 
 with:
 
 ```python
-        # Lift targets: points, plus mesh.ply's vertices (no source pixel, so unseen stays zero)
-        targets = {"points": pointcloud}
-
-        if self.outputs["mesh"].exists():
-            mesh = o3d.io.read_triangle_mesh(str(self.outputs["mesh"]))
-            vertices = np.asarray(mesh.vertices, dtype=np.float32)
-            targets["vertices"] = dataclasses.replace(pointcloud, points=vertices, pixel_indices=None)
-
-        # OCR lens: each frame's codes decode to word probabilities
-        word_frame = None
-        word_attrs = {}
-
-        if name == "ocr_lens":
-            params = inspect.signature(OCRLensExtractor).parameters
-            model_id = extractor_kwargs.get("model_id", params["model_id"].default)
-            decoder = load_decoder(model_id)
-            vocab = word_vocabulary(load_processor(model_id).tokenizer)
-            word_frame = partial(_word_frame, codes, rows, ae, decoder, vocab)
-            word_attrs = {"words": vocab.words}
-
-        lifted = {}
-        words = {key: {} for key in targets}
-
-        for key, target in targets.items():
-            # Codes lifted onto every target
-            lifted[key] = to_numpy(lift_features(partial(_load_frame, codes, rows, None), target))
-
-            if word_frame is None:
-                continue
-
-            # Full vocabulary lifted, each row's top-64 kept with the mass it drops
-            probs = lift_features(word_frame, target)
-            top = probs.topk(min(64, probs.shape[1]), dim=1)
-            dropped = probs.sum(1) - top.values.sum(1)
-            words[key] = {
-                "word_ids": top.indices.numpy().astype(np.uint16),
-                "word_probs": top.values.half().numpy(),
-                "dropped_mass": dropped.clamp_min(0).half().numpy(),
-            }
-            del probs
-
-        # Free the lens decoder before writing
-        if word_frame is not None:
-            del word_frame, decoder
-            pytorch_gc()
-
-        # Vertex store first; the lifted store is the stage's done marker, so it lands last
-        if "vertices" in targets:
-            vertex_path = self.backend_dir / "semantics" / f"{name}_vertices.zarr"
-            vertex_attrs = {"extractor": name, "extractor_kwargs": extractor_kwargs, **word_attrs}
-            write_point_features(vertex_path, lifted["vertices"], ae, arrays=words["vertices"], attrs=vertex_attrs)
-
-        write_point_features(self.outputs["semantics"], lifted["points"], ae, arrays=words["points"], attrs=word_attrs)
+    # Scene-root temporary full-width states; the 2D codes and <backend>/semantics are pushed
+    "/semantics/*_states.zarr/**",
 ```
 
-`lift_features` never reads `colors`, and `PointcloudResult` has no `__post_init__`, so `dataclasses.replace` with vertex points and the points' `colors` is safe.
-
-`dropped.clamp_min(0)` stops float rounding from storing tiny negative masses. On a zero row, `sum - sum` is `0`.
-
-- [ ] **Step 4: Run the reconstructor tests**
+- [ ] **Step 4: Run the remote and CLI tests**
 
 ```bash
-PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/reconstructor -q -p no:cacheprovider > /tmp/claude-0/ss_t6.log 2>&1; echo exit=$?
+PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/remote tests/reconstructor/test_cli.py -q -p no:cacheprovider > /tmp/claude-0/ss_t6.log 2>&1; echo exit=$?
 grep -E "passed|failed" /tmp/claude-0/ss_t6.log | tail -1
 ```
 
-Expected: `exit=0`, with no failures beyond the baseline.
+Expected: `exit=0`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py
-git commit --only collab_splats/reconstructor.py tests/reconstructor/test_reconstructor.py -m "feat(semantics): vertex store for every extractor; OCR-lens top-64 words on points and vertices
+git add collab_splats/remote.py tests/remote/test_remote.py
+git commit --only collab_splats/remote.py tests/remote/test_remote.py -m "feat(remote): push the 2D semantics codes; exclude only the temporary states
 
-When mesh.ply exists, codes also lift onto its vertices into
-<extractor>_vertices.zarr (codes, autoencoder.pt, attrs extractor and
-extractor_kwargs) for the scene viewer. ocr_lens adds word_ids uint16,
-word_probs fp16, dropped_mass fp16 and attrs words to both stores.
+PUSH_EXCLUDES /semantics/** -> /semantics/*_states.zarr/**. The fp16
+codes store (~360 MB on GH010229) is what the viewer and any re-lift read.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: Viewer reads the vertex store
+### Task 7: Viewer decodes the codes and lifts top-64 words per patch at start-up
 
 **Files:**
-- Modify: `docs/examples/ocr_lens_viewer.py` (whole file)
+- Modify: `docs/examples/ocr_lens_viewer.py` (whole file except `_chart`)
 
-Stopgap: the scene-viewer effort deletes this script and moves its word mode into `collab_splats/viewer.py`. This rewrite keeps the viewer working on the new stores until then and is the code scene-viewer moves.
+Stopgap: the scene-viewer effort deletes this script and moves its word mode into `collab_splats/viewer.py`. This rewrite keeps the viewer working on the codes store until then.
 
 - [ ] **Step 1: Rewrite the viewer**
 
@@ -1471,30 +1363,110 @@ Replace the module docstring, the imports, `_probability_maps`, `_lift_onto` and
 """
 Probe a scene's mesh for the OCR lens's words as a continuous heat overlay.
 
-- needs mesh.ply and semantics/ocr_lens_vertices.zarr under the backend dir (semantics stage, ocr_lens)
-- the store holds each vertex's top-64 words; no decoder loads
+- needs mesh.ply and pointcloud.zarr under the backend dir, <scene>/semantics/ocr_lens_codes.zarr
+- start-up: each frame's codes decode to its top-64 words per patch, lifted as indexed maps onto the vertices
 - unseen vertices (depth test) are grey and score zero; scene terms are every observed top-10 word
 - label list: words ranked by probability mass (expected vertex count); a click queries that word
 - query: comma-separated words; summed probability draws as heat, faces under min p hidden
 - click a vertex to chart its top-10 scene terms; --textured shows texture/mesh.obj, picks stay on mesh.ply
 
 Usage:
-    python docs/examples/ocr_lens_viewer.py /workspace/outputs/<scene>/<backend> --port 8080
+    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python docs/examples/ocr_lens_viewer.py \\
+        /workspace/outputs/<scene>/<backend> --port 8080
 """
 
 import argparse
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import torch
 import trimesh
 import zarr
 from PIL import Image
 
+from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.reconstructor import store_rows
+from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.features.ocr_lens import (
+    WordVocab,
+    load_decoder,
+    load_processor,
+    word_probabilities,
+    word_vocabulary,
+)
+from collab_splats.semantics.lifting import lift_features
+from collab_splats.utils.torch_utils import get_device
 from collab_splats.viewer import Viewer
 
 logger = logging.getLogger(__name__)
+
+
+@torch.no_grad()
+def _top_words(
+    codes: zarr.Array,
+    rows: list[int],
+    ae: Optional[FeatureAutoencoder],
+    decoder: torch.nn.Module,
+    vocab: WordVocab,
+    k: int = 64,
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """
+    Each pointcloud frame's codes decoded to its top-k words per patch, (ids, probs) each (k, H_p, W_p).
+
+    - store row rows[i] for frame i; ae None when the store holds full-width states
+    - held on the decoder's device, sorted by probability within each patch
+    """
+    maps = []
+
+    for row in rows:
+        # Patch codes as rows, (H_p * W_p, latent)
+        fmap = torch.from_numpy(codes[row])
+        channels, height, width = fmap.shape
+        states = fmap.reshape(channels, -1)
+        states = states.T
+
+        # Word probabilities per patch; top-k kept as an indexed map over the vocabulary
+        probs = torch.cat([p for p, _ in word_probabilities(states, decoder, vocab, ae=ae)])
+        top = probs.topk(k, dim=1)
+        ids = top.indices.T.reshape(k, height, width)
+        values = top.values.T.reshape(k, height, width)
+        maps.append((ids, values))
+
+    return maps
+
+
+def _lift_top_words(
+    vertices: np.ndarray,
+    colors: np.ndarray,
+    cloud: PointcloudResult,
+    maps: list[tuple[torch.Tensor, torch.Tensor]],
+    n_words: int,
+    chunk: int,
+    k: int = 64,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Top-k words per vertex from the indexed per-frame maps, chunk vertices per lift_features call.
+
+    - vertices have no source pixel, so pixel_indices=None: no fallback, unseen rows stay zero
+    - (V, k) int64 word ids and (V, k) float32 probabilities, sorted descending per row
+    """
+    device = get_device()
+    ids, probs = [], []
+
+    for start in range(0, len(vertices), chunk):
+        # One (chunk, n_words) accumulator at a time; its top-k ranked on the GPU
+        stop = start + chunk
+        part = replace(cloud, points=vertices[start:stop], colors=colors[start:stop], pixel_indices=None)
+        lifted = lift_features(maps.__getitem__, part, num_classes=n_words)
+        top = lifted.to(device).topk(k, dim=1)
+        ids.append(top.indices.cpu().numpy())
+        probs.append(top.values.cpu().numpy())
+        logger.info("lifted vertices %d/%d", min(stop, len(vertices)), len(vertices))
+
+    return np.concatenate(ids), np.concatenate(probs)
 ```
 
 `main()`:
@@ -1507,10 +1479,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("backend_dir", type=Path)
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--chunk", type=int, default=131_072, help="vertices lifted per lift_features call")
+    parser.add_argument("--model_id", default="llava-hf/llava-v1.6-vicuna-7b-hf")
     parser.add_argument("--textured", action="store_true", help="show texture/mesh.obj over the same surface")
     parser.add_argument("--texture_size", type=int, default=4096, help="displayed texture edge, pixels")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     # Mesh with its vertex colors; light grey when the mesh has none
     mesh = trimesh.load(args.backend_dir / "mesh.ply", process=False)
@@ -1522,19 +1496,39 @@ def main() -> None:
     else:
         colors = np.full((len(vertices), 3), 200, dtype=np.uint8)
 
-    # Per-vertex top-64 words from the semantics stage
-    store = zarr.open(str(args.backend_dir / "semantics" / "ocr_lens_vertices.zarr"), mode="r")
-    word_ids = store["word_ids"][:].astype(np.int64)
-    word_probs = store["word_probs"][:].astype(np.float32)
-    words = list(store.attrs["words"])
-    row_of = {word: row for row, word in enumerate(words)}
+    # Cameras and depth the lift tests visibility against
+    cloud = PointcloudResult.load_zarr(
+        args.backend_dir / "pointcloud.zarr",
+        load_world_points=False,
+        load_pixel_indices=False,
+    )
 
-    # A mesh re-run alone leaves the store describing other vertices
-    if len(word_ids) != len(vertices):
-        raise SystemExit(
-            f"ocr_lens_vertices.zarr has {len(word_ids)} rows for {len(vertices)} mesh vertices: "
-            "mesh.ply changed since semantics ran; re-run the semantics stage"
-        )
+    # Scene-level codes store; its rows follow the images/ store
+    scene_dir = args.backend_dir.parent
+    codes_path = scene_dir / "semantics" / "ocr_lens_codes.zarr"
+    store = zarr.open(str(codes_path), mode="r")
+    rows = store_rows(scene_dir / "images", cloud.image_paths)
+
+    # The codes' AE; none when n_components was null and the store holds full-width states
+    ae = None
+
+    if store.attrs["latent_dim"] is not None:
+        ae = FeatureAutoencoder.load(codes_path / "autoencoder.pt")
+        ae.to(get_device())
+
+    # Word vocabulary and lens decoder
+    processor = load_processor(args.model_id)
+    vocab = word_vocabulary(processor.tokenizer)
+    words = vocab.words
+    row_of = {word: row for row, word in enumerate(words)}
+    decoder = load_decoder(args.model_id)
+
+    # Top-64 words per patch, then per vertex; the decoder goes once the frames are decoded
+    logger.info("decoding %d frames", len(rows))
+    maps = _top_words(store["features"], rows, ae, decoder, vocab)
+    del decoder, ae
+    word_ids, word_probs = _lift_top_words(vertices, colors, cloud, maps, len(words), args.chunk)
+    del maps
 
     # Unobserved vertices have zero probabilities and are grey
     observed = word_probs[:, 0] > 0
@@ -1567,7 +1561,7 @@ def main() -> None:
 
     def search(_=None) -> None:
         """
-        Draw the summed stored probability of the query words as heat; faces under min p hidden.
+        Draw the summed probability of the query words as heat; faces under min p hidden.
         """
         typed = [word.strip().lower() for word in query.value.split(",") if word.strip()]
         known = [word for word in typed if word in row_of]
@@ -1602,7 +1596,7 @@ def main() -> None:
             panel.content = _chart(f"vertex {vertex}: unobserved", [], np.zeros(0))
             return
 
-        # Stored entries that are scene terms, already sorted by probability
+        # Kept entries that are scene terms, already sorted by probability
         ids = word_ids[vertex]
         probs = word_probs[vertex]
         keep = is_term[ids] & (probs > 0)
@@ -1620,6 +1614,8 @@ def main() -> None:
     viewer.serve_forever()
 ```
 
+Memory at GH010229 scale (294 frames, 545k vertices): the per-frame top-64 maps are ~1 MB each on the GPU; one `--chunk` accumulator is 131k × 3,512 fp32 = 1.8 GB, freed per chunk.
+
 - [ ] **Step 2: Lint and import-check**
 
 ```bash
@@ -1627,16 +1623,17 @@ PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m black --check docs/exampl
 PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python docs/examples/ocr_lens_viewer.py --help
 ```
 
-Expected: both checks clean (run `black`/`isort` on this one file if not), and `--help` prints the usage without `--model_id` or `--chunk`. The viewer is exercised live in Task 9.
+Expected: both checks clean (run `black`/`isort` on this one file if not), and `--help` prints the usage with `--chunk` and `--model_id`. The viewer is exercised live in Task 9.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add docs/examples/ocr_lens_viewer.py
-git commit --only docs/examples/ocr_lens_viewer.py -m "refactor(examples): ocr_lens_viewer reads the vertex word store
+git commit --only docs/examples/ocr_lens_viewer.py -m "refactor(examples): ocr_lens_viewer decodes codes to top-64 words at start-up
 
-No decoder, no per-frame decode, no .npy cache: word_ids/word_probs from
-semantics/ocr_lens_vertices.zarr drive heat, mass ranking and the probe.
+Reads ocr_lens_codes.zarr and its AE; each frame decodes to its top-64
+words per patch, lifted as indexed maps onto the vertices in chunks. No .npy
+cache, no full-vocabulary vertex array.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1647,8 +1644,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `docs/semantics.md` (the "On-disk layout" section)
+- Modify: `configs/README.md` (output trees ~lines 60 and 741, the scene-level cache note ~line 671, the not-pushed paragraph ~line 820, the layout note ~line 867)
 - Modify: `configs/base.yaml:114` (`n_components` comment)
-- Modify: `CLAUDE.md` (the semantics-storage in-flight entry: add the plan link)
+- Modify: `CLAUDE.md` (the semantics-storage in-flight entry)
 
 - [ ] **Step 1: Rewrite the layout section of `docs/semantics.md`**
 
@@ -1660,35 +1658,40 @@ Replace everything from `## On-disk layout` up to the next `---` with:
 | store | contents | written by |
 |---|---|---|
 | `<scene>/semantics/<extractor>_codes.zarr` | `features` (N, latent, H_p, W_p) fp16, one chunk per frame; `autoencoder.pt`; attrs `extractor`, `patch_size`, `n_frames`, `extractor_kwargs`, `latent_dim` | `write_feature_cache` |
-| `<scene>/semantics/<extractor>.zarr` | full-width states, (N, D, H_p, W_p) fp16; temporary, deleted once encoded | `write_feature_cache` |
-| `<scene>/<backend>/semantics/<extractor>_lifted.zarr` | `features` (P, latent) fp16, `autoencoder.pt`; ocr_lens adds the word arrays | `write_point_features` |
-| `<scene>/<backend>/semantics/<extractor>_vertices.zarr` | when `mesh.ply` exists: `features` (V, latent) fp16 per `mesh.ply` vertex, `autoencoder.pt`, attrs `extractor`, `extractor_kwargs`; ocr_lens adds the word arrays | `write_point_features` |
+| `<scene>/semantics/<extractor>_states.zarr` | full-width states, (N, D, H_p, W_p) fp16; temporary, deleted once encoded | `write_feature_cache` |
+| `<scene>/<backend>/semantics/<extractor>_lifted.zarr` | `features` (P, latent) fp16, `autoencoder.pt` | `write_point_features` |
 
 - `n_components: null`: `_codes.zarr` holds full-width features, `latent_dim` null, no AE, no temporary store
 - the AE trains once on every frame (streamed); changing `n_components` re-runs the extractor
-- word arrays: `word_ids` (T, 64) uint16, `word_probs` (T, 64) fp16 sorted descending, `dropped_mass` (T,) fp16; attrs `words`
-- unobserved rows have all-zero `word_probs`
-- `<scene>/semantics/` stays local (`PUSH_EXCLUDES`); the backend stores are pushed
-- semantics runs after mesh; a mesh re-run alone leaves `_vertices.zarr` stale, and the viewer refuses it
+- codes and lifted stores are pushed; `_states.zarr` never is (`PUSH_EXCLUDES`)
+- no word probabilities on disk: `docs/examples/ocr_lens_viewer.py` decodes the codes to top-64 words per patch and lifts them onto the mesh at start-up
 ```
 
-Also grep the file for `extract_feature_cache`, `load_features` and `_ae.pt`, and update every hit to the new names.
+Also grep the file for `extract_feature_cache`, `load_features`, `_ae.pt` and `<extractor>.zarr`, and update every hit to the new names.
 
-- [ ] **Step 2: `configs/base.yaml` comment**
+- [ ] **Step 2: `configs/README.md`**
+
+- both output trees: `<extractor>.zarr ← 2D patch cache ...` becomes `<extractor>_codes.zarr ← fp16 2D codes + autoencoder.pt, one per extractor (backend-agnostic)`
+- the cache note (~line 671) and the layout note (~line 867): `semantics/<extractor>.zarr` → `semantics/<extractor>_codes.zarr`
+- the not-pushed paragraph (~line 820): replace "`/semantics/**` at the scene root (raw 2D patch maps, regenerable from frames + extractor — note the leading slash, which is what keeps `<backend>/semantics/**` in the push)" with "`/semantics/*_states.zarr/**` at the scene root (temporary full-width states, deleted once the codes are written; the codes store and `<backend>/semantics/**` are pushed)"
+
+Grep `configs/README.md` for `<extractor>.zarr` afterwards; only the `features/<extractor>/<extractor>.zarr` history note (~line 868) may remain.
+
+- [ ] **Step 3: `configs/base.yaml` comment**
 
 ```yaml
   n_components: 64            # AE code width stored in <extractor>_codes.zarr; null = full width; 128 for ocr_lens; changing it re-extracts
 ```
 
-- [ ] **Step 3: CLAUDE.md in-flight entry gets the plan link**
+- [ ] **Step 4: CLAUDE.md in-flight entry**
 
-In `/workspace/collab-splats/.worktrees/semantics-storage/CLAUDE.md`, change the entry's link group from `([spec](docs/superpowers/specs/2026-10-07-semantics-storage-design.md))` to `([spec](docs/superpowers/specs/2026-10-07-semantics-storage-design.md) · [plan](docs/superpowers/plans/2026-10-07-semantics-storage.md))`. Skip this when the plan commit on `clean/final` already made the change.
+In `/workspace/collab-splats/.worktrees/semantics-storage/CLAUDE.md`, replace the semantics-storage entry's description (between the bold name and the link group) with: `2D cache keeps fp16 AE codes only (\`<extractor>_codes.zarr\`, pushed; full states deleted after an all-frames fit); no stored words or vertex store — the ocr_lens viewer decodes codes and lifts top-64 words per patch at start-up`. Keep the link group `([spec](...) · [plan](...))`. Skip whatever the plan commit on `clean/final` already changed.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add docs/semantics.md configs/base.yaml CLAUDE.md
-git commit --only docs/semantics.md configs/base.yaml CLAUDE.md -m "docs(semantics): codes-only 2D cache, word arrays, vertex store
+git add docs/semantics.md configs/README.md configs/base.yaml CLAUDE.md
+git commit --only docs/semantics.md configs/README.md configs/base.yaml CLAUDE.md -m "docs(semantics): codes-only 2D cache, pushed; states temporary
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1704,9 +1707,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```bash
 cd /workspace/collab-splats/.worktrees/semantics-storage
 PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -c "import collab_splats; print(collab_splats.__file__)"
-PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/semantics tests/reconstructor tests/utils tests/test_docstring_contract.py tests/test_import_style.py -q -p no:cacheprovider > /tmp/claude-0/ss_gate.log 2>&1; echo exit=$?
+PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python -m pytest tests/semantics tests/reconstructor tests/utils tests/remote tests/test_docstring_contract.py tests/test_import_style.py -q -p no:cacheprovider > /tmp/claude-0/ss_gate.log 2>&1; echo exit=$?
 grep -E "passed|failed" /tmp/claude-0/ss_gate.log | tail -1
-grep -rn "extract_feature_cache\|load_features\b" collab_splats tests evals docs --include=*.py --include=*.md | grep -v "docs/superpowers\|dashboard"
+grep -rn "extract_feature_cache\|load_features\b\|ocr_lens_vertices" collab_splats tests evals docs --include=*.py --include=*.md | grep -v "docs/superpowers\|dashboard"
 ```
 
 Expected:
@@ -1714,11 +1717,11 @@ Expected:
 - the pass count is at or above the baseline, with failures only from the baseline list
 - the grep is empty; the dashboard imports were already broken (spec: out of scope)
 
-Run `/graphify update .` afterwards (per `/workspace/CLAUDE.md`).
+Run `graphify update .` afterwards (per `/workspace/CLAUDE.md`).
 
 - [ ] **Step 2: Ask before the real run**
 
-The run overwrites `/workspace/outputs/ocr_viewer/GH010229/semantics/ocr_lens.zarr` (today's full-state cache, 294 frames) and the backend's `ocr_lens_lifted.zarr`. Re-creating either means re-extracting with LLaVA. Get the user's go-ahead in chat before Step 3. Keep `vggt_omega/ocr_lens_vertices.npy`: it is the top-1 reference.
+The run writes `ocr_lens_codes.zarr` beside today's full-state `semantics/ocr_lens.zarr` (294 frames) and overwrites the backend's `ocr_lens_lifted.zarr`. Get the user's go-ahead in chat before Step 3. Keep `vggt_omega/ocr_lens_vertices.npy` until Step 5: it is the top-1 reference.
 
 - [ ] **Step 3: Run the semantics stage in tmux**
 
@@ -1731,37 +1734,38 @@ tmux new -d -s ss_run "cd /workspace/collab-splats/.worktrees/semantics-storage 
   > /tmp/claude-0/ss_run.log 2>&1; echo exit=\$? >> /tmp/claude-0/ss_run.log"
 ```
 
-- In a second tmux window, sample GPU memory: `nvidia-smi --query-gpu=memory.used --format=csv -l 5 > /tmp/claude-0/ss_gpu.log`.
+- In a second tmux window, sample GPU memory: `nvidia-smi --query-gpu=memory.used --format=csv -l 5 > /tmp/claude-0/ss_gpu.log`. Kill it by PID afterwards, never `pkill -f`.
 - Wait with Monitor on `exit=` in the log. Do not run other heavy processes meanwhile (OOM risk).
-- Stage times come from the log's timestamps (extract, `fit autoencoder`, `feature cache written` ×2, then the three lifts). Peak RSS comes from `time -v` "Maximum resident set size".
+- Stage times come from the log's timestamps (extract, `fit autoencoder`, encode, point lift). Peak RSS comes from `time -v` "Maximum resident set size".
 
 If `local` rejects a processed scene dir as input, read `collab_splats/__main__.py` `_scene_name` and the leaf-stage re-run path (memory: "leaf-only `--stages` pulls from processed"), then use the documented form.
 
-- [ ] **Step 4: Measure**
+- [ ] **Step 4: Measure the stores and the viewer**
 
 ```bash
 du -sh /workspace/outputs/ocr_viewer/GH010229/semantics/* /workspace/outputs/ocr_viewer/GH010229/vggt_omega/semantics/*
+ls /workspace/outputs/ocr_viewer/GH010229/semantics/   # no ocr_lens_states.zarr
 ```
 
-Top-1 agreement against the old `.npy`, from the scratchpad:
+Viewer start-up: launch in tmux, with `/usr/bin/time -v` for peak RSS, and sample `nvidia-smi` as in Step 3. The viewer logs with timestamps: decode = `decoding N frames` to the first `lifted vertices` line; vertex lift = first to last `lifted vertices` line; start-up = the `date` printed at launch to the last `lifted vertices` line (the `time -v` wall clock includes serving, so it is not start-up).
+
+```bash
+date +%T.%N; tmux new -d -s ss_viewer "cd /workspace/collab-splats/.worktrees/semantics-storage && \
+  PYTHONPATH=\$PWD HF_HOME=/workspace/models HF_HUB_OFFLINE=1 /usr/bin/time -v \
+  /opt/venv/reconstruction/bin/python docs/examples/ocr_lens_viewer.py /workspace/outputs/ocr_viewer/GH010229/vggt_omega --port 8080 \
+  > /tmp/claude-0/ss_viewer.log 2>&1"
+```
+
+Top-1 agreement against the old `.npy`: in the scratchpad, import `_top_words` and `_lift_top_words` from the viewer (add `docs/examples` to `sys.path`), run them as `main()` does, and compare:
 
 ```python
-import numpy as np, zarr
+seen_new = word_probs[:, 0] > 0
 old = np.load("/workspace/outputs/ocr_viewer/GH010229/vggt_omega/ocr_lens_vertices.npy", mmap_mode="r")
-new = zarr.open("/workspace/outputs/ocr_viewer/GH010229/vggt_omega/semantics/ocr_lens_vertices.zarr", mode="r")
-ids = new["word_ids"][:, 0]
-seen_new = new["word_probs"][:, 0] > 0
 top_old = np.concatenate([np.asarray(old[s:s + 65536]).argmax(1) for s in range(0, len(old), 65536)])
 seen_old = np.concatenate([np.asarray(old[s:s + 65536]).any(1) for s in range(0, len(old), 65536)])
 both = seen_new & seen_old
 print("observed old/new/both", seen_old.sum(), seen_new.sum(), both.sum())
-print("top-1 agreement", (ids[both] == top_old[both]).mean())
-```
-
-Viewer start-up: launch the viewer in tmux and time from launch to the `serve` log line:
-
-```bash
-time (PYTHONPATH=$PWD /opt/venv/reconstruction/bin/python docs/examples/ocr_lens_viewer.py /workspace/outputs/ocr_viewer/GH010229/vggt_omega --port 8080)
+print("top-1 agreement", (word_ids[both, 0] == top_old[both]).mean())
 ```
 
 Then open the viewer:
@@ -1773,14 +1777,24 @@ Then open the viewer:
 
 Post a table in chat, with no thresholds:
 - disk per store, before vs after
-- stage times
-- peak GPU and RSS
+- stage times: extract, AE fit, encode, point lift
+- peak GPU and RSS, stage and viewer
+- viewer start-up: decode, vertex lift
 - observed counts
 - top-1 agreement
-- viewer start-up
 
-Remove `ocr_lens_vertices.npy` only after the user says so.
+- [ ] **Step 6: Delete the old stores, asked first**
 
-- [ ] **Step 6: Changelog and in-flight entry**
+These are the pre-B files, now unread by any code. Ask the user in chat, listing each path with its `du -sh`, and delete only after a yes:
+- `/workspace/outputs/ocr_viewer/GH010229/semantics/ocr_lens.zarr`
+- `/workspace/outputs/ocr_viewer/GH010229/vggt_omega/ocr_lens_vertices.npy`
+- `/workspace/outputs/ocr_viewer/GH010229/vggt_omega/semantics/ocr_lens_ae.pt`
+- the same three paths under `/workspace/outputs/2026_07_15-Goprosplat-GH010229/` (that scene has no mesh, so it may lack the `.npy`; its semantics re-run when needed)
+
+`ls` each path first; report any that is missing rather than guessing another name.
+
+- [ ] **Step 7: Changelog and in-flight entry**
 
 Append a `semantics-storage` entry to `docs/superpowers/CHANGELOG.md` with the Step 5 numbers and the branch tip. Remove the semantics-storage line from CLAUDE.md "In-Flight Work" and add it to "Recently Completed" (five newest only). Commit with `git add -f docs/superpowers/CHANGELOG.md` and `git commit --only docs/superpowers/CHANGELOG.md CLAUDE.md`. Merging to `clean/final` is the user's call; ask.
+
+Tell the scene-viewer session (`ListAgents`, then `SendMessage`) that no `*_vertices.zarr` exists: codes stores are pushed and vertices lift from them at start-up.

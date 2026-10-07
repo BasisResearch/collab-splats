@@ -177,8 +177,11 @@ Real run on GH010229 (tmux), numbers reported, no thresholds:
 
 ## Out of scope
 
-- a sparse lift (lifting only the 64 ids; ~14x less work, unmeasured); follow-up if ~5 min per store is too slow
-  or a GPU under ~24 GB must run it
+- a sparse lift: top-64 per patch in each frame, scatter-added onto targets; a word-probability-only
+  function, so not adopted. A/B on GH010229, all 1039 frames, 486k points, A40:
+  - dense 264 s, 21.5 GiB peak; sparse prototype 67 s, 9.3 GiB peak (~4x, not the ~14x estimated)
+  - top-1 identical on every point; top-10 overlap 0.9996; top-64 L1 vs dense median 0.001, p99 0.007
+  - follow-up if ~5 min per store is too slow, or a GPU under ~24 GB must run the stage
 - dashboard (its imports are already broken pending its own cleanup)
 - one pretrained AE shared across scenes
 - deleting old caches on disk: done by hand

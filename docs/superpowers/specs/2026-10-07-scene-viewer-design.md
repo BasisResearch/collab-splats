@@ -1,6 +1,6 @@
 # Scene viewer — one viewer, optional semantics
 
-Date: 2026-10-07 · Status: approved in brainstorm, spec under review · Depends on: semantics-storage
+Date: 2026-10-07 · Status: approved in brainstorm, self-reviewed · Depends on: semantics-storage
 
 ## Problem
 
@@ -8,7 +8,7 @@ Date: 2026-10-07 · Status: approved in brainstorm, spec under review · Depends
   (word vocabulary, decoder, `.npy` word cache).
 - Text-queryable extractors (maskclip, talk2dino) have no mesh query path; the Panel dashboard
   queries points only.
-- Viewing a mesh with no semantics needs the OCR script anyway, or none.
+- No viewer shows a mesh without semantics: the OCR script refuses a backend with no word store.
 
 ## Decisions (from brainstorm)
 
@@ -34,10 +34,12 @@ Date: 2026-10-07 · Status: approved in brainstorm, spec under review · Depends
 Built on the vertex store that `semantics-storage` defines
 (`<backend>/semantics/<extractor>_vertices.zarr`), with one extension that spec does not have:
 
-- **semantics writes the vertex store for every extractor when `mesh.ply` exists**, not only ocr_lens
-  - all extractors: `features` (V, latent) fp16 codes + `autoencoder.pt`, as the point store
-  - ocr_lens additionally: the word arrays (`word_ids`, `word_probs`, `dropped_mass`, attrs `words`)
-  - attrs `extractor`, `extractor_kwargs` (to rebuild the text encoder)
+- **semantics writes a vertex store for queryable extractors too when `mesh.ply` exists**, not only ocr_lens
+  - queryable (maskclip, talk2dino): `features` (V, latent) fp16 codes + `autoencoder.pt`, attrs
+    `latent_dim`, `input_dim` (what `read_point_features` reads) and `extractor_kwargs` (to rebuild
+    the text encoder)
+  - ocr_lens: the word arrays only, as semantics-storage writes them
+  - dinov2 and other non-queryable extractors: no vertex store (nothing could read the codes)
 - semantics-storage owns that change; this spec lands after it. Lifting at viewer start-up
   (the path semantics-storage removes for OCR) is rejected.
 
@@ -48,7 +50,9 @@ Built on the vertex store that `semantics-storage` defines
 - `Viewer` class unchanged (widget layer; the reconstructor's loop-closure display keeps using it).
 - New, below it:
   - `main()`: CLI `backend_dir`, `--port`, `--textured`, `--texture_size` (the OCR script's flags
-    minus `--model_id`, `--chunk`)
+    minus `--model_id`, `--chunk`); builds a `Viewer`, calls `_build`, then `serve_forever()`
+  - `_build(viewer, backend_dir, textured, texture_size)`: mesh, dropdown, mode switching; what the
+    tests drive (no serve loop)
   - `_load_mesh(backend_dir, textured, texture_size)`: `mesh.ply` + optional `texture/mesh.obj`,
     moved from the OCR script
   - `_find_stores(backend_dir, n_vertices)`: `{extractor: path}` for `*_vertices.zarr` that hold
@@ -56,12 +60,16 @@ Built on the vertex store that `semantics-storage` defines
     is skipped with a warning (re-run semantics)
   - `_word_mode(viewer, store)` and `_text_mode(viewer, store)`: build that mode's GUI and handlers,
     return the GUI handles to remove on switch
+- Switching away from a mode, in `_build` (same module, no new `Viewer` methods):
+  - `viewer.show_heat("mesh", None, 0.0)`; remove the mode's GUI handles
+  - word mode only: pop and remove `viewer.label_lists["mesh"]`; pop `viewer.mesh_clicks["mesh"]`
+    (the dispatcher only picks meshes in `mesh_clicks`); remove the `/probe` marker
 - Import rule: `viewer.py` never imports `collab_splats.reconstructor` (it imports `viewer.py`);
   `store_rows` is not needed once words come from the vertex store.
 
 ### Word mode (ocr_lens)
 
-The OCR script's behavior on the semantics-storage vertex store, unchanged otherwise:
+Storage plan Task 7's rewrite of the OCR script (vertex store, no decoder), moved in unchanged:
 
 - query box (comma-separated words), `Query min p` floor, Search; unknown words noted
 - heat: per vertex, sum of `word_probs` where `word_ids` is a query word
@@ -72,10 +80,13 @@ The OCR script's behavior on the semantics-storage vertex store, unchanged other
 
 - query box: comma-separated positives; `Negatives` box, default `object`
   (`score_queries`'s Talk2DINO convention); floor slider `Query min score`; Search
-- on first Search: `BaseFeatureExtractor.get(extractor)(**extractor_kwargs)` builds the extractor;
-  the AE decodes the vertex codes once to unit (V, D) features, kept on the GPU for the mode's life
-- heat: `extractor.score_queries(features, positives, negatives)` → (V,) in [0, 1], `show_heat`
-- unobserved vertices (zero codes) score 0 explicitly, so they never reach the floor
+- on entering the mode: `read_point_features(store)` → unit (V, D) float32 features (decodes with the
+  store's `autoencoder.pt`); observed = the raw stored codes' rows that are not all zero
+  - decoded zero codes are not zero, so the mask must come from the raw codes
+  - GH010229: 545k × D float32, ~1.1 GB at D = 512
+- on first Search: `BaseFeatureExtractor.get(extractor)(**extractor_kwargs)` builds the extractor
+- heat: `extractor.score_queries(torch.from_numpy(features), positives, negatives)` → (V,) in
+  [0, 1]; unobserved vertices set to 0, so they never reach the floor; `show_heat`
 - switching away drops the extractor and features, `pytorch_gc()`
 
 ### What moves, what goes
@@ -91,12 +102,13 @@ The OCR script's behavior on the semantics-storage vertex store, unchanged other
 
 - `_find_stores`: no `semantics/` → empty; word store and queryable codes store listed; dinov2-only
   codes store not listed; vertex-count mismatch skipped
-- `main` with no stores: mesh added, no dropdown
-- dropdown switch: previous heat cleared, previous mode's GUI removed, new mode's GUI present
+- `_build` with no stores: mesh added, no dropdown
+- dropdown switch: previous heat cleared, previous mode's GUI removed, new mode's GUI present;
+  leaving word mode removes the label list and the click handler
 - word mode on a toy store: query heat equals the summed `word_probs`; label list ranks by mass;
   probe charts top words
-- text mode with a stub registered queryable extractor: heat equals `score_queries` on decoded
-  codes; unobserved vertices 0; extractor built once across two searches
+- text mode with a stub registered queryable extractor: heat equals `score_queries` on the
+  `read_point_features` output; zero-code vertices score 0; extractor built once across two searches
 - import check: `collab_splats.viewer` does not import `collab_splats.reconstructor`
 
 Manual: GH010229 with ocr_lens and maskclip vertex stores — switch modes, query both;
@@ -106,8 +118,8 @@ no-semantics backend shows the mesh with no dropdown.
 
 | file | change |
 |---|---|
-| `collab_splats/viewer.py` | `main`, `_load_mesh`, `_find_stores`, `_word_mode`, `_text_mode`, `_chart` |
+| `collab_splats/viewer.py` | `main`, `_build`, `_load_mesh`, `_find_stores`, `_word_mode`, `_text_mode`, `_chart` |
 | `docs/examples/ocr_lens_viewer.py` | deleted |
 | `docs/mesh.md` | viewer pointer |
 | `tests/test_viewer.py` | tests above |
-| semantics-storage scope | vertex store for every extractor (owned by that spec) |
+| semantics-storage scope | vertex store for queryable extractors (owned by that spec) |

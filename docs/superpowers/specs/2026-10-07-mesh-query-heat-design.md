@@ -1,6 +1,6 @@
 # Mesh query heat
 
-Date: 2026-10-07 · Status: design approved, spec under review
+Date: 2026-10-07 · Status: implemented (default offset 0.25 after browser check)
 
 ## Problem
 

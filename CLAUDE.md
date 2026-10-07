@@ -29,7 +29,6 @@ These tasks are started but not complete — do not assume their targets are don
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md)). **Refactor unfinished (2026-10-02):** `feat/batch-forward` (1a) still loops per pair and deviates from spec (assert not ValueError, no `supports_batches`); uncommitted xfeat `_extract_batch` there (9× extract) is really step 4 work; no `basis` branch, no pin — collab-splats still runs site-packages vismatch; `LocalMatcher.match_batch` lives only in the `rgbd-ba` worktree
 - **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
 - **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
-- **mesh-query-heat** — viewer queries draw a continuous per-vertex heat overlay (`Viewer.show_heat`) instead of thresholded points; label list ranked by probability mass, smoothing k removed ([spec](docs/superpowers/specs/2026-10-07-mesh-query-heat-design.md))
 - **semantics-storage** — 2D cache keeps fp16 AE codes only (`<extractor>_codes.zarr`, full states deleted after an all-frames fit); ocr_lens top-64 word probabilities stored on points and mesh vertices; semantics runs after mesh ([spec](docs/superpowers/specs/2026-10-07-semantics-storage-design.md))
 
 ## Recently Completed
@@ -37,11 +36,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **mesh-query-heat** (2026-10-07)
 - **rgbd-ba + lc-window-ba** (2026-10-06)
 - **localization-cleanup** (2026-10-06)
 - **mesh-hull-perf** (2026-10-04)
 - **vismatch-feature-matching** (2026-10-04)
-- **texture-unwrap-color** (2026-10-03)
 
 Known test failures: `docs/known-test-failures.md`
 

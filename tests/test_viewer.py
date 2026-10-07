@@ -132,7 +132,7 @@ def test_show_heat_keeps_faces_reaching_the_floor_on_their_used_vertices(viewer,
     sent = _capture_heat(viewer, monkeypatch)
 
     # Only vertex 3 reaches the floor: face [1, 3, 2] stays, face [0, 1, 2] goes
-    viewer.show_heat("quad", np.array([0.0, 0.1, 0.2, 0.9]), floor=0.5)
+    viewer.show_heat("quad", np.array([0.0, 0.1, 0.2, 0.9]), floor=0.5, offset=0.0)
 
     assert [name for name, _ in sent] == ["quad/heat"]
     heat = sent[0][1]

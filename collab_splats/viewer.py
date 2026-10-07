@@ -237,7 +237,7 @@ class Viewer:
         floor: float,
         *,
         opacity: float = 0.6,
-        offset: float = 0.0,
+        offset: float = 0.25,
     ) -> None:
         """
         Overlay a per-vertex score on a mesh as a vertex-colored `<name>/heat` sub-mesh.

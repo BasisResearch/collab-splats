@@ -68,7 +68,7 @@ Measured for B (codes only), GH010229 `ocr_viewer`, 294 frames, 545k vertices, 5
   - storing per-frame top-64 words in the codes store later (B+) needs no migration
 - **The 2D codes are pushed.** The viewer reads them, and a re-lift after a mesh or pointcloud
   re-run never re-extracts, local or remote.
-- **The full-width states are temporary.** Extract, train the AE once on all frames, encode, delete.
+- **The full-width features are temporary.** Extract, train the AE once on all frames, encode, delete.
   - changing `n_components` re-runs the extractor; accepted, the AE is not expected to be retrained
 - **The AE trains on all frames.** `fit` streams frame blocks from the store instead of an 8 GiB sample.
 - **Codes are fp16 on disk**, in both the 2D cache and the lifted stores.
@@ -92,7 +92,7 @@ Measured for B (codes only), GH010229 `ocr_viewer`, 294 frames, 545k vertices, 5
 | store | path (spelled by `Reconstructor`) | contents |
 |---|---|---|
 | 2D codes | `<scene>/semantics/<extractor>_codes.zarr` | `features` (N, latent, H_p, W_p) fp16, `autoencoder.pt`; attrs `extractor`, `patch_size`, `n_frames`, `extractor_kwargs`, `latent_dim` |
-| 2D states (temporary) | `<scene>/semantics/<extractor>_states.zarr` | full-width `features`; deleted once encoded |
+| 2D features (temporary) | `<scene>/semantics/<extractor>_features.zarr` | full-width `features`; deleted once encoded |
 | point store | `<scene>/<backend>/semantics/<extractor>_lifted.zarr` | `features` (P, latent) fp16, `autoencoder.pt` |
 
 - every path is keyed by extractor: two extractors (e.g. ocr_lens, talk2dino) are two runs with
@@ -101,8 +101,8 @@ Measured for B (codes only), GH010229 `ocr_viewer`, 294 frames, 545k vertices, 5
 - every backend lifts from the one scene-level codes store into its own `<backend>/semantics/`
 - `n_components: null`: `<extractor>_codes.zarr` holds full-width features, `latent_dim` null, no AE,
   no temporary store; it is pushed at full width
-- `PUSH_EXCLUDES`: `/semantics/**` becomes `/semantics/*_states.zarr/**`; codes and point stores are
-  pushed, the temporary states never
+- `PUSH_EXCLUDES`: `/semantics/**` becomes `/semantics/*_features.zarr/**`; codes and point stores are
+  pushed, the temporary features never
 
 Expected sizes, GH010229 (1039 frames): 2D codes ~360 MB; point store ~125 MB. Was ~20 GB.
 
@@ -110,15 +110,15 @@ Expected sizes, GH010229 (1039 frames): 2D codes ~360 MB; point store ~125 MB. W
 
 1. Cache check: `valid_feature_cache(codes_path, ...)` with `latent_dim`; a hit loads the codes
    store's `autoencoder.pt` and skips 2-5.
-2. Extract every frame to the temporary states store: `write_feature_cache` over the extractor's
+2. Extract every frame to the temporary features store: `write_feature_cache` over the extractor's
    per-frame maps (images decoded and batched in `semantics()`).
-3. Train the AE on all frames: `FeatureAutoencoder.fit(states["features"], ...)` streams.
+3. Train the AE on all frames: `FeatureAutoencoder.fit(features["features"], ...)` streams.
 4. Encode every frame into the codes store: `write_feature_cache` over
-   `partial(_load_frame, states, range(N), ae)`; save `autoencoder.pt`; validity attrs last.
-5. Delete the states store.
+   `partial(_load_frame, features, range(N), ae)`; save `autoencoder.pt`; validity attrs last.
+5. Delete the features store.
 6. Lift codes onto points → point store.
 
-A crash between 2 and 4 leaves the states store; the next run overwrites it.
+A crash between 2 and 4 leaves the features store; the next run overwrites it.
 
 ## API changes
 
@@ -169,7 +169,7 @@ No change: `word_probabilities`, `load_decoder` and `word_vocabulary` are reused
 
 | name | verdict | change |
 |---|---|---|
-| `PUSH_EXCLUDES` | change | `/semantics/**` → `/semantics/*_states.zarr/**` |
+| `PUSH_EXCLUDES` | change | `/semantics/**` → `/semantics/*_features.zarr/**` |
 
 ### `docs/examples/ocr_lens_viewer.py`
 
@@ -197,7 +197,7 @@ Built on the viewer as `mesh-query-heat` left it (heat overlay, mass-ranked labe
   reference in the test), with points visible in some frames only and with confidence weights.
 - `write_feature_cache`: fp16, one chunk per frame, attrs written last (a crash mid-write reads
   invalid); after the stage the codes store holds (N, latent, H_p, W_p) and `autoencoder.pt`, and
-  the states store is gone.
+  the features store is gone.
 - `fit` streaming: every frame contributes (a fixture whose frames differ per frame); block
   shuffling runs on a zarr and a tensor; empty input still raises.
 - validity: `latent_dim` mismatch, crash before the attrs, and wrong frame count each read invalid.
@@ -207,7 +207,7 @@ Built on the viewer as `mesh-query-heat` left it (heat overlay, mass-ranked labe
   targets without `pixel_indices` stay zero. Each `num_classes` misuse raises `ValueError`.
 - `write_point_features`: fp16 on disk; a failed write leaves no store; `read_point_features`
   returns float32 unit rows.
-- `PUSH_EXCLUDES`: `semantics/x_states.zarr/...` excluded; `semantics/x_codes.zarr/...` and
+- `PUSH_EXCLUDES`: `semantics/x_features.zarr/...` excluded; `semantics/x_codes.zarr/...` and
   `<backend>/semantics/x_lifted.zarr/...` pushed.
 - Removed with their code: `load_features` tests.
 - Gate: `tests/semantics tests/reconstructor tests/utils tests/test_docstring_contract.py
@@ -227,8 +227,8 @@ Real run on `ocr_viewer/GH010229` (294 frames, has `mesh.ply`; tmux), numbers re
 
 - `docs/semantics.md`: layout table (it already says fp32 and `_ae.pt`, both stale)
 - `configs/README.md`: output tree (`<extractor>.zarr` → `_codes.zarr`) and the not-pushed list
-  (`/semantics/**` → `/semantics/*_states.zarr/**`)
-- `remote.py`: the `PUSH_EXCLUDES` comment (codes pushed, states not)
+  (`/semantics/**` → `/semantics/*_features.zarr/**`)
+- `remote.py`: the `PUSH_EXCLUDES` comment (codes pushed, features not)
 - `configs/base.yaml`: `n_components` comment (changing it re-extracts)
 - CLAUDE.md in-flight entry: rewritten to B (codes only, words derived by the viewer, codes
   pushed); it still says words stored on points and vertices and semantics after mesh; CHANGELOG on

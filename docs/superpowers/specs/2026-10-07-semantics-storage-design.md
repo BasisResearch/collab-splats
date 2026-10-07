@@ -21,8 +21,14 @@ Date: 2026-10-07 · Branch: off `clean/final` · Status: approved in brainstorm,
 
 Measured for this design:
 - decode codes → AE → `lm_head` → word probabilities: 15 ms per frame (~17 s for 1039 frames)
-- `lift_features` of full-vocabulary maps, unchunked: all 486k points in ~4.5 min, 21.5 GiB GPU
-  (chunked at 131k targets: ~6.5 min, 7.5 GiB; every chunk re-decodes every frame)
+- `lift_features` of full-vocabulary maps, all 1039 frames onto 486k points:
+  - today's lift, reading full-state frames: 264 s, 21.5 GiB peak GPU
+  - visible-only `index_add_` (below), reading fp16 codes: 74 s, 12.2 GiB; top-64 equal to today's on
+    every observed point (max p difference 1.2e-7)
+  - boolean-mask `acc[vis] += s` instead: 61 s, 15.7 GiB; `index_add_` chosen for the memory
+- where today's per-frame time goes (20 frames): read full-state frame 86 ms, decode 22 ms,
+  visibility 2 ms, sample all points 65 ms, accumulate all points 175 ms; ~12% of points are
+  visible in a median frame (max 38%)
 - top-k mass kept per vertex (97k observed vertices of the `.npy`):
 
 | k | median | p10 | worst |
@@ -42,7 +48,9 @@ Measured for this design:
 - **The AE trains on all frames.** `fit` streams frame blocks from the store instead of an 8 GiB sample.
 - **Codes are fp16 on disk**, in both the 2D cache and the lifted stores.
 - **Word probabilities: per-target top-64**, each target its own 64 words.
-  - exact for top-1 and top-10, so labels, select-by-label and the probe chart are unchanged
+  - exact for top-1 and top-10, so select-by-label and the probe chart are unchanged
+  - label-list mass (sum of p over vertices) from top-64: 0.987 to 0.996 of the full sum for the
+    50 most common words
   - every word with p > 1/65 is kept; fainter words read as 0
   - `dropped_mass` records what top-64 left out, per target
 - **Decode, then lift.** Word probabilities are computed per frame and then lifted, as the OCR-lens spec requires.
@@ -90,14 +98,14 @@ Was ~20 GB.
 
 A crash between 2 and 4 leaves the states store; the next run overwrites it.
 
-Measured on GH010229 (A40): the unchunked word lift onto 486k points peaks at 21.5 GiB GPU and takes
-~4.5 min (30 frames in 7.9 s, extrapolated); vertices (545k) ~5 min, unmeasured. A GPU under ~24 GB
-runs out of memory; the sparse lift (out of scope) is the way out if that matters.
+Measured on GH010229 (A40): the word lift onto 486k points takes 74 s at 12.2 GiB peak GPU with the
+`lift_features` change below; vertices (545k) ~85 s, scaled, unmeasured.
 
 ## API changes
 
 Net: no public function added; one removed (`load_features`), one renamed and generalized
-(`extract_feature_cache` → `write_feature_cache`); one private helper added (`_word_frame`).
+(`extract_feature_cache` → `write_feature_cache`), one sped up (`lift_features`); one private
+helper added (`_word_frame`).
 
 ### `collab_splats/semantics/store.py`
 
@@ -113,6 +121,12 @@ Net: no public function added; one removed (`load_features`), one renamed and ge
 | name | verdict | change |
 |---|---|---|
 | `FeatureAutoencoder.fit` | change | takes any (N, D, ...) array (tensor, ndarray, zarr); reads axis-0 blocks of `read_gb`, flattens trailing axes to rows, shuffles blocks and rows within a block, every epoch |
+
+### `collab_splats/semantics/lifting.py`
+
+| name | verdict | change |
+|---|---|---|
+| `lift_features` | change | samples only visible points (`w > 0`) and accumulates them with `features_sum.index_add_`; weights multiply in place; the mean divides in place. Same output: invisible points carried weight 0. Every lift gets it, codes included |
 
 ### `collab_splats/utils/torch_utils.py`
 
@@ -135,15 +149,21 @@ No change: `word_probabilities`, `load_decoder` and `word_vocabulary` are reused
 
 ### `docs/examples/ocr_lens_viewer.py`
 
+Built on the viewer as `mesh-query-heat` left it (heat overlay, mass-ranked labels, no smoothing).
+
 - reads the vertex store: `word_ids`, `word_probs`, `words`; no decoder, no `--model-id`
 - refuses when the store's row count differs from `mesh.ply`'s vertex count: re-run semantics
-- scene terms: union of observed vertices' top-10; expanded to a (V_obs, n_terms) array over them only
-- smoothing (`transfer_features` in place) and labels: unchanged
-- query: per-vertex sum of the stored probabilities of the query words
+- observed: `word_probs[:, 0] > 0`
+- label-list mass: `np.bincount(word_ids, weights=word_probs, minlength=n_words)`
+- query heat: per vertex, the sum of `word_probs` where `word_ids` is a query word; floor `min p` unchanged
+- probe chart: on click, the vertex's stored entries that are scene terms, renormalized, top-10;
+  scene terms stay the union of observed vertices' top-10 (columns 0-9); no (V_obs, n_terms) array
 - `_probability_maps`, `_lift_onto`, the `.npy` cache: deleted
 
 ## Testing
 
+- `lift_features`: on the toy scene, output equals the pre-change implementation's (kept as a
+  reference in the test), with points visible in some frames only and with confidence weights.
 - `write_feature_cache`: fp16, one chunk per frame, attrs written last (a crash mid-write reads
   invalid); after the stage the codes store holds (N, latent, H_p, W_p) and `autoencoder.pt`, and
   the states store is gone.
@@ -178,10 +198,11 @@ Real run on GH010229 (tmux), numbers reported, no thresholds:
 ## Out of scope
 
 - a sparse lift: top-64 per patch in each frame, scatter-added onto targets; a word-probability-only
-  function, so not adopted. A/B on GH010229, all 1039 frames, 486k points, A40:
-  - dense 264 s, 21.5 GiB peak; sparse prototype 67 s, 9.3 GiB peak (~4x, not the ~14x estimated)
+  function, and the visible-only dense lift matches its speed exactly. A/B on GH010229, all 1039
+  frames, 486k points, A40, both reading full-state frames:
+  - today's dense lift 264 s, 21.5 GiB peak; sparse prototype 67 s, 9.3 GiB peak
   - top-1 identical on every point; top-10 overlap 0.9996; top-64 L1 vs dense median 0.001, p99 0.007
-  - follow-up if ~5 min per store is too slow, or a GPU under ~24 GB must run the stage
+  - would only buy memory now (9.3 vs 12.2 GiB)
 - dashboard (its imports are already broken pending its own cleanup)
 - one pretrained AE shared across scenes
 - deleting old caches on disk: done by hand

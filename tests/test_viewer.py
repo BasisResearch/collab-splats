@@ -140,16 +140,15 @@ def test_show_heat_keeps_faces_reaching_the_floor_on_their_used_vertices(viewer,
     assert heat.faces.tolist() == [[0, 2, 1]]
 
 
-def test_show_heat_colors_follow_the_score_with_opacity_alpha(viewer, monkeypatch):
+def test_show_heat_colors_follow_the_score(viewer, monkeypatch):
     viewer.add_mesh("quad", *_quad())
     sent = _capture_heat(viewer, monkeypatch)
 
-    viewer.show_heat("quad", np.array([0.6, 0.7, 0.8, 0.9]), floor=0.5, opacity=0.5)
+    viewer.show_heat("quad", np.array([0.6, 0.7, 0.8, 0.9]), floor=0.5)
 
     rgba = sent[0][1].visual.vertex_colors
     # Viridis runs dark purple to yellow: brightness rises with the score
     assert np.all(np.diff(rgba[:, :3].astype(int).sum(axis=1)) > 0)
-    assert rgba[:, 3].tolist() == [128] * 4
 
 
 def test_show_heat_offset_lifts_along_normals(viewer, monkeypatch):

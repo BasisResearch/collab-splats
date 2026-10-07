@@ -1,6 +1,6 @@
 # Mesh query heat
 
-Date: 2026-10-07 · Status: implemented (default offset 0.25 after browser check)
+Date: 2026-10-07 · Status: implemented (browser check: offset default 0.25, opacity dropped — alpha ignored)
 
 ## Problem
 

@@ -236,7 +236,6 @@ class Viewer:
         scores: Optional[np.ndarray],
         floor: float,
         *,
-        opacity: float = 0.6,
         offset: float = 0.25,
     ) -> None:
         """
@@ -250,7 +249,6 @@ class Viewer:
             name: mesh node name, already added with add_mesh.
             scores: (V,) score per mesh vertex; None clears the overlay.
             floor: score a face needs on one vertex to be drawn.
-            opacity: overlay alpha, 0-1.
             offset: shift along vertex normals, in median edge lengths, against z-fighting.
         """
         # Drop the previous overlay
@@ -270,13 +268,12 @@ class Viewer:
         used, inverse = np.unique(faces[keep], return_inverse=True)
         sub_faces = inverse.reshape(-1, 3)
 
-        # Viridis over the drawn scores, alpha at opacity
+        # Viridis over the drawn scores
         values = scores[used].astype(np.float64)
         span = values.max() - values.min()
         normalized = (values - values.min()) / span if span > 0 else np.zeros_like(values)
-        rgba = (matplotlib.colormaps["viridis"](normalized) * 255).astype(np.uint8)
-        rgba[:, 3] = round(255 * opacity)
-        heat = trimesh.Trimesh(vertices[used], sub_faces, vertex_colors=rgba, process=False)
+        rgb = (matplotlib.colormaps["viridis"](normalized)[:, :3] * 255).astype(np.uint8)
+        heat = trimesh.Trimesh(vertices[used], sub_faces, vertex_colors=rgb, process=False)
 
         # Lift off the base surface along vertex normals
         if offset > 0:

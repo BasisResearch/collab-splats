@@ -29,19 +29,16 @@ Date: 2026-10-07 · Status: approved in brainstorm, self-reviewed · Depends on:
   `issubclass(BaseFeatureExtractor.get(name), BaseQueryableExtractor)`.
 - Switching the dropdown clears the heat and probe, removes the previous mode's GUI, builds the new one.
 
-## Dependency: semantics-storage, extended
+## Dependency: semantics-storage
 
-Built on the vertex store that `semantics-storage` defines
-(`<backend>/semantics/<extractor>_vertices.zarr`), with one extension that spec does not have:
+Built on the vertex store `semantics-storage` defines and its plan Task 6 writes:
+`<backend>/semantics/<extractor>_vertices.zarr` for every extractor when `mesh.ply` exists.
 
-- **semantics writes a vertex store for queryable extractors too when `mesh.ply` exists**, not only ocr_lens
-  - queryable (maskclip, talk2dino): `features` (V, latent) fp16 codes + `autoencoder.pt`, attrs
-    `latent_dim`, `input_dim` (what `read_point_features` reads) and `extractor_kwargs` (to rebuild
-    the text encoder)
-  - ocr_lens: the word arrays only, as semantics-storage writes them
-  - dinov2 and other non-queryable extractors: no vertex store (nothing could read the codes)
-- semantics-storage owns that change; this spec lands after it. Lifting at viewer start-up
-  (the path semantics-storage removes for OCR) is rejected.
+- `features` (V, latent) fp16 codes + `autoencoder.pt`; attrs `extractor`, `extractor_kwargs`,
+  and `latent_dim` / `input_dim` (written by `write_point_features`, read by `read_point_features`)
+- ocr_lens adds the word arrays (`word_ids`, `word_probs`, `dropped_mass`, attrs `words`)
+- dinov2 stores exist but are not listed (no text encoder)
+- this spec lands after semantics-storage; lifting at viewer start-up is rejected
 
 ## Design
 
@@ -122,4 +119,3 @@ no-semantics backend shows the mesh with no dropdown.
 | `docs/examples/ocr_lens_viewer.py` | deleted |
 | `docs/mesh.md` | viewer pointer |
 | `tests/test_viewer.py` | tests above |
-| semantics-storage scope | vertex store for queryable extractors (owned by that spec) |

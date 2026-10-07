@@ -38,7 +38,9 @@ Out of scope:
 
 ### `Viewer.show_heat` (`collab_splats/viewer.py`)
 
-Replaces `Viewer.highlight`.
+Replaces `Viewer.highlight`. `viewer.py` is in `tests/test_docstring_contract.py` `MODULES`:
+`show_heat` and the new `add_label_list` carry full `Args:`; the module, class and `add_mesh`
+docstrings say heat overlay where they say highlights.
 
 ```python
 def show_heat(
@@ -56,7 +58,8 @@ def show_heat(
 - drops the previous `<name>/heat` node, if any, before drawing
 - keeps faces where any vertex's score is at or above `floor`
 - sub-mesh: `np.unique(faces[keep], return_inverse=True)` remaps to the used vertices only
-- colors: `apply_viridis(scores[used])` plus an alpha channel at `opacity`
+- colors: viridis over `scores[used]` min-max normalized (what `apply_viridis` does and the
+  prototype showed), via `matplotlib.colormaps["viridis"]`, plus an alpha channel at `opacity`
 - `offset`: shift along the sub-mesh's vertex normals, in median edge lengths, to avoid
   z-fighting with the base mesh; 0 sends the positions unchanged
 - sends one `trimesh.Trimesh(..., vertex_colors=rgba, process=False)` through
@@ -72,12 +75,17 @@ in the browser on GH010229:
 - alpha ignored by viser's GLB path: drop `opacity` and send RGB
 - z-fighting at offset 0: set the default to the smallest offset that removes it
 
-### `apply_viridis` moves to `collab_splats/utils/visualization.py`
+### Colormap: matplotlib directly, `apply_viridis` stays put
 
-- body unchanged (min-max normalize, viridis, uint8 (P, 3))
-- `collab_splats/dashboard/viz_utils.py` re-exports it, as it already does for
-  `pointcloud_to_polydata`; dashboard callers and `tests/dashboard/test_viz_utils.py` unchanged
-- `viewer.py` imports it from `utils.visualization`, never from `dashboard`
+`apply_viridis` lives in `collab_splats/dashboard/viz_utils.py`; moving it to
+`collab_splats/utils/visualization.py` was the first plan. Rejected on import cost:
+
+- `import collab_splats.viewer`: 3.7 s today, no matplotlib / pyvista / torch loaded
+- `import collab_splats.utils.visualization`: 11.1 s (pyvista, torch, geometry incl. BA)
+- `viz_utils` imports `utils.visualization`, so importing it from there costs the same
+- `matplotlib` on top of the viewer: 0.16 s
+
+So `show_heat` calls the matplotlib colormap itself (two lines). Dashboard untouched.
 
 ### `Viewer.add_label_list` takes weighted words
 
@@ -113,15 +121,18 @@ top-1 inflates winners (grass 67.7k top-1 vs 28.7k mass).
   (unobserved rows are zero, so no mask; float64 avoids float16 accumulation)
 - `on_select(word)` sets the query box to `word` (or `""`) and runs `search`, so a click and a
   typed query draw the same heat
-- removed: `Smoothing k` slider, `relabel`, `transfer_features` import, `shown_probs`,
-  per-vertex `labels`, `seen`
+- removed: `Smoothing k` slider, its `Apply` button, `relabel`, `transfer_features` import,
+  `shown_probs`, per-vertex `labels`, `seen`, and `lock` (it only kept relabels and probes
+  from interleaving; nothing mutates shared state once relabel is gone)
 - probe chart reads `term_probs` directly (was the smoothed copy)
+- module and `main` docstrings drop the top-1 / smoothing wording; query bullet says heat
 - `transfer_features` stays in `collab_splats/semantics/lifting.py`; other code calls it
 
 ## Testing
 
 `tests/test_viewer.py`, mocked server as today. Replace the `highlight` test and the
-label-count test; adapt `test_clicks_still_pick_after_a_highlight` to `show_heat`.
+label-count test; `test_clicks_still_pick_after_a_highlight` becomes
+`test_clicks_still_pick_after_show_heat`.
 
 - `show_heat` keeps only faces with a vertex at or above the floor, remapped to used vertices
 - vertex colors follow the score order (lowest score darkest viridis)
@@ -140,7 +151,5 @@ heat shading reads like the 2D query.
 | File | Change |
 |---|---|
 | `collab_splats/viewer.py` | `show_heat` replaces `highlight`; `add_label_list` takes words + weights + `on_select` |
-| `collab_splats/utils/visualization.py` | gains `apply_viridis` |
-| `collab_splats/dashboard/viz_utils.py` | re-exports `apply_viridis` |
-| `docs/examples/ocr_lens_viewer.py` | heat search, mass-ranked list, smoothing removed |
+| `docs/examples/ocr_lens_viewer.py` | heat search, mass-ranked list, smoothing + lock removed |
 | `tests/test_viewer.py` | tests above |

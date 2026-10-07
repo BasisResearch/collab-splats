@@ -21,7 +21,8 @@ Date: 2026-10-07 · Branch: off `clean/final` · Status: approved in brainstorm,
 
 Measured for this design:
 - decode codes → AE → `lm_head` → word probabilities: 15 ms per frame (~17 s for 1039 frames)
-- `lift_features` of full-vocabulary maps: 102 s per 131k-point chunk, ~6.5 min per 500k targets, 7.5 GiB GPU
+- `lift_features` of full-vocabulary maps, unchunked: all 486k points in ~4.5 min, 21.5 GiB GPU
+  (chunked at 131k targets: ~6.5 min, 7.5 GiB; every chunk re-decodes every frame)
 - top-k mass kept per vertex (97k observed vertices of the `.npy`):
 
 | k | median | p10 | worst |
@@ -74,27 +75,36 @@ Was ~20 GB.
 ## Stage flow (`Reconstructor.semantics`)
 
 1. Cache check: `valid_feature_cache(codes_path, ...)` with `latent_dim`; a hit skips 2-5.
-2. Extract every frame to the temporary states store (`extract_feature_cache`).
+2. Extract every frame to the temporary states store: `write_feature_cache` over the extractor's
+   per-frame maps (images decoded and batched in `semantics()`).
 3. Train the AE on all frames: `FeatureAutoencoder.fit(states["features"], ...)` streams.
-4. Encode every frame into the codes store (`compress_feature_cache`); validity attrs last.
+4. Encode every frame into the codes store: `write_feature_cache` over
+   `partial(_load_frame, states, range(N), ae)`; save `autoencoder.pt`; validity attrs last.
 5. Delete the states store.
 6. Lift codes onto points → point store.
-7. ocr_lens only: `lift_word_probabilities` onto points, written in the point store's atomic write.
-8. ocr_lens and `mesh.ply` exists: `lift_word_probabilities` onto its vertices → vertex store.
+7. ocr_lens only, one loop over the targets (points; vertices when `mesh.ply` exists):
+   - `lift_features(partial(_word_frame, codes, rows, ae, decoder, vocab), target)` → (T, n_words)
+   - vertices: `target = replace(cloud, points=vertices, pixel_indices=None)`
+   - `topk(64)`, `dropped_mass = observed sum - top-64 sum`
+   - points: into the point store's atomic write; vertices: the vertex store
 
 A crash between 2 and 4 leaves the states store; the next run overwrites it.
 
+Measured on GH010229 (A40): the unchunked word lift onto 486k points peaks at 21.5 GiB GPU and takes
+~4.5 min (30 frames in 7.9 s, extrapolated); vertices (545k) ~5 min, unmeasured. A GPU under ~24 GB
+runs out of memory; the sparse lift (out of scope) is the way out if that matters.
+
 ## API changes
 
-Net: two public functions added, one public function removed.
+Net: no public function added; one removed (`load_features`), one renamed and generalized
+(`extract_feature_cache` → `write_feature_cache`); one private helper added (`_word_frame`).
 
 ### `collab_splats/semantics/store.py`
 
 | name | verdict | change |
 |---|---|---|
 | `valid_feature_cache` | change | takes `store_path` and `latent_dim`; checks `latent_dim` too |
-| `extract_feature_cache` | change | takes `store_path`; writes `latent_dim: None`; drops its own validity check and `overwrite` (`Reconstructor` checks first) |
-| `compress_feature_cache` | **new** | `(states_path, codes_path, ae, batch_size)`: encode every frame into fp16 codes, save `autoencoder.pt`, copy attrs + `latent_dim` last |
+| `extract_feature_cache` | rename → `write_feature_cache` | `(store_path, maps, n_frames, attrs)`: writes an iterable of per-frame (D, H_p, W_p) maps as fp16, one chunk per frame, attrs last; serves both extraction and encoding; no extractor, no validity check, no `overwrite` (`Reconstructor` checks first) |
 | `write_point_features` | change | casts codes to fp16; `codes` may be None (vertex store); `arrays` and `attrs` keyword args go into the same atomic write |
 | `read_point_features` | keep | already casts to float32 and normalizes |
 
@@ -112,10 +122,7 @@ Net: two public functions added, one public function removed.
 
 ### `collab_splats/semantics/features/ocr_lens.py`
 
-| name | verdict | change |
-|---|---|---|
-| `lift_word_probabilities` | **new** | `(codes, rows, ae, cloud, decoder, vocab, *, k=64, chunk=131_072) -> (word_ids, word_probs, dropped_mass)`; per target chunk, `lift_features` over per-frame full-vocabulary maps, then top-k |
-| `_word_map` | new, private | frame i's codes → AE → `word_probabilities` → (n_words, H_p, W_p); the `lift_features` callable via `partial`, like `_load_frame` |
+No change: `word_probabilities`, `load_decoder` and `word_vocabulary` are reused as they are.
 
 ### `collab_splats/reconstructor.py`
 
@@ -123,7 +130,8 @@ Net: two public functions added, one public function removed.
 |---|---|---|
 | `STAGES` | change | `mesh` before `semantics` |
 | `semantics()` | change | flow above |
-| `_load_frame` | change | AE branch goes; codes are read as stored |
+| `_load_frame` | keep | its AE branch now feeds the encode step; the lift reads stored codes with `ae=None` |
+| `_word_frame` | new, private | frame i's codes → AE decode → `word_probabilities` → (n_words, H_p, W_p); the word lift's `lift_features` callable via `partial`, next to `_load_frame` |
 
 ### `docs/examples/ocr_lens_viewer.py`
 
@@ -136,20 +144,21 @@ Net: two public functions added, one public function removed.
 
 ## Testing
 
-- `extract_feature_cache` + `compress_feature_cache`: codes store holds (N, latent, H_p, W_p) fp16 and
-  `autoencoder.pt`; states store gone after the stage.
+- `write_feature_cache`: fp16, one chunk per frame, attrs written last (a crash mid-write reads
+  invalid); after the stage the codes store holds (N, latent, H_p, W_p) and `autoencoder.pt`, and
+  the states store is gone.
 - `fit` streaming: every frame contributes (a fixture whose frames differ per frame); block
   shuffling runs on a zarr and a tensor; empty input still raises.
 - validity: `latent_dim` mismatch, crash before the attrs, and wrong frame count each read invalid.
 - `n_components: null`: full-width features in the codes store, no AE, no temporary store.
 - `write_point_features`: fp16 on disk; `arrays`/`attrs` land in the same store; a failed write
   leaves no store; `read_point_features` returns float32 unit rows.
-- `lift_word_probabilities` (toy decoder + vocabulary): matches a dense lift followed by top-k;
+- word arrays from `semantics()` (toy decoder + vocabulary): match a dense lift followed by top-k;
   `dropped_mass == observed sum - sum(top-k)`; k capped at the vocabulary size; unobserved
-  targets have zero probabilities.
+  vertices have zero probabilities.
 - `Reconstructor.semantics`: stage order (mesh before semantics); vertex store written only for
   ocr_lens with `mesh.ply`; word arrays only for ocr_lens.
-- Removed with their code: `load_features` tests, the `_load_frame` AE test.
+- Removed with their code: `load_features` tests.
 - Gate: `tests/semantics tests/reconstructor tests/utils tests/test_docstring_contract.py
   tests/test_import_style.py`, in the worktree, printing `collab_splats.__file__`.
 
@@ -168,7 +177,8 @@ Real run on GH010229 (tmux), numbers reported, no thresholds:
 
 ## Out of scope
 
-- a sparse lift (lifting only the 64 ids; ~14x less work, unmeasured); follow-up if ~7 min per store is too slow
+- a sparse lift (lifting only the 64 ids; ~14x less work, unmeasured); follow-up if ~5 min per store is too slow
+  or a GPU under ~24 GB must run it
 - dashboard (its imports are already broken pending its own cleanup)
 - one pretrained AE shared across scenes
 - deleting old caches on disk: done by hand

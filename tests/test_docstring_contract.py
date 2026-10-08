@@ -244,6 +244,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 RELEASED: frozenset[str] = frozenset(
     {
         "preproc",
+        "pointcloud",
         "semantics",
         "geometry",
         "splats",

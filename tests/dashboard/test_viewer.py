@@ -242,7 +242,7 @@ def test_score_query_without_lifted_store_reports_and_returns_rgb():
     assert any("run the semantics stage" in line for line in log.log_lines)
 
 
-def test_score_query_targets_requested_mode(tmp_path):
+def test_score_query_targets_requested_mode(tmp_path, monkeypatch):
     """Mode switches score in the target feature space, not the outgoing current one."""
     mesh_path = tmp_path / "mesh.ply"
     _write_mesh_6v(mesh_path)
@@ -258,7 +258,7 @@ def test_score_query_targets_requested_mode(tmp_path):
     v.load(_FakeResult(20), mesh_path=mesh_path, lifted_store=store)
     v.mode = "mesh"
     stub = _CountingExtractor()
-    v._extractor_cache = {"talk2dino": stub}
+    monkeypatch.setattr(v, "_get_extractor", lambda name: stub)
 
     # Outgoing mode is mesh, but a switch to pointcloud scores the 20 points
     colors = v.score_query(
@@ -272,7 +272,7 @@ def test_score_query_targets_requested_mode(tmp_path):
     assert len(colors) == 6
 
 
-def test_score_query_reads_stored_vertex_features_in_mesh_mode(tmp_path):
+def test_score_query_reads_stored_vertex_features_in_mesh_mode(tmp_path, monkeypatch):
     """Mesh queries score the stored vertex_features once per load; all-zero rows draw grey."""
     mesh_path = tmp_path / "mesh.ply"
     _write_mesh_6v(mesh_path)
@@ -289,7 +289,7 @@ def test_score_query_reads_stored_vertex_features_in_mesh_mode(tmp_path):
     v.load(_FakeResult(20), mesh_path=mesh_path, lifted_store=store)
     v.mode = "mesh"
     stub = _CountingExtractor()
-    v._extractor_cache = {"talk2dino": stub}
+    monkeypatch.setattr(v, "_get_extractor", lambda name: stub)
     colors = v.score_query(positive=["x"], negative=[], extractor_name="talk2dino")
 
     # Six vertex rows scored, L2-normalized; rows 4-5 are all-zero -> unobserved grey
@@ -306,7 +306,35 @@ def test_score_query_reads_stored_vertex_features_in_mesh_mode(tmp_path):
     assert v._mesh_vertex_features is cached
 
 
-def test_mesh_query_without_vertex_features_reports_and_returns_rgb(tmp_path):
+def test_score_query_builds_extractor_with_stored_kwargs(tmp_path, monkeypatch):
+    """The extractor is rebuilt with the lifted store's extractor_kwargs, not defaults."""
+    built = []
+
+    class _KwargsExtractor(_CountingExtractor):
+        def __init__(self, **kwargs):
+            super().__init__()
+            built.append(kwargs)
+
+    monkeypatch.setitem(
+        viewer_module.BaseQueryableExtractor._registry, "stub_kw", _KwargsExtractor
+    )
+    store = tmp_path / "stub_kw_lifted.zarr"
+    write_point_features(
+        store,
+        np.ones((20, 4), dtype=np.float32),
+        None,
+        attrs={"extractor": "stub_kw", "extractor_kwargs": {"model_name": "big"}},
+    )
+
+    v = SplitViewer(OperationLog(), off_screen=True)
+    v.load(_FakeResult(20), mesh_path=None, lifted_store=store)
+    v.score_query(positive=["x"], negative=[], extractor_name="stub_kw")
+    assert built == [{"model_name": "big"}]
+
+
+def test_mesh_query_without_vertex_features_reports_and_returns_rgb(
+    tmp_path, monkeypatch
+):
     """A store without vertex_features leaves the mesh uncolored and tells the console how to fix it."""
     mesh_path = tmp_path / "mesh.ply"
     _write_mesh_6v(mesh_path)
@@ -318,7 +346,7 @@ def test_mesh_query_without_vertex_features_reports_and_returns_rgb(tmp_path):
     result = _FakeResult(20)
     v.load(result, mesh_path=mesh_path, lifted_store=store)
     v.mode = "mesh"
-    v._extractor_cache = {"talk2dino": _CountingExtractor()}
+    monkeypatch.setattr(v, "_get_extractor", lambda name: _CountingExtractor())
     colors = v.score_query(positive=["x"], negative=[], extractor_name="talk2dino")
 
     assert np.array_equal(colors, result.colors)

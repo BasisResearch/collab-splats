@@ -7,6 +7,7 @@ Side-by-side PyVista viewer: RGB pointcloud or mesh (left), query similarity hea
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -518,11 +519,18 @@ class SplitViewer:
     def _get_extractor(self, name: str) -> BaseQueryableExtractor:
         """
         Construct (and cache) a queryable extractor by registry name.
-        """
-        if name not in self._extractor_cache:
-            self._extractor_cache[name] = BaseQueryableExtractor.get(name)()
 
-        return self._extractor_cache[name]
+        - built with the lifted store's `extractor_kwargs`, so text lands in the stored feature space
+        - cached per name and kwargs, so a scene lifted with other kwargs gets its own extractor
+        """
+        store = zarr.open(str(self._lifted_store), mode="r")
+        kwargs = store.attrs.get("extractor_kwargs", {})
+        key = (name, json.dumps(kwargs, sort_keys=True))
+
+        if key not in self._extractor_cache:
+            self._extractor_cache[key] = BaseQueryableExtractor.get(name)(**kwargs)
+
+        return self._extractor_cache[key]
 
     def score_query(
         self,

@@ -26,6 +26,7 @@ from collab_splats.geometry.projection import (
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.utils import confidence_mask, cross_frame_attention_ratio
+from collab_splats.utils.io import to_uint8_hwc
 from collab_splats.utils.torch_utils import RegistryMixin, get_device, pytorch_gc
 
 logger = logging.getLogger(__name__)
@@ -254,7 +255,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
 
         # Collect the colors and pixel indices of the kept pixels
         images = torch.as_tensor(raw_outputs["images"]).cpu().float().numpy()
-        colors_grid = (images.transpose(0, 2, 3, 1) * 255).astype(np.uint8)
+        colors_grid = to_uint8_hwc(images, channels_first=True)
         pixel_indices = np.stack(np.where(valid), axis=1).astype(np.int32)
 
         assert self.image_paths is not None and self.original_coords is not None

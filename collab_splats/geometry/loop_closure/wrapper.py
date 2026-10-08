@@ -636,13 +636,9 @@ class LoopClosure:
                         self._forward_window, windows[wi + 1], bounds[wi + 1][0]
                     )
 
-                # Dense uint8 colors: VGGT-SLAM scales [0, 1] frames by 255; some backends already give [0, 255]
+                # Dense uint8 colors: VGGT-SLAM truncates [0, 1] frames scaled by 255
                 frames_hw3 = rgb01.transpose(0, 2, 3, 1)
-
-                if frames_hw3.size and frames_hw3.max() > 1.0:
-                    dense_colors = frames_hw3.astype(np.uint8)
-                else:
-                    dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
+                dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
 
                 submap.set_dense_points(
                     dense_points, dense_colors, raw["depth_conf"].astype(np.float32)

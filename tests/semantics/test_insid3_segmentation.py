@@ -132,6 +132,17 @@ def test_tensor_to_pil_shape_and_mode():
     assert img.mode == "RGB"
 
 
+def test_tensor_to_pil_rounds_to_nearest():
+    """[0, 1] values round to the nearest uint8 level, not truncate."""
+    from collab_splats.semantics.segmentation.insid3 import _tensor_to_pil
+
+    t = torch.full((3, 2, 2), 0.999)
+    arr = np.asarray(_tensor_to_pil(t))
+
+    assert arr.shape == (2, 2, 3)
+    assert np.all(arr == 255)
+
+
 def test_seed_and_aggregate_returns_bool_mask():
     from collab_splats.semantics.segmentation.insid3 import _seed_and_aggregate
 

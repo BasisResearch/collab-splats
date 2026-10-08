@@ -14,6 +14,7 @@ from sklearn.cluster import AgglomerativeClustering
 
 from collab_splats.semantics.features.dino import DINOFeatureExtractor
 from collab_splats.semantics.segmentation.base import BaseSegmentation
+from collab_splats.utils.io import to_uint8_hwc
 
 ########################################################
 ########## Clustering utilities ########################
@@ -147,13 +148,16 @@ def _tensor_to_pil(t: torch.Tensor) -> Image.Image:
     """
     (C, H, W) float tensor in [0, 1] to a PIL image.
 
+    - rounds to the nearest level via to_uint8_hwc
+
     Args:
         t: (C, H, W) float tensor in [0, 1].
 
     Returns:
         uint8 PIL image.
     """
-    arr = (t.cpu().float().clamp(0, 1) * 255).byte().permute(1, 2, 0).numpy()
+    arr = t.cpu().float().numpy()
+    arr = to_uint8_hwc(arr, channels_first=True)
     return Image.fromarray(arr)
 
 

@@ -305,6 +305,27 @@ def test_postprocess_returns_feedforward_result(tmp_path):
     assert result.image_paths == image_paths
 
 
+def test_postprocess_colors_round_to_nearest(tmp_path):
+    """Point colors round [0, 1] images to the nearest uint8 level, not truncate."""
+    n = 2
+    raw = _make_raw_outputs(n)
+    raw["images"] = np.full(raw["images"].shape, 0.999, dtype=np.float32)
+
+    creator = VGGTOmegaCreator()
+    creator.image_paths = [tmp_path / f"{i}.jpg" for i in range(n)]
+    creator.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+    )
+    creator.model = MagicMock()
+    creator.model.parameters = lambda: iter([nn.Parameter(torch.zeros(1))])
+
+    result = creator._postprocess(raw)
+
+    # 0.999 * 255 = 254.7: rounds to 255, truncation would give 254
+    assert result.colors.dtype == np.uint8
+    assert np.all(result.colors == 255)
+
+
 def test_postprocess_world_points_populated(tmp_path):
     """world_points always populated (needed by BundleAdjustment wrapper)."""
     n, h, w = 2, 4, 4

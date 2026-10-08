@@ -208,11 +208,12 @@ disable_error_code = ["var-annotated"]
 # importlib mode: avoids prepending test parent dirs to sys.path.
 # --doctest-modules removed: no doctests in codebase; it scanned all importable
 # CUDA modules causing multi-minute startup.
-addopts = "--import-mode=importlib"
+addopts = "--import-mode=importlib -m 'not gpu'"
 testpaths = ["./tests"]
 pythonpath = ["."]
 markers = [
     "slow: requires network access or GPU (deselect with -m 'not slow')",
+    "gpu: real-model or real-data run, deselected by default; opt in with -m gpu (an explicit -m replaces the default, so -m 'not slow' re-includes gpu tests)",
 ]
 
 [tool.isort]

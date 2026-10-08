@@ -21,45 +21,31 @@ dependencies = [
     "ninja",
     "torch==2.5.1+cu121",
     "torchvision==0.20.1+cu121",
-    "einops",
+    # ftfy: maskclip_onnx imports it without declaring it
     "ftfy",
-    "gdown",
     "matplotlib",
 "seaborn",
     "mergedeep",
     "numpy>=1.26",
     "zarr>=2.16",
-    "numcodecs",
     "scipy>=1.11",
     # av — PyAV, the decode path in preproc/video.py (was transitive via other deps)
     "av>=17.0",
-    "lightning",
     "pillow",
-    "regex",
     "tqdm",
     "huggingface_hub",
     "ultralytics",
-    "gradio",
     "pyvista[jupyter]",
     # viser — websocket 3D viewer for live scene visualization (collab_splats/viewer.py)
     "viser>=1.0",
-    "trame",
-    "trame-vuetify",
-    "trame-vtk",
     # Texture bake: nvdiffrast rasterizes the UV atlas and each view's occlusion depth,
-    # meshoptimizer decimates, meshlib patches holes.
-    # meshoptimizer's only published wheel is a pre-release; the explicit ==a0 pin is what
-    # makes uv accept it without a global --prerelease flag.
+    # meshlib decimates and patches holes.
     # nvdiffrast ships no wheel; at this rev it compiles its CUDA extension at INSTALL (AOT),
     # so it needs nvcc at build time only (see setup.sh) and no build isolation (below).
-    "meshoptimizer==0.2.30a0",
     "meshlib==3.1.4.297",
     "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast@253ac4fcea7de5f396371124af597e6cc957bfae",
     "python-dotenv",
-    "hydra-core",
-    "omegaconf",
     "segmentation-models-pytorch==0.5.0",
-    "requests",
     "trimesh",
     "pydantic==2.10.6",
     "pyyaml",
@@ -74,13 +60,10 @@ dependencies = [
     "pyarrow",
     "timm>=0.9,<2.0",
     "opencv-python",
-    "torchcodec",
     "scikit-learn",
-    "roma",
     "kornia",
     # BasisResearch fork, `basis` branch: batched extract + match() + match_batch() (spec 2026-10-03-vismatch-feature-matching)
     "vismatch @ git+https://github.com/BasisResearch/vismatch@865d91a52ff23f60096188e0e0a748911768535d",
-    "open-clip-torch",
     "mobile_sam",
     # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
     # mobilesamv2/efficientvit/models/nn/drop.py imports torchpack.distributed at module level,
@@ -106,7 +89,6 @@ dependencies = [
     # nvcc — CUDA_HOME is wired to the venv's nvidia/cuda_nvcc dir in setup.sh.
     # USE_CUDSS defaults to "1" in bae 0.2.5.
     "bae",
-    "clip",
     "collab_data @ file:///workspace/collab-data",
 ]
 
@@ -120,13 +102,7 @@ feedforward = [
     "uniception==0.1.7",
     "viser>=0.2.23",
     "evo",
-    "pyliblzfse",
     "safetensors",
-    "natsort",
-    "orjson",
-    "pillow-heif",
-    "tensorboard",
-    "python-box",
     "open3d",
     # stable 4.3 carries SL4; gtsam-develop nightlies drop off PyPI after ~10 releases
     "gtsam>=4.3.0",
@@ -138,7 +114,6 @@ feedforward = [
     "mapanything",
     "lightglue",
     "salad",
-    "co3d",
 ]
 
 # hloc @ c13273b for the `hloc` sfm backend: editable path source on the setup/hloc.sh clone
@@ -252,7 +227,6 @@ known_models = [
     "loger",
     "mapanything",
     "maskclip_onnx",
-    "meshoptimizer",
     "mobile_sam",
     "nvdiffrast",
     "pypose",
@@ -340,12 +314,10 @@ fused-ssim = { git = "https://github.com/rahul-goel/fused-ssim.git", rev = "a7c4
 mobile_sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
 maskclip_onnx = { git = "https://github.com/RogerQi/maskclip_onnx.git" }
 bae = { git = "https://github.com/pypose/bae.git", rev = "0.2.5" }
-clip = { git = "https://github.com/openai/CLIP.git" }
 vggt = { git = "https://github.com/Linketic/VGGT-X.git", rev = "26d1b956cfda6f83926adda9f5c2c53f75dda749" }
 vggt-omega = { git = "https://github.com/facebookresearch/vggt-omega.git", rev = "39a0cb8" }
 mapanything = { git = "https://github.com/facebookresearch/map-anything.git" }
 lightglue = { git = "https://github.com/cvg/LightGlue.git" }
 salad = { git = "https://github.com/Dominic101/salad.git" }
-co3d = { git = "https://github.com/facebookresearch/co3d.git" }
 # setup/hloc.sh clone, pinned c13273b; must exist before any resolve (setup.sh clones it first)
 hloc = { path = "third_party/hloc", editable = true }

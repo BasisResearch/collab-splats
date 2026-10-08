@@ -4,11 +4,9 @@ import pytest
 import torch
 import trimesh
 
-pytest.importorskip("meshoptimizer")
-
-from collab_splats.mesh import texture  # noqa: E402
-from collab_splats.mesh.clean import prepare_mesh  # noqa: E402
-from collab_splats.mesh.texture import (  # noqa: E402
+from collab_splats.mesh import texture
+from collab_splats.mesh.clean import prepare_mesh
+from collab_splats.mesh.texture import (
     create_texture_mesh,
     project_images_to_texture,
     unwrap_view_charts,

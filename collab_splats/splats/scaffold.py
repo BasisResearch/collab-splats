@@ -23,6 +23,7 @@ from torch.optim.lr_scheduler import ExponentialLR, LambdaLR
 from gsplat import fully_fused_projection
 from gsplat.strategy.ops import _update_param_with_optimizer
 
+from collab_splats.geometry.projection import project
 from collab_splats.splats.gaussian import SH_C0
 from collab_splats.splats.rendering import render_gaussians
 from collab_splats.splats.utils import knn_spacing
@@ -556,18 +557,14 @@ class Scaffold:
 
         - half-frame margin on each side
         """
+        # Project to pixels; depth floor 1e-3 keeps points behind the camera finite
         world_to_cam = torch.linalg.inv(cam_to_world)[0]
-        anchors_cam = (
-            self.params["anchors"] @ world_to_cam[:3, :3].T + world_to_cam[:3, 3]
+        projected, anchors_cam = project(
+            self.params["anchors"], world_to_cam, intrinsics[0], min_depth=1e-3
         )
-        depth = anchors_cam[:, 2]
-        in_front = depth > 1e-3
+        in_front = anchors_cam[:, 2] > 1e-3
 
-        # Project to pixels; the margin keeps anchors just outside the frame
-        safe_depth = depth.clamp_min(1e-3)
-        projected = (anchors_cam[:, :2] / safe_depth[:, None]) @ intrinsics[
-            0, :2, :2
-        ].T + intrinsics[0, :2, 2]
+        # The margin keeps anchors just outside the frame
         margin_x, margin_y = width * 0.5, height * 0.5
         in_frame = (
             (projected[:, 0] > -margin_x)

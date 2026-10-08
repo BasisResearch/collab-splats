@@ -33,6 +33,7 @@ from collab_splats.geometry.bundle_adjustment import (
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
 from collab_splats.geometry.metrics import compute_reconstruction_quality
 from collab_splats.geometry.transforms import invert_poses
+from collab_splats.geometry.viz import plot_photometric_ncc
 from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.localizer import (
     CameraLocalizer,
@@ -1159,6 +1160,7 @@ class Reconstructor:
         - null photometric table without images; columns listed in geometry/metrics.py
         - a failing measurement raises
         - runs no model and no matcher; reads the zarr and images/ only
+        - reconstruction_quality_ncc.png beside it: photometric NCC by frame gap
         """
         pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr)
 
@@ -1198,3 +1200,7 @@ class Reconstructor:
         }
         write_json(self.outputs["reconstruction_quality_report"], {"scene": scene, **tables})
         logger.info("Reconstruction quality report written to %s", self.outputs["reconstruction_quality_report"])
+
+        # NCC-by-gap plot beside the report; skipped without images
+        plot_path = self.backend_dir / "reconstruction_quality_ncc.png"
+        plot_photometric_ncc(tables["photometric_pairs"], plot_path, title=f"{scene['backend']}: cross-view NCC by gap")

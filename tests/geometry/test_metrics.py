@@ -197,7 +197,7 @@ def _translated_pair(shift_px=4, hw=32, f=40.0, depth=4.0, seed=5):
 
 def test_identical_poses_and_depth_warp_to_ncc_one():
     img, d, K, e = _plane()
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1,))
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.05)
 
 
@@ -209,7 +209,7 @@ def test_the_warp_actually_moves_pixels_through_pose_and_depth():
     noise a correct warp reads 1.0 and a warp through the wrong pose reads ~0.
     """
     img, d, K, e = _translated_pair()
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1,))
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
 
 
@@ -224,7 +224,7 @@ def test_bounds_are_checked_against_the_right_axis_on_a_NON_SQUARE_frame():
     the pixel count is what discriminates, not availability.
     """
     img, d, K, e = _plane(hw=(24, 32))
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1,))
     assert m["n_pixels"][0] == 24 * 32
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.05)
 
@@ -245,7 +245,7 @@ def test_zero_depth_pixels_are_dropped_rather_than_warped_from_the_camera_center
     d[0, :8, :] = 0.0  # 8 rows of frame 0 carry no observation
     e = e.copy()
     e[1, 2, 3] = 2.0  # camera 1 sits at world z = -2, looking the same way
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1,))
     assert m["n_pixels"][0] == 32 * 32 - 8 * 32
 
 
@@ -260,8 +260,8 @@ def test_ncc_is_invariant_to_image_scale_convention():
     rng = np.random.default_rng(11)
     img, d, K, e = _plane()
     img[1] = img[1] + rng.normal(0, 120, img[1].shape)
-    a = compute_photometric_ncc(img, d, K, e, max_separation=1)["photometric_ncc"][0]
-    b = compute_photometric_ncc(img / 255.0, d, K, e, max_separation=1)["photometric_ncc"][0]
+    a = compute_photometric_ncc(img, d, K, e, separations=(1,))["photometric_ncc"][0]
+    b = compute_photometric_ncc(img / 255.0, d, K, e, separations=(1,))["photometric_ncc"][0]
     assert a == pytest.approx(b, abs=1e-4)
     assert 0.2 < a < 0.9  # anchor: not the trivial 1.0 case
 
@@ -277,7 +277,7 @@ def test_ncc_is_invariant_to_exposure_shift():
     img, d, K, e = _plane()
     shifted = img.copy()
     shifted[1] = shifted[1] * 0.15 + 210.0
-    m = compute_photometric_ncc(shifted, d, K, e, max_separation=1)
+    m = compute_photometric_ncc(shifted, d, K, e, separations=(1,))
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.05)
 
 
@@ -286,8 +286,8 @@ def test_ncc_drops_with_genuine_disagreement():
     img, d, K, e = _plane()
     noisy = img.copy()
     noisy[1] = noisy[1] + rng.normal(0, 90, noisy[1].shape)
-    clean = compute_photometric_ncc(img, d, K, e, max_separation=1)["photometric_ncc"][0]
-    dirty = compute_photometric_ncc(noisy, d, K, e, max_separation=1)["photometric_ncc"][0]
+    clean = compute_photometric_ncc(img, d, K, e, separations=(1,))["photometric_ncc"][0]
+    dirty = compute_photometric_ncc(noisy, d, K, e, separations=(1,))["photometric_ncc"][0]
     assert dirty < clean
 
 
@@ -304,7 +304,7 @@ def test_flat_patch_is_skipped_not_a_divide_by_zero():
     img, d, K, e = _plane()
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        m = compute_photometric_ncc(np.full_like(img, 128.0), d, K, e, max_separation=1)
+        m = compute_photometric_ncc(np.full_like(img, 128.0), d, K, e, separations=(1,))
     assert m["photometric_ncc"] == []
 
 
@@ -314,7 +314,7 @@ def test_two_overlapping_pixels_do_not_count_as_a_correlation():
     """
     assert abs(np.corrcoef([0.0, 1.0], [5.0, -3.0])[0, 1]) == pytest.approx(1.0)
     img, d, K, e = _plane()
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1, min_samples=10**9)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1,), min_samples=10**9)
     assert m["photometric_ncc"] == []
 
 
@@ -327,19 +327,20 @@ def test_min_samples_counts_pixels_not_the_ravelled_rgb_values():
     admits it at 1024 and rejects it at 1025, which no value-count reading can produce.
     """
     img, d, K, e = _plane()
-    assert compute_photometric_ncc(img, d, K, e, max_separation=1, min_samples=1024)["n_pixels"] == [1024]
-    assert compute_photometric_ncc(img, d, K, e, max_separation=1, min_samples=1025)["n_pixels"] == []
+    assert compute_photometric_ncc(img, d, K, e, separations=(1,), min_samples=1024)["n_pixels"] == [1024]
+    assert compute_photometric_ncc(img, d, K, e, separations=(1,), min_samples=1025)["n_pixels"] == []
 
 
-def test_photometric_respects_max_separation():
-    img, d, K, e = _plane(n=4, hw=16)
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
-    assert m["idx1"] and all(abs(i - j) <= 1 for i, j in zip(m["idx1"], m["idx2"]))
+def test_photometric_scores_only_the_requested_gaps():
+    img, d, K, e = _plane(n=6, hw=16)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1, 4))
+    assert m["idx1"] and {j - i for i, j in zip(m["idx1"], m["idx2"])} == {1, 4}
+    assert sum(j - i == 4 for i, j in zip(m["idx1"], m["idx2"])) == 2
 
 
 def test_photometric_is_empty_for_a_single_frame():
     img, d, K, e = _plane(n=1, hw=16)
-    m = compute_photometric_ncc(img, d, K, e, max_separation=1)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1,))
     assert m == {"idx1": [], "idx2": [], "photometric_ncc": [], "n_pixels": []}
 
 
@@ -359,7 +360,7 @@ def test_photometric_upsamples_model_res_depth_onto_the_images_grid_K():
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
     K = rescale_intrinsics(model_K, (16, 16), (32, 32))
     K = shift_intrinsics(K, coords[:, :2])
-    m = compute_photometric_ncc(img, model_d, K, e, original_coords=coords, max_separation=1)
+    m = compute_photometric_ncc(img, model_d, K, e, original_coords=coords, separations=(1,))
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
 
 
@@ -409,7 +410,7 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
     e1[1, 3], e1[2, 3] = 0.2, -2.0
     e = np.stack([np.eye(4, dtype=np.float32), e1])
 
-    m = compute_photometric_ncc(np.stack([img0, img1]), model_d, K, e, original_coords=coords, max_separation=1)
+    m = compute_photometric_ncc(np.stack([img0, img1]), model_d, K, e, original_coords=coords, separations=(1,))
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
     # Anchor: the whole crop warped in bounds, so 1.0 is full overlap, not a few surviving pixels
     assert m["n_pixels"][0] == 16 * 32
@@ -446,9 +447,9 @@ def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(mon
     K = rescale_intrinsics(model_K, (16, 16), (32, 32))
     K = shift_intrinsics(K, coords[:, :2])
 
-    compute_photometric_ncc(img, model_d, K, e, original_coords=coords, max_separation=1)
-    compute_photometric_ncc(img / 255.0, model_d, K, e, original_coords=coords, max_separation=1)
-    # One call per compute, lifting only frame 0: frame 1 has no partner at max_separation=1
+    compute_photometric_ncc(img, model_d, K, e, original_coords=coords, separations=(1,))
+    compute_photometric_ncc(img / 255.0, model_d, K, e, original_coords=coords, separations=(1,))
+    # One call per compute, lifting only frame 0: frame 1 has no partner at separation 1
     assert len(lifted) == 2
     assert lifted[0].shape == (1, 64, 64) and lifted[1].shape == (1, 64, 64)
     np.testing.assert_array_equal(lifted[0], lifted[1])
@@ -506,8 +507,8 @@ def test_ncc_is_invariant_to_image_scale_convention_even_with_a_DARK_frame():
     img, d, K, e, coords = _scene_with_a_dark_frame()
     # Fixture has teeth only if the dark frame trips a per-frame max() test while the array does not
     assert img[1].max() < 1.0 < img.max()
-    a = compute_photometric_ncc(img, d, K, e, original_coords=coords, max_separation=1)
-    b = compute_photometric_ncc(img / 255.0, d, K, e, original_coords=coords, max_separation=1)
+    a = compute_photometric_ncc(img, d, K, e, original_coords=coords, separations=(1,))
+    b = compute_photometric_ncc(img / 255.0, d, K, e, original_coords=coords, separations=(1,))
     assert a["idx1"] == b["idx1"] == [0, 1]
     for na, nb in zip(a["photometric_ncc"], b["photometric_ncc"]):
         assert na == pytest.approx(nb, abs=1e-6)
@@ -521,7 +522,7 @@ def test_upsampling_without_crop_rows_is_a_refusal_not_a_guess():
     """
     img, d, K, e = _plane(hw=64)
     with pytest.raises(ValueError, match="original_coords"):
-        compute_photometric_ncc(img, d[:, ::2, ::2], K, e, max_separation=1)
+        compute_photometric_ncc(img, d[:, ::2, ::2], K, e, separations=(1,))
 
 
 def test_images_that_are_not_the_canvas_the_crops_were_cut_from_are_a_refusal():
@@ -538,18 +539,18 @@ def test_images_that_are_not_the_canvas_the_crops_were_cut_from_are_a_refusal():
     # original_coords claim a 128x128 canvas; the images are 64x64.
     coords = np.tile(np.array([16, 8, 48, 40, 128, 128], dtype=np.float32), (2, 1))
     with pytest.raises(ValueError, match="original_coords"):
-        compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords, max_separation=1)
+        compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords, separations=(1,))
 
 
 def test_photometric_output_is_four_columns_over_unordered_pairs():
     """
     UNORDERED pairs (i < j); one entry per pair per column.
 
-    This loop is `for j in range(i + 1, ...)`, one row per pair, unlike the depth pass's
+    This loop walks forward gaps j = i + g, one row per pair, unlike the depth pass's
     ordered directions — so the two row counts are not comparable.
     """
     img, d, K, e = _plane(n=4)
-    m = compute_photometric_ncc(img, d, K, e, max_separation=3)
+    m = compute_photometric_ncc(img, d, K, e, separations=(1, 2, 3))
     assert set(m) == {"idx1", "idx2", "photometric_ncc", "n_pixels"}
     # C(4, 2) = 6 unordered pairs. An ordered loop over the same frames would ship 12.
     assert all(len(v) == 6 for v in m.values())
@@ -1072,7 +1073,7 @@ def test_photometric_ncc_on_uint8_frames_is_the_float64_ncc_of_the_exact_warp():
     img = img.copy()
     img[1] = 0.6 * img[1] + 0.4 * np.random.default_rng(3).uniform(0, 255, img[1].shape)
     img = img.round().astype(np.uint8)
-    m = compute_photometric_ncc(img, depth, K, e, max_separation=1)
+    m = compute_photometric_ncc(img, depth, K, e, separations=(1,))
 
     # Frame 0's column u lands on frame 1's u - 4: columns 4.. against columns ..28
     a = img[0][:, 4:].astype(np.float64).ravel()
@@ -1095,8 +1096,8 @@ def test_photometric_ncc_on_lifted_depth_matches_uint8_and_float_frames_exactly(
     K = rescale_intrinsics(model_K, (16, 16), (32, 32))
     K = shift_intrinsics(K, coords[:, :2])
 
-    as_float = compute_photometric_ncc(img.astype(np.float32), model_d, K, e, original_coords=coords, max_separation=1)
-    as_uint8 = compute_photometric_ncc(img.astype(np.uint8), model_d, K, e, original_coords=coords, max_separation=1)
+    as_float = compute_photometric_ncc(img.astype(np.float32), model_d, K, e, original_coords=coords, separations=(1,))
+    as_uint8 = compute_photometric_ncc(img.astype(np.uint8), model_d, K, e, original_coords=coords, separations=(1,))
     assert as_uint8["n_pixels"] == as_float["n_pixels"] and as_uint8["n_pixels"][0] > 0
     assert as_uint8["photometric_ncc"] == as_float["photometric_ncc"]
 
@@ -1107,13 +1108,13 @@ def test_photometric_ncc_is_invariant_to_a_far_world_origin():
     """
     img, depth, K, e = _translated_pair(shift_px=4, hw=32)
     img = np.stack([img[0], 0.7 * img[1] + 0.3 * np.random.default_rng(3).uniform(0, 255, img[1].shape)])
-    near = compute_photometric_ncc(img, depth, K, e, max_separation=1)
+    near = compute_photometric_ncc(img, depth, K, e, separations=(1,))
 
     # Same rig with the world origin moved 10 km away: t' = t - R @ offset for every camera
     offset = np.array([1e4, -1e4, 5e3])
     far_e = e.astype(np.float64)
     far_e[:, :3, 3] -= far_e[:, :3, :3] @ offset
-    far = compute_photometric_ncc(img, depth, K, far_e, max_separation=1)
+    far = compute_photometric_ncc(img, depth, K, far_e, separations=(1,))
 
     assert far["n_pixels"] == near["n_pixels"]
     np.testing.assert_allclose(far["photometric_ncc"], near["photometric_ncc"], rtol=0, atol=1e-4)
@@ -1181,7 +1182,7 @@ def test_photometric_ncc_composes_rotated_poses_at_a_far_origin():
     n_ref, ncc_ref = _reference_ncc(img, depth, K, e)
 
     for poses in (e, far_e):
-        m = compute_photometric_ncc(img, depth, K, poses, max_separation=1)
+        m = compute_photometric_ncc(img, depth, K, poses, separations=(1,))
         assert m["n_pixels"] == [n_ref] and n_ref > 1000
         assert abs(m["photometric_ncc"][0] - ncc_ref) < 1e-4
 
@@ -1195,7 +1196,7 @@ def test_photometric_ncc_warp_is_exact_under_global_tf32(monkeypatch):
     img, depth, K, _, far_e = _rotated_rig(192, 256)
     n_ref, ncc_ref = _reference_ncc(img, depth, K, far_e)
 
-    m = compute_photometric_ncc(img, depth, K, far_e, max_separation=1)
+    m = compute_photometric_ncc(img, depth, K, far_e, separations=(1,))
     assert m["n_pixels"] == [n_ref] and n_ref > 20000
     assert abs(m["photometric_ncc"][0] - ncc_ref) < 1e-4
 

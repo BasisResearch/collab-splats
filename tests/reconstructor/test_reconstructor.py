@@ -1759,6 +1759,18 @@ def test_report_json_is_the_columnar_contract(tmp_path):
     assert not out.with_suffix(".json.tmp").exists()
 
 
+def test_report_writes_the_ncc_by_gap_plot_beside_the_json(tmp_path):
+    """With images the stage plots photometric NCC by frame gap next to the report."""
+    rec = Reconstructor(_make_config(tmp_path))
+    _save_tiny_zarr(rec, with_confidence=False)
+
+    rec.reconstruction_quality_report()
+
+    report = json.loads(rec.outputs["reconstruction_quality_report"].read_text())
+    plot = rec.backend_dir / "reconstruction_quality_ncc.png"
+    assert plot.exists() == bool(report["photometric_pairs"] and report["photometric_pairs"]["photometric_ncc"])
+
+
 def test_report_scene_block_records_min_pair_overlap(tmp_path):
     """The pruning knob is part of how the numbers were made, so the report carries it."""
     rec = Reconstructor(_make_config(tmp_path, {"reconstruction_quality_report": {"min_pair_overlap": 0.05}}))

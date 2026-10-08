@@ -116,7 +116,7 @@ marks a value that does not exist, never a failure.
 ``depth_residual_histogram`` (model grid): ``counts`` and ``bin_edges`` over
 ``r / (1 + |r|)``; invert an edge with ``u / (1 - |u|)``.
 
-.. list-table:: ``photometric_pairs`` — original grid, one row per pair ``i < j``; null without ``images/``
+.. list-table:: ``photometric_pairs`` — original grid, one row per pair ``i < j`` at gap ``j - i`` in ``separations`` (default 1, 2, 5, 10, 20); null without ``images/``
    :header-rows: 1
    :widths: 30 70
 
@@ -128,6 +128,11 @@ marks a value that does not exist, never a failure.
      - zero-mean NCC of the warped RGB, -1..1
    * - ``n_pixels``
      - original-grid pixels compared
+
+``reconstruction_quality_ncc.png`` beside the report plots this table by gap.
+
+.. automodule:: collab_splats.geometry.viz
+   :members:
 
 Loop closure
 ------------

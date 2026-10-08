@@ -208,7 +208,7 @@ the artifacts it produced and leaves everything else in place.
   | `frames` | mixed | one per frame | frame_idx (null off the `frame_{idx:06d}` contract), covered_fraction (0..1, original), median_abs_rel_depth_error (model), multiview_agreement (model; share of seen pixels where ≥1 other view agrees at rel 0.05; null when unseen), confidence_median (model; backbone-native, not comparable across backbones) |
   | `depth_pairs` | model | one per ordered direction | idx1, idx2, n_pixels, median_depth, median_rel_depth_error (signed s − 1), iqr_rel_depth_error, median_parallax_deg |
   | `depth_residual_histogram` | model | — | counts, bin_edges over r/(1+\|r\|) |
-  | `photometric_pairs` | original | i < j | idx1, idx2, photometric_ncc (zero-mean NCC), n_pixels |
+  | `photometric_pairs` | original | i < j, j − i ∈ {1, 2, 5, 10, 20} | idx1, idx2, photometric_ncc (zero-mean NCC), n_pixels |
 
   Written atomically (`.json.tmp` then rename) by the always-on
   `reconstruction_quality_report` leaf stage; re-runnable with
@@ -221,6 +221,10 @@ the artifacts it produced and leaves everything else in place.
 
   The stage runs no model and no matcher; `photometric_pairs` is null only when `images/`
   is absent.
+
+- `<backend>/reconstruction_quality_ncc.png` — `photometric_pairs` plotted: median and p10
+  NCC per frame gap, and NCC along the sequence per gap. Wide gaps expose pose drift that
+  neighbor pairs hide. Not written when `photometric_pairs` is null or empty.
 
   **Report-only: nothing here feeds back into the reconstruction.** No verdict,
   no grade, no cause — raw per-row values only. Each table's grid (`model` or

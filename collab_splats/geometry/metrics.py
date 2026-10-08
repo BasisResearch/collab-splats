@@ -3,7 +3,7 @@ Report-only, scale-free cross-view reconstruction quality, no ground truth.
 
 - compute_reconstruction_quality: every report table from arrays; columns in docs/source/api/geometry.rst
 - depth_pairs + pooled residual histogram: depth error where two views overlap
-- photometric_pairs: NCC of pixel colors after warping one view into another through its depth
+- photometric_pairs: NCC of pixel colors after warping one view into another through its depth, at index gaps 1-20
 - frames: per-frame median depth error, multiview agreement, covered fraction, confidence median
 - confidence_median: not comparable across backbones
 """
@@ -232,11 +232,11 @@ def compute_photometric_ncc(
     intrinsics: np.ndarray,
     extrinsics: np.ndarray,
     original_coords: np.ndarray | None = None,
-    max_separation: int = 2,
+    separations: tuple[int, ...] = (1, 2, 5, 10, 20),
     min_samples: int = 32,
 ) -> dict:
     """
-    Warp each frame into its neighbors through pose + depth and correlate the RGB.
+    Warp each frame into the frames at fixed index gaps through pose + depth and correlate the RGB.
 
     - zero-mean Pearson NCC in float64: 1.0 is perfect agreement, 0.0 is none
     - normalizing cancels the [0, 255] vs [0, 1] image-scale split and exposure or gain change
@@ -251,8 +251,8 @@ def compute_photometric_ncc(
         intrinsics: (N, 3, 3) K on the images' pixel grid.
         extrinsics: (N, 4, 4) world-to-cam.
         original_coords: (N, 6) crop rows, required only when depth needs upsampling.
-        max_separation: pairs per frame; distant frames differ mostly by lighting and
-            viewpoint, so the cost stays O(N * max_separation) rather than O(N^2).
+        separations: index gaps j - i scored per frame; wide gaps expose pose drift that
+            neighbors hide, and the cost stays O(N * len(separations)) rather than O(N^2).
         min_samples: floor on overlapping pixels (the `n_pixels` column); Pearson NCC on two
             values is exactly ±1 whatever they are.
 
@@ -267,7 +267,7 @@ def compute_photometric_ncc(
     t0 = time.perf_counter()
     N = len(depth)
     H, W = images.shape[1:3]
-    logger.info("Photometric NCC: %d frames at %dx%d, max_separation=%d", N, W, H, max_separation)
+    logger.info("Photometric NCC: %d frames at %dx%d, separations=%s", N, W, H, separations)
 
     # Model-grid depth is lifted to the image grid frame by frame below
     lift = depth.shape[1:] != (H, W)
@@ -300,15 +300,16 @@ def compute_photometric_ncc(
     identity = torch.eye(4, dtype=torch.float32, device=device)
 
     # Closed-form pair count, so the bar states the real unit of work, and the columnar output
-    n_pairs_expected = sum(min(N, i + max_separation + 1) - (i + 1) for i in range(N))
+    gaps = sorted(set(separations))
+    n_pairs_expected = sum(max(N - g, 0) for g in gaps)
     cols: dict[str, list] = {"idx1": [], "idx2": [], "photometric_ncc": [], "n_pixels": []}
 
-    # Each frame against its next max_separation frames
+    # Each frame against the frames at its forward gaps
     for i in tqdm(range(N), desc=f"Photometric NCC ({n_pairs_expected} pairs)", unit="frame"):
-        # Forward partners end at j_end; the last frame has none
-        j_end = min(N, i + max_separation + 1)
+        # Forward partners inside the sequence; the last frame has none
+        partners = [i + g for g in gaps if i + g < N]
 
-        if j_end == i + 1:
+        if not partners:
             continue
 
         # Frame i's depth on the image grid; the guide must be uint8 [0, 255]
@@ -334,16 +335,16 @@ def compute_photometric_ncc(
         has_depth = depth_t.reshape(-1) > 0
 
         # Camera i -> camera j for every partner, composed in float64 then uploaded once
-        rel_poses = world_to_cam[i + 1 : j_end] @ cam_to_world[i]
+        rel_poses = world_to_cam[partners] @ cam_to_world[i]
         rel_poses = torch.as_tensor(rel_poses, dtype=torch.float32, device=device)
 
         # Frame i and its partners uploaded once per source frame, in their own dtype
-        window = torch.tensor(np.asarray(images[i:j_end]), device=device)
+        window = torch.tensor(np.asarray(images[[i, *partners]]), device=device)
         colors_i = window[0].reshape(-1, 3)
 
-        for j in range(i + 1, j_end):
+        for k, j in enumerate(partners):
             # Project camera i's points into frame j; no occlusion test
-            pixels, pts_cam_j = project(pts_cam_i, rel_poses[j - i - 1], intrinsics_t[j])
+            pixels, pts_cam_j = project(pts_cam_i, rel_poses[k], intrinsics_t[j])
 
             # Nearest sampling, matching the depth pass; round half to even like np.round
             ui = torch.round(pixels[:, 0]).long()
@@ -358,7 +359,7 @@ def compute_photometric_ncc(
 
             # Paired RGB samples: frame i's pixel against where it landed in frame j
             a = colors_i[idx].reshape(-1).double()
-            b = window[j - i][vi[idx], ui[idx]].reshape(-1).double()
+            b = window[k + 1][vi[idx], ui[idx]].reshape(-1).double()
 
             # Float64 Pearson NCC on the device; one host transfer per pair below
             a0, b0 = a - a.mean(), b - b.mean()

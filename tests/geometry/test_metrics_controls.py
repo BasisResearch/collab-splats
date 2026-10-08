@@ -364,7 +364,7 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     """
     depth, K, extr = _scene(n=4)
     images = _texture(4)
-    clean = compute_photometric_ncc(images, depth, K, extr, max_separation=2)
+    clean = compute_photometric_ncc(images, depth, K, extr, separations=(1, 2))
     assert len(clean["idx1"]) == 5
     ncc_clean = clean["photometric_ncc"]
     # A correlation worth being invariant about: measured 0.884-0.956 on this fixture.
@@ -373,7 +373,7 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     # Gain and offset on one frame only: a global rescale would also survive a shift-invariant measure
     shifted = images.copy()
     shifted[1] = shifted[1] * 1.6 + 30.0
-    after = compute_photometric_ncc(shifted, depth, K, extr, max_separation=2)
+    after = compute_photometric_ncc(shifted, depth, K, extr, separations=(1, 2))
     assert after["idx1"] == clean["idx1"]  # else the zip below misaligns and truncates
     exposure_delta = max(abs(a - b) for a, b in zip(ncc_clean, after["photometric_ncc"]))
     assert exposure_delta < 1e-9  # measured 3.3e-16
@@ -381,7 +381,7 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     # Without this, a constant NCC passes everything above; a comparable geometric fault must move it
     extr_bad = extr.copy()
     extr_bad[1, 1, 3] -= POSE_FAULT_DY
-    faulted = compute_photometric_ncc(images, depth, K, extr_bad, max_separation=2)
+    faulted = compute_photometric_ncc(images, depth, K, extr_bad, separations=(1, 2))
     assert faulted["idx1"] == clean["idx1"]  # same guard, same reason
     pose_delta = max(abs(a - b) for a, b in zip(ncc_clean, faulted["photometric_ncc"]))
     assert pose_delta > 0.01  # measured 0.0277

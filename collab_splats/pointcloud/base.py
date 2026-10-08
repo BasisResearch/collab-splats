@@ -57,8 +57,8 @@ class PointcloudResult:
         points: (P, 3) world-space XYZ.
         colors: (P, 3) uint8 RGB in [0, 255].
         extrinsics: (N, 4, 4) w2c poses, OpenCV axes.
-        intrinsics: (N, 3, 3) K on the full-res original frame.
-        model_intrinsics: (N, 3, 3) K on the model grid; matches depth, world_points, pixel_indices.
+        intrinsics: (N, 3, 3) pixel-center K (pixel i at coordinate i) on the full-res original frame.
+        model_intrinsics: (N, 3, 3) pixel-center K on the model grid; matches depth, world_points, pixel_indices.
         image_paths: N source image paths, in extrinsics order.
         original_coords: (N, 6) [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], crop box in original pixels.
         model_width: model grid width W in pixels.
@@ -106,9 +106,10 @@ class PointcloudResult:
         box = np.asarray(self.original_coords)
         crop_hw = np.stack([box[:, 3] - box[:, 1], box[:, 2] - box[:, 0]], axis=-1)
 
-        # Scale K up to the crop size, then shift it by the crop's top-left corner
-        K = rescale_intrinsics(self.model_intrinsics, (self.model_height, self.model_width), crop_hw)
-        K = shift_intrinsics(K, box[:, :2])
+        # Scale pixel-center K up to the crop size via the corner convention, then shift by the crop's top-left
+        K = shift_intrinsics(self.model_intrinsics, (0.5, 0.5))
+        K = rescale_intrinsics(K, (self.model_height, self.model_width), crop_hw)
+        K = shift_intrinsics(K, box[:, :2] - 0.5)
         self.intrinsics = K.astype(np.float32)
 
     def save_zarr(self, path: Path, extra_attrs: dict | None = None) -> None:
@@ -291,7 +292,7 @@ class PointcloudResult:
         """
         In-memory pycolmap model of this result on the full-res frames.
 
-        - one PINHOLE camera and one image per frame, K from `intrinsics`
+        - one PINHOLE camera and one image per frame, K from `intrinsics` shifted to COLMAP's pixel-corner convention
         - points have empty tracks: no 2D-3D matches, so not usable for COLMAP BA
 
         Returns:
@@ -312,6 +313,9 @@ class PointcloudResult:
         for xyz, rgb in zip(self.points, self.colors):
             recon.add_point3D(xyz.astype(np.float64), pycolmap.Track(), rgb)
 
+        # COLMAP puts pixel i's center at i + 0.5
+        colmap_intrinsics = shift_intrinsics(self.intrinsics, (0.5, 0.5))
+
         # Add one camera and one image per frame at full resolution
         for i, path in enumerate(self.image_paths):
             camera_id = i + 1
@@ -321,7 +325,7 @@ class PointcloudResult:
                 model="PINHOLE",
                 width=int(self.original_coords[i][4]),
                 height=int(self.original_coords[i][5]),
-                params=extract_intrinsics(self.intrinsics[i]),
+                params=extract_intrinsics(colmap_intrinsics[i]),
                 camera_id=camera_id,
             )
             # Register the camera with its own rig, which pycolmap 4 requires before adding an image

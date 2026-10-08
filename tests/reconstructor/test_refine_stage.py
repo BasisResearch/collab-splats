@@ -15,6 +15,9 @@ from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.reconstructor import LEAF_STAGES, STAGES, Reconstructor
 from tests.reconstructor._stubs import stub_creator_cls
 
+# BA on vggsfm tracks: refine tests mock BA and write no images/ store
+VGGSFM_BA = {"enabled": True, "track_source": "vggsfm"}
+
 
 def _cfg(tmp_path, **pointcloud):
     """Minimal valid config dict; pointcloud kwargs merged over base.yaml defaults."""
@@ -38,18 +41,11 @@ def test_validate_config_accepts_ba_with_lc_dict(tmp_path):
 
 
 @pytest.mark.parametrize("source", ["xfeat", "loma"])
-def test_validate_config_refuses_matcher_tracks_with_lc(tmp_path, source):
-    """Window BA gets no frame_paths, so a matcher track_source with LC fails at construction."""
+def test_validate_config_accepts_matcher_tracks_with_lc(tmp_path, source):
+    """Window BA reads the window's full-res frames, so a matcher track_source runs with LC."""
     ba = {"enabled": True, "track_source": source}
-    with pytest.raises(ValueError, match=f"track_source '{source}' is not supported with pointcloud.loop_closure"):
-        Reconstructor(_cfg(tmp_path, bundle_adjustment=ba, loop_closure=True))
-
-
-def test_validate_config_accepts_matcher_tracks_with_lc_when_ba_off(tmp_path):
-    """A matcher track_source is inert while BA is off, so LC still constructs."""
-    ba = {"enabled": False, "track_source": "xfeat"}
     r = Reconstructor(_cfg(tmp_path, bundle_adjustment=ba, loop_closure=True))
-    assert r.config["pointcloud"]["loop_closure"]["enabled"] is True
+    assert r.config["pointcloud"]["bundle_adjustment"]["track_source"] == source
 
 
 def test_validate_config_refuses_sfm_before_matcher_tracks_with_lc(tmp_path):
@@ -124,10 +120,10 @@ def _write_ff_zarr(backend_dir, N=2, H=8, W=8, P=10):
 
 
 def _reconstructor(tmp_path):
-    return Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=False))
+    return Reconstructor(_cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False))
 
 
-def fake_refine(self, images, confidence, world_points, extrinsics, intrinsics, image_paths=None, depth=None, **kwargs):
+def fake_refine(self, images, confidence, world_points, extrinsics, intrinsics, depth=None, **kwargs):
     """BA output: translate every camera by +1 in x so refinement is observable."""
     new_ext = extrinsics.copy()
     new_ext[:, 0, 3] += 1.0
@@ -186,7 +182,7 @@ def test_refine_refines_and_persists(tmp_path):
 
 
 def test_refine_vggsfm_source_passes_no_frame_paths(tmp_path):
-    """The default vggsfm source never reads images/: refine gets frame_paths=None."""
+    """The vggsfm source never reads images/: refine gets frame_paths=None."""
     r = _reconstructor(tmp_path)
     _write_ff_zarr(r.backend_dir)
     seen = {}
@@ -203,9 +199,7 @@ def test_refine_vggsfm_source_passes_no_frame_paths(tmp_path):
 
 def test_refine_matcher_source_passes_store_frames_in_zarr_order(tmp_path):
     """A matcher track source gets the full-res images/ frame per zarr frame, joined on frame index."""
-    r = Reconstructor(
-        _cfg(tmp_path, bundle_adjustment={"enabled": True, "track_source": "xfeat"}, loop_closure=False)
-    )
+    r = Reconstructor(_cfg(tmp_path, bundle_adjustment={"enabled": True, "track_source": "xfeat"}, loop_closure=False))
     _write_ff_zarr(r.backend_dir)
     r.images_dir.mkdir(parents=True)
 
@@ -247,7 +241,7 @@ def test_refine_matcher_source_checks_images_dir_before_loading_zarr(tmp_path):
 
 def test_refine_reexports_pinhole(tmp_path):
     """A vggtx scene is re-exported as PINHOLE after BA."""
-    recon = Reconstructor(_cfg(tmp_path, backend="vggtx", bundle_adjustment=True, loop_closure=False))
+    recon = Reconstructor(_cfg(tmp_path, backend="vggtx", bundle_adjustment=VGGSFM_BA, loop_closure=False))
     _write_ff_zarr(recon.backend_dir)
     with (
         patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine),
@@ -258,8 +252,8 @@ def test_refine_reexports_pinhole(tmp_path):
     cams = list(pycolmap.Reconstruction(str(sparse)).cameras.values())
     assert {c.model.name for c in cams} == {"PINHOLE"}
 
-    # Full-res K: the 8x8 model grid's fx=10, cx=4 scaled to the 64x64 original
-    assert all(np.allclose(c.params, [80, 80, 32, 32]) for c in cams)
+    # Full-res K: center cx=4 rescales 8x to 35.5; COLMAP corner export adds 0.5
+    assert all(np.allclose(c.params, [80, 80, 36, 36]) for c in cams)
 
 
 def test_pointcloud_rerun_clears_a_stale_refine_marker(tmp_path):
@@ -320,7 +314,7 @@ def test_refine_recleans_after_reproject(tmp_path):
 
 def test_refine_keeps_every_point_when_clean_disabled(tmp_path):
     """pointcloud.clean.enabled: false leaves the reprojected set whole, outlier included."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=False, clean={"enabled": False}))
+    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False, clean={"enabled": False}))
     P = _write_outlier_zarr(r)
     with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
         r.refine()
@@ -332,7 +326,7 @@ def test_refine_keeps_every_point_when_clean_disabled(tmp_path):
 
 def test_refine_recaps_to_max_points(tmp_path):
     """A max_points lowered since the pointcloud stage caps the refined set on every artifact."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=False, max_points=50))
+    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False, max_points=50))
     _write_outlier_zarr(r)
     with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
         r.refine()

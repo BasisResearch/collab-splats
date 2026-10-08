@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from collab_splats.geometry.loop_closure import LoopClosureConfig, Submap
-from collab_splats.geometry.loop_closure.matching import LoopMatch, LoopMatchQueue
+from collab_splats.geometry.loop_closure.matching import LoopMatch, find_loop_closures
 
 
 def _make_submap(k=4, h=224, w=224, d=128, submap_id=0):
@@ -26,13 +26,6 @@ def test_submap_creation():
     assert s.intrinsics.shape == (4, 3, 3)
     assert s.retrieval_vectors.shape == (4, 128)
     assert len(s.image_paths) == 4
-    assert not s.is_lc_submap
-
-
-def test_submap_lc_flag():
-    s = _make_submap()
-    s.is_lc_submap = True
-    assert s.is_lc_submap
 
 
 def test_loop_closure_config_defaults():
@@ -47,18 +40,6 @@ def test_loop_closure_config_defaults():
     assert cfg.min_submap_gap == 1
 
 
-def test_loop_match_queue_keeps_top_k():
-    queue = LoopMatchQueue(max_size=2, nms_frame_distance=0)
-    queue.push(LoopMatch(0.9, 0, 1, 0, 0))
-    queue.push(LoopMatch(0.5, 0, 2, 0, 0))  # lower distance = better
-    queue.push(LoopMatch(0.7, 0, 3, 0, 0))
-    matches = queue.get_matches()
-    assert len(matches) == 2
-    distances = [m.similarity_score for m in matches]
-    assert sorted(distances) == distances  # ascending (best first)
-    assert 0.5 in distances and 0.7 in distances  # 0.9 evicted
-
-
 def test_loop_match_dataclass():
     m = LoopMatch(0.3, query_submap_id=0, detected_submap_id=1, query_frame_idx=2, detected_frame_idx=5)
     assert m.similarity_score == 0.3
@@ -66,18 +47,6 @@ def test_loop_match_dataclass():
     assert m.accepted is False  # default
     m.accepted = True
     assert m.accepted is True
-
-
-def test_loop_match_queue_equal_score_tiebreak():
-    """Equal scores must not raise TypeError (dataclass lacks __lt__)."""
-    queue = LoopMatchQueue(max_size=5, nms_frame_distance=0)
-    for i in range(3):
-        queue.push(LoopMatch(0.5, query_submap_id=0, detected_submap_id=i, query_frame_idx=0, detected_frame_idx=0))
-    matches = queue.get_matches()
-    assert len(matches) == 3
-
-
-from collab_splats.geometry.loop_closure.matching import find_loop_closures
 
 
 def test_find_loop_closures_detects_similar():
@@ -147,26 +116,39 @@ def test_find_loop_closures_no_match():
     assert matches == []
 
 
-def test_loop_match_queue_nms():
-    from collab_splats.geometry.loop_closure.matching import LoopMatch, LoopMatchQueue
+def _find_at(frame_scores, max_loops, nms):
+    """
+    find_loop_closures where query frame i lies exactly frame_scores[i][1] from past frame frame_scores[i][0].
 
-    # frames [10, 12, 50, 53, 100] — 10+12 cluster, 50+53 cluster, 100 alone
-    # nms=25: keep best of each cluster by score (lower = better)
-    queue = LoopMatchQueue(max_size=10, nms_frame_distance=25)
-    for frame_idx, score in [(10, 0.1), (12, 0.2), (50, 0.15), (53, 0.3), (100, 0.05)]:
-        queue.push(
-            LoopMatch(
-                similarity_score=score,
-                query_submap_id=1,
-                detected_submap_id=0,
-                query_frame_idx=0,
-                detected_frame_idx=frame_idx,
-            )
-        )
-    matches = queue.get_matches()
-    detected_frames = [m.detected_frame_idx for m in matches]
-    assert 10 in detected_frames
-    assert 12 not in detected_frames
-    assert 50 in detected_frames
-    assert 53 not in detected_frames
-    assert 100 in detected_frames
+    - past descriptors are 10 * one-hot rows; a query row adds its score on an axis no past row uses
+    """
+    n_past = 101
+    past = _make_submap(k=n_past, h=1, w=1, d=n_past + 1, submap_id=0)
+    past.retrieval_vectors = 10.0 * torch.eye(n_past, n_past + 1)
+    query = _make_submap(k=len(frame_scores), h=1, w=1, d=n_past + 1, submap_id=1)
+    query.retrieval_vectors = torch.zeros(len(frame_scores), n_past + 1)
+
+    for i, (frame_idx, score) in enumerate(frame_scores):
+        query.retrieval_vectors[i, frame_idx] = 10.0
+        query.retrieval_vectors[i, n_past] = score
+
+    matches = find_loop_closures(query, [past], lc_threshold=1.0, max_loops=max_loops, nms_frame_distance=nms)
+    return [m.detected_frame_idx for m in matches]
+
+
+def test_find_loop_closures_ranks_caps_then_suppresses():
+    """Best first; top max_loops kept before NMS drops near neighbors on the same submap."""
+    frame_scores = [(10, 0.1), (12, 0.2), (50, 0.15), (53, 0.3), (100, 0.05)]
+
+    # Clusters {10, 12}, {50, 53}, {100}: nms=25 keeps each cluster's best, in score order
+    assert _find_at(frame_scores, max_loops=10, nms=25) == [100, 10, 50]
+
+    # No suppression radius: every candidate, ascending distance
+    assert _find_at(frame_scores, max_loops=10, nms=0) == [100, 10, 50, 12, 53]
+
+    # The cap applies before NMS: top 3 are 100, 10, 50; 12 never reaches NMS
+    assert _find_at(frame_scores, max_loops=3, nms=25) == [100, 10, 50]
+
+    # Top 3 of {10, 12, 13} share one cluster, so NMS leaves one; 50 was capped out
+    frame_scores = [(10, 0.1), (12, 0.12), (13, 0.13), (50, 0.15)]
+    assert _find_at(frame_scores, max_loops=3, nms=25) == [10]

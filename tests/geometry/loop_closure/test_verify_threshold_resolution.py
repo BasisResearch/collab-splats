@@ -2,6 +2,9 @@
 
 from collab_splats.geometry.loop_closure import LoopClosureConfig
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
+from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
+from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
 
 
 class _CreatorWithDefault:
@@ -16,8 +19,7 @@ def test_config_verify_match_ratio_defaults_to_none():
 
 
 def test_explicit_config_none_resolves_to_model_default():
-    # The plumbing-gap case: explicit config (the pipeline's dict path) must still pick
-    # up the creator's calibrated threshold when verify_match_ratio is unset.
+    # Explicit config without verify_match_ratio still picks up the creator's calibrated value
     lc = LoopClosure(_CreatorWithDefault(), config=LoopClosureConfig(submap_size=16))
     assert lc.config.verify_match_ratio == 0.72
     assert lc.config.submap_size == 16
@@ -36,25 +38,17 @@ def test_no_config_resolves_to_model_default():
 
 def test_vggtx_has_calibrated_classvar():
     # Chess d5 layer-sweep calibration (2026-07-09): layer 10, threshold 1.17.
-    # Import inside test: vggt is an optional heavy dep in some environments.
-    from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
-
     assert VGGTXCreator.default_verify_match_ratio == 1.17
     assert VGGTXCreator._lc_layer_index == 10
 
 
 def test_omega_has_calibrated_classvars():
     # Chess d5 clean-negative sweep (2026-07-10): layer 13, threshold 1.55.
-    from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
-
     assert VGGTOmegaCreator._lc_layer_index == 13
     assert VGGTOmegaCreator.default_verify_match_ratio == 1.55
 
 
 def test_mapanything_has_calibrated_classvars():
     # Chess d5 clean-negative sweep (2026-07-10): layer 4 confirmed, threshold 1.46.
-    from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
-
     assert MapAnythingCreator._lc_layer_index == 4
     assert MapAnythingCreator.default_verify_match_ratio == 1.46
-

@@ -58,23 +58,22 @@ pointcloud:
   # LM bundle adjustment (leaf stage `refine`); rewrites pointcloud.zarr whole, dropping the localization DB; with loop_closure on, runs inside each LC window instead (no refine stage)
   bundle_adjustment:
     enabled: false
-    max_query_pts: 4096        # VGGSfM track query points (upstream demo default)
-    query_frame_num: 8         # VGGSfM query frames (upstream demo default)
-    fine_tracking: false       # VGGSfM fine tracking; true peaks at 34 GB RSS on 50 frames
-    track_source: vggsfm       # vggsfm | xfeat | loma (matcher star tracks, geometry/tracks.py)
-    vis_thresh: 0.2            # min VGGSfM visibility score for an observation
+    track_source: xfeat        # vggsfm | xfeat | loma (matcher star tracks, geometry/tracks.py)
+    track_kwargs: {}           # source-specific; empty = defaults. vggsfm: max_query_pts, query_frame_num, fine_tracking; xfeat/loma: retrieval, seed_fraction, window, retrieval_k
+    vis_thresh: 0.2            # min track score for an observation (VGGSfM visibility; matcher tracks score 1.0)
     max_reproj_error: 4.0      # pre-solve pixel reprojection gate; null skips the filter
     min_inliers_per_frame: 64  # frames below this inlier count sit out the solve
+    solver: schur              # schur eliminates points (less GPU); lm solves the joint system
+    dtype: float32             # solve precision: float32 | float64
     lm_steps: 40               # max LM steps without photometric; photometric runs up to its 30-step schedule
     lm_tol: 1.0e-4             # relative loss drop below which an LM step counts as stalled
     lm_patience: 2             # stalled steps in a row that end the solve, or one photometric re-sample
-    shared_camera: true        # one focal per scene; false = one per frame
-    refine_focal: true         # solve for focal; false holds the input mean focal fixed
-    dtype: float32             # solve precision: float32 | float64
     increment_size: 0          # 0 = one global solve; N = frames added per incremental solve
-    use_photometric: true      # brightness matching between overlapping frames; not with increment_size > 0
+    shared_camera: true        # one focal per scene; false = one per frame
+    refine_focal: false        # solve for focal; false holds the input mean focal fixed
     use_depth: true            # track camera z against feedforward depth
     depth_sigma: 0.01          # relative depth error weighted like 1 px
+    use_photometric: true      # brightness matching between overlapping frames; not with increment_size > 0
     device: null               # CUDA device; null = auto (bae LM is CUDA-only)
   clean:
     enabled: true              # statistical outlier removal on the final sparse point set
@@ -198,6 +197,7 @@ localization:
   enabled: false
   # vismatch model name: only batch-capable xfeat | loma (cached-feature matching)
   matcher: loma
+  retrieval: dino-salad   # retrieval registry name: dino-salad | megaloc
 
 reconstruction_quality_report:
   min_pair_overlap: 0.0   # 0 = every ordered pair; >0 skips pairs whose frustum overlap is below it

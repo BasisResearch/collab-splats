@@ -6,7 +6,7 @@ import pytest
 from collab_splats.geometry.loop_closure import graph as graph_mod
 from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.submap import Submap
-from tests.geometry.loop_closure._helpers import drive_pose_graph
+from tests.geometry.loop_closure._helpers import drive_pose_graph, graph_extrinsics
 
 
 def _regular_submap(sid: int, k: int, seed: int) -> Submap:
@@ -50,7 +50,7 @@ def test_add_submap_matches_monolith_sequential(two_submaps):
     for s in two_submaps:
         pg.add_submap(s, overlap_frames=1)
         pg.optimize()
-    incremental = pg.extract_extrinsics(total_frames=8)
+    incremental = graph_extrinsics(pg, 8)
 
     np.testing.assert_allclose(incremental, golden, atol=1e-6)
 
@@ -86,7 +86,7 @@ def test_incremental_matches_monolith_nonident_K():
     for s in subs:
         pg.add_submap(s, overlap_frames=1)
         pg.optimize()
-    incremental = pg.extract_extrinsics(total_frames=8)
+    incremental = graph_extrinsics(pg, 8)
     np.testing.assert_allclose(incremental, golden, atol=1e-6)
 
 
@@ -95,12 +95,9 @@ def _lc_submap(sid: int, q_path: str, d_path: str) -> Submap:
     poses = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
     return Submap(
         submap_id=sid,
-        frames=np.zeros((2, 3, 4, 4), dtype=np.float32),
         poses=poses,
         intrinsics=np.tile(np.eye(3, dtype=np.float32), (2, 1, 1)),
-        retrieval_vectors=np.zeros((2, 8), dtype=np.float32),
         image_paths=[q_path, d_path],
-        is_lc_submap=True,
         points=np.zeros((2, 8, 8, 3), dtype=np.float32),
         conf=np.full((2, 8, 8), 50.0, dtype=np.float32),
     )
@@ -115,9 +112,9 @@ def test_add_loop_edge_matches_monolith(two_submaps):
     for s in two_submaps:
         pg.add_submap(s, overlap_frames=1)
         pg.optimize()
-    pg.add_loop_edge(lc, self_submaps=two_submaps)
+    pg.add_loop_edge(lc)
     pg.optimize()
-    incremental = pg.extract_extrinsics(total_frames=8)
+    incremental = graph_extrinsics(pg, 8)
 
     np.testing.assert_allclose(incremental, golden, atol=1e-6)
 
@@ -140,5 +137,5 @@ def test_min_conf_points_reaches_sequential_and_both_anchor_scale_fits(two_subma
     assert seen == [10]
 
     seen.clear()
-    pg.add_loop_edge(lc, self_submaps=two_submaps)
+    pg.add_loop_edge(lc)
     assert seen == [10, 10]

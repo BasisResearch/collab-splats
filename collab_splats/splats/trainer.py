@@ -15,7 +15,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from collab_splats.geometry.transforms import invert_poses, rescale_intrinsics
+from collab_splats.geometry.transforms import (
+    invert_poses,
+    rescale_intrinsics,
+    shift_intrinsics,
+)
 from collab_splats.splats.cameras import CameraOpt
 from collab_splats.splats.checkpoint import (
     MODEL_CLASSES,
@@ -188,7 +192,7 @@ def train(
         cfg: run config.
         images: (n_views, H, W, 3) uint8 frames.
         world_to_cam: (n_views, 4, 4) COLMAP-convention poses.
-        intrinsics: (n_views, 3, 3) at frame resolution.
+        intrinsics: (n_views, 3, 3) pixel-center K (pixel i at coordinate i) at frame resolution.
         points: (P, 3) float32 seed points.
         colors: (P, 3) uint8 seed colors.
         out_dir: output directory; created if absent.
@@ -243,6 +247,9 @@ def train(
 
         # Depth-unit loss settings follow the normalization
         loss_schedule = rescale_depth_units(loss_schedule, normalize_factor)
+
+    # gsplat puts pixel i's center at i + 0.5
+    intrinsics = shift_intrinsics(intrinsics, (0.5, 0.5))
 
     cam_to_world = torch.from_numpy(cam_to_world_np).float().to(device)
     intrinsics_gpu = torch.from_numpy(intrinsics).float().to(device)

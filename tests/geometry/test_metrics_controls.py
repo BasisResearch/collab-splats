@@ -1,4 +1,5 @@
-"""Negative controls: each measurement must move under its own fault and stay still under others.
+"""
+Negative controls: each measurement must move under its own fault and stay still under others.
 
 The report aggregates two measurements chosen because their DEPENDENCIES DIFFER — depth
 cross-view reads poses+depth, photometric reads poses+depth+appearance.
@@ -19,6 +20,7 @@ Three things this file deliberately does NOT do:
 """
 
 import inspect
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -30,10 +32,7 @@ from collab_splats.geometry.metrics import _collect_pairs, compute_photometric_n
 # Constants — every one of these is load-bearing, so none of them is a bare literal
 ########################################
 
-# FOCAL, HW and BASELINE are jointly tuned against the one-pixel-of-disparity floor: at f=30 a
-# 0.25 baseline at range ~4 gives the worst strafing pair ~1.75 px of disparity, clear of the
-# floor, while FLOOR_STEP lands a forward pair under it. Moving any of them moves both sides of
-# test_control_forward_motion_is_the_direction_that_falls_under_the_floor.
+# FOCAL, HW, BASELINE tuned jointly: strafing pair ~1.75 px disparity, FLOOR_STEP forward pair below 1 px
 FOCAL = 30.0
 HW = 24
 BASELINE = 0.25
@@ -42,28 +41,16 @@ BASELINE = 0.25
 Z0 = 4.0
 TILT = 0.3
 
-# The injected depth fault. x1.1 is deliberately larger than the production rel_thresh of 0.05,
-# because a fault inside the tolerance is not a fault the measurement is supposed to report.
+# Injected depth fault, x1.1: above rel_thresh 0.05, since a fault inside tolerance is not reported
 DEPTH_FAULT = 1.1
 
-# Every control that injects a fault runs at this tolerance, NOT the production default of 0.05.
-# At 0.05 the occlusion branch deletes the very pairs the fault produced: a from-frame-2 pair
-# reads sampled < expected - tol, which the measurement classifies as OCCLUDED (absent evidence)
-# and drops from the collection entirely. Measured: 12 ordered pairs here, 9 at the default,
-# with all three from-frame-2 pairs gone. Pinned by
-# test_the_controls_must_run_above_the_production_rel_thresh, so moving the controls "back to
-# the default" fails loudly instead of quietly measuring six clean pairs.
+# Fault controls run above the 0.05 default, where occlusion would drop the faulted from-frame-2 pairs
 CONTROL_REL_THRESH = 0.5
 
-# The injected pose fault: camera 1's centre translated along world Y. That axis is chosen
-# because the plane Z = Z0 + TILT*X contains it, so the SURFACE IS INVARIANT under the
-# perturbation — the depth channel is structurally blind to this fault, which is precisely the
-# claim under test — while every projection still shifts by f*dy/Z. An X or Z translation, or a
-# rotation, would perturb depth on a slanted plane and confound the control.
+# Pose fault: camera 1 moved along world Y, which leaves the Z = Z0 + TILT*X plane invariant
 POSE_FAULT_DY = 0.4
 
-# Matched baseline for the forward-vs-strafe contrast. Both directions get the SAME magnitude,
-# so the comparison is about direction and not about step size.
+# Same baseline magnitude for forward and strafe, so the contrast is direction, not step size
 FLOOR_STEP = 0.1
 
 
@@ -73,7 +60,8 @@ FLOOR_STEP = 0.1
 
 
 def _scene(n=4, centers=None, tilt=TILT):
-    """N cameras viewing the world plane Z = Z0 + tilt*X, depth rendered exactly per camera.
+    """
+    N cameras viewing the world plane Z = Z0 + tilt*X, depth rendered exactly per camera.
 
     A SLANTED plane, not a fronto-parallel one: the tilt gives each frustum real depth extent,
     which is what a real scene has, and spreads parallax over 3.3-10.1 deg instead of pinning
@@ -92,9 +80,7 @@ def _scene(n=4, centers=None, tilt=TILT):
     for k, c in enumerate(centers):
         extr[k, :3, 3] = -np.asarray(c, np.float32)
 
-    # Ray-plane intersection in closed form. Ray through pixel u is (a, b, 1) with
-    # a = (u - cx)/f; substituting C + s*(a, b, 1) into Z = Z0 + tilt*X gives
-    # s*(1 - tilt*a) = Z0 + tilt*Cx - Cz, and Z-depth equals s because the ray's z is 1.
+    # Closed-form ray-plane hit: s*(1 - tilt*a) = Z0 + tilt*Cx - Cz, and Z-depth equals s
     a = (np.arange(HW) - HW / 2) / FOCAL
     depth = np.stack(
         [
@@ -106,20 +92,27 @@ def _scene(n=4, centers=None, tilt=TILT):
 
 
 def _pairs(depth, K, extr, **kw):
-    """{(i, j): PairStats} from the report's cross-view pass; rel_thresh defaults to the report's 0.05."""
-    out, _ = _collect_pairs(depth, K, extr, kw.get("rel_thresh", 0.05))
-    return {(p.idx1, p.idx2): p for p in out["pairs"]}
+    """
+    {(i, j): row} from the report's cross-view pass; rel_thresh defaults to the report's 0.05.
+    """
+    out = _collect_pairs(depth, K, extr, kw.get("rel_thresh", 0.05))[0]
+    rows = [SimpleNamespace(**dict(zip(out, vals))) for vals in zip(*out.values())]
+    return {(r.idx1, r.idx2): r for r in rows}
 
 
 def _faulted_scene(n=4):
-    """The standard depth fault: frame 2 scaled, everything else exact."""
+    """
+    The standard depth fault: frame 2 scaled, everything else exact.
+    """
     depth, K, extr = _scene(n=n)
     depth[2] *= DEPTH_FAULT
     return depth, K, extr
 
 
 def _texture(n):
-    """Smooth RGB with a little noise: enough structure to correlate, no aliasing under warp."""
+    """
+    Smooth RGB with a little noise: enough structure to correlate, no aliasing under warp.
+    """
     rng = np.random.default_rng(0)
     yy, xx = np.meshgrid(np.arange(HW), np.arange(HW), indexing="ij")
     base = 120 + 60 * np.sin(xx / 7.0) * np.cos(yy / 9.0)
@@ -128,7 +121,8 @@ def _texture(n):
 
 
 def _parallax_truth_deg(depth, K, extr, i, j):
-    """Median ray-to-ray angle over frame i's pixels, computed WITHOUT the measurement under test.
+    """
+    Median ray-to-ray angle over frame i's pixels, computed WITHOUT the measurement under test.
 
     An independent reimplementation, sharing the fixture and nothing else. It exists because
     every other assertion in this file consumes ``median_parallax_deg`` on both sides of a ratio
@@ -146,7 +140,8 @@ def _parallax_truth_deg(depth, K, extr, i, j):
 
 
 def _reprojection_shift_px(depth, K, extr_true, extr_faulty, i, j):
-    """Median pixel motion in frame j when frame j's pose changes — the error a tracker sees.
+    """
+    Median pixel motion in frame j when frame j's pose changes — the error a tracker sees.
 
     Measured, not assumed: frame i's pixels are unprojected once through the TRUE geometry, then
     projected into frame j under both poses and differenced. This is the only honest way to put
@@ -177,10 +172,11 @@ def _reprojection_shift_px(depth, K, extr_true, extr_faulty, i, j):
 
 
 def test_the_fixture_produces_every_pair_and_a_real_parallax_spread():
-    """Nothing below means anything if a filter has quietly emptied the collection."""
+    """
+    Nothing below means anything if a filter has quietly emptied the collection.
+    """
     depth, K, extr = _scene(n=4)
-    # No fault injected here, so this one runs at the PRODUCTION default: the clean fixture must
-    # survive the shipping tolerance, and only a faulted one needs CONTROL_REL_THRESH.
+    # No fault: runs at the production default, which the clean fixture must survive
     p = _pairs(depth, K, extr)
     # ORDERED directions: the mv loop runs (i, j) and (j, i) separately, so 4 frames give 12.
     assert len(p) == 12
@@ -193,7 +189,8 @@ def test_the_fixture_produces_every_pair_and_a_real_parallax_spread():
 
 
 def test_the_fixture_parallax_matches_closed_form_geometry():
-    """Pins median_parallax_deg to truth, which no ratio in this file can do.
+    """
+    Pins median_parallax_deg to truth, which no ratio in this file can do.
 
     Every other parallax assertion here feeds the same number into both sides of a ratio, so a
     parallax scaled by a constant self-normalises and survives them all — measured, a x1.5
@@ -213,7 +210,8 @@ def test_the_fixture_parallax_matches_closed_form_geometry():
 
 
 def test_the_controls_must_run_above_the_production_rel_thresh():
-    """Pins CONTROL_REL_THRESH the way the tilt is pinned: the default deletes the evidence.
+    """
+    Pins CONTROL_REL_THRESH the way the tilt is pinned: the default deletes the evidence.
 
     A silent-deletion trap. A from-frame-2 pair carries
     sampled < expected - tol at the production tolerance, which the measurement reads as
@@ -236,7 +234,8 @@ def test_the_controls_must_run_above_the_production_rel_thresh():
 
 
 def test_control_depth_scale_moves_the_depth_measurement_on_both_sides_of_frame_2():
-    """x1.1 on frame 2's depth moves BOTH directions touching frame 2, by different closed forms.
+    """
+    x1.1 on frame 2's depth moves BOTH directions touching frame 2, by different closed forms.
 
     Three buckets, all asserted, because the ordered-pair loop gives the fault two distinct
     signatures and reporting only one of them would be false:
@@ -253,17 +252,15 @@ def test_control_depth_scale_moves_the_depth_measurement_on_both_sides_of_frame_
     clean = [v.median_rel_depth_error for (i, j), v in p.items() if 2 not in (i, j)]
     assert len(into_2) == 3 and len(from_2) == 3 and len(clean) == 6
 
-    # Tolerances from the measurement, not from what passes. Both assertions are on the MEDIAN,
-    # so the median is the deviation that sets the tolerance: 0.0014 into, 0.0012 from, against
-    # the abs=0.01 asserted here — roughly 7x headroom. The worst single element runs wider
-    # (0.0023 into, 0.0049 from), which is why the band is not tightened to the median figure.
+    # Median deviation is 0.0014 into / 0.0012 from, worst element 0.0049: abs=0.01 leaves headroom
     assert np.median(into_2) == pytest.approx(DEPTH_FAULT - 1.0, abs=0.01)
     assert np.median(from_2) == pytest.approx(1.0 / DEPTH_FAULT - 1.0, abs=0.01)
     assert np.max(np.abs(clean)) < 0.01  # measured 0.001593, pure resampling noise
 
 
 def test_control_depth_scale_moves_parallax_only_on_the_source_side():
-    """Parallax is pose geometry on the TARGET side only; on the source side a depth fault leaks.
+    """
+    Parallax is pose geometry on the TARGET side only; on the source side a depth fault leaks.
 
     The measurement computes parallax from world points unprojected through the SOURCE frame's
     depth, so scaling that depth slides every point along its ray and changes the subtended
@@ -279,8 +276,7 @@ def test_control_depth_scale_moves_parallax_only_on_the_source_side():
     depth[2] *= DEPTH_FAULT
     after = _pairs(depth, K, extr, rel_thresh=CONTROL_REL_THRESH)
     shared = set(before) & set(after)
-    # Assert the sample BEFORE looping over it: at the production tolerance this set is 9 and
-    # the from-frame-2 arm below would silently have nothing in it.
+    # Assert the sample before looping: at the production tolerance the from-frame-2 arm is empty
     assert len(before) == len(after) == len(shared) == 12
 
     untouched = [k for k in shared if 2 not in k]
@@ -288,23 +284,18 @@ def test_control_depth_scale_moves_parallax_only_on_the_source_side():
     from_2 = [k for k in shared if k[0] == 2]
     assert len(untouched) == 6 and len(into_2) == 3 and len(from_2) == 3
 
-    # Arm 1 — pairs the fault cannot reach. Exact-zero BY CONSTRUCTION (identical inputs to an
-    # identical computation), so this arm pins determinism and nothing more. It is kept because
-    # a non-zero here would mean the fault leaked across frames entirely, but it is not evidence
-    # of separation on its own; arm 3 is what carries that.
+    # Arm 1: pairs the fault cannot reach are exactly unchanged; pins determinism, not separation
     for key in untouched:
         assert after[key].median_parallax_deg == before[key].median_parallax_deg
 
-    # Arm 2 — the arm with real content. The fault IS in frame 2 and these pairs read frame 2,
-    # yet parallax never touches the target's depth, so they too are exactly unchanged.
+    # Arm 2: pairs reading frame 2 stay exactly unchanged, since parallax never touches target depth
     for key in into_2:
         assert after[key].median_parallax_deg == before[key].median_parallax_deg
 
     # Arm 3 — the leak. These MUST move, by the reciprocal of the injected scale.
     for key in from_2:
         ratio = after[key].median_parallax_deg / before[key].median_parallax_deg
-        # rel=0.01 is justified by measurement: the worst pair sits 7e-4 from the prediction,
-        # the small-angle approximation being exact only in the limit.
+        # rel=0.01: worst pair sits 7e-4 off the small-angle prediction
         assert ratio == pytest.approx(1.0 / DEPTH_FAULT, rel=0.01)
 
 
@@ -314,7 +305,8 @@ def test_control_depth_scale_moves_parallax_only_on_the_source_side():
 
 
 def test_control_pose_fault_leaves_the_depth_channel_quiet():
-    """Pixels move while depths stay mutually consistent — the depth channel cannot see it.
+    """
+    Pixels move while depths stay mutually consistent — the depth channel cannot see it.
 
     The fault is a real translation of camera 1 along world Y (see POSE_FAULT_DY for why that
     axis): the surface is invariant under it, so the depth channel is structurally blind, while
@@ -322,7 +314,7 @@ def test_control_pose_fault_leaves_the_depth_channel_quiet():
     """
     depth, K, extr = _scene()
     extr_bad = extr.copy()
-    extr_bad[1, 1, 3] -= POSE_FAULT_DY  # camera 1's centre moves +dy in world Y
+    extr_bad[1, 1, 3] -= POSE_FAULT_DY  # camera 1's center moves +dy in world Y
 
     # Measured pixel motion, and a check that it is the size the geometry says it is.
     shift_px = _reprojection_shift_px(depth, K, extr, extr_bad, 0, 1)
@@ -333,8 +325,7 @@ def test_control_pose_fault_leaves_the_depth_channel_quiet():
     pairs = _pairs(depth, K, extr_bad, rel_thresh=CONTROL_REL_THRESH)
     assert len(pairs) == 12
     p = pairs[(0, 1)]
-    # The depth channel stays as quiet as an unperturbed pair: nothing here exceeds the
-    # resampling floor the clean fixture already sits at.
+    # Depth channel stays at the clean fixture's resampling floor
     assert abs(p.median_rel_depth_error) < 0.01
 
 
@@ -344,7 +335,8 @@ def test_control_pose_fault_leaves_the_depth_channel_quiet():
 
 
 def test_control_depth_measurement_never_sees_appearance():
-    """Appearance faults cannot reach a measurement that never reads appearance.
+    """
+    Appearance faults cannot reach a measurement that never reads appearance.
 
     Asserted structurally rather than by injecting an exposure shift, because there is nowhere
     to inject one: _collect_pairs takes depth, intrinsics and extrinsics and
@@ -367,7 +359,9 @@ def test_control_depth_measurement_never_sees_appearance():
 
 
 def test_control_exposure_shift_is_invisible_to_photometric_too():
-    """NCC is what buys this — a raw difference would flag it as error."""
+    """
+    NCC is what buys this — a raw difference would flag it as error.
+    """
     depth, K, extr = _scene(n=4)
     images = _texture(4)
     clean = compute_photometric_ncc(images, depth, K, extr, max_separation=2)
@@ -376,8 +370,7 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     # A correlation worth being invariant about: measured 0.884-0.956 on this fixture.
     assert min(ncc_clean) > 0.5
 
-    # Gain AND offset on one frame only — the asymmetric case, since a global rescale would
-    # also survive a merely shift-invariant measure.
+    # Gain and offset on one frame only: a global rescale would also survive a shift-invariant measure
     shifted = images.copy()
     shifted[1] = shifted[1] * 1.6 + 30.0
     after = compute_photometric_ncc(shifted, depth, K, extr, max_separation=2)
@@ -385,8 +378,7 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     exposure_delta = max(abs(a - b) for a, b in zip(ncc_clean, after["photometric_ncc"]))
     assert exposure_delta < 1e-9  # measured 3.3e-16
 
-    # Without this half the test is decoration: an NCC hardwired to a constant would pass
-    # everything above. A geometric fault of comparable size must move the same number.
+    # Without this, a constant NCC passes everything above; a comparable geometric fault must move it
     extr_bad = extr.copy()
     extr_bad[1, 1, 3] -= POSE_FAULT_DY
     faulted = compute_photometric_ncc(images, depth, K, extr_bad, max_separation=2)
@@ -402,7 +394,8 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
 
 
 def test_control_forward_motion_is_the_direction_that_falls_under_the_floor():
-    """At the SAME baseline magnitude, forward motion falls under the floor and strafing clears it.
+    """
+    At the SAME baseline magnitude, forward motion falls under the floor and strafing clears it.
 
     The magnitudes are matched deliberately. Comparing a small forward step against a large
     sideways one would only restate that a shorter baseline gives less parallax, which is true
@@ -430,13 +423,13 @@ def test_control_forward_motion_is_the_direction_that_falls_under_the_floor():
 
 
 def test_control_separation_axis_has_teeth():
-    """Injecting error that grows with frame gap must show as a positive rank correlation."""
+    """
+    Injecting error that grows with frame gap must show as a positive rank correlation.
+    """
     depth, K, extr = _scene(n=6)
     for k in range(6):
         depth[k] *= 1.0 + 0.02 * k  # drift: each frame slightly more scaled than the last
-    # Faults injected, so CONTROL_REL_THRESH: at the production default the occlusion branch
-    # deletes the widest-gap pairs, which are exactly the ones carrying the signal (measured
-    # 24 pairs instead of 30, and the ones lost are the most-drifted).
+    # Faults injected, so CONTROL_REL_THRESH: the default drops the widest-gap, most-drifted pairs
     p = _pairs(depth, K, extr, rel_thresh=CONTROL_REL_THRESH)
     assert len(p) == 30
     frame_seps = np.array([abs(i - j) for (i, j) in p], dtype=np.float64)

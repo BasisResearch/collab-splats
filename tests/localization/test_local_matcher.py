@@ -101,12 +101,14 @@ def test_to_device_moves_every_tensor(mock_get, device):
 @patch("vismatch.get_matcher")
 def test_match_returns_native_indices(mock_get):
     m = _batch_vismatch_matcher()
-    m.match.return_value = {
-        "matched_kpts0": np.ones((2, 2), np.float32),
-        "matched_kpts1": np.ones((2, 2), np.float32),
-        "matched_idxs0": np.array([0, 3]),
-        "matched_idxs1": np.array([1, 2]),
-    }
+    m.match_batch.return_value = [
+        {
+            "matched_kpts0": np.ones((2, 2), np.float32),
+            "matched_kpts1": np.ones((2, 2), np.float32),
+            "matched_idxs0": np.array([0, 3]),
+            "matched_idxs1": np.array([1, 2]),
+        }
+    ]
     mock_get.return_value = m
     lm = LocalMatcher("xfeat", device="cpu")
     f = LocalFeatures(keypoints=torch.zeros(4, 2), descriptors=torch.zeros(4, 8), image_size=(10, 10))
@@ -211,19 +213,22 @@ def _one_hot_features(rows, d=8, keypoints_normalized=False):
 @patch("vismatch.get_matcher")
 def test_match_passes_features_and_maps_indices(mock_get):
     m = _batch_vismatch_matcher()
-    m.match.return_value = {
-        "matched_kpts0": np.array([[0.0, 0.0], [20.0, 20.0]], np.float32),
-        "matched_kpts1": np.array([[30.0, 30.0], [10.0, 10.0]], np.float32),
-        "matched_idxs0": np.array([0, 2]),
-        "matched_idxs1": np.array([3, 1]),
-    }
+    m.match_batch.return_value = [
+        {
+            "matched_kpts0": np.array([[0.0, 0.0], [20.0, 20.0]], np.float32),
+            "matched_kpts1": np.array([[30.0, 30.0], [10.0, 10.0]], np.float32),
+            "matched_idxs0": np.array([0, 2]),
+            "matched_idxs1": np.array([3, 1]),
+        }
+    ]
     mock_get.return_value = m
     lm = LocalMatcher("xfeat", device="cpu")
     q = _one_hot_features([0, 1, 2, 3])
     db = _one_hot_features([3, 2, 1, 0], keypoints_normalized=True)
     res = lm.match(q, db)
 
-    (f0, f1), _ = m.match.call_args
+    ((pair,),), _ = m.match_batch.call_args
+    f0, f1 = pair
     assert f0["image_size"] == (100, 80) and "kpts_normalized" not in f0
     assert f0["all_kpts0"] is q.keypoints and f0["all_desc0"] is q.descriptors
     assert torch.equal(f1["kpts_normalized"], db.keypoints_normalized)

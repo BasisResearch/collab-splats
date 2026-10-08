@@ -25,7 +25,7 @@ import pytest
 import torch
 
 from collab_splats.geometry.loop_closure.graph import (
-    _loop_chain_relatives,
+    PoseGraph,
     calculate_pairwise_frame_scale,
 )
 from collab_splats.geometry.loop_closure.submap import Submap
@@ -138,19 +138,15 @@ def _make_lc_submap(
     wp0 = scale * grid  # P0 = I: world == camera-local
     wp1 = _apply(np.linalg.inv(P1), scale * grid)  # LC-local world frame
     if poison_inf:
-        # Corrupt ALL pixels (on-grid included) with inf — mimics depth-unprojection
-        # NaN/inf on invalid pixels driving the scale estimate degenerate.
+        # Every pixel inf, as unprojected invalid depth, so the scale estimate degenerates
         wp0 = np.full_like(wp0, np.inf)
         wp1 = np.full_like(wp1, np.inf)
     conf = np.full((2, H_IMG, W_IMG), 100.0, dtype=np.float32) if with_conf else None
     return Submap(
         submap_id=99,
-        frames=torch.zeros(2, 3, H_IMG, W_IMG),
         poses=np.stack([P0, P1]).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (2, 1, 1)).astype(np.float32),
-        retrieval_vectors=torch.zeros(2, 8),
         image_paths=[Path(f"frame_{q_global:04d}.png"), Path(f"frame_{d_global:04d}.png")],
-        is_lc_submap=True,
         points=None if no_points else np.stack([wp0, wp1]).reshape(2, H_IMG, W_IMG, 3).astype(np.float32),
         conf=None if no_points else conf,
     )
@@ -172,16 +168,14 @@ def _run(submaps, lc_submaps, total_frames=7):
 
 def _run_recording_graph_errors(monkeypatch, submaps, lc_submaps):
     """Run PGO while recording factor-graph error before each optimize() call."""
-    from collab_splats.geometry.loop_closure.graph import PoseGraph as _SL4PoseGraph
-
     pre_errors: list[float] = []
-    orig = _SL4PoseGraph.optimize
+    orig = PoseGraph.optimize
 
     def patched(self):
         pre_errors.append(float(self._graph.error(self._initial)))
         orig(self)
 
-    monkeypatch.setattr(_SL4PoseGraph, "optimize", patched)
+    monkeypatch.setattr(PoseGraph, "optimize", patched)
     out = _run(submaps, lc_submaps)
     return out, pre_errors
 
@@ -201,34 +195,6 @@ def consistent_submaps(gt):
 
 
 Q_GLOBAL, D_GLOBAL = 5, 1  # query frame (submap 1) loops back to detected frame (submap 0)
-
-
-########################################
-####### Chain relative derivation ######
-########################################
-
-
-def test_chain_relatives_compose_to_direct_for_identity_anchors(gt):
-    """With sA=sB=1 and K=I the composed chain equals P_lc0 @ inv(P_lc1)."""
-    P0 = np.eye(4)
-    P1 = gt[D_GLOBAL] @ np.linalg.inv(gt[Q_GLOBAL])
-    h_a, h_inner, h_b = _loop_chain_relatives(P0, P1, 1.0, 1.0, np.eye(4), np.eye(4), np.eye(4), np.eye(4))
-    composed = h_a @ h_inner @ h_b  # SLAM's 3-edge chain as one relative
-    np.testing.assert_allclose(composed, P0 @ np.linalg.inv(P1), atol=1e-12)
-    # each anchor is pure identity here; the inner edge carries the whole relative
-    np.testing.assert_allclose(h_a, np.eye(4), atol=1e-12)
-    np.testing.assert_allclose(h_b, np.eye(4), atol=1e-12)
-
-
-def test_chain_relatives_scale_reconciliation_cancels_lc_scale(gt):
-    """LC at 2x: sA=1/2, sB=2 makes the composed chain equal the metric relative."""
-    k = 2.0
-    Sk = np.diag([k, k, k, 1.0])
-    P1_metric = gt[D_GLOBAL] @ np.linalg.inv(gt[Q_GLOBAL])
-    P0_k, P1_k = np.eye(4), Sk @ P1_metric @ np.linalg.inv(Sk)
-    h_a, h_inner, h_b = _loop_chain_relatives(P0_k, P1_k, 1.0 / k, k, np.eye(4), np.eye(4), np.eye(4), np.eye(4))
-    composed = h_a @ h_inner @ h_b  # SLAM's 3-edge chain as one relative
-    np.testing.assert_allclose(composed, np.eye(4) @ np.linalg.inv(P1_metric), atol=1e-10)
 
 
 ########################################
@@ -310,8 +276,7 @@ def test_anchor_scale_none_when_lc_points_nonfinite(gt, consistent_submaps):
     """All-inf LC world points (invalid depth pixels) on the prior side drive the
     median scale non-finite → None, and the loop falls back to a finite graph."""
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, poison_inf=True)
-    # s_b pairs finite detected-frame norms (X) against inf/NaN LC norms (Y):
-    # the median ratio is non-finite and must be rejected by the guard.
+    # s_b pairs finite detected norms with inf/NaN LC norms; the guard rejects the non-finite median
     s_b = calculate_pairwise_frame_scale(consistent_submaps[0], D_GLOBAL, lc, 1, 100)
     assert s_b is None
     # End-to-end: fallback keeps the graph finite and at GT (consistent fixture)

@@ -8,6 +8,7 @@ import torch
 
 from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.submap import Submap
+from tests.geometry.loop_closure._helpers import graph_extrinsics
 
 
 def _dense_submap(sid=0, S=2, H=4, W=5):
@@ -48,57 +49,13 @@ def test_conf_percentile_sets_conf_threshold():
     assert Submap(**kw, conf_percentile=60.0).conf_threshold == np.percentile(conf, 60.0) + 1e-6
 
 
-def test_get_points_in_world_frame_conf_masked():
-    s = _dense_submap()
-    pg = PoseGraph()
-    pg.add_submap(s, overlap_frames=1)
-    pg.optimize()
-    pts = s.get_points_in_world_frame(pg)
-    cols = s.get_points_colors()
-    assert pts.ndim == 2 and pts.shape[1] == 3
-    assert cols.shape[0] == pts.shape[0]  # index-aligned points/colors
-    assert pts.shape[0] <= 2 * 4 * 5  # conf mask may drop points
-
-
-def test_get_points_in_world_frame_skip_first_drops_leading_frames():
-    """skip_first excludes leading overlap frames; points and colors stay aligned."""
-    s = _dense_submap(S=3)
-    pg = PoseGraph()
-    pg.add_submap(s, overlap_frames=1)
-    pg.optimize()
-
-    full_pts = s.get_points_in_world_frame(pg)
-    full_cols = s.get_points_colors()
-    # Points dropped by skipping frame 0 == that frame's conf-passing points.
-    frame0_kept = int((s.conf[0] > s.conf_threshold).sum())
-
-    skip_pts = s.get_points_in_world_frame(pg, skip_first=1)
-    skip_cols = s.get_points_colors(skip_first=1)
-    assert skip_pts.shape[0] == full_pts.shape[0] - frame0_kept
-    assert skip_cols.shape[0] == skip_pts.shape[0]  # still index-aligned
-    # Remaining points are exactly the tail (frames 1..) of the full set.
-    np.testing.assert_allclose(skip_pts, full_pts[frame0_kept:])
-    np.testing.assert_array_equal(skip_cols, full_cols[frame0_kept:])
-
-
-def test_get_points_in_world_frame_skip_all_returns_empty():
-    """A pure-overlap tail submap (skip_first >= frames) yields an empty (0,3) array."""
-    s = _dense_submap(S=2)
-    pg = PoseGraph()
-    pg.add_submap(s, overlap_frames=1)
-    pg.optimize()
-    pts = s.get_points_in_world_frame(pg, skip_first=2)
-    assert pts.shape == (0, 3)
-    assert s.get_points_colors(skip_first=2).shape == (0, 3)
-
-
-def test_get_all_poses_world_matches_extract_extrinsics():
+def test_get_all_poses_world_matches_graph_extrinsics():
     s = _dense_submap()
     pg = PoseGraph()
     pg.add_submap(s, overlap_frames=1)
     pg.optimize()
     per_submap = s.get_all_poses_world(pg)  # (S,4,4)
-    full = pg.extract_extrinsics(total_frames=s.points.shape[0])  # (S,4,4)
+    full = graph_extrinsics(pg, s.points.shape[0])  # (S,4,4)
     np.testing.assert_allclose(per_submap, full, atol=1e-5)
 
 
@@ -132,7 +89,7 @@ def _rotated_submap(sid=0, S=3, H=4, W=5):
 
 
 def test_get_all_poses_world_convention_nonidentity():
-    """Non-identity rotation: get_all_poses_world must match extract_extrinsics (R.T convention)."""
+    """Non-identity rotation: get_all_poses_world must match graph_extrinsics (R.T convention)."""
     s = _rotated_submap()
     # Sanity: the fixture genuinely has R != R.T (else the test proves nothing).
     assert np.max(np.abs(s.poses[1, :3, :3] - s.poses[1, :3, :3].T)) > 0.1
@@ -140,7 +97,7 @@ def test_get_all_poses_world_convention_nonidentity():
     pg.add_submap(s, overlap_frames=1)
     pg.optimize()
     per_submap = s.get_all_poses_world(pg)
-    full = pg.extract_extrinsics(total_frames=s.points.shape[0])
+    full = graph_extrinsics(pg, s.points.shape[0])
     np.testing.assert_allclose(per_submap, full, atol=1e-5)
 
 
@@ -248,13 +205,13 @@ def _moving_submaps(S=4, H=6, W=8):
 
 
 def test_world_grid_reprojects_under_extracted_extrinsics():
-    """Each frame's world grid lands on its own pixels under extract_extrinsics, in every submap."""
+    """Each frame's world grid lands on its own pixels under graph_extrinsics, in every submap."""
     submaps, K, uv = _moving_submaps()
     pg = PoseGraph()
     for s in submaps:
         pg.add_submap(s, overlap_frames=1)
     pg.optimize()
-    ext = pg.extract_extrinsics(total_frames=submaps[-1].frame_start + len(submaps[-1].poses))
+    ext = graph_extrinsics(pg, submaps[-1].frame_start + len(submaps[-1].poses))
 
     for s in submaps:
         grid = s.get_world_grid(pg).astype(np.float64)
@@ -279,14 +236,14 @@ def test_submap_node_ids_count_overlap_and_loop_carriers():
         submap_id=2,
         poses=np.stack([first.poses[0], second.poses[3]]),
         intrinsics=first.intrinsics[:2],
-        retrieval_vectors=first.retrieval_vectors[:2],
+        retrieval_vectors=None,
+        frames=None,
         image_paths=["f0.jpg", "f6.jpg"],
-        is_lc_submap=True,
         points=None,
         colors=None,
         conf=None,
     )
-    pg.add_loop_edge(lc, submaps)
+    pg.add_loop_edge(lc)
     third = replace(second, submap_id=3, frame_start=6, image_paths=[f"f{6 + i}.jpg" for i in range(4)])
     pg.add_submap(third, overlap_frames=1)
 
@@ -298,25 +255,3 @@ def test_submap_node_ids_count_overlap_and_loop_carriers():
     ids = pg.submap_node_ids(0)
     ids.append(99)
     assert pg.submap_node_ids(0) == [0, 1, 2, 3]
-
-
-def test_world_reads_refuse_a_node_count_mismatch():
-    """get_world_grid and get_all_poses_world raise when frames and graph nodes disagree."""
-    submaps, _, _ = _moving_submaps()
-    pg = PoseGraph()
-    pg.add_submap(submaps[0], overlap_frames=1)
-
-    # Fewer poses than graph nodes
-    short_poses = replace(submaps[0], poses=submaps[0].poses[:3], intrinsics=submaps[0].intrinsics[:3])
-
-    with pytest.raises(ValueError, match="4 graph nodes, 3 poses"):
-        short_poses.get_all_poses_world(pg)
-
-    with pytest.raises(ValueError, match="4 graph nodes, 3 poses"):
-        short_poses.get_world_grid(pg)
-
-    # Fewer point frames than graph nodes
-    short_points = replace(submaps[0], points=submaps[0].points[:3])
-
-    with pytest.raises(ValueError, match="3 point frames"):
-        short_points.get_world_grid(pg)

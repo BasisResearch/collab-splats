@@ -11,13 +11,10 @@ from scipy.linalg import rq
 from scipy.spatial.transform import Rotation as ScipyR
 
 from collab_splats.geometry.loop_closure import graph as graph_mod
-from collab_splats.geometry.loop_closure.graph import (
-    PoseGraph,
-    estimate_scale_pairwise,
-)
+from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.submap import Submap
 from collab_splats.geometry.transforms import decompose_camera
-from tests.geometry.loop_closure._helpers import drive_pose_graph
+from tests.geometry.loop_closure._helpers import drive_pose_graph, graph_extrinsics
 
 
 def test_decompose_camera_round_trip():
@@ -71,21 +68,6 @@ def test_decompose_camera_returns_the_unsnapped_rq_rotation_like_upstream():
     assert np.array_equal(t_out, np.linalg.inv(K_rq) @ P34[:, 3])
 
 
-def test_estimate_scale_pairwise_known():
-    rng = np.random.default_rng(1)
-    X = rng.random((50, 3)).astype(np.float64)
-    Y = X * 2.5  # exact scale = 2.5
-    scale = estimate_scale_pairwise(X, Y)
-    assert abs(scale - 2.5) < 0.01
-
-
-def test_estimate_scale_pairwise_no_div_zero():
-    X = np.zeros((5, 3), dtype=np.float64)  # all at origin
-    Y = np.ones((5, 3), dtype=np.float64)
-    scale = estimate_scale_pairwise(X, Y)  # should not raise
-    assert np.isfinite(scale)
-
-
 ########################################
 ########## PoseGraph tests #############
 ########################################
@@ -101,32 +83,36 @@ def _translate_H(tx: float, ty: float, tz: float) -> np.ndarray:
     return H
 
 
+def _anchored_graph(Hs: list[np.ndarray]) -> PoseGraph:
+    """PoseGraph over one submap whose frame nodes start at Hs, the first held at identity by the prior."""
+    k = len(Hs)
+    assert np.array_equal(Hs[0], np.eye(4))
+    poses = np.linalg.inv(np.stack(Hs)).astype(np.float32)
+    submap = Submap(
+        submap_id=0,
+        poses=poses,
+        intrinsics=np.tile(np.eye(3, dtype=np.float32), (k, 1, 1)),
+        image_paths=[Path(f"f{i}.png") for i in range(k)],
+    )
+    pg = PoseGraph()
+    pg.add_submap(submap, overlap_frames=0)
+    return pg
+
+
 def test_sl4_add_homography_initializes():
     pg = PoseGraph()
     pg.add_homography(0, _identity_H())
     pg.add_homography(1, _translate_H(0.1, 0, 0))
-    assert 0 in pg._node_ids
-    assert 1 in pg._node_ids
-
-
-def test_sl4_add_homography_duplicate_noop():
-    pg = PoseGraph()
-    pg.add_homography(0, _identity_H())
-    pg.add_homography(0, _translate_H(1, 1, 1))  # duplicate — must not raise or re-insert
-    assert len(pg._node_ids) == 1
+    np.testing.assert_allclose(pg.get_homography(0), _identity_H(), atol=1e-9)
+    np.testing.assert_allclose(pg.get_homography(1), _translate_H(0.1, 0, 0), atol=1e-9)
 
 
 def test_sl4_sequential_edge_optimize():
-    pg = PoseGraph()
-    # Translation matrices have det=1, so they already satisfy the SL(4)
-    # constraint; add_homography/add_prior_factor SL4-normalize on insert regardless.
+    # Translations have det 1, already SL(4); inserts SL4-normalize regardless
     H0 = _identity_H()
     H1 = _translate_H(0.1, 0, 0)
-    pg.add_homography(0, H0)
-    pg.add_homography(1, H1)
-    pg.add_prior_factor(0, H0)
-    H_rel = np.linalg.inv(H0) @ H1
-    pg.add_between_factor(0, 1, H_rel)
+    pg = _anchored_graph([H0, H1])
+    np.testing.assert_allclose(pg.get_homography(1), H1, atol=1e-6)
     pg.optimize()
     H0_out = pg.get_homography(0)
     assert H0_out.shape == (4, 4)
@@ -134,15 +120,9 @@ def test_sl4_sequential_edge_optimize():
 
 
 def test_sl4_loop_edge_no_crash():
-    pg = PoseGraph()
     Hs = [_translate_H(i * 0.1, 0, 0) for i in range(3)]
-    for i, H in enumerate(Hs):
-        pg.add_homography(i, H)
-    pg.add_prior_factor(0, Hs[0])
-    pg.add_between_factor(0, 1, np.linalg.inv(Hs[0]) @ Hs[1])
-    pg.add_between_factor(1, 2, np.linalg.inv(Hs[1]) @ Hs[2])
+    pg = _anchored_graph(Hs)
     # Loop-chain edges share the sequential-edge API and Gaussian noise
-    # (add_loop_edge was removed with the scale-reconciled 3-edge chain).
     pg.add_between_factor(2, 0, np.linalg.inv(Hs[2]) @ Hs[0])
     pg.optimize()  # must not raise
     for i in range(3):
@@ -150,10 +130,7 @@ def test_sl4_loop_edge_no_crash():
 
 
 def test_get_homography_post_optimize():
-    pg = PoseGraph()
-    H0 = _identity_H()
-    pg.add_homography(0, H0)
-    pg.add_prior_factor(0, H0)
+    pg = _anchored_graph([_identity_H()])
     pg.optimize()
     H_out = pg.get_homography(0)
     assert H_out.shape == (4, 4)
@@ -263,10 +240,7 @@ def test_optimize_propagates_non_gtsam_errors(monkeypatch):
 ########################################
 
 
-# Three confidence groups, each voting a different scale
-# - A (20 pts): both sides confident, scale 2 -> the joint mask
-# - B (60 pts): prior side confident only, scale 4 -> A+B is the prior-only mask
-# - C (120 pts): low but positive confidence on both sides, scale 8 -> everything
+# Confidence groups voting scales 2 / 4 / 8: A both confident, B prior-only, C low on both sides
 N_A, N_B, N_C = 20, 60, 120
 
 
@@ -307,7 +281,7 @@ def _drive(pg, submaps):
     for s in submaps:
         pg.add_submap(s, 1)
         pg.optimize()
-    return pg.extract_extrinsics(3)
+    return graph_extrinsics(pg, 3)
 
 
 def test_min_conf_points_sets_the_confidence_mask_floor():
@@ -354,9 +328,7 @@ def test_sequential_edge_last_tier_drops_zero_confidence_points():
     _set_overlap_points(s0, prior, prior_conf)
     _set_overlap_points(s1, curr, curr_conf)
 
-    # s1's frame-0 initial value, read before any optimize
-    # - shared K and identity poses: H_w = diag(s, s, s, 1)
-    # - gtsam.SL4 rescales to det 1, so s is the ratio [0, 0] / [3, 3]
+    # s1's frame-0 initial H_w = diag(s, s, s, 1), read before optimize; SL4 det-1 rescale, so s = [0, 0] / [3, 3]
     pg = PoseGraph(min_conf_points=100)
     for sm in (s0, s1):
         pg.add_submap(sm, 1)
@@ -382,9 +354,7 @@ def test_sequential_edge_recovers_a_known_2x_scale():
     _set_overlap_points(s0, prior, conf)
     _set_overlap_points(s1, curr, conf)
 
-    # s1's frame-0 initial value, read before any optimize
-    # - shared K and identity poses: H_w = diag(s, s, s, 1)
-    # - gtsam.SL4 rescales to det 1, so raw [0, 0] is s^(1/4); the ratio is s
+    # s1's frame-0 initial H_w = diag(s, s, s, 1), read before optimize; SL4 det-1 rescale, so ratio is s
     pg = PoseGraph()
     for sm in (s0, s1):
         pg.add_submap(sm, 1)
@@ -480,7 +450,7 @@ def test_sequential_edge_without_dense_points_warns_and_uses_scale_1(caplog):
     assert sum("no usable overlap points" in r.getMessage() for r in caplog.records) == 1
 
 
-def _single_frame_submap(sid: int, points: np.ndarray, conf: np.ndarray, is_lc: bool) -> Submap:
+def _single_frame_submap(sid: int, points: np.ndarray, conf: np.ndarray) -> Submap:
     """One-frame submap at the identity pose with identity intrinsics."""
     return Submap(
         submap_id=sid,
@@ -489,7 +459,6 @@ def _single_frame_submap(sid: int, points: np.ndarray, conf: np.ndarray, is_lc: 
         intrinsics=np.eye(3, dtype=np.float32)[None],
         retrieval_vectors=np.zeros((1, 8), dtype=np.float32),
         image_paths=[f"s{sid}_f0.jpg"],
-        is_lc_submap=is_lc,
         points=points.reshape(1, 1, -1, 3).astype(np.float32),
         conf=conf.reshape(1, 1, -1).astype(np.float32),
         conf_threshold=25.0,
@@ -500,8 +469,8 @@ def _single_frame_submap(sid: int, points: np.ndarray, conf: np.ndarray, is_lc: 
 def testcalculate_pairwise_frame_scale_confidence_floor_picks_the_mask(min_conf_points, expected):
     """100: prior > 0 fallback (all); 30: prior-only mask (A+B); 10: joint mask (A)."""
     curr, prior, curr_conf, prior_conf = _conf_group_points()
-    lc = _single_frame_submap(9, curr, curr_conf, is_lc=True)
-    reg = _single_frame_submap(0, prior, prior_conf, is_lc=False)
+    lc = _single_frame_submap(9, curr, curr_conf)
+    reg = _single_frame_submap(0, prior, prior_conf)
     s = graph_mod.calculate_pairwise_frame_scale(lc, 0, reg, 0, min_conf_points)
     assert s == pytest.approx(expected, rel=1e-5)
 
@@ -521,8 +490,8 @@ def testcalculate_pairwise_frame_scale_gates_by_the_prior_submaps_conf_percentil
     conf = np.concatenate([np.full(n_l, 0.2), np.full(n_h, 0.9)]).astype(np.float32)
 
     # conf_threshold derived from conf on both single-frame submaps
-    lc = _single_frame_submap(9, curr, conf, is_lc=True)
-    reg = _single_frame_submap(0, prior, conf, is_lc=False)
+    lc = _single_frame_submap(9, curr, conf)
+    reg = _single_frame_submap(0, prior, conf)
     for sm in (lc, reg):
         sm.conf_threshold = None
         sm.__post_init__()

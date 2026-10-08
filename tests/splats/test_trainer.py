@@ -567,6 +567,7 @@ def test_downscaled_intrinsics_match_the_resized_image(monkeypatch, tmp_path):
 
     K, width, height = seen[0]
     assert (width, height) == (31, 22)
-    assert K[0, 2] == pytest.approx(intrinsics[0, 0, 2] * 31 / 63)
-    assert K[1, 2] == pytest.approx(intrinsics[0, 1, 2] * 22 / 45)
+    # gsplat K is pixel-corner: the pixel-center input gains 0.5 before the resize
+    assert K[0, 2] == pytest.approx((intrinsics[0, 0, 2] + 0.5) * 31 / 63)
+    assert K[1, 2] == pytest.approx((intrinsics[0, 1, 2] + 0.5) * 22 / 45)
     assert K[0, 0] == pytest.approx(intrinsics[0, 0, 0] * 31 / 63)

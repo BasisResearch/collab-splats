@@ -135,3 +135,26 @@ def test_same_seed_draws_same_samples_and_new_seed_differs():
     # Another seed draws other pixels
     same_draw = first["x_i"].shape == other["x_i"].shape and torch.equal(first["x_i"], other["x_i"])
     assert not same_draw
+
+
+def test_samples_read_pixel_centers_at_integer_coordinates():
+    """
+    Pixel-center K: a drawn pixel's coordinate is its index, so its brightness is the pixel value itself.
+    """
+    w2c, gray, depth, K = _scene()
+    samples = photometric_samples(w2c, gray, depth, K, n_samples=32)
+    assert samples is not None
+
+    # Project each source point back through K: lands on an integer pixel index
+    x_i, K_i = samples["x_i"], K[samples["i_idx"]]
+    uvw = torch.einsum("mij,mj->mi", K_i, x_i)
+    uv = uvw[:, :2] / uvw[:, 2:3]
+    torch.testing.assert_close(uv, uv.round(), atol=1e-9, rtol=0)
+
+    # Brightness is the raw pixel at that index, not a blend of neighbors
+    u, v = uv.round().long().unbind(1)
+    torch.testing.assert_close(samples["I_i"], gray[samples["i_idx"], v, u], atol=1e-9, rtol=0)
+
+    # Identity poses carry each pixel onto itself in frame j
+    torch.testing.assert_close(samples["uv_j"], uv, atol=1e-9, rtol=0)
+    torch.testing.assert_close(samples["I_j"], gray[samples["j_idx"], v, u], atol=1e-9, rtol=0)

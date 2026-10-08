@@ -101,6 +101,27 @@ def test_from_pointcloud_ids_default_to_result_image_paths(tmp_path, stub_matche
     assert loc.image_paths == [str(p) for p in result.image_paths]
 
 
+def test_retrieval_name_selects_registry_model_and_keys_db(tmp_path, monkeypatch, stub_matcher, fake_salad):
+    """retrieval="megaloc" builds the retrieval model by registry name and stamps it on the saved DB."""
+    pts3d, world_points, extrinsics, K = _make_synthetic_scene()
+    images = _frame_images(len(extrinsics))
+    ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
+    requested = []
+
+    # Registry stub records the requested name, returns the CPU stand-in
+    registry = SimpleNamespace(get=lambda name: requested.append(name) or fake_salad)
+    monkeypatch.setattr(localizer_mod, "BaseRetrievalExtractor", registry)
+
+    # Construction embeds the references, which builds the retrieval model
+    extractor = _projecting_matcher(stub_matcher, pts3d, extrinsics, K)
+    loc = CameraLocalizer(world_points, extrinsics, images=images, ids=ids, extractor=extractor, retrieval="megaloc")
+    loc.save_index(tmp_path / "pc.zarr", "stub")
+
+    group = zarr.open_group(str(tmp_path / "pc.zarr"), mode="r")["local_features/stub/reconstruction"]
+    assert requested == ["megaloc"]
+    assert group.attrs["retrieval"] == "megaloc"
+
+
 def test_localization_db_exists_false_without_commit_marker(tmp_path):
     """A reconstruction group lacking the image_paths marker is a crashed build, not a DB."""
     zarr.open_group(str(tmp_path / "pc.zarr"), mode="w").require_group("local_features/mock/reconstruction")

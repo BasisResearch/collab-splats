@@ -18,10 +18,31 @@ Bundle adjustment
 -----------------
 
 ``BundleAdjustment.refine`` takes arrays (images, confidence, world points,
-extrinsics, the result's ``model_intrinsics``) and returns ``(extrinsics, intrinsics)``, K
-on the model grid.
+extrinsics, the result's ``model_intrinsics``), the required model-grid ``depth`` and, for
+matcher track sources, the optional full-res ``frame_paths``; it returns
+``(extrinsics, intrinsics)``, K on the model grid.
 
 .. automodule:: collab_splats.geometry.bundle_adjustment
+   :members:
+   :show-inheritance:
+
+Tracks
+------
+
+``extract_tracks`` returns flat observations: ``frame`` (M,), ``track`` (M,),
+``xy`` (M, 2), ``score`` (M,) and ``pts3d`` (P, 3). Bundle adjustment consumes
+them.
+
+.. automodule:: collab_splats.geometry.tracks
+   :members:
+   :show-inheritance:
+
+Photometric
+-----------
+
+Brightness residual and pixel samples for the bundle-adjustment photometric term.
+
+.. automodule:: collab_splats.geometry.photometric
    :members:
    :show-inheritance:
 
@@ -113,7 +134,9 @@ Loop closure
 
 The ``collab_splats.geometry.loop_closure`` package exports ``LoopClosure``,
 ``LoopClosureConfig``, ``PoseGraph`` and ``Submap``; import anything else from
-its submodules.
+its submodules. ``LoopClosureConfig.retrieval`` names the retrieval backend in
+the registry: ``"dino-salad"`` (default) or ``"megaloc"``, which needs its own
+``lc_retrieval_threshold``.
 
 .. automodule:: collab_splats.geometry.loop_closure.graph
    :members:

@@ -16,6 +16,7 @@ import pytest
 import torch
 import zarr
 
+from collab_splats.localization.localizer import CameraLocalizer
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.reconstructor import Reconstructor, _build_localization_db
@@ -225,17 +226,18 @@ def test_localization_db_pairs_zarr_rows_with_their_own_frames(tmp_path):
     recon = _seed_subset_scene(tmp_path)
     seen = {}
 
-    def spy_from_pointcloud(result, *, zarr_path, images, **kwargs):
+    def spy_init(self, world_points, extrinsics, images, ids, **kwargs):
         seen["pixels"] = [int(image[0, 0, 0]) for image in images]
 
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
         patch(f"{RECONSTRUCTOR}.LocalMatcher"),
-        patch("collab_splats.localization.localizer.CameraLocalizer.from_pointcloud", side_effect=spy_from_pointcloud),
+        patch.object(CameraLocalizer, "__init__", spy_init),
+        patch.object(CameraLocalizer, "save_index"),
     ):
         _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir)
 
-    # from_pointcloud pairs image i with geometry row i: M frames, in zarr order
+    # The localizer pairs image i with geometry row i: M frames, in zarr order
     assert seen["pixels"] == list(KEPT_IDX)
 
 
@@ -248,13 +250,14 @@ def test_localization_db_reads_full_res_store_frames_not_model_images(tmp_path):
     model_res.image_paths = [Path(f"frame_{i:06d}") for i in KEPT_IDX]
     load_zarr = MagicMock(return_value=model_res)
 
-    def spy_from_pointcloud(result, *, zarr_path, images, **kwargs):
+    def spy_init(self, world_points, extrinsics, images, ids, **kwargs):
         seen["shapes"] = [image.shape for image in images]
 
     with (
         patch.object(PointcloudResult, "load_zarr", load_zarr),
         patch(f"{RECONSTRUCTOR}.LocalMatcher"),
-        patch("collab_splats.localization.localizer.CameraLocalizer.from_pointcloud", side_effect=spy_from_pointcloud),
+        patch.object(CameraLocalizer, "__init__", spy_init),
+        patch.object(CameraLocalizer, "save_index"),
     ):
         _build_localization_db(recon.pointcloud_zarr, "loma", recon.images_dir)
 

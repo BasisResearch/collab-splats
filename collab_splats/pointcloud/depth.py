@@ -130,7 +130,7 @@ def align_depth(
     PointcloudResult at COLMAP world scale from an sfm model and VDA depth maps.
 
     - the depth grid is the model grid: model_intrinsics, images and pixel_indices use it
-    - `intrinsics` is the COLMAP K on the keyframe grid
+    - `intrinsics` is the COLMAP K on the keyframe grid, shifted to pixel-center like `model_intrinsics`
     - depth is scaled per frame to the COLMAP world: median of COLMAP / VDA track depths
     - frames with fewer than min_obs track depths use the global median scale
     - confidence is None: sfm has no per-pixel confidence
@@ -292,7 +292,8 @@ def align_depth(
     images_arr = images_arr.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
 
     # Shift K half a pixel: COLMAP pixel centers sit at +0.5, unproject samples at integer pixels
-    centered_intrinsics = shift_intrinsics(intrinsics, (-0.5, -0.5)).astype(np.float32)
+    centered_intrinsics = shift_intrinsics(intrinsics, (-0.5, -0.5))
+    centered_intrinsics = centered_intrinsics.astype(np.float32)
 
     # Turn the rescaled depth maps into 3D points
     depth_t = torch.from_numpy(depths)
@@ -304,13 +305,17 @@ def align_depth(
     # Mark each frame as uncropped
     original_coords = np.tile(np.array([0, 0, orig_w, orig_h, orig_w, orig_h], dtype=np.float32), (n, 1))
 
-    # Package everything, keeping both the full-size and depth-size intrinsics
+    # Full-res K to pixel-center like the model K
+    full_intrinsics = shift_intrinsics(colmap_intrinsics, (-0.5, -0.5))
+    full_intrinsics = full_intrinsics.astype(np.float32)
+
+    # Package everything, both Ks in the result's pixel-center convention
     result = PointcloudResult(
         points=points,
         colors=colors,
         extrinsics=extrinsics,
-        intrinsics=colmap_intrinsics.astype(np.float32),
-        model_intrinsics=intrinsics,
+        intrinsics=full_intrinsics,
+        model_intrinsics=centered_intrinsics,
         image_paths=[Path(im.name) for im in images_sorted],
         original_coords=original_coords,
         model_width=w,

@@ -14,14 +14,14 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as ScipyR
 
-from collab_splats.geometry.loop_closure.graph import estimate_scale_pairwise
+from collab_splats.geometry.loop_closure.graph import calculate_pairwise_frame_scale
 from collab_splats.geometry.loop_closure.submap import Submap
 from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
 from tests.geometry.loop_closure._helpers import drive_pose_graph
 
-# ---------------------------------------------------------------------------
+########################################################################
 # Helpers
-# ---------------------------------------------------------------------------
+########################################################################
 
 
 def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
@@ -47,18 +47,56 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
     )
 
 
-# ---------------------------------------------------------------------------
+def _one_frame_submap(submap_id, pts, pose=None, conf=None, conf_threshold=None) -> Submap:
+    """1-frame submap with K = I; P points laid out as a (1, 1, P, 3) grid."""
+    n = len(pts)
+    pose = np.eye(4) if pose is None else pose
+    return Submap(
+        submap_id=submap_id,
+        poses=pose[None].astype(np.float32),
+        intrinsics=np.eye(3, dtype=np.float32)[None],
+        image_paths=[f"frame_{submap_id}.png"],
+        points=np.asarray(pts, dtype=np.float32).reshape(1, 1, n, 3),
+        conf=None if conf is None else np.asarray(conf, dtype=np.float32).reshape(1, 1, n),
+        conf_threshold=conf_threshold,
+    )
+
+
+def _frame_scale(curr_pts, prior_pts, curr_pose=None, curr_conf=None, prior_conf=None, conf_threshold=None) -> float:
+    """calculate_pairwise_frame_scale between two 1-frame submaps, min_conf_points 10."""
+    curr = _one_frame_submap(1, curr_pts, curr_pose, curr_conf, conf_threshold)
+    prior = _one_frame_submap(0, prior_pts, None, prior_conf, conf_threshold)
+    return calculate_pairwise_frame_scale(curr, 0, prior, 0, min_conf_points=10)
+
+
+########################################################################
+# Test 0: median norm ratio
+########################################################################
+
+
+def test_frame_scale_known_ratio():
+    rng = np.random.default_rng(1)
+    X = rng.random((50, 3))
+    assert abs(_frame_scale(X, X * 2.5) - 2.5) < 0.01
+
+
+def test_frame_scale_degenerate_source_falls_back_to_one():
+    # Every source point at the origin: no valid ratio, scale 1.0
+    assert _frame_scale(np.zeros((5, 3)), np.ones((5, 3))) == 1.0
+
+
+########################################################################
 # Test 1: Scale estimation with rotation between submaps
-# ---------------------------------------------------------------------------
+########################################################################
 
 
 def test_scale_estimation_survives_intersubmap_rotation():
-    """Scale estimation with full w2c poses vs intrinsics-only (K=I→T=I).
+    """Scale estimation moves each frame's points into its own camera first.
 
     The key failure mode: curr world origin is far from prev world origin.
-    Old code leaves curr_pts at their small curr-world magnitudes while
-    prev_pts are large → scale wildly off.  New code applies the full T
-    (rotation + translation) first, recovering the correct 1/true_scale ratio.
+    Skipping the camera move leaves curr_pts at their small curr-world magnitudes while
+    prev_pts are large → scale wildly off.  Applying the full w2c pose
+    (rotation + translation) first recovers the correct 1/true_scale ratio.
 
     Why 1/true_scale?  H_scale = diag([scale, scale, scale, 1]) is right-multiplied
     into H_w.  When curr world is at true_scale times prev world, the SL4 homography
@@ -72,21 +110,16 @@ def test_scale_estimation_survives_intersubmap_rotation():
     N = 200
     X_scene = rng.standard_normal((N, 3)) * 0.1
 
-    # Prev world: scene lives far from prev-world origin at [D, 0, 0].
-    # Overlap-frame camera sits at the prev-world origin (P_prev_ov = I).
+    # Prev world: scene at [D, 0, 0], overlap-frame camera at the origin (P_prev_ov = I)
     D = 10.0
     X_prev = X_scene + np.array([D, 0.0, 0.0])
     P_prev_ov = np.eye(4, dtype=np.float64)
 
-    # Curr world: 30° rotation + true_scale relative to prev world.
-    # Same physical points expressed in curr coords: true_scale * R_w @ X_scene
-    # (scene is near the curr-world origin, which is shifted to [D,0,0] in prev frame).
+    # Curr world: same points as true_scale * R_w @ X_scene, near the curr origin (prev [D, 0, 0])
     R_w = ScipyR.from_euler("z", 30, degrees=True).as_matrix()
     X_curr = true_scale * (R_w @ X_scene.T).T
 
-    # Overlap-frame camera (prev-world origin [0,0,0]) expressed in curr world:
-    #   C_cam_curr = true_scale * R_w @ (C_cam_prev - scene_offset)
-    #              = true_scale * R_w @ [-D, 0, 0]
+    # Overlap-frame camera in curr world: true_scale * R_w @ (0 - scene_offset) = true_scale * R_w @ [-D, 0, 0]
     C_cam_curr = true_scale * (R_w @ np.array([-D, 0.0, 0.0]))
     R_cam_curr = R_w.T  # compensate for world rotation
     t_cam_curr = -R_cam_curr @ C_cam_curr
@@ -94,27 +127,21 @@ def test_scale_estimation_survives_intersubmap_rotation():
     P_curr_ov[:3, :3] = R_cam_curr
     P_curr_ov[:3, 3] = t_cam_curr
 
-    # --- Old code: K=I → P_temp=I → no frame alignment ---
-    curr_in_prev_old = X_curr.copy()
-    scale_old = estimate_scale_pairwise(curr_in_prev_old, X_prev)
+    # Without the camera move (identity curr pose) vs with the full w2c pose
+    assert np.array_equal(P_prev_ov, np.eye(4))
+    scale_old = _frame_scale(X_curr, X_prev)
+    scale_new = _frame_scale(X_curr, X_prev, curr_pose=P_curr_ov)
 
-    # --- New code: full w2c poses ---
-    T = np.linalg.inv(P_prev_ov) @ P_curr_ov
-    curr_h = np.hstack([X_curr, np.ones((N, 1))])
-    curr_in_prev_new = (T @ curr_h.T).T[:, :3]
-    scale_new = estimate_scale_pairwise(curr_in_prev_new, X_prev)
-
-    # New code: scale = 1/true_scale (the H_scale correction for a 3× curr world)
+    # With the camera move: scale = 1/true_scale (the H_scale correction for a 3× curr world)
     expected = 1.0 / true_scale
     assert abs(scale_new - expected) / expected < 0.05, f"New scale {scale_new:.4f} far from expected {expected:.4f}"
-    # Old code: X_curr is near origin (magnitude ~0.3) but X_prev is far (magnitude ~10)
-    # → scale_old >> expected (regression guard)
-    assert scale_old > 5.0, f"Old code should give a large wrong scale, got {scale_old:.3f}"
+    # Without it: X_curr near origin (~0.3) vs X_prev far (~10), so scale_old >> expected
+    assert scale_old > 5.0, f"Unmoved points should give a large wrong scale, got {scale_old:.3f}"
 
 
-# ---------------------------------------------------------------------------
+########################################################################
 # Test 2: submap_overlap default is 1
-# ---------------------------------------------------------------------------
+########################################################################
 
 
 def test_loop_closure_config_default_overlap_is_1():
@@ -122,9 +149,9 @@ def test_loop_closure_config_default_overlap_is_1():
     assert cfg.submap_overlap == 1, f"Expected default submap_overlap=1 (VGGT-SLAM parity), got {cfg.submap_overlap}"
 
 
-# ---------------------------------------------------------------------------
+########################################################################
 # Test 3: PGO with overlap=1 builds correct edge topology
-# ---------------------------------------------------------------------------
+########################################################################
 
 
 def test_pgo_overlap_1_connects_submaps():
@@ -151,16 +178,15 @@ def test_pgo_overlap_1_connects_submaps():
     assert np.allclose(result[0], np.eye(4), atol=0.1), "First frame should be near identity"
 
 
-# ---------------------------------------------------------------------------
+########################################################################
 # Test 4: Confidence masking reduces scale noise
-# ---------------------------------------------------------------------------
+########################################################################
 
 
 def test_confidence_masking_reduces_scale_noise():
     """Confidence filtering excludes noisy low-conf points from scale estimation.
 
-    estimate_scale_pairwise(X, Y) = median(||Y[i]|| / ||X[i]||).
-    Production call: estimate_scale_pairwise(curr_in_prev, prev_pts).
+    The scale is median(||prior[i]|| / ||curr[i]||) over the masked points.
     When curr world is world_scale× larger than prev world, the function
     returns ~1/world_scale (the SL4 correction factor).
 
@@ -191,13 +217,15 @@ def test_confidence_masking_reduces_scale_noise():
     conf_prev = np.array([50.0] * N_good + [5.0] * N_noisy, dtype=np.float32)
     conf_curr = np.array([50.0] * N_good + [5.0] * N_noisy, dtype=np.float32)
 
-    # Without masking: 80 noisy points dominate the median, pulling it away from 0.5
-    scale_unmasked = estimate_scale_pairwise(X_curr_in_prev, X_prev)
+    # Without conf: 80 noisy points dominate the median, pulling it away from 0.5
+    scale_unmasked = _frame_scale(X_curr_in_prev, X_prev)
 
-    # With joint mask (conf > threshold on both sides): only the 20 good points
+    # With conf on both sides: the joint tier (both > threshold) keeps only the 20 good points
     joint_mask = (conf_curr > conf_threshold) & (conf_prev > conf_threshold)
     assert joint_mask.sum() == N_good, f"Should have exactly {N_good} good points in mask"
-    scale_masked = estimate_scale_pairwise(X_curr_in_prev[joint_mask], X_prev[joint_mask])
+    scale_masked = _frame_scale(
+        X_curr_in_prev, X_prev, curr_conf=conf_curr, prior_conf=conf_prev, conf_threshold=conf_threshold
+    )
 
     err_masked = abs(scale_masked - expected_scale) / expected_scale
     err_unmasked = abs(scale_unmasked - expected_scale) / expected_scale

@@ -27,7 +27,7 @@ from tqdm.auto import tqdm
 from collab_splats.geometry.projection import sample_world_points
 from collab_splats.geometry.transforms import rescale_intrinsics
 from collab_splats.localization.extractors import LocalFeatures, LocalMatcher
-from collab_splats.localization.retrieval import DinoSaladExtractor
+from collab_splats.localization.retrieval import BaseRetrievalExtractor
 from collab_splats.utils.io import LZ4
 from collab_splats.utils.torch_utils import to_numpy
 
@@ -366,6 +366,7 @@ class CameraLocalizer:
         original_coords: np.ndarray | None = None,
         top_k: int = 8,
         batch_size: int = 32,
+        retrieval: str = "dino-salad",
     ) -> None:
         """
         Extract and embed every reference frame, one chunk at a time.
@@ -382,11 +383,22 @@ class CameraLocalizer:
             original_coords: (N, 6) preprocess crop per frame; None means images are the uncropped grid source.
             top_k: retrieved reference frames per localize(refs=None).
             batch_size: frames per extract and embed call.
+            retrieval: retrieval registry name, e.g. "dino-salad" or "megaloc".
 
         Raises:
             ValueError: images is empty, or a frame's size disagrees with its original_coords row.
         """
-        self._setup(world_points, extrinsics, ids, extractor, config, original_coords, top_k, batch_size)
+        self._setup(
+            world_points,
+            extrinsics,
+            ids,
+            extractor=extractor,
+            config=config,
+            original_coords=original_coords,
+            top_k=top_k,
+            retrieval=retrieval,
+            batch_size=batch_size,
+        )
         descs = []
 
         # Extract and embed per chunk; tqdm only without an external progress sink
@@ -437,7 +449,8 @@ class CameraLocalizer:
         config: dict | None,
         original_coords: np.ndarray | None,
         top_k: int,
-        batch_size: int,
+        retrieval: str,
+        batch_size: int = 32,
     ) -> None:
         """
         State shared by __init__ and load_index, before any reference frame is known.
@@ -446,7 +459,8 @@ class CameraLocalizer:
         self._world_points = world_points
         self._extrinsics = extrinsics
         self._extractor = extractor if extractor is not None else LocalMatcher("loma")
-        self._retrieval: DinoSaladExtractor | None = None
+        self._retrieval_name = retrieval
+        self._retrieval: BaseRetrievalExtractor | None = None
         self._top_k = top_k
         self._batch_size = batch_size
         self._original_coords = original_coords
@@ -513,10 +527,11 @@ class CameraLocalizer:
 
     def _embed(self, images: list[np.ndarray]) -> np.ndarray:
         """
-        DINO-SALAD descriptors of uint8 RGB frames; the model is built on first use.
+        Retrieval descriptors of uint8 RGB frames; the registry model is built on first use.
         """
         if self._retrieval is None:
-            self._retrieval = DinoSaladExtractor()
+            retrieval_cls = BaseRetrievalExtractor.get(self._retrieval_name)
+            self._retrieval = retrieval_cls()
 
         # Upload uint8, convert on device
         device = next(self._retrieval.parameters()).device
@@ -569,6 +584,7 @@ class CameraLocalizer:
         group.create_array("global_desc", data=self._global_desc, chunks=self._global_desc.shape, compressors=LZ4)
         group.attrs["hw"] = list(self._image_hw)
         group.attrs["max_num_keypoints"] = self._extractor.max_num_keypoints
+        group.attrs["retrieval"] = self._retrieval_name
         group.attrs["image_paths"] = list(self._ids)
         logger.info("CameraLocalizer.save_index: %d frames to %s [%s]", len(self._ids), zarr_path, extractor_name)
 
@@ -589,6 +605,7 @@ class CameraLocalizer:
         Localizer from the zarr feature DB, attached to the current scene geometry.
 
         - localized frames load as ids and poses only; the retrieval model loads on first localize
+        - the retrieval model is the one stored with the DB, so queries embed like the references
 
         Args:
             zarr_path: pointcloud.zarr path.
@@ -624,9 +641,19 @@ class CameraLocalizer:
         store = zarr.open(str(zarr_path), mode="r")
         rec_group = store[f"local_features/{extractor_name}/reconstruction"]
 
-        # Same state as __init__, with the stored features in place of extraction
+        # Same state as __init__, with the stored features and retrieval model in place of extraction
+        retrieval = rec_group.attrs["retrieval"]
         obj = cls.__new__(cls)
-        obj._setup(world_points, extrinsics, rec_ids, extractor, config, original_coords, top_k, 32)
+        obj._setup(
+            world_points,
+            extrinsics,
+            rec_ids,
+            extractor=extractor,
+            config=config,
+            original_coords=original_coords,
+            top_k=top_k,
+            retrieval=retrieval,
+        )
         global_desc = rec_group["global_desc"][:]
         obj._set_frames(rec_features, global_desc, hw)
 
@@ -797,11 +824,12 @@ class CameraLocalizer:
         progress_callback: Callable[[int, int], None] | None = None,
         top_k: int = 8,
         config: dict | None = None,
+        retrieval: str = "dino-salad",
     ) -> CameraLocalizer:
         """
         Localizer for a reconstruction: loads the zarr feature DB, or builds and saves it.
 
-        - cache hit: ids, the matcher's max_num_keypoints and the full-res (H, W) all match the DB
+        - cache hit: ids, max_num_keypoints, retrieval name and full-res (H, W) all match the DB
         - a hit draws nothing from images; an incomplete DB rebuilds
         - a rebuild replaces the DB and drops its localized frames
 
@@ -814,6 +842,7 @@ class CameraLocalizer:
             progress_callback: called (frame_index, total) during a rebuild.
             top_k: retrieved reference frames per localize(refs=None).
             config: pycolmap options, as __init__.
+            retrieval: retrieval registry name; keys the DB's global descriptors.
 
         Returns:
             The localizer.
@@ -836,7 +865,11 @@ class CameraLocalizer:
         name = extractor.model_name
 
         # Cache key: what the DB was built from
-        expected = {"image_paths": [str(i) for i in ids], "max_num_keypoints": extractor.max_num_keypoints}
+        expected = {
+            "image_paths": [str(i) for i in ids],
+            "max_num_keypoints": extractor.max_num_keypoints,
+            "retrieval": retrieval,
+        }
 
         if coords is not None:
             expected["hw"] = [int(coords[0, 5]), int(coords[0, 4])]
@@ -882,6 +915,7 @@ class CameraLocalizer:
             progress_callback=progress_callback,
             original_coords=coords,
             top_k=top_k,
+            retrieval=retrieval,
         )
         localizer.save_index(zarr_path, name)
         return localizer

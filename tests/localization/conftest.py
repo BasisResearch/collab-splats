@@ -2,6 +2,8 @@
 Localization test fixtures: a CPU DINO-SALAD stand-in and a duck-typed matcher.
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
@@ -81,7 +83,8 @@ def fake_salad(monkeypatch):
     """
     Every localizer in these tests embeds with FakeSalad, never the real checkpoint.
     """
-    monkeypatch.setattr("collab_splats.localization.localizer.DinoSaladExtractor", FakeSalad)
+    registry = SimpleNamespace(get=lambda name: FakeSalad)
+    monkeypatch.setattr("collab_splats.localization.localizer.BaseRetrievalExtractor", registry)
     return FakeSalad
 
 

@@ -71,14 +71,15 @@ collab_splats/
     utils.py               # clean_pointcloud (result -> result), outlier_mask, confidence_mask, subsample_points,
                            #   cross_frame_attention_ratio
   geometry/                # pose/geometry backend: loop closure + bundle adjustment
-    transforms.py          # extrinsics_to_homogeneous, invert_poses, OPENGL_TO_OPENCV, project_to_so3,
+    transforms.py          # extrinsics_to_homogeneous, invert_poses, project_to_so3,
                            #   decompose_camera, intrinsics_4x4, rescale_intrinsics, shift_intrinsics
     projection.py          # unproject/project, depth_residual, depth_agreement, multiview_depth_confidence
-    bundle_adjustment.py   # Levenberg-Marquardt BA: array-in refine over VGGSfM tracks
+    tracks.py              # extract_tracks: VGGSfM or matcher star tracks as flat observations
+    bundle_adjustment.py   # Levenberg-Marquardt BA: array-in refine over flat tracks
     metrics.py             # compute_reconstruction_quality -> reconstruction_quality_report.json
     loop_closure/          # submap pose graph (SL4/SE3), DINO-SALAD retrieval gate, LoopClosure wrapper
   localization/            # camera localization: query image → pose in known reconstruction
-    retrieval.py           # Stage 1: BaseRetrievalExtractor, DinoSalad/PECLIP (also used by loop closure)
+    retrieval.py           # Stage 1: BaseRetrievalExtractor, DinoSalad/MegaLoc (also used by loop closure + tracks)
     extractors.py          # Stage 2: LocalMatcher over the vismatch model zoo (FEATURE_MATCH_MODELS fast paths)
     localizer.py           # Stage 3: CameraLocalizer, zarr feature cache
     viz.py                 # plot_correspondences

@@ -1,11 +1,16 @@
 """
 NumPy/SciPy camera geometry shared across the pipeline.
 
-- OpenCV camera axes: X right, Y down, Z forward (COLMAP, VGGT-X, BA)
-- OpenGL camera axes: X right, Y up, Z backward (nerfstudio)
+- pose algebra: extrinsics_to_homogeneous, invert_poses, transform_points, project_to_so3
+- intrinsics: intrinsics_4x4, rescale_intrinsics, shift_intrinsics, decompose_camera
+- fits: estimate_intrinsics_from_points, fit_dominant_plane
+- point-set alignment: umeyama_se3, umeyama_sim3
+- OpenCV camera axes throughout: X right, Y down, Z forward (COLMAP, VGGT-X, BA)
 """
 
 from __future__ import annotations
+
+from contextlib import nullcontext
 
 import numpy as np
 import open3d as o3d
@@ -13,15 +18,6 @@ from scipy.linalg import rq
 from torch import Tensor
 
 from collab_splats.utils.torch_utils import full_fp32_matmul
-
-########################################################################
-# Constants
-########################################################################
-
-# Camera axis convention flip (OpenCV <-> OpenGL)
-# - diag(1, -1, -1, 1)
-# - self-inverse: applying it twice returns the original
-OPENGL_TO_OPENCV: np.ndarray = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]], dtype=np.float64)
 
 ########################################################################
 # Geometry helpers
@@ -38,13 +34,10 @@ def extrinsics_to_homogeneous(extrinsics: np.ndarray) -> np.ndarray:
     Returns:
         (N, 4, 4) or (4, 4) homogeneous poses, same dtype as the input.
     """
-    single = extrinsics.ndim == 2  # (3,4) → (4,4)
-    if single:
-        extrinsics = extrinsics[np.newaxis]  # (1,3,4)
-    n = extrinsics.shape[0]
-    bottom = np.tile(np.array([[0, 0, 0, 1]], dtype=extrinsics.dtype), (n, 1, 1))  # (N,1,4)
-    out = np.concatenate([extrinsics, bottom], axis=1)  # (N,4,4)
-    return out[0] if single else out
+    # Broadcast [0, 0, 0, 1] row stacked under the poses
+    bottom = np.zeros((*extrinsics.shape[:-2], 1, 4), dtype=extrinsics.dtype)
+    bottom[..., 3] = 1
+    return np.concatenate([extrinsics, bottom], axis=-2)
 
 
 def invert_poses(poses: np.ndarray) -> np.ndarray:
@@ -77,12 +70,9 @@ def transform_points(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.
     """
     Points moved by a rigid transform: R @ p + t.
 
-    - reads only the 3x4 block, so a (4, 4) bottom row must be [0, 0, 0, 1]
-    - numpy or torch, not mixed; dtype follows the library's promotion of the inputs
-    - torch: differentiable in both arguments
-    - a (B, 4, 4) batch maps (P, 3) or (B, P, 3) points to (B, P, 3)
-    - computes forward in full fp32 whatever the matmul precision: TF32 would round R @ p
-    - TF32 is forced off only for torch inputs; the toggle waits while another thread holds hold_matmul_precision
+    - reads only the 3x4 block; a (B, 4, 4) batch maps (P, 3) or (B, P, 3) points to (B, P, 3)
+    - numpy or torch, not mixed; torch is differentiable and runs in full fp32, as TF32 would round R @ p
+    - the TF32 toggle waits while another thread holds hold_matmul_precision
 
     Args:
         points: (..., 3) points, or (P, 3) / (B, P, 3) with a pose batch.
@@ -91,25 +81,16 @@ def transform_points(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.
     Returns:
         (..., 3) transformed points; (B, P, 3) for a pose batch.
     """
-    # numpy ignores torch's matmul precision, so skip the toggle
-    if isinstance(points, np.ndarray):
-        return _rigid_transform(points, T)
+    # Full fp32 for torch: TF32, which a mapanything import enables, rounds the matmul; numpy ignores it
+    precision = nullcontext() if isinstance(points, np.ndarray) else full_fp32_matmul()
 
-    # Full fp32 precision: TF32, which a mapanything import enables, rounds the matmul
-    with full_fp32_matmul():
-        return _rigid_transform(points, T)
+    with precision:
+        # One pose: apply its 3x4 block directly
+        if T.ndim == 2:
+            return points @ T[:3, :3].T + T[:3, 3]
 
-
-def _rigid_transform(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.ndarray | Tensor:
-    """
-    R @ p + t for one pose or a pose batch, at the caller's matmul precision.
-    """
-    # One pose: the original expression, bit-identical for existing callers
-    if T.ndim == 2:
-        return points @ T[:3, :3].T + T[:3, 3]
-
-    # Pose batch: one matmul per pose, translation broadcast over the points
-    return points @ T[..., :3, :3].swapaxes(-1, -2) + T[..., None, :3, 3]
+        # Pose batch: one matmul per pose, translation broadcast over the points
+        return points @ T[..., :3, :3].swapaxes(-1, -2) + T[..., None, :3, 3]
 
 
 def extract_intrinsics(K: np.ndarray) -> tuple[float, float, float, float]:
@@ -137,6 +118,7 @@ def intrinsics_4x4(K: np.ndarray) -> np.ndarray:
     Returns:
         (..., 4, 4) with K top-left and 1 at [3, 3].
     """
+    # Identities tiled over K's batch dims, K written top-left
     out = np.tile(np.eye(4, dtype=K.dtype), K.shape[:-2] + (1, 1))
     out[..., :3, :3] = K
     return out
@@ -147,7 +129,8 @@ def rescale_intrinsics(K: np.ndarray, src_hw: np.ndarray, dst_hw: np.ndarray) ->
     Map K from one pixel grid to another of a different size, as an image resize does.
 
     - row 0 (fx, skew, cx) scales by dst_w / src_w, row 1 (fy, cy) by dst_h / src_h
-    - pixel-corner convention (cx = W / 2 is the centre), as COLMAP, VGGT and MapAnything use
+    - pixel-corner convention (cx = W / 2 is the center), as COLMAP and gsplat use
+    - pixel-center K (as PointcloudResult stores): shift by +0.5, rescale, shift by -0.5
     - a crop is a separate shift_intrinsics call; K follows the image ops in the same order
     - output takes K's shape; the hw leading dims broadcast into K's: (2,) for any K, (N, 2) with (N, 3, 3)
 
@@ -163,16 +146,14 @@ def rescale_intrinsics(K: np.ndarray, src_hw: np.ndarray, dst_hw: np.ndarray) ->
         ValueError: an hw's leading dims don't broadcast into K's, or a height or width is
             non-positive or NaN.
     """
-    # Output always takes K's shape; the hw leading dims must broadcast into it
+    # Output always takes K's shape; a bad hw shape fails the in-place multiply below
     src = np.asarray(src_hw, dtype=np.float64)
     dst = np.asarray(dst_hw, dtype=np.float64)
     out = np.array(K, dtype=np.float64)
-    for hw in (src, dst):
-        if np.broadcast_shapes(hw.shape[:-1], out.shape[:-2]) != out.shape[:-2]:
-            raise ValueError(f"hw leading dims {hw.shape[:-1]} do not broadcast into K leading dims {out.shape[:-2]}")
 
     # Positive-form check so a NaN size is rejected too: any comparison against NaN is False
     bad = ~(src > 0) | ~(dst > 0)
+
     if np.any(bad):
         raise ValueError(f"grid sizes must be positive, got src_hw {src.tolist()} dst_hw {dst.tolist()}")
 
@@ -201,14 +182,9 @@ def shift_intrinsics(K: np.ndarray, offset_xy: np.ndarray) -> np.ndarray:
     Raises:
         ValueError: offset_xy's leading dims don't broadcast into K's.
     """
-    # Output always takes K's shape; the offset's leading dims must broadcast into it
+    # Output always takes K's shape; a bad offset shape fails the in-place add below
     offset = np.asarray(offset_xy, dtype=np.float64)
     out = np.array(K, dtype=np.float64)
-    if np.broadcast_shapes(offset.shape[:-1], out.shape[:-2]) != out.shape[:-2]:
-        raise ValueError(
-            f"offset leading dims {offset.shape[:-1]} do not broadcast into K leading dims {out.shape[:-2]}"
-        )
-
     out[..., 0, 2] += offset[..., 0]
     out[..., 1, 2] += offset[..., 1]
     return out
@@ -227,6 +203,7 @@ def project_to_so3(R: np.ndarray) -> np.ndarray:
     Returns:
         (..., 3, 3) rotations, det +1.
     """
+    # SVD projection, flipping U's last column wherever det(U @ Vt) is -1
     U, _, Vt = np.linalg.svd(R)
     U[..., :, -1] *= np.where(np.linalg.det(U @ Vt) < 0, -1.0, 1.0)[..., None]
     return U @ Vt
@@ -236,12 +213,9 @@ def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray,
     """
     RQ-decompose a 3x4 or 4x4 projection matrix into (K, R, t, scale).
 
-    - port of MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/slam_utils.py:45-83; no orthogonal snap, as upstream
-    - upstream default (:76-78): R = inv(R_rq) camera-to-world, t = -R @ inv(K) @ P[:, 3] = center C
-    - upstream ``no_inverse=True`` (:79-80): R = R_rq world-to-camera, t = inv(K) @ P[:, 3]
-    - ours mixes them: default branch's R, ``no_inverse`` branch's t; C = -R @ t
-    - callers store [R.T | t], a world-to-cam pose; see PoseGraph.extract_extrinsics
-    - intrinsics ratio inv(K_a) @ K_b is I for a shared camera; RQ strips K from K @ inv(H)
+    - port of MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/slam_utils.py:45-83; no orthogonal snap
+    - R is camera-to-world (upstream default), t is world-to-camera (upstream no_inverse); C = -R @ t
+    - callers store [R.T | t] as a world-to-cam pose; see Submap.get_all_poses_world
 
     Args:
         P: 3x4 projection matrix, or 4x4 (divided by P[-1, -1], last row dropped).
@@ -254,9 +228,11 @@ def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray,
     """
     # Normalize a 4x4 by P[-1, -1] and drop its last row
     P = np.array(P, dtype=np.float64)
+
     if P.shape[0] != 3:
         P = P / P[-1, -1]
         P = P[:3, :]
+
     if P.shape != (3, 4):
         raise ValueError(f"expected (3,4) after strip, got {P.shape}")
 
@@ -264,16 +240,12 @@ def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray,
     M = P[:, :3]
     K, R = rq(M)
 
-    # ensure positive diagonal on K (per-column sign fix)
-    if K[0, 0] < 0:
-        K[:, 0] *= -1
-        R[0, :] *= -1
-    if K[1, 1] < 0:
-        K[:, 1] *= -1
-        R[1, :] *= -1
-    if K[2, 2] < 0:
-        K[:, 2] *= -1
-        R[2, :] *= -1
+    # Positive diagonal on K: flip each negative column of K with the matching row of R
+    for axis in range(3):
+        if K[axis, axis] < 0:
+            K[:, axis] *= -1
+            R[axis, :] *= -1
+
     scale = float(K[2, 2])
 
     # Default branch's camera-to-world R, no_inverse branch's world-to-cam t; see the docstring
@@ -284,7 +256,7 @@ def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray,
 
 
 ########################################################################
-# Intrinsics estimation
+# Intrinsics and floor-plane fits
 ########################################################################
 
 
@@ -297,11 +269,11 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     - values, weights: (M,); weights non-negative
     - None for empty input or zero total weight
     """
+    # Empty input has no median
     if len(values) == 0:
         return None
 
-    # Cap the argsort over the pooled H*W*N population
-    # - fixed seed keeps the subsample reproducible
+    # Cap the argsort over the pooled H*W*N population; fixed seed keeps the subsample reproducible
     if len(values) > max_n:
         idx = np.random.default_rng(42).choice(len(values), max_n, replace=False)
         values, weights = values[idx], weights[idx]
@@ -314,6 +286,7 @@ def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int
     # Zero total weight has no midpoint; report no estimate
     if cumw[-1] <= 0:
         return None
+
     return float(values[np.searchsorted(cumw, cumw[-1] / 2.0)])
 
 
@@ -323,14 +296,9 @@ def estimate_intrinsics_from_points(
     """
     Fit one shared pinhole K to a camera-frame pointmap by confidence-weighted median.
 
-    - for backends with no intrinsics head; a best-fit pinhole, not a recovered ground truth
-    - per pixel fx = u_c * Z / X (fy likewise), pooled over all frames
-    - one K for the batch (one camera, one resolution); fx and fy distinct, principal point centered
-    - prior art: github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:180-192 (_focal_from_frame),
-      :206-254 (estimate_focal_lengths); not done: its _snap_square_pixels (:195)
-    - vendored fork differs: github.com/Junyi42/LoGeR @ 7685b7a, eval/relpose/launch.py:528-534
-      (dust3r weiszfeld, one focal)
-    - fit is approximate: ray field, github.com/Junyi42/LoGeR @ 7685b7a, loger/models/pi3.py:772-775
+    - for backends with no intrinsics head; per pixel fx = u_c * Z / X (fy likewise), pooled over all frames
+    - one K per batch, fx and fy distinct, principal point centered
+    - ported from PolyCam/LoGeR @ 5d7c1a7, run_loger.py:180-254, without its _snap_square_pixels (:195)
 
     Args:
         local_points: (N, H, W, 3) camera-frame points, channel 2 being depth.
@@ -344,6 +312,8 @@ def estimate_intrinsics_from_points(
         RuntimeError: too few pixels survive to fit either focal; there is no fallback.
     """
     n, h, w, _ = local_points.shape
+
+    # Drop a trailing singleton confidence channel
     if conf.ndim == 4:
         conf = conf.squeeze(-1)
 
@@ -356,15 +326,16 @@ def estimate_intrinsics_from_points(
     # Invert the pinhole model per pixel: u_c = fx * X / Z  =>  fx = u_c * Z / X
     x, y, z = local_points[..., 0], local_points[..., 1], local_points[..., 2]
     valid = (z > 1e-3) & (np.abs(x) > 1e-6) & (np.abs(y) > 1e-6) & (conf > conf_threshold)
+
     with np.errstate(divide="ignore", invalid="ignore"):
         fx_per_pixel = uu * z / x
         fy_per_pixel = vv * z / y
 
+    # Valid per-pixel focals and their confidence weights
     fx_vals, fy_vals = fx_per_pixel[valid], fy_per_pixel[valid]
     weights = conf[valid]
 
-    # Bounds keep focals in a 157-6 degree FOV band; X or Y near 0 makes u_c * Z / X explode
-    # - both sides load-bearing: upper drops +inf, lower drops -inf, NaN fails both
+    # Focal bounds (157-6 degree FOV): upper drops +inf, lower drops -inf, NaN fails both
     ok_fx = (fx_vals > w * 0.1) & (fx_vals < w * 10)
     ok_fy = (fy_vals > h * 0.1) & (fy_vals < h * 10)
     fx = _compute_weighted_median(fx_vals[ok_fx], weights[ok_fx])
@@ -381,65 +352,7 @@ def estimate_intrinsics_from_points(
         )
 
     # Keep fx and fy distinct: per-axis resizing yields non-square pixels
-    return np.array(
-        [[fx, 0.0, (w - 1) / 2.0],
-         [0.0, fy, (h - 1) / 2.0],
-         [0.0, 0.0, 1.0]],
-        dtype=np.float32,
-    )
-
-
-def rotation_angle_deg(R: np.ndarray) -> float:
-    """
-    Geodesic rotation angle from the trace formula.
-
-    Args:
-        R: (3, 3) rotation matrix.
-
-    Returns:
-        Rotation angle in degrees, in [0, 180].
-    """
-    return float(np.degrees(np.arccos(np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0))))
-
-
-def rotation_align_vectors(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
-    """
-    Rotation R with R @ src ≈ dst, by Rodrigues' formula.
-
-    - inputs are normalized first
-    - antiparallel inputs give a 180 degree turn about an arbitrary perpendicular axis
-
-    Args:
-        src: (3,) vector to rotate from.
-        dst: (3,) vector to rotate to.
-
-    Returns:
-        (3, 3) rotation matrix; identity when src and dst are parallel.
-    """
-    # Normalize inputs to ensure unit vectors
-    src = src / np.linalg.norm(src)
-    dst = dst / np.linalg.norm(dst)
-
-    # Compute rotation axis via cross product
-    axis = np.cross(src, dst)
-    axis_norm = np.linalg.norm(axis)
-
-    # Parallel (identity) or antiparallel (180° rotation around arbitrary perp axis)
-    if axis_norm < 1e-6:
-        if np.dot(src, dst) > 0:
-            return np.eye(3)
-        perp = np.array([1.0, 0.0, 0.0]) if abs(src[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
-        axis = np.cross(src, perp)
-        axis /= np.linalg.norm(axis)
-
-        # Rodrigues for 180°: R = 2 * axis @ axis.T - I
-        return -np.eye(3) + 2 * np.outer(axis, axis)
-
-    # General case: Rodrigues' rotation formula
-    axis /= axis_norm
-    angle = np.arccos(np.clip(np.dot(src, dst), -1.0, 1.0))
-    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
-    return np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * (K @ K)
+    return np.array([[fx, 0.0, (w - 1) / 2.0], [0.0, fy, (h - 1) / 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
 
 
 def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -447,7 +360,6 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     RANSAC floor plane, as the rigid transform that puts it at Z-up, z=0.
 
     - open3d segment_plane over the full cloud; largest inlier set is taken as the floor
-    - no heuristic percentile
 
     Args:
         points: (N, 3) point cloud.
@@ -456,23 +368,35 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         R: (3, 3) rotation taking the floor normal onto [0, 0, 1].
         t: (3,) translation placing the floor at z=0 after that rotation.
     """
+    # RANSAC plane normal · x + d_norm = 0, with a unit normal
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
     plane_model, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
     a, b, c, d = plane_model
     n_mag = np.linalg.norm([a, b, c])
     normal = np.array([a, b, c]) / n_mag
-    d_norm = d / n_mag  # plane: normal · x + d_norm = 0; floor at z = -d_norm after rotation
+    d_norm = d / n_mag
 
     # Ensure normal points upward (positive Z component after alignment)
     if normal[2] < 0:
         normal = -normal
         d_norm = -d_norm
 
-    R = rotation_align_vectors(normal, np.array([0.0, 0.0, 1.0]))
-    # After R, floor is at z = -d_norm. Translate by d_norm to bring to z = 0.
-    t = np.array([0.0, 0.0, d_norm])
-    return R.astype(np.float64), t.astype(np.float64)
+    # Rodrigues rotation of the normal onto +z; the flip above rules out the antiparallel case
+    axis = np.cross(normal, np.array([0.0, 0.0, 1.0]))
+    axis_norm = np.linalg.norm(axis)
+
+    if axis_norm < 1e-6:
+        R = np.eye(3)
+    else:
+        axis /= axis_norm
+        angle = np.arccos(np.clip(normal[2], -1.0, 1.0))
+        cross = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        R = np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * (cross @ cross)
+
+    # After R the floor sits at z = -d_norm; translate by d_norm to bring it to z = 0
+    t = np.array([0.0, 0.0, d_norm], dtype=np.float64)
+    return R, t
 
 
 ########################################################################
@@ -480,23 +404,52 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 ########################################################################
 
 
-def _umeyama_weights(source: np.ndarray, weights: np.ndarray | None) -> np.ndarray:
+def _umeyama(
+    source: np.ndarray, target: np.ndarray, weights: np.ndarray | None, *, with_scale: bool
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Validated, normalized per-point weights shared by both Umeyama solvers.
+    Weighted Umeyama core shared by both solvers: scale, float64 rotation and the two weighted means.
 
-    - source (M, 3); weights (M,) non-negative, None for uniform
-    - returns (M,) float64 summing to 1
+    - source, target (M, 3); weights (M,) non-negative, None for uniform
+    - scale is 1.0 without with_scale; multiplying by 1.0 leaves the cross-covariance bit-identical
     - raises ValueError on fewer than 3 correspondences or zero total weight
     """
     # Reject too few points or zero weight, then normalize
     M = source.shape[0]
+
     if M < 3:
         raise ValueError(f"Umeyama alignment needs at least 3 correspondences, got {M}")
+
     w = np.ones(M, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
     w_sum = w.sum()
+
     if w_sum < 1e-9:
         raise ValueError("Umeyama alignment got zero total weight")
-    return w / w_sum
+
+    w = w / w_sum
+
+    # Center both sets on their weighted means
+    src = source.astype(np.float64)
+    tgt = target.astype(np.float64)
+    mu_src = (w[:, None] * src).sum(axis=0)
+    mu_tgt = (w[:, None] * tgt).sum(axis=0)
+    src_c = src - mu_src
+    tgt_c = tgt - mu_tgt
+
+    # Scale as the ratio of weighted RMS spreads; coincident source points keep scale 1
+    s = 1.0
+
+    if with_scale:
+        scale_src = float(np.sqrt((w * (src_c**2).sum(axis=1)).sum()))
+        scale_tgt = float(np.sqrt((w * (tgt_c**2).sum(axis=1)).sum()))
+        s = scale_tgt / scale_src if scale_src > 1e-9 else 1.0
+
+    # Rotation from the SVD of the weighted cross-covariance; D forces det(R) = +1
+    H = (src_c * s * w[:, None]).T @ tgt_c
+    U, _, Vt = np.linalg.svd(H)
+    D = np.diag([1.0, 1.0, np.linalg.det(Vt.T @ U.T)])
+    R = Vt.T @ D @ U.T
+    return s, R, mu_src, mu_tgt
 
 
 def umeyama_se3(
@@ -510,7 +463,7 @@ def umeyama_se3(
     Args:
         source: (M, 3) points in source frame.
         target: (M, 3) corresponding points in target frame.
-        weights: optional (M,) non-negative weights; uniform if None.
+        weights: (M,) non-negative weights; uniform if None.
 
     Returns:
         (4, 4) float32 homogeneous T such that target ≈ T @ source.
@@ -518,29 +471,14 @@ def umeyama_se3(
     Raises:
         ValueError: fewer than 3 correspondences, or zero total weight.
     """
-    # Reject degenerate input; normalize the weights
-    w = _umeyama_weights(source, weights)
-
-    # Center both sets on their weighted means
-    src = source.astype(np.float64)
-    tgt = target.astype(np.float64)
-    mu_src = (w[:, None] * src).sum(axis=0)
-    mu_tgt = (w[:, None] * tgt).sum(axis=0)
-    src_c = src - mu_src
-    tgt_c = tgt - mu_tgt
-
-    # Rotation from the SVD of the weighted cross-covariance; D forces det(R) = +1
-    H = (src_c * w[:, None]).T @ tgt_c
-    U, _, Vt = np.linalg.svd(H)
-    d = np.linalg.det(Vt.T @ U.T)
-    D = np.diag([1.0, 1.0, d])
-    R = Vt.T @ D @ U.T
+    # Rotation from the shared core, translation from the weighted means
+    _, R, mu_src, mu_tgt = _umeyama(source, target, weights, with_scale=False)
     t = mu_tgt - R @ mu_src
 
     # Pack into a float32 homogeneous transform
     T = np.eye(4, dtype=np.float32)
-    T[:3, :3] = R.astype(np.float32)
-    T[:3, 3] = t.astype(np.float32)
+    T[:3, :3] = R
+    T[:3, 3] = t
     return T
 
 
@@ -555,9 +493,9 @@ def umeyama_sim3(
     - coincident source points give scale 1 by design: a stationary camera has one center
 
     Args:
-        source: (M, 3) float32/64 points in source frame.
-        target: (M, 3) float32/64 corresponding points in target frame.
-        weights: optional (M,) non-negative weights; uniform if None.
+        source: (M, 3) points in source frame.
+        target: (M, 3) corresponding points in target frame.
+        weights: (M,) non-negative weights; uniform if None.
 
     Returns:
         (s, R, t): float scale, (3, 3) float32 rotation, (3,) float32 translation
@@ -566,30 +504,8 @@ def umeyama_sim3(
     Raises:
         ValueError: fewer than 3 correspondences, or zero total weight.
     """
-    # Reject degenerate input; normalize the weights
-    w = _umeyama_weights(source, weights)
-
-    # Center both sets on their weighted means
-    src = source.astype(np.float64)
-    tgt = target.astype(np.float64)
-
-    mu_src = (w[:, None] * src).sum(axis=0)
-    mu_tgt = (w[:, None] * tgt).sum(axis=0)
-
-    src_c = src - mu_src
-    tgt_c = tgt - mu_tgt
-
-    # Scale as the ratio of weighted RMS spreads
-    scale_src = float(np.sqrt((w * (src_c**2).sum(axis=1)).sum()))
-    scale_tgt = float(np.sqrt((w * (tgt_c**2).sum(axis=1)).sum()))
-    s = scale_tgt / scale_src if scale_src > 1e-9 else 1.0
-
-    # Rotation from the SVD of the weighted cross-covariance; D forces det(R) = +1
-    H = (src_c * s * w[:, None]).T @ tgt_c  # (3, 3)
-    U, _, Vt = np.linalg.svd(H)
-    d = np.linalg.det(Vt.T @ U.T)
-    D = np.diag([1.0, 1.0, d])
-    R = (Vt.T @ D @ U.T).astype(np.float32)
-
+    # Translation from the float32 rotation, as callers apply it
+    s, R, mu_src, mu_tgt = _umeyama(source, target, weights, with_scale=True)
+    R = R.astype(np.float32)
     t = (mu_tgt - s * R @ mu_src).astype(np.float32)
     return s, R, t

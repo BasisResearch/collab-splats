@@ -1,5 +1,3 @@
-from unittest.mock import MagicMock, patch
-
 import numpy as np
 import pytest
 import torch
@@ -9,7 +7,7 @@ from PIL import Image
 from collab_splats.localization import (
     BaseRetrievalExtractor,
     DinoSaladExtractor,
-    PECLIPExtractor,
+    MegaLocExtractor,
 )
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD
 
@@ -29,60 +27,24 @@ def test_base_extractor_forward_abstract():
         BaseRetrievalExtractor()
 
 
-########################################################
-########## PECLIPExtractor ############################
-########################################################
+def test_megaloc_is_registered():
+    assert BaseRetrievalExtractor.get("megaloc") is MegaLocExtractor
 
 
-def test_registry_get_pe_clip():
-    cls = BaseRetrievalExtractor.get("pe-clip")
-    assert cls is PECLIPExtractor
+def test_pe_clip_is_gone():
+    with pytest.raises(ValueError, match="Unknown"):
+        BaseRetrievalExtractor.get("pe-clip")
 
 
-def test_pe_clip_forward_shape_and_norm():
-    """forward() returns (1, 1024) unit-norm tensor without loading real weights."""
-    fake_img_emb = torch.randn(1, 1024)
-    fake_img_emb = fake_img_emb / fake_img_emb.norm(dim=-1, keepdim=True)
+@pytest.mark.slow
+def test_megaloc_descriptors_are_unit_norm_on_cpu():
+    extractor = MegaLocExtractor(device="cpu")
+    images = torch.rand(2, 3, 294, 518)
 
-    mock_model = MagicMock()
-    mock_model.encode_image.return_value = fake_img_emb
-    mock_model.context_length = 32
+    desc = extractor(images)
 
-    mock_preprocess = MagicMock(return_value=torch.zeros(3, 336, 336))
-
-    with patch("collab_splats.localization.retrieval.open_clip") as mock_oc:
-        mock_oc.create_model_and_transforms.return_value = (mock_model, None, mock_preprocess)
-        mock_oc.get_tokenizer.return_value = MagicMock(return_value=torch.zeros(1, 32, dtype=torch.long))
-        extractor = PECLIPExtractor(device="cpu")
-
-    img = Image.new("RGB", (336, 336))
-    result = extractor([img])
-
-    assert result.shape == (1, 1024)
-    norms = result.norm(dim=-1)
-    torch.testing.assert_close(norms, torch.ones(1), atol=1e-5, rtol=0)
-
-
-def test_pe_clip_encode_text_shape_and_norm():
-    """encode_text() returns (2, 1024) unit-norm tensor."""
-    fake_text_emb = torch.randn(2, 1024)
-    fake_text_emb = fake_text_emb / fake_text_emb.norm(dim=-1, keepdim=True)
-
-    mock_model = MagicMock()
-    mock_model.encode_text.return_value = fake_text_emb
-    mock_model.context_length = 32
-
-    with patch("collab_splats.localization.retrieval.open_clip") as mock_oc:
-        mock_oc.create_model_and_transforms.return_value = (mock_model, None, MagicMock())
-        mock_tokenizer = MagicMock(return_value=torch.zeros(2, 32, dtype=torch.long))
-        mock_oc.get_tokenizer.return_value = mock_tokenizer
-        extractor = PECLIPExtractor(device="cpu")
-
-    result = extractor.encode_text(["a cat", "a dog"])
-
-    assert result.shape == (2, 1024)
-    norms = result.norm(dim=-1)
-    torch.testing.assert_close(norms, torch.ones(2), atol=1e-5, rtol=0)
+    assert desc.shape == (2, 8448)
+    assert torch.allclose(desc.norm(dim=-1), torch.ones(2), atol=1e-5)
 
 
 def test_dino_salad_tensor_input_matches_pil_input():

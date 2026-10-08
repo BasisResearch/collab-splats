@@ -21,7 +21,7 @@ from collab_splats.localization.localizer import (
 from collab_splats.localization.retrieval import (
     BaseRetrievalExtractor,
     DinoSaladExtractor,
-    PECLIPExtractor,
+    MegaLocExtractor,
 )
 from collab_splats.localization.viz import (
     correspondences_for_ref,
@@ -37,7 +37,7 @@ __all__ = [
     "LocalMatcher",
     "LocalizationResult",
     "MatchResult",
-    "PECLIPExtractor",
+    "MegaLocExtractor",
     "correspondences_for_ref",
     "localization_db_exists",
     "read_localization_db",

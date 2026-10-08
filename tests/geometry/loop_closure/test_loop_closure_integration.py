@@ -1,6 +1,7 @@
 """Smoke tests: loop closure pipeline components integrate without crashing."""
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import torch
@@ -11,6 +12,7 @@ from collab_splats.geometry.loop_closure import (
     Submap,
 )
 from collab_splats.geometry.loop_closure.matching import find_loop_closures
+from collab_splats.pointcloud.feedforward import MapAnythingCreator
 
 
 def _make_submap(submap_id, k, vec_dim=128):
@@ -25,14 +27,9 @@ def _make_submap(submap_id, k, vec_dim=128):
 
 
 def test_pose_graph_two_nodes_no_loop():
-    """Two nodes with identity homographies — optimizer runs without crashing."""
+    """Two identity-pose frames — optimizer runs without crashing."""
     pg = PoseGraph()
-    H0 = np.eye(4, dtype=np.float64)
-    H1 = np.eye(4, dtype=np.float64)
-    pg.add_homography(0, H0)
-    pg.add_prior_factor(0, H0)
-    pg.add_homography(1, H1)
-    pg.add_between_factor(0, 1, H1)
+    pg.add_submap(_make_submap(0, 2), overlap_frames=0)
     pg.optimize()
     assert pg.get_homography(0).shape == (4, 4)
     assert pg.get_homography(1).shape == (4, 4)
@@ -73,10 +70,6 @@ def test_image_retrieval_detects_identical_submaps():
 
 def test_verify_loop_candidate_returns_tuple():
     """F4: _verify_loop_candidate must return (bool, lc_data dict|None), not bare bool."""
-    from unittest.mock import MagicMock
-
-    from collab_splats.pointcloud.feedforward import MapAnythingCreator
-
     creator = object.__new__(MapAnythingCreator)
     creator._lc_retrieval = None
     # Provide a mock model so _verify_loop_candidate can resolve the device

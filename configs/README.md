@@ -392,25 +392,25 @@ parameter and raises.
 | `pointcloud.hloc.num_threads` | int | `8` | Mapper thread cap |
 | `pointcloud.hloc.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
 | `pointcloud.bundle_adjustment.enabled` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`); with `loop_closure` on it runs inside each LC window instead (first window sets the focal, later windows hold it; no `refine` stage); a bare bool sets this |
-| `pointcloud.bundle_adjustment.max_query_pts` | int | `4096` | VGGSfM track query points (upstream demo default) |
-| `pointcloud.bundle_adjustment.query_frame_num` | int | `8` | VGGSfM query frames (upstream demo default) |
-| `pointcloud.bundle_adjustment.fine_tracking` | bool | `false` | VGGSfM fine tracking; `true` peaks at 34 GB RSS on 50 frames |
-| `pointcloud.bundle_adjustment.track_source` | str | `vggsfm` | Track source: `vggsfm` predicts tracks; `xfeat` / `loma` build matcher star tracks over the full-res `images/` frames (`geometry/tracks.py`); `xfeat` / `loma` with `loop_closure` on is a `ValueError` (window BA gets no frame paths); anything else is a `ValueError` |
-| `pointcloud.bundle_adjustment.vis_thresh` | float | `0.2` | Min VGGSfM visibility score for an observation |
+| `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | Track source: `xfeat` / `loma` build matcher star tracks over the full-res `images/` frames (`geometry/tracks.py`), also inside each LC window; `vggsfm` predicts tracks on the model grid; anything else is a `ValueError` |
+| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{}` | Source-specific settings forwarded to `extract_tracks`; empty takes their defaults. `vggsfm`: `max_query_pts` (4096), `query_frame_num` (8), `fine_tracking` (false; true peaks at 34 GB RSS on 50 frames). `xfeat`/`loma`: `retrieval` (`dino-salad` / `megaloc`), `seed_fraction` (0.34, in (0, 1]), `window` (10), `retrieval_k` (20) and the other `build_tracks` keywords. A key the source does not take is a `TypeError`; bad values are a `ValueError` |
+| `pointcloud.bundle_adjustment.vis_thresh` | float | `0.2` | Min track score for an observation (VGGSfM visibility; matcher tracks score 1.0) |
 | `pointcloud.bundle_adjustment.max_reproj_error` | float\|null | `4.0` | Pre-solve pixel reprojection gate; `null` skips the filter |
 | `pointcloud.bundle_adjustment.min_inliers_per_frame` | int | `64` | Frames below this inlier count sit out the solve |
+| `pointcloud.bundle_adjustment.solver` | str | `schur` | `schur` eliminates points (camera-only PCG, less GPU); `lm` solves the joint system. `schur` with `refine_focal` and `shared_camera` is a `ValueError` |
+| `pointcloud.bundle_adjustment.dtype` | str | `float32` | Solve precision, `float32` or `float64`; anything else is a `ValueError` |
 | `pointcloud.bundle_adjustment.lm_steps` | int | `40` | Max LM steps for a solve without photometric. Ignored with `use_photometric`, which runs up to (3, 2, 1) scale re-samples x 5 IRLS steps, 30 in all |
 | `pointcloud.bundle_adjustment.lm_tol` | float | `1.0e-4` | Relative loss drop below which an LM step counts as stalled; `ValueError` below 0 |
 | `pointcloud.bundle_adjustment.lm_patience` | int | `2` | Stalled steps in a row that end the solve, or one photometric re-sample; `ValueError` below 1 |
-| `pointcloud.bundle_adjustment.shared_camera` | bool | `true` | One focal per scene; `false` = one per frame |
-| `pointcloud.bundle_adjustment.refine_focal` | bool | `true` | Solve for focal; `false` holds the input mean focal fixed |
-| `pointcloud.bundle_adjustment.dtype` | str | `float32` | Solve precision, `float32` or `float64`; anything else is a `ValueError` |
 | `pointcloud.bundle_adjustment.increment_size` | int | `0` | `0` = one global solve; `N` = frames added per incremental solve |
-| `pointcloud.bundle_adjustment.use_photometric` | bool | `true` | Brightness matching between overlapping frames; `ValueError` with `increment_size > 0` |
+| `pointcloud.bundle_adjustment.shared_camera` | bool | `true` | One focal per scene; `false` = one per frame |
+| `pointcloud.bundle_adjustment.refine_focal` | bool | `false` | Solve for focal; `false` holds the input mean focal fixed |
 | `pointcloud.bundle_adjustment.use_depth` | bool | `true` | Track camera z against feedforward depth |
 | `pointcloud.bundle_adjustment.depth_sigma` | float | `0.01` | Relative depth error weighted like 1 px |
-| `pointcloud.bundle_adjustment.device` | str\|null | `null` | CUDA device (`cuda`, `cuda:1`); `null` = auto. The track cache dir is set by the pipeline, not here |
+| `pointcloud.bundle_adjustment.use_photometric` | bool | `true` | Brightness matching between overlapping frames; `ValueError` with `increment_size > 0` |
+| `pointcloud.bundle_adjustment.device` | str\|null | `null` | CUDA device (`cuda`, `cuda:1`); `null` = auto. The pipeline never caches tracks; `tracks_cache_dir` is not a key |
 | `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`); with `bundle_adjustment.enabled` BA runs inside each window |
+| `pointcloud.loop_closure.retrieval` | str | `dino-salad` | Dict form only: retrieval registry name, `dino-salad` or `megaloc`; `megaloc` needs its own `lc_retrieval_threshold` |
 | `pointcloud.min_views` | int | `0` | Feedforward cross-view depth filter: keep a pixel when min(min_views, seen) other views agree. `0` = off; upstream MapAnything uses `1` |
 | `pointcloud.mv_rel_thresh` | float | `0.01` | Multiview agreement tolerance, as a fraction of depth |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points, every method. sfm deletes the same points3D from the mapper's COLMAP export, which keeps its tracks and camera model |
@@ -451,6 +451,7 @@ parameter and raises.
 | `splats.losses.normal_consistency.depth_ratio` | float | `0.0` | `2dgs` only: RaDe-GS blend weight on the median-depth normal — `(1-r)·d(n, dn_expected) + r·d(n, dn_median)`, `d = 1 - cos`. `0` = expected depth only. Rejected on `3dgs` and outside `[0, 1]` |
 | `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
 | `localization.matcher` | str | `loma` | vismatch model name: `loma` or `xfeat`, the batch-capable models; anything else is a `ValueError` |
+| `localization.retrieval` | str | `dino-salad` | Retrieval registry name, `dino-salad` or `megaloc`; stored with the DB, so queries embed with the same model |
 
 **Migration (2026-09-06):** the pointcloud cleanup retired eight keys from `base.yaml`, and
 they are **not refused** — a published `run_config.yaml` that still sets them deep-merges and
@@ -496,7 +497,7 @@ runs with top_k 8 (`CameraLocalizer` default).
 `LocalMatcher(name)` (`collab_splats/localization/extractors.py`) — `loma` or
 `xfeat`. There is one match path: reference features are extracted once and cached in
 the localization zarr, the query is extracted once, and `LocalMatcher.match` pairs the
-query features against each reference's cached features. DINO-SALAD retrieval picks
+query features against each reference's cached features. Retrieval (`localization.retrieval`) picks
 the top `top_k` reference frames (`CameraLocalizer` default 8), or the caller passes
 `refs=`; reference pixels map back to the world-point grid through `original_coords`.
 

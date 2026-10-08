@@ -1192,7 +1192,7 @@ requires-dist = [
     { name = "vggt-omega", marker = "extra == 'feedforward'", git = "https://github.com/facebookresearch/vggt-omega.git?rev=39a0cb8" },
     { name = "viser", specifier = ">=1.0" },
     { name = "viser", marker = "extra == 'feedforward'", specifier = ">=0.2.23" },
-    { name = "vismatch", git = "https://github.com/BasisResearch/vismatch?rev=aa81830dd40fe188898c7379c2a555fc4eefdc72" },
+    { name = "vismatch", git = "https://github.com/BasisResearch/vismatch?rev=865d91a52ff23f60096188e0e0a748911768535d" },
     { name = "wheel" },
     { name = "zarr", specifier = ">=2.16" },
 ]
@@ -7857,8 +7857,8 @@ wheels = [
 
 [[package]]
 name = "vismatch"
-version = "0.1.dev437+gaa81830dd"
-source = { git = "https://github.com/BasisResearch/vismatch?rev=aa81830dd40fe188898c7379c2a555fc4eefdc72#aa81830dd40fe188898c7379c2a555fc4eefdc72" }
+version = "0.1.dev439+g865d91a52"
+source = { git = "https://github.com/BasisResearch/vismatch?rev=865d91a52ff23f60096188e0e0a748911768535d#865d91a52ff23f60096188e0e0a748911768535d" }
 dependencies = [
     { name = "e2cnn" },
     { name = "einops" },

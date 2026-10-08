@@ -6,6 +6,7 @@ Depth module: VDA metric depth estimation and its alignment to an sfm model.
   per-frame median fit, global-median fallback and PointcloudResult builder
 """
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +14,7 @@ import pycolmap
 import pytest
 import torch
 
-from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
+from collab_splats.geometry.transforms import shift_intrinsics
 from collab_splats.pointcloud import depth as depth_mod
 from tests.pointcloud._stubs import make_recon
 
@@ -284,8 +285,9 @@ def test_align_depth_shapes_and_k_rescaling():
     # the 2026-08-11 mesh-collapse class, and world_points cannot catch it (depth is unaffected)
     np.testing.assert_allclose(out.model_intrinsics[0][0, 0], 50.0 * DEPTH_W / ORIG_W, rtol=1e-5)
     np.testing.assert_allclose(out.model_intrinsics[0][1, 1], 50.0 * DEPTH_H / ORIG_H, rtol=1e-5)
-    np.testing.assert_allclose(out.model_intrinsics[0][0, 2], 32.0 * DEPTH_W / ORIG_W, rtol=1e-5)
-    np.testing.assert_allclose(out.model_intrinsics[0][1, 2], 24.0 * DEPTH_H / ORIG_H, rtol=1e-5)
+    # Principal point lands pixel-center: COLMAP's corner cx scaled, then 0.5 off
+    np.testing.assert_allclose(out.model_intrinsics[0][0, 2], 32.0 * DEPTH_W / ORIG_W - 0.5, rtol=1e-5)
+    np.testing.assert_allclose(out.model_intrinsics[0][1, 2], 24.0 * DEPTH_H / ORIG_H - 0.5, rtol=1e-5)
 
     # Poses are homogeneous w2c, one per frame in row order. unproject reads [:, :3, :] only,
     # so a broken bottom row would reach save_zarr with nothing to stop it
@@ -428,7 +430,7 @@ def test_align_depth_refuses_a_frames_to_depth_row_mismatch():
 
 def test_align_depth_simple_radial_keeps_linear_k_per_grid():
     """
-    A SIMPLE_RADIAL camera stores its linear K twice: keyframe grid and depth grid, k1 dropped.
+    A SIMPLE_RADIAL camera stores its linear K twice, pixel-center: keyframe grid and depth grid, k1 dropped.
     """
     # SIMPLE_RADIAL params (f, cx, cy, k1) on the 64x48 keyframe grid
     names = ["frame_000000.jpg"]
@@ -438,35 +440,33 @@ def test_align_depth_simple_radial_keeps_linear_k_per_grid():
 
     out, _ = depth_mod.align_depth(recon, depths, images, names, min_obs=1)
 
-    # Full-res K: calibration_matrix of the SIMPLE_RADIAL camera, one f for both axes
-    np.testing.assert_array_equal(out.intrinsics[0], [[60.0, 0.0, 28.0], [0.0, 60.0, 18.0], [0.0, 0.0, 1.0]])
+    # Full-res K: calibration_matrix of the SIMPLE_RADIAL camera, one f for both axes, principal point -0.5
+    np.testing.assert_array_equal(out.intrinsics[0], [[60.0, 0.0, 27.5], [0.0, 60.0, 17.5], [0.0, 0.0, 1.0]])
 
-    # Depth-grid K by hand: x by 16 / 64 = 1/4, y by 8 / 48 = 1/6
-    # - fx 60 -> 15, cx 28 -> 7; fy 60 -> 10, cy 18 -> 3
+    # Depth-grid K by hand: x by 16 / 64 = 1/4, y by 8 / 48 = 1/6, then -0.5
+    # - fx 60 -> 15, cx 28 -> 6.5; fy 60 -> 10, cy 18 -> 2.5
     np.testing.assert_allclose(
-        out.model_intrinsics[0], [[15.0, 0.0, 7.0], [0.0, 10.0, 3.0], [0.0, 0.0, 1.0]], rtol=1e-6
+        out.model_intrinsics[0], [[15.0, 0.0, 6.5], [0.0, 10.0, 2.5], [0.0, 0.0, 1.0]], rtol=1e-6
     )
 
 
 def test_align_depth_k_maps_back_through_its_box():
     """
-    Stored K resized and shifted back through original_coords is the original K: one convention, not two.
+    The stored model K re-derives the stored full-res K as feedforward results do: one convention, not two.
     """
     recon, depths, images, names = _scene_inputs(n=2)
 
     out, _ = depth_mod.align_depth(recon, depths, images, names, min_obs=1)
 
-    K_orig = recon.cameras[1].calibration_matrix()
-    box = out.original_coords[:, :4]
-    crop_hw = np.stack([box[:, 3] - box[:, 1], box[:, 2] - box[:, 0]], axis=-1)
-    back = rescale_intrinsics(out.model_intrinsics, (DEPTH_H, DEPTH_W), crop_hw)
-    back = shift_intrinsics(back, box[:, :2])
+    # PointcloudResult derives full-res K from the model K when intrinsics is None
+    derived = replace(out, intrinsics=None).intrinsics
     assert out.model_intrinsics.dtype == np.float32
-    np.testing.assert_allclose(back, np.broadcast_to(K_orig, back.shape), rtol=1e-6)
+    np.testing.assert_allclose(derived, out.intrinsics, rtol=1e-6)
 
-    # The full-res K is the COLMAP K itself, stored float32
+    # The full-res K is the COLMAP K shifted to pixel-center, stored float32
+    K_center = shift_intrinsics(recon.cameras[1].calibration_matrix(), (-0.5, -0.5))
     assert out.intrinsics.dtype == np.float32
-    np.testing.assert_array_equal(out.intrinsics, np.broadcast_to(K_orig, back.shape).astype(np.float32))
+    np.testing.assert_array_equal(out.intrinsics, np.broadcast_to(K_center, out.intrinsics.shape).astype(np.float32))
 
 
 ########################################################################

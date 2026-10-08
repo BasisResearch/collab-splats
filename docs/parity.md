@@ -33,11 +33,11 @@ All paths are at `MIT-SPARK/VGGT-SLAM @ fd3fd218`, used under its BSD-2-Clause l
 |---|---|
 | `geometry/loop_closure/graph.py` `PoseGraph` | `vggt_slam/graph.py:PoseGraph` (SL4 backend: `BetweenFactorSL4`, sigma 0.05 edges, 1e-6 first-frame prior, `graph.py:19-23`); edge construction from `vggt_slam/solver.py:118-195` (`add_edge`) |
 | `geometry/transforms.py` `decompose_camera` | `vggt_slam/slam_utils.py:45-83` (`decompose_camera`): R from the default branch (`:77`), t from the `no_inverse=True` branch (`:80`) |
-| `graph.py` `estimate_scale_pairwise` | `vggt_slam/scale_solver.py:estimate_scale_pairwise` |
+| `graph.py` `calculate_pairwise_frame_scale` | `vggt_slam/scale_solver.py:estimate_scale_pairwise` |
 | `graph.py` loop-edge chain + confidence fallback | `vggt_slam/solver.py:270-287` (LC submap + `add_edge` pair), `:129-146` (anchor scale), `:129-138` (confidence fallback) |
 | `geometry/loop_closure/submap.py` `Submap` | `vggt_slam/submap.py:Submap` (fat: dense points/colors/conf) |
 | `geometry/loop_closure/map.py` `GraphMap` | `vggt_slam/map.py:GraphMap` |
-| `geometry/loop_closure/matching.py` | `vggt_slam/loop_closure.py` (`LoopMatch`, `LoopMatchQueue`, `find_loop_closures`) + `vggt_slam/map.py:retrieve_best_score_frame`, per decision 015 |
+| `geometry/loop_closure/matching.py` | `vggt_slam/loop_closure.py` (`LoopMatch`, `LoopMatchQueue` → `find_loop_closures`) + `vggt_slam/map.py:retrieve_best_score_frame`, per decision 015 |
 | `geometry/loop_closure/wrapper.py` `LoopClosure` | `main.py:109-130` (window loop) + `vggt_slam/solver.py` `Solver` structure (`run_predictions` / `add_points`); graph construction stays in `PoseGraph` |
 | `pointcloud/utils.py` `cross_frame_attention_ratio` | VGGT-SPARK `get_similarity()` + top-quarter mean `r[r >= np.percentile(r, 75)].mean()` |
 
@@ -47,7 +47,7 @@ Config defaults that mirror VGGT-SLAM (`LoopClosureConfig`, `wrapper.py`):
 - `conf_percentile` is upstream's `--conf_threshold 25` (`main.py:32`): each submap's gate is `percentile(depth_conf, 25) + 1e-6` (`vggt_slam/submap.py:36-41`); until 2026-09-26 it was `conf_threshold`, a raw gate on the stride-8 points
 - scale inputs follow `vggt_slam/solver.py:129-146` on density and gate: dense per-pixel points, gated by the prior submap's threshold (`:131`)
 - kept different, on purpose: the point frame; see [Scale point frame](#scale-point-frame-a-measured-divergence) below
-- kept different: `estimate_scale_pairwise` drops points with `|x| < 1e-8` (upstream `scale_solver.py:15-25` has no filter); loop anchors use each frame's own K where upstream uses `proj_mats[-1]` / `proj_mats[0]` (`solver.py:140`)
+- kept different: `calculate_pairwise_frame_scale` drops points with `|x| < 1e-8` (upstream `scale_solver.py:15-25` has no filter); loop anchors use each frame's own K where upstream uses `proj_mats[-1]` / `proj_mats[0]` (`solver.py:140`)
 - inter-submap scale is always `rotation_only`, VGGT-SLAM's method; the `scale_method` field was deleted in geometry-round3 (2026-09-26) along with its `none` alternative
 
 ### Scale point frame: a measured divergence

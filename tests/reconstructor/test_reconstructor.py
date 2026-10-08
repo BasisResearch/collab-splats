@@ -1116,7 +1116,7 @@ def test_reconstructor_viewer_none_when_viz_disabled(tmp_path):
 
 
 def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
-    """BA + LC: LoopClosure gets a BA config with the window_ba cache dir; the zarr records window_ba."""
+    """BA + LC: LoopClosure gets a BA config with no track cache; the zarr records window_ba."""
     config = _make_config(
         tmp_path,
         {
@@ -1141,7 +1141,7 @@ def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
 
     ba_cfg = mock_lc_cls.call_args.kwargs["ba"]
     assert ba_cfg.dtype == "float64"
-    assert ba_cfg.tracks_cache_dir == rec.backend_dir / "window_ba"
+    assert ba_cfg.tracks_cache_dir is None
 
     attrs = result.save_zarr.call_args.kwargs["extra_attrs"]
     assert attrs["window_ba"] == [{"start": 0, "focal": 368.5, "loss_final": None}]
@@ -1238,7 +1238,7 @@ def test_pointcloud_stage_no_loop_closure_no_viewer(tmp_path):
 
 
 def test_localize_stage_builds_the_db(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
+    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma", "retrieval": "megaloc"}})
     rec = Reconstructor(config)
     pc_zarr = rec.backend_dir / "pointcloud.zarr"
     pc_zarr.mkdir(parents=True)
@@ -1247,7 +1247,7 @@ def test_localize_stage_builds_the_db(tmp_path):
         patch.object(R, "_build_localization_db") as build,
     ):
         rec.localize()
-    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir)
+    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, "megaloc")
 
 
 ########################################

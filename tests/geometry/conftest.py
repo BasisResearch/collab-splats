@@ -13,7 +13,9 @@ from collab_splats.geometry.loop_closure import Submap
 
 @pytest.fixture
 def identity_submap_factory():
-    """Returns a factory that builds an identity-perturbed Submap."""
+    """
+    Returns a factory that builds an identity-perturbed Submap.
+    """
 
     def _make(submap_id: int, k: int = 3) -> Submap:
         np.random.seed(0)

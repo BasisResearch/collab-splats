@@ -11,7 +11,6 @@ import torch
 import torch.nn as nn
 import torchvision.transforms as T
 
-import open_clip
 from salad.models_salad.aggregators.salad import SALAD
 from salad.models_salad.backbones.dinov2 import DINOv2
 
@@ -131,64 +130,64 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
 
 
 ########################################################################
-# PE-CLIP retrieval extractor
+# MegaLoc retrieval extractor
 ########################################################################
 
 
-@BaseRetrievalExtractor.register("pe-clip")
-class PECLIPExtractor(BaseRetrievalExtractor):
+@BaseRetrievalExtractor.register("megaloc")
+class MegaLocExtractor(BaseRetrievalExtractor):
     """
-    PE-Core-L/14-336 global image+text encoder for open-label frame retrieval.
+    MegaLoc global image descriptor for visual place recognition.
 
-    - open_clip with hf-hub:timm/PE-Core-L-14-336
-    - (N, 1024) normalized image and text descriptors, one CLIP space
-    - AttentionPoolLatent (pool='map'), no separate projection
-    - global retrieval only, no patch-level features
+    - ported from gmberton/MegaLoc @ 5fe0dd697c4a70ba3e23607f6716ab3c606b16db (MIT): hubconf.py
+    - DINOv2 backbone + optimal-transport aggregator; weights from Hugging Face gberton/MegaLoc
+    - preprocessing as upstream evaluates: ImageNet normalization, 322 x 322 resize
     """
 
-    _MODEL_ID = "hf-hub:timm/PE-Core-L-14-336"
+    _HUB_REPO = "gmberton/MegaLoc:5fe0dd697c4a70ba3e23607f6716ab3c606b16db"
+    _INPUT_SIZE = 322  # divisible by 14 for the DINOv2 patch grid
 
-    def __init__(self, model_id: str = _MODEL_ID, device: str | None = None):
+    def __init__(self, device: str | None = None):
         super().__init__()
         self._device = device or get_device()
-        self._model, _, self._preprocess = open_clip.create_model_and_transforms(model_id)
-        self._model.to(self._device)
-        self._model.eval()
-        self._tokenizer = open_clip.get_tokenizer(model_id)
-        logger.debug("PECLIPExtractor: loaded %s on %s", model_id, self._device)
+        self.model = torch.hub.load(self._HUB_REPO, "get_trained_model", trust_repo=True)
+        self.model = self.model.to(self._device).eval()
+
+        # PIL input: tensor in [0, 1], ImageNet stats, upstream's eval size
+        self._transform = T.Compose(
+            [
+                T.ToTensor(),
+                T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+                T.Resize((self._INPUT_SIZE, self._INPUT_SIZE), antialias=True),
+            ]
+        )
 
     def forward(self, images: list | torch.Tensor) -> torch.Tensor:
         """
-        Normalized PE-Core image descriptors, one per image.
+        Global MegaLoc descriptors, one per image.
+
+        - tensor input: ImageNet-normalized then resized to 322 here, as the PIL transform
+        - input raw RGB in [0, 1], never pre-normalized
 
         Args:
-            images: PIL images, or an (N, 3, H, W) float32 tensor already preprocessed.
+            images: PIL images, or an (N, 3, H, W) RGB tensor in [0, 1].
 
         Returns:
-            (N, 1024) float32, L2-normalized, on CPU.
+            (N, 8448) float32 descriptors, L2-normalized, on CPU.
         """
-        # Preprocess PIL images if needed; tensors passed through directly
+        # Preprocess: PIL list through the transform, tensors normalized then resized
         if isinstance(images, (list, tuple)):
-            imgs = torch.stack([self._preprocess(img) for img in images])
+            imgs = torch.stack([self._transform(img) for img in images])
         else:
-            imgs = images
+            imgs = images.float()
+            imgs = T.functional.normalize(imgs, mean=IMAGENET_MEAN, std=IMAGENET_STD)
+            imgs = T.functional.resize(imgs, [self._INPUT_SIZE, self._INPUT_SIZE], antialias=True)
+
+        logger.debug("MegaLocExtractor: embedding batch of %d images", len(imgs))
+
+        # MegaLoc returns L2-normalized descriptors already
         imgs = imgs.to(self._device)
         with torch.no_grad():
-            features = self._model.encode_image(imgs, normalize=True)
-        return features.cpu().float()
+            descriptors = self.model(imgs)
 
-    def encode_text(self, texts: list[str]) -> torch.Tensor:
-        """
-        Normalized PE-Core text descriptors, one per string.
-
-        Args:
-            texts: text prompts.
-
-        Returns:
-            (N, 1024) float32, L2-normalized, on CPU.
-        """
-        tokens = self._tokenizer(texts, context_length=self._model.context_length)
-        tokens = tokens.to(self._device)
-        with torch.no_grad():
-            features = self._model.encode_text(tokens, normalize=True)
-        return features.cpu().float()
+        return descriptors.float().cpu()

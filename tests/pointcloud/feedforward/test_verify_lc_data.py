@@ -11,6 +11,7 @@ from collab_splats.geometry.loop_closure.matching import LoopMatch
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
+from tests.geometry.loop_closure._helpers import record_driven_submaps
 from tests.pointcloud.feedforward.conftest import _FakeMapAnythingModel, _FakeQKV
 
 ########################################################################
@@ -268,8 +269,6 @@ def _run_lc_with_verify_return(verify_return):
             )
         ]
 
-    # Output is now assembled from the GraphMap (no batch PGO / merge helpers to
-    # patch); n_loops_applied is still set in _run_lc_loop.
     with (
         patch("collab_splats.localization.BaseRetrievalExtractor.get") as mock_get,
         patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=_fake_find_loops),
@@ -280,13 +279,14 @@ def _run_lc_with_verify_return(verify_return):
 
 
 def test_accepted_loop_with_geometry_is_applied():
-    """Accepted lc_data with geometry → the loop is applied (n_loops_applied == 1)."""
+    """Accepted lc_data with geometry → the loop is applied (one loop edge reaches the graph)."""
     h = w = 8
     lc_data = {
         "poses": np.tile(np.eye(4, dtype=np.float32), (2, 1, 1)),
         "world_points": np.random.rand(2, h, w, 3).astype(np.float32),
         "conf": np.ones((2, h, w), dtype=np.float32),
     }
-    base = _run_lc_with_verify_return((True, lc_data))
+    with record_driven_submaps() as driven:
+        _run_lc_with_verify_return((True, lc_data))
 
-    assert base.n_loops_applied == 1
+    assert len(driven["lc_submaps"]) == 1

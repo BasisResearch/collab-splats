@@ -13,6 +13,7 @@ from collab_splats.geometry.projection import (
     depth_residual,
     multiview_depth_confidence,
     project,
+    reprojection_error,
     sample_world_points,
     unproject,
     unproject_frames,
@@ -192,9 +193,7 @@ def test_depth_residual_reads_the_other_views_depth_at_the_projected_pixel():
     v, u = torch.meshgrid(torch.arange(5.0), torch.arange(7.0), indexing="ij")
     depth_j = (2.0 + 0.1 * u + 0.01 * v).double()
 
-    # Camera-j points at known pixels and z, then taken to world through view i's pose
-    # - rows 0-2: interior integer pixels, z differs from the stored depth
-    # - row 3: projects right of the grid; row 4: behind camera j
+    # Camera-j points at known pixels and z, to world via view i: rows 0-2 interior, 3 off-grid, 4 behind j
     pixels = torch.tensor([[1.0, 4.0], [5.0, 1.0], [3.0, 2.0], [9.0, 2.0], [3.0, 2.0]], dtype=torch.float64)
     z = torch.tensor([2.5, 1.0, 4.0, 3.0, -3.0], dtype=torch.float64)
     rays = torch.stack(
@@ -337,8 +336,7 @@ def _pinhole(h: int, w: int) -> np.ndarray:
 
 
 def test_multiview_depth_confidence_nearest_sampling_fabricates_no_depth():
-    # Depth step at mid-image, small baseline: bilinear would sample a depth on no surface
-    # - every in-bounds pixel sits on a rigid surface both cameras see, so seen ones all agree
+    # Depth step at mid-image, small baseline: bilinear would sample depth on no surface; nearest agrees
     n, h, w = 2, 16, 16
     depth = np.empty((n, h, w), dtype=np.float32)
     depth[:, :, : w // 2] = 2.0
@@ -373,7 +371,9 @@ def test_multiview_depth_confidence_is_scale_invariant():
 
 
 def test_depth_agreement_returns_the_camera_depth_project_computes():
-    """expected is project's camera z, so callers need no second transform."""
+    """
+    expected is project's camera z, so callers need no second transform.
+    """
     rng = np.random.default_rng(3)
     points = torch.as_tensor(rng.uniform(-1, 1, (500, 3)) + [0, 0, 4], dtype=torch.float32)
     w2c = torch.eye(4)
@@ -387,7 +387,9 @@ def test_depth_agreement_returns_the_camera_depth_project_computes():
 
 
 def _views(hw=(12, 16), seed=0):
-    """Four distinct cameras around a noisy depth field with holes, and points incl. some behind."""
+    """
+    Four distinct cameras around a noisy depth field with holes, and points incl. some behind.
+    """
     rng = np.random.default_rng(seed)
     b, (h, w) = 4, hw
     K = torch.tensor([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1.0]]).repeat(b, 1, 1)
@@ -443,7 +445,9 @@ def test_depth_agreement_over_a_pose_batch_matches_one_view_at_a_time():
 
 
 def test_sample_world_points_bilinear_and_invalid():
-    """Exact-pixel and bilinear samples return grid values; NaN cells are invalid."""
+    """
+    Exact-pixel and bilinear samples return grid values; NaN cells are invalid.
+    """
     # 4x4 grid whose world point at (row r, col c) is (c, r, 1)
     H = W = 4
     wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
@@ -458,10 +462,46 @@ def test_sample_world_points_bilinear_and_invalid():
 
 
 def test_sample_world_points_out_of_bounds():
-    """Pixels outside the image bounds are marked invalid."""
+    """
+    Pixels outside the image bounds are marked invalid.
+    """
     H = W = 4
     wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
 
     px = np.array([[10.0, 1.0]], dtype=np.float32)  # x beyond W-1
     _, valid = sample_world_points(wp, px)
     assert not valid[0]
+
+
+def test_reprojection_error_one_camera_matches_project():
+    K = torch.tensor([[100.0, 0, 50], [0, 100.0, 40], [0, 0, 1]], dtype=torch.float64)
+    w2c = torch.eye(4, dtype=torch.float64)
+    points = torch.tensor([[0.0, 0.0, 2.0], [0.2, -0.1, 4.0]], dtype=torch.float64)
+    px = torch.tensor([[50.0, 40.0], [55.0, 38.0]], dtype=torch.float64)
+
+    err = reprojection_error(points, w2c, K, px)
+
+    assert torch.allclose(err, torch.tensor([0.0, 0.5], dtype=torch.float64))
+
+
+def test_reprojection_error_per_point_cameras():
+    K = torch.tensor([[100.0, 0, 50], [0, 100.0, 40], [0, 0, 1]], dtype=torch.float64)
+    w2c = torch.eye(4, dtype=torch.float64).repeat(2, 1, 1)
+    w2c[1, 0, 3] = 0.2
+    points = torch.tensor([[0.0, 0.0, 2.0], [0.0, 0.0, 2.0]], dtype=torch.float64)
+    px = torch.tensor([[50.0, 40.0], [60.0, 40.0]], dtype=torch.float64)
+
+    err = reprojection_error(points, w2c, K.expand(2, 3, 3), px)
+
+    assert torch.allclose(err, torch.zeros(2, dtype=torch.float64))
+
+
+def test_reprojection_error_inf_behind_camera_and_nan():
+    K = torch.eye(3, dtype=torch.float64)
+    w2c = torch.eye(4, dtype=torch.float64)
+    points = torch.tensor([[0.0, 0.0, -1.0], [float("nan"), 0.0, 1.0]], dtype=torch.float64)
+    px = torch.zeros(2, 2, dtype=torch.float64)
+
+    err = reprojection_error(points, w2c, K, px)
+
+    assert torch.isinf(err).all()

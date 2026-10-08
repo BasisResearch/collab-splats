@@ -1,20 +1,20 @@
-"""Building the localization DB must drop the stale zarr cache group.
+"""Building the localization DB must replace the stale zarr cache group.
 
-Regression tests for the silent no-op: the localize stage's overwrite called
-_build_localization_db with no overwrite notion, and from_pointcloud cache-hits on an
-existing local_features/<extractor>/reconstruction group — so the
-stale (payload-less) cache was reloaded untouched and verify()'s rebuild-once
-branch crashed downstream.
+Regression tests for the silent no-op: a cache-hit on an existing
+local_features/<extractor>/reconstruction group reloaded the stale (payload-less)
+cache untouched and verify()'s rebuild-once branch crashed downstream.
 """
 
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import zarr
 
 from collab_splats import reconstructor as R
+from collab_splats.localization.localizer import CameraLocalizer
 from collab_splats.reconstructor import Reconstructor, _build_localization_db
 
 REC_KEY = "local_features/loma/reconstruction"
@@ -29,21 +29,24 @@ def _make_stale_store(tmp_path: Path) -> Path:
     return pc_zarr
 
 
-def _patch_heavy_deps(stack: ExitStack, pc_zarr: Path, seen: dict):
-    """Stub the heavy deps of _build_localization_db; record cache state at call time."""
+def _fake_init(seen: dict):
+    """Stand-in for CameraLocalizer.__init__: no extraction, just the fields save_index reads."""
 
-    # from_pointcloud is where the cache check lives — capture whether the stale
-    # reconstruction group still exists in the store at the moment it runs.
-    def record_cache_state(*args, **kwargs):
-        seen["rec_group_present"] = REC_KEY in zarr.open_group(str(pc_zarr), mode="r")
-        return MagicMock()
+    def init(self, world_points, extrinsics, images, ids, **kwargs):
+        seen["init_kwargs"] = kwargs
+        self._frame_features = []
+        self._global_desc = np.zeros((2, 4), np.float32)
+        self._image_hw = (8, 8)
+        self._extractor = MagicMock(max_num_keypoints=2048)
+        self._retrieval_name = kwargs["retrieval"]
+        self._ids = ["frame_000000", "frame_000001"]
 
-    stack.enter_context(
-        patch(
-            "collab_splats.localization.localizer.CameraLocalizer.from_pointcloud",
-            side_effect=record_cache_state,
-        )
-    )
+    return init
+
+
+def _patch_heavy_deps(stack: ExitStack, seen: dict):
+    """Stub the heavy deps of _build_localization_db; the real save_index still writes."""
+    stack.enter_context(patch.object(CameraLocalizer, "__init__", _fake_init(seen)))
     stack.enter_context(
         patch(
             "collab_splats.pointcloud.base.PointcloudResult.load_zarr",
@@ -58,7 +61,7 @@ def _images_dir(tmp_path: Path) -> Path:
     A two-frame images/ directory for _build_localization_db to list.
 
     - Only the filenames are read here (frame_indices and ids come from them); the images
-      genexpr is never consumed because from_pointcloud is stubbed, so empty files do.
+      genexpr is never consumed because CameraLocalizer.__init__ is stubbed, so empty files do.
     """
     images_dir = tmp_path / "images"
     images_dir.mkdir(exist_ok=True)
@@ -67,15 +70,21 @@ def _images_dir(tmp_path: Path) -> Path:
     return images_dir
 
 
-def test_build_drops_stale_group_before_rebuild(tmp_path):
+def test_build_replaces_stale_group(tmp_path):
     pc_zarr = _make_stale_store(tmp_path)
     images_dir = _images_dir(tmp_path)
     seen = {}
+
     with ExitStack() as stack:
-        _patch_heavy_deps(stack, pc_zarr, seen)
-        _build_localization_db(pc_zarr, "loma", images_dir)
-    # The stale group must be gone when from_pointcloud runs, so its cache check misses
-    assert seen["rec_group_present"] is False
+        _patch_heavy_deps(stack, seen)
+        _build_localization_db(pc_zarr, "loma", images_dir, retrieval="megaloc")
+
+    # The stale payload is gone; the group now carries the fresh DB and its retrieval name
+    group = zarr.open_group(str(pc_zarr), mode="r")[REC_KEY]
+    assert "dummy" not in group
+    assert group.attrs["image_paths"] == ["frame_000000", "frame_000001"]
+    assert group.attrs["retrieval"] == "megaloc"
+    assert seen["init_kwargs"]["retrieval"] == "megaloc"
 
 
 def test_build_refuses_a_missing_images_store_and_keeps_the_db(tmp_path):
@@ -83,7 +92,7 @@ def test_build_refuses_a_missing_images_store_and_keeps_the_db(tmp_path):
     seen = {}
 
     with ExitStack() as stack, pytest.raises(FileNotFoundError, match="no images/ store"):
-        _patch_heavy_deps(stack, pc_zarr, seen)
+        _patch_heavy_deps(stack, seen)
         _build_localization_db(pc_zarr, "loma", tmp_path / "images")
 
     # The check runs before the drop: the existing group survives, and no build started
@@ -104,4 +113,4 @@ def test_localize_stage_always_rebuilds(tmp_path):
     pc_zarr.mkdir(parents=True)
     with patch.object(R, "_build_localization_db") as build:
         rec.localize()
-    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir)
+    build.assert_called_once_with(pc_zarr, "loma", rec.images_dir, "dino-salad")

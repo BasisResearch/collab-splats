@@ -78,8 +78,8 @@ dependencies = [
     "scikit-learn",
     "roma",
     "kornia",
-    # BasisResearch fork, `basis` branch: batched extract + match() (spec 2026-10-03-vismatch-feature-matching)
-    "vismatch @ git+https://github.com/BasisResearch/vismatch@aa81830dd40fe188898c7379c2a555fc4eefdc72",
+    # BasisResearch fork, `basis` branch: batched extract + match() + match_batch() (spec 2026-10-03-vismatch-feature-matching)
+    "vismatch @ git+https://github.com/BasisResearch/vismatch@865d91a52ff23f60096188e0e0a748911768535d",
     "open-clip-torch",
     "mobile_sam",
     # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
@@ -255,7 +255,6 @@ known_models = [
     "meshoptimizer",
     "mobile_sam",
     "nvdiffrast",
-    "open_clip",
     "pypose",
     "salad",
     "sam3",

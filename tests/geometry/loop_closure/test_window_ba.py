@@ -2,6 +2,7 @@
 Bundle adjustment inside each loop-closure window (LoopClosure ba=...).
 """
 
+import inspect
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,7 +11,10 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig
+from collab_splats.geometry.bundle_adjustment import (
+    BundleAdjustment,
+    BundleAdjustmentConfig,
+)
 from collab_splats.geometry.loop_closure.matching import LoopMatch
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
 
@@ -52,7 +56,9 @@ def _wrapper(n_frames: int, submap_size: int, ba: BundleAdjustmentConfig | None)
         max_loops_per_submap=0,
         lc_retrieval_threshold=999.0,
     )
-    return LoopClosure(base, config=cfg, ba=ba)
+    wrapper = LoopClosure(base, config=cfg, ba=ba)
+    wrapper.frame_paths = [Path(f"/images/frame_{i:06d}.png") for i in range(n_frames)]
+    return wrapper
 
 
 class _FakeBA:
@@ -67,15 +73,18 @@ class _FakeBA:
         self.alignment_scale = 1.0
         self.loss_history = [[3.0, 2.0]]
 
-    def refine(self, images, confidence, world_points, extrinsics, intrinsics, image_paths=None, depth=None):
+    def refine(self, *args, **kwargs):
+        # Bind to the real signature, so a call the real refine would refuse fails here too
+        call = inspect.signature(BundleAdjustment.refine).bind(self, *args, **kwargs).arguments
+        extrinsics, intrinsics = call["extrinsics"], call["intrinsics"]
         type(self).calls.append(
             {
                 "config": self.config,
-                "images": images,
+                "images": call["images"],
                 "intrinsics": intrinsics.copy(),
-                "paths": image_paths,
-                "depth": depth,
-                "world_points": world_points,
+                "frame_paths": call.get("frame_paths"),
+                "depth": call["depth"],
+                "world_points": call["world_points"],
             }
         )
         refined = extrinsics.astype(np.float64).copy()
@@ -109,17 +118,38 @@ def _run_loop(wrapper: LoopClosure, matches: Callable[..., list] | None = None) 
         wrapper.run_inference()
 
 
-def test_ba_runs_once_per_window_with_that_windows_paths(fake_ba, tmp_path):
+def test_ba_runs_once_per_window_over_that_windows_frames(fake_ba, tmp_path):
     # 9 frames, submap 3 + overlap 1: windows start at 0, 3, 6
     wrapper = _wrapper(9, 3, BundleAdjustmentConfig(tracks_cache_dir=tmp_path))
     _run_loop(wrapper)
 
     assert [r["start"] for r in wrapper.window_ba] == [0, 3, 6]
-    assert [c["paths"] for c in fake_ba] == [
-        ["img_000.png", "img_001.png", "img_002.png", "img_003.png"],
-        ["img_003.png", "img_004.png", "img_005.png", "img_006.png"],
-        ["img_006.png", "img_007.png", "img_008.png"],
+    assert [r["ok"] for r in wrapper.window_ba] == [True, True, True]
+    assert [len(c["images"]) for c in fake_ba] == [4, 4, 3]
+    assert [len(c["depth"]) for c in fake_ba] == [4, 4, 3]
+
+
+def test_ba_gets_that_windows_full_res_frame_paths(fake_ba):
+    # Matcher tracks read the window's full-res frames from the images/ store
+    wrapper = _wrapper(9, 3, BundleAdjustmentConfig())
+    _run_loop(wrapper)
+
+    assert [c["frame_paths"] for c in fake_ba] == [
+        [Path(f"/images/frame_{i:06d}.png") for i in range(0, 4)],
+        [Path(f"/images/frame_{i:06d}.png") for i in range(3, 7)],
+        [Path(f"/images/frame_{i:06d}.png") for i in range(6, 9)],
     ]
+
+
+def test_reconstruct_keeps_full_frame_paths():
+    # The base creator keeps stems only; the wrapper keeps the paths it was given
+    wrapper = _wrapper(3, 3, BundleAdjustmentConfig())
+    paths = [Path(f"/data/images/frame_{i:06d}.png") for i in range(3)]
+
+    with patch.object(LoopClosure, "run_inference"):
+        wrapper._reconstruct(paths, Path("/out"))
+
+    assert wrapper.frame_paths == paths
 
 
 def test_ba_gets_squeezed_depth_and_window_frames(fake_ba):
@@ -140,7 +170,7 @@ def test_mapanything_window_uses_raw_images(fake_ba):
     wrapper = _wrapper(3, 20, BundleAdjustmentConfig())
 
     with patch.object(wrapper.base, "_forward", return_value=raw):
-        out = wrapper._forward_window([{"img": None}] * 3, 0)
+        out, _ = wrapper._forward_window([{"img": None}] * 3, 0)
 
     np.testing.assert_array_equal(fake_ba[0]["images"], raw["images"])
     assert fake_ba[0]["depth"].shape == (3, 4, 4)
@@ -148,7 +178,7 @@ def test_mapanything_window_uses_raw_images(fake_ba):
 
 
 def test_later_windows_hold_window_zero_focal(fake_ba):
-    wrapper = _wrapper(9, 3, BundleAdjustmentConfig(refine_focal=True))
+    wrapper = _wrapper(9, 3, BundleAdjustmentConfig(refine_focal=True, solver="lm"))
     _run_loop(wrapper)
 
     assert fake_ba[0]["config"].refine_focal is True
@@ -168,6 +198,17 @@ def test_refine_focal_false_never_holds(fake_ba):
         assert call["intrinsics"][0, 0, 0] == 100.0
 
 
+def test_matcher_tracks_without_frame_paths_raise(fake_ba):
+    wrapper = _wrapper(3, 20, BundleAdjustmentConfig(track_source="xfeat"))
+    wrapper.frame_paths = []
+
+    # A config error, not a failed window: it is not swallowed into feedforward poses
+    with pytest.raises(ValueError, match="frame_paths"):
+        wrapper._forward_window(wrapper.base.views, 0)
+
+    assert fake_ba == []
+
+
 def test_failed_window_keeps_feedforward_poses(fake_ba):
     wrapper = _wrapper(3, 20, BundleAdjustmentConfig())
     raw = _raw(3)
@@ -177,7 +218,7 @@ def test_failed_window_keeps_feedforward_poses(fake_ba):
         patch.object(_FakeBA, "refine", side_effect=ValueError("too few points")),
         patch.object(wrapper.base, "_forward", return_value=raw),
     ):
-        out = wrapper._forward_window(wrapper.base.views, 0)
+        out, _ = wrapper._forward_window(wrapper.base.views, 0)
 
     np.testing.assert_array_equal(out["extrinsic"], expected)
     assert wrapper.window_ba[0]["ok"] is False
@@ -200,7 +241,7 @@ def test_refined_poses_are_anchored_to_frame_zero(fake_ba):
     K[:, 0, 0] = 77.0
 
     with patch.object(_FakeBA, "refine", return_value=(poses, K)):
-        out = wrapper._forward_window(wrapper.base.views, 0)
+        out, _ = wrapper._forward_window(wrapper.base.views, 0)
 
     expected = poses @ np.linalg.inv(poses[0])
 
@@ -296,7 +337,7 @@ def test_verify_pairs_are_never_refined(fake_ba):
 
 def test_failed_first_window_lets_next_window_set_focal(fake_ba):
     # The failing call raises before recording, so fake_ba holds windows 1 and 2 at [0] and [1]
-    wrapper = _wrapper(9, 3, BundleAdjustmentConfig(refine_focal=True))
+    wrapper = _wrapper(9, 3, BundleAdjustmentConfig(refine_focal=True, solver="lm"))
     real_refine = _FakeBA.refine
     calls = {"n": 0}
 
@@ -319,7 +360,7 @@ def test_failed_first_window_lets_next_window_set_focal(fake_ba):
 
 
 def test_run_inference_resets_window_state(fake_ba):
-    wrapper = _wrapper(3, 20, BundleAdjustmentConfig())
+    wrapper = _wrapper(3, 20, BundleAdjustmentConfig(refine_focal=True, solver="lm"))
     wrapper.run_inference()
     wrapper.run_inference()
 
@@ -336,7 +377,7 @@ def test_ba_none_leaves_forward_untouched():
         patch.object(wrapper.base, "_forward", return_value=raw),
         patch(f"{WRAPPER}.BundleAdjustment") as ba_cls,
     ):
-        out = wrapper._forward_window(wrapper.base.views, 0)
+        out, _ = wrapper._forward_window(wrapper.base.views, 0)
 
     ba_cls.assert_not_called()
 

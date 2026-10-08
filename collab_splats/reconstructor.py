@@ -172,36 +172,42 @@ def _load_frame(
         return ae.encode(fmap)
 
 
-def _build_localization_db(pointcloud_zarr: Path, extractor_name: str, images_dir: Path) -> None:
+def _build_localization_db(
+    pointcloud_zarr: Path, extractor_name: str, images_dir: Path, retrieval: str = "dino-salad"
+) -> None:
     """
     Build the per-frame local-feature localization cache into pointcloud.zarr.
 
     - persists keypoints/descriptors to local_features/{extractor_name}/reconstruction
-    - always rebuilds: an existing group for the extractor is dropped first
-    - a missing pointcloud.zarr, images/ or frame raises before the old group is dropped
+    - always rebuilds: save_index replaces the extractor's whole group
+    - a missing pointcloud.zarr, images/ or frame raises before anything is written
+    - a failed extraction leaves the old group in place
+    - retrieval: registry name of the global-descriptor model stored with the DB
     """
-    # Open the zarr, then validate images/; a bad store must never cost the existing DB
-    store = zarr.open_group(str(pointcloud_zarr), mode="r+")
+    # Load the reconstruction; raises on a missing pointcloud.zarr without creating one
+    pointcloud = PointcloudResult.load_zarr(pointcloud_zarr, load_world_points=True)
 
+    # The localizer reads full-res frames from images/, not model-res images
     if not images_dir.is_dir():
         raise FileNotFoundError(f"{images_dir}: scene has no images/ store")
-
-    # Load the reconstruction; the localizer reads full-res frames, not model-res images
-    pointcloud = PointcloudResult.load_zarr(pointcloud_zarr, load_world_points=True)
 
     # Full-res frames read lazily; KeyError here when a zarr frame is missing from images/
     idxs = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
     images = frames.read_frames_chunked(images_dir, idxs)
+    ids = [str(p) for p in pointcloud.image_paths]
 
-    # Drop the stale group; from_pointcloud would cache-hit it
-    rec_key = f"local_features/{extractor_name}/reconstruction"
-
-    if rec_key in store:
-        del store[rec_key]
-
-    # Extract every reference frame and save the DB
+    # Extract every reference frame, then replace the stored DB
     extractor = LocalMatcher(extractor_name)
-    CameraLocalizer.from_pointcloud(pointcloud, zarr_path=pointcloud_zarr, images=images, extractor=extractor)
+    localizer = CameraLocalizer(
+        pointcloud.world_points,
+        pointcloud.extrinsics,
+        images,
+        ids,
+        extractor=extractor,
+        original_coords=pointcloud.original_coords,
+        retrieval=retrieval,
+    )
+    localizer.save_index(pointcloud_zarr, extractor_name)
     logger.info("Localization DB built: %s :: local_features/%s", pointcloud_zarr, extractor_name)
 
 
@@ -301,7 +307,7 @@ class Reconstructor:
         ba = pc["bundle_adjustment"]
         ba = dict(ba) if isinstance(ba, dict) else {"enabled": bool(ba)}
         ba.setdefault("enabled", True)
-        # tracks_cache_dir is the stage's own path, never a config key
+        # Unknown keys: neither `enabled` nor a BundleAdjustmentConfig field (tracks_cache_dir is a field, so it passes)
         unknown = (
             set(ba) - {"enabled", "tracks_cache_dir"} - {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
         )
@@ -313,7 +319,7 @@ class Reconstructor:
 
         # Build the BA config so its own checks refuse values the solver cannot run
         try:
-            ba_cfg = BundleAdjustmentConfig(**{k: v for k, v in ba.items() if k != "enabled"})
+            BundleAdjustmentConfig(**{k: v for k, v in ba.items() if k != "enabled"})
         except ValueError as e:
             raise ValueError(f"pointcloud.bundle_adjustment: {e}") from e
 
@@ -329,15 +335,6 @@ class Reconstructor:
             raise ValueError(
                 "pointcloud.loop_closure is not supported with method: sfm — "
                 "sfm backends map the whole frame set at once, not in sequential submaps"
-            )
-
-        # Refuse matcher tracks with LC: window BA gets no full-res frame paths
-        source = ba_cfg.track_source
-
-        if ba["enabled"] and lc["enabled"] and source != "vggsfm":
-            raise ValueError(
-                f"pointcloud.bundle_adjustment.track_source {source!r} is not supported with "
-                "pointcloud.loop_closure — window BA does not receive frame paths; use track_source: vggsfm"
             )
 
         # Refuse LC with LoGeR: no LC verify thresholds are calibrated for it
@@ -723,7 +720,7 @@ class Reconstructor:
                 # BA with LC runs inside each window, with the refine stage's terms
                 if cfg["bundle_adjustment"]["enabled"]:
                     terms = {k: v for k, v in cfg["bundle_adjustment"].items() if k != "enabled"}
-                    ba_cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir / "window_ba", **terms)
+                    ba_cfg = BundleAdjustmentConfig(**terms)
 
                 creator = LoopClosure(base=creator, config=lc_config, ba=ba_cfg)
 
@@ -797,7 +794,7 @@ class Reconstructor:
 
         # Build the BA config; a matcher track_source needs the images/ store before any load
         terms = {k: v for k, v in cfg["bundle_adjustment"].items() if k != "enabled"}
-        ba_cfg = BundleAdjustmentConfig(tracks_cache_dir=self.backend_dir, **terms)
+        ba_cfg = BundleAdjustmentConfig(**terms)
 
         if ba_cfg.track_source != "vggsfm" and not self.images_dir.is_dir():
             raise FileNotFoundError(f"{self.images_dir}: scene has no images/ store")
@@ -806,7 +803,7 @@ class Reconstructor:
         pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=True)
         ba = BundleAdjustment(ba_cfg)
 
-        # Full-res store frames in zarr order; only matcher track sources read them
+        # Full-res store frames in zarr order: matcher track input and track-cache key; vggsfm needs no store
         frame_paths = None
 
         if ba_cfg.track_source != "vggsfm":
@@ -820,7 +817,6 @@ class Reconstructor:
             pointcloud.world_points,
             pointcloud.extrinsics,
             pointcloud.model_intrinsics,
-            pointcloud.image_paths,
             depth=pointcloud.depth,
             frame_paths=frame_paths,
         )
@@ -1076,7 +1072,7 @@ class Reconstructor:
         - always rebuilds: an existing group for the matcher is dropped first
         """
         cfg = self.config["localization"]
-        _build_localization_db(self.pointcloud_zarr, cfg["matcher"], self.images_dir)
+        _build_localization_db(self.pointcloud_zarr, cfg["matcher"], self.images_dir, cfg["retrieval"])
 
     def splats(self) -> None:
         """

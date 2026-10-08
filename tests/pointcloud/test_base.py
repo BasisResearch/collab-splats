@@ -68,14 +68,14 @@ def test_base_creator_abstract_method_is_reconstruct():
 
 def test_post_init_sets_full_res_intrinsics_on_cropped_box():
     """
-    intrinsics=None derives the full-res K: resize to the crop undone, then the crop origin added.
+    intrinsics=None derives the pixel-center full-res K: resize to the crop undone, then the crop origin added.
     """
     result = _tiny_result()
 
-    # Hand-computed for CROPPED_BOX: 64x48 grid -> 640x360 crop at y=60
-    # - x scale 640 / 64 = 10: fx 40 -> 400, cx 31.5 -> 315
-    # - y scale 360 / 48 = 7.5: fy 44 -> 330, cy 23.5 -> 176.25, + 60 crop origin -> 236.25
-    expected = np.array([[400.0, 0.0, 315.0], [0.0, 330.0, 236.25], [0.0, 0.0, 1.0]], dtype=np.float32)
+    # Hand-computed for CROPPED_BOX: 64x48 grid -> 640x360 crop at y=60, pixel-center cx = (cx + 0.5) s - 0.5
+    # - x scale 640 / 64 = 10: fx 40 -> 400, cx 31.5 -> 319.5, the crop's center column
+    # - y scale 360 / 48 = 7.5: fy 44 -> 330, cy 23.5 -> 179.5, + 60 crop origin -> 239.5
+    expected = np.array([[400.0, 0.0, 319.5], [0.0, 330.0, 239.5], [0.0, 0.0, 1.0]], dtype=np.float32)
     assert result.intrinsics.dtype == np.float32
     np.testing.assert_array_equal(result.intrinsics[0], expected)
 
@@ -102,7 +102,7 @@ def test_supplied_intrinsics_are_kept():
 
 def test_to_colmap_cameras_carry_full_res_k():
     """
-    Every exported camera is PINHOLE with the full-res K and the original frame size.
+    Every exported camera is PINHOLE with the full-res K in COLMAP's pixel-corner form and the original frame size.
     """
     result = _tiny_result()
     recon = result.to_colmap()
@@ -113,7 +113,9 @@ def test_to_colmap_cameras_carry_full_res_k():
         row = image_id - 1
         assert camera.model.name == "PINHOLE"
         assert image.name == result.image_paths[row].name
-        np.testing.assert_array_equal(camera.calibration_matrix(), result.intrinsics[row].astype(np.float64))
+        expected = result.intrinsics[row].astype(np.float64)
+        expected[:2, 2] += 0.5
+        np.testing.assert_array_equal(camera.calibration_matrix(), expected)
         assert camera.width == int(result.original_coords[row][4])
         assert camera.height == int(result.original_coords[row][5])
     assert recon.num_points3D() == len(result.points)
@@ -129,12 +131,12 @@ def test_to_colmap_sizes_each_camera_by_its_own_frame():
     result = replace(result, original_coords=coords, intrinsics=None)
     recon = result.to_colmap()
 
-    # Frame 1 by hand: 64x48 -> 320x240 is x5 on both axes, no crop origin
-    # - fx 40 -> 200, fy 44 -> 220, cx 31.5 -> 157.5, cy 23.5 -> 117.5
+    # Frame 1 by hand: 64x48 -> 320x240 is x5 on both axes, no crop origin; COLMAP cx = (cx + 0.5) s
+    # - fx 40 -> 200, fy 44 -> 220, cx 31.5 -> 160, cy 23.5 -> 120: the frame center
     assert (recon.cameras[1].width, recon.cameras[1].height) == (640, 480)
-    np.testing.assert_array_equal(recon.cameras[1].params, [400.0, 330.0, 315.0, 236.25])
+    np.testing.assert_array_equal(recon.cameras[1].params, [400.0, 330.0, 320.0, 240.0])
     assert (recon.cameras[2].width, recon.cameras[2].height) == (320, 240)
-    np.testing.assert_array_equal(recon.cameras[2].params, [200.0, 220.0, 157.5, 117.5])
+    np.testing.assert_array_equal(recon.cameras[2].params, [200.0, 220.0, 160.0, 120.0])
 
 
 def test_to_colmap_accepts_3x4_extrinsics():

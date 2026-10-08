@@ -26,14 +26,12 @@ def __getattr__(name: str) -> type:
     Raises:
         AttributeError: for any other name.
     """
-    if name == "LoopClosure":
-        from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+    # Import the wrapper on first access (cycle)
+    if name in ("LoopClosure", "LoopClosureConfig"):
+        from collab_splats.geometry.loop_closure import wrapper
 
-        return LoopClosure
-    if name == "LoopClosureConfig":
-        from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
+        return getattr(wrapper, name)
 
-        return LoopClosureConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

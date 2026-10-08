@@ -1,5 +1,5 @@
 """
-Stage 2 local matching: vismatch features, cached once, matched pair by pair.
+Stage 2 local matching: vismatch features, cached once, matched in batches of pairs.
 
 - xfeat and loma only: vismatch supports_batches, so match() reads cached features
 - LocalFeatures is one cache row; MatchResult carries native keypoint-table indices
@@ -228,29 +228,40 @@ class LocalMatcher:
         Returns:
             Pre-RANSAC matches; empty when either side has no keypoints.
         """
-        if len(query.descriptors) == 0 or len(db.descriptors) == 0:
-            return _empty_match()
+        return self.match_batch([(query, db)])[0]
 
-        query_in = self._vismatch_features(query)
-        db_in = self._vismatch_features(db)
+    def match_batch(self, pairs: list[tuple[LocalFeatures, LocalFeatures]]) -> list[MatchResult]:
+        """
+        Match many cached frame pairs in one vismatch match_batch call.
+
+        - xfeat matches every pair in one forward; loma loops pairs inside vismatch
+        - caller sizes the batch: xfeat holds two B x N x N similarity tensors
+
+        Args:
+            pairs: (query, db) feature pairs.
+
+        Returns:
+            One match() result per pair, in order; empty where either side has no keypoints.
+        """
+        results = [_empty_match() for _ in pairs]
+        live = [i for i, (q, d) in enumerate(pairs) if len(q.descriptors) and len(d.descriptors)]
+        inputs = [(self._vismatch_features(pairs[i][0]), self._vismatch_features(pairs[i][1])) for i in live]
 
         with torch.inference_mode():
-            out = self._matcher.match(query_in, db_in)
-
-        if len(out["matched_idxs0"]) == 0:
-            return _empty_match()
-
-        query_px = to_numpy(out["matched_kpts0"])
-        ref_px = to_numpy(out["matched_kpts1"])
-        idx_q = to_numpy(out["matched_idxs0"])
-        idx_db = to_numpy(out["matched_idxs1"])
+            outs = self._matcher.match_batch(inputs)
 
         # MatchResult dtypes: float32 pixels, int64 keypoint indices
-        query_px = query_px.astype(np.float32, copy=False)
-        ref_px = ref_px.astype(np.float32, copy=False)
-        idx_q = idx_q.astype(np.int64, copy=False)
-        idx_db = idx_db.astype(np.int64, copy=False)
-        return MatchResult(query_px=query_px, ref_px=ref_px, idx_q=idx_q, idx_db=idx_db)
+        for i, out in zip(live, outs):
+            if len(out["matched_idxs0"]) == 0:
+                continue
+
+            query_px = out["matched_kpts0"].astype(np.float32, copy=False)
+            ref_px = out["matched_kpts1"].astype(np.float32, copy=False)
+            idx_q = out["matched_idxs0"].astype(np.int64, copy=False)
+            idx_db = out["matched_idxs1"].astype(np.int64, copy=False)
+            results[i] = MatchResult(query_px=query_px, ref_px=ref_px, idx_q=idx_q, idx_db=idx_db)
+
+        return results
 
     @staticmethod
     def _vismatch_features(feats: LocalFeatures) -> dict:

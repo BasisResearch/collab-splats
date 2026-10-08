@@ -1,28 +1,39 @@
+"""
+Tests for collab_splats.geometry.transforms: poses, intrinsics, focal fit, Umeyama, floor plane.
+"""
+
+import ast
+import pathlib
+
 import numpy as np
 import pytest
 import torch
 
+import collab_splats.geometry.bundle_adjustment as ba_mod
 from collab_splats.geometry.transforms import (
-    OPENGL_TO_OPENCV,
     _compute_weighted_median,
     estimate_intrinsics_from_points,
-    extract_intrinsics,
     extrinsics_to_homogeneous,
     fit_dominant_plane,
     intrinsics_4x4,
     invert_poses,
     project_to_so3,
     rescale_intrinsics,
-    rotation_align_vectors,
     shift_intrinsics,
     transform_points,
     umeyama_se3,
     umeyama_sim3,
 )
 
+########################################################################
+# Helpers
+########################################################################
 
-def _random_rigid(*shape):
-    """Build a random valid rigid-body (SE3) transform via QR decomposition."""
+
+def _random_rigid(*shape: int) -> np.ndarray:
+    """
+    Random valid rigid-body (SE3) transform via QR decomposition.
+    """
     A = np.random.randn(*shape, 3, 3)
     Q, _ = np.linalg.qr(A)
     t = np.random.randn(*shape, 3, 1)
@@ -31,6 +42,11 @@ def _random_rigid(*shape):
     poses[..., :3, 3:] = t
     poses[..., 3, 3] = 1.0
     return poses.astype(np.float64)
+
+
+########################################################################
+# Poses
+########################################################################
 
 
 def test_transform_points_matches_homogeneous_matmul():
@@ -97,21 +113,6 @@ def test_invert_poses_dtype_preserved():
     assert invert_poses(T).dtype == np.float32
 
 
-def test_extract_intrinsics_basic():
-    K = np.array([[500.0, 0, 320.0], [0, 480.0, 240.0], [0, 0, 1.0]])
-    fx, fy, cx, cy = extract_intrinsics(K)
-    assert fx == 500.0
-    assert fy == 480.0
-    assert cx == 320.0
-    assert cy == 240.0
-
-
-def test_extract_intrinsics_returns_floats():
-    K = np.eye(3, dtype=np.float32)
-    fx, fy, cx, cy = extract_intrinsics(K)
-    assert isinstance(fx, float)
-
-
 @pytest.mark.parametrize("batch", [(), (5,)])
 def test_intrinsics_4x4_embeds_k_top_left(batch):
     K = np.random.default_rng(0).uniform(1.0, 500.0, size=batch + (3, 3)).astype(np.float32)
@@ -124,8 +125,15 @@ def test_intrinsics_4x4_embeds_k_top_left(batch):
     np.testing.assert_array_equal(out[..., :3, 3], 0.0)
 
 
+########################################################################
+# Intrinsics
+########################################################################
+
+
 def _model_to_original(K: np.ndarray, crops: np.ndarray, model_hw: tuple[int, int]) -> np.ndarray:
-    """Undo crop-then-resize the way callers do: resize model -> crop size, then shift by +tl."""
+    """
+    Undo crop-then-resize the way callers do: resize model -> crop size, then shift by +tl.
+    """
     crops = np.asarray(crops, dtype=np.float64)
     crop_hw = np.stack([crops[..., 3] - crops[..., 1], crops[..., 2] - crops[..., 0]], axis=-1)
     K = rescale_intrinsics(K, model_hw, crop_hw)
@@ -133,7 +141,9 @@ def _model_to_original(K: np.ndarray, crops: np.ndarray, model_hw: tuple[int, in
 
 
 def test_model_to_original_known_answer():
-    """Crop (11,7)-(59,47) resized to a 12x8 model grid: sx=0.25, sy=0.2."""
+    """
+    Crop (11,7)-(59,47) resized to a 12x8 model grid: sx=0.25, sy=0.2.
+    """
     K = np.array([[10.0, 0, 6.0], [0, 10.0, 4.0], [0, 0, 1]])
     out = _model_to_original(K, (11.0, 7.0, 59.0, 47.0), (8, 12))
     assert out.dtype == np.float64
@@ -141,9 +151,10 @@ def test_model_to_original_known_answer():
 
 
 def test_model_to_original_round_trips_a_projection_through_the_crop_box():
-    """A model-K projection mapped through the crop box lands on the original-K pixel.
+    """
+    A model-K projection mapped through the crop box lands on the original-K pixel.
 
-    - non-square crop, off-centre origin, distinct fx/fy, so swapping sx/sy or dropping tl fails
+    - non-square crop, off-center origin, distinct fx/fy, so swapping sx/sy or dropping tl fails
     - batched call equals the per-frame calls, so (N, 3, 3) with (N, 2) hw/offset broadcasts per row
     """
     rng = np.random.default_rng(0)
@@ -167,7 +178,9 @@ def test_model_to_original_round_trips_a_projection_through_the_crop_box():
 
 
 def test_crop_then_resize_and_its_undo_round_trip_k():
-    """original -> model (shift -tl, resize crop -> model) -> original returns K; ops undo in reverse order."""
+    """
+    original -> model (shift -tl, resize crop -> model) -> original returns K; ops undo in reverse.
+    """
     crops = np.array([[16.0, 8.0, 48.0, 40.0], [5.0, 30.0, 105.0, 90.0]])
     crop_hw = np.stack([crops[:, 3] - crops[:, 1], crops[:, 2] - crops[:, 0]], axis=-1)
     model_hw = (24, 40)
@@ -179,7 +192,9 @@ def test_crop_then_resize_and_its_undo_round_trip_k():
 
 
 def test_rescale_intrinsics_scales_whole_rows_including_skew():
-    """x row (fx, skew, cx) by dst_w/src_w, y row (fy, cy) by dst_h/src_h; bottom row untouched."""
+    """
+    x row (fx, skew, cx) by dst_w/src_w, y row (fy, cy) by dst_h/src_h; bottom row untouched.
+    """
     K = np.array([[500.0, 7.0, 250.0], [0, 400.0, 200.0], [0, 0, 1]])
     out = rescale_intrinsics(K, (400, 500), (100, 250))
     np.testing.assert_allclose(out, [[250.0, 3.5, 125.0], [0, 100.0, 50.0], [0, 0, 1]])
@@ -189,6 +204,11 @@ def test_shift_intrinsics_moves_only_the_principal_point():
     K = np.array([[500.0, 7.0, 250.0], [0, 400.0, 200.0], [0, 0, 1]])
     out = shift_intrinsics(K, (-10.0, 30.0))
     np.testing.assert_array_equal(out, [[500.0, 7.0, 240.0], [0, 400.0, 230.0], [0, 0, 1]])
+
+
+########################################################################
+# Rotations
+########################################################################
 
 
 def test_project_to_so3_returns_nearest_rotation_with_det_one():
@@ -215,94 +235,61 @@ def test_project_to_so3_batch_flips_only_the_reflected_member():
     assert np.allclose(np.linalg.det(batch), 1.0)
 
 
-def test_opengl_to_opencv_shape():
-    assert OPENGL_TO_OPENCV.shape == (4, 4)
-
-
-def test_opengl_to_opencv_flips_yz():
-    expected = np.diag([1, -1, -1, 1]).astype(np.float64)
-    np.testing.assert_array_equal(OPENGL_TO_OPENCV, expected)
-
-
-def test_rotation_align_vectors_identity():
-    """Aligning a vector to itself returns identity."""
-    src = np.array([0.0, 0.0, 1.0])
-    R = rotation_align_vectors(src, src)
-    np.testing.assert_allclose(R, np.eye(3), atol=1e-10)
-
-
-def test_rotation_align_vectors_aligns_correctly():
-    """R @ src ≈ dst."""
-    src = np.array([0.0, 1.0, 0.0])
-    dst = np.array([0.0, 0.0, 1.0])
-    R = rotation_align_vectors(src, dst)
-    result = R @ src
-    np.testing.assert_allclose(result, dst, atol=1e-10)
-
-
-def test_rotation_align_vectors_is_rotation():
-    """det(R) == 1 and R @ R.T == I."""
-    src = np.array([1.0, 0.0, 0.0])
-    dst = np.array([0.0, 1.0, 0.0])
-    R = rotation_align_vectors(src, dst)
-    assert abs(np.linalg.det(R) - 1.0) < 1e-10
-    np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-10)
-
-
-def test_rotation_align_vectors_antiparallel():
-    """180-degree case: src = -dst still returns a valid rotation."""
-    src = np.array([0.0, 0.0, 1.0])
-    dst = np.array([0.0, 0.0, -1.0])
-    R = rotation_align_vectors(src, dst)
-    result = R @ src
-    np.testing.assert_allclose(result, dst, atol=1e-6)
+########################################################################
+# Intrinsics fit
+########################################################################
 
 
 def test_compute_weighted_median_equal_weights_matches_plain_median():
-    # With uniform weights the weighted median is the ordinary median.
+    # With uniform weights the weighted median is the ordinary median
     values = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
     weights = np.ones_like(values)
     assert _compute_weighted_median(values, weights) == pytest.approx(3.0)
 
 
 def test_compute_weighted_median_follows_the_weight_mass():
-    # Weight concentrated on the low values pulls the median down, even though
-    # the high values are the numerical majority by count.
-    # Deliberately unsorted: this is what pins the argsort. Pre-sorted input would
-    # pass even if the sort were deleted.
+    """
+    Weight concentrated on the low values pulls the median down, though the high values outnumber them.
+
+    - deliberately unsorted: pins the argsort; pre-sorted input passes with the sort deleted
+    """
     values = np.array([9.0, 1.0, 9.0, 1.0, 9.0], dtype=np.float32)
     weights = np.array([1.0, 50.0, 1.0, 50.0, 1.0], dtype=np.float32)
     assert _compute_weighted_median(values, weights) == pytest.approx(1.0)
 
 
 def test_compute_weighted_median_empty_returns_none():
-    # Signals "no estimate" to the caller, which raises rather than falling back.
+    # Signals "no estimate" to the caller, which raises rather than falling back
     assert _compute_weighted_median(np.array([]), np.array([])) is None
 
 
 def test_compute_weighted_median_zero_weights_returns_none():
-    # No confidence mass to bisect. Must not silently return the smallest value.
+    # No confidence mass to bisect; must not silently return the smallest value
     values = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     assert _compute_weighted_median(values, np.zeros(3, dtype=np.float32)) is None
 
 
 def test_compute_weighted_median_subsamples_deterministically():
-    # Above max_n the seeded RNG must give the same answer every call — the
-    # intrinsics fit is otherwise non-reproducible at production frame counts.
+    """
+    Above max_n the seeded RNG gives the same answer every call.
+
+    - otherwise the intrinsics fit is non-reproducible at production frame counts
+    """
     rng = np.random.default_rng(0)
     values = rng.normal(100.0, 10.0, size=200_000).astype(np.float32)
     weights = np.ones_like(values)
     first = _compute_weighted_median(values, weights, max_n=1000)
     assert first == _compute_weighted_median(values, weights, max_n=1000)
-    # ...and that subsampling did not move the estimate off the true median.
+
+    # Subsampling did not move the estimate off the true median
     assert first == pytest.approx(float(np.median(values)), abs=1.0)
 
 
 def _synthetic_local_points(h: int, w: int, fx: float, fy: float, depth: float = 2.0) -> np.ndarray:
-    """Exact camera-frame pointmap for a centre-principal pinhole camera, shape (1,H,W,3).
+    """
+    Exact camera-frame pointmap for a center-principal pinhole camera, shape (1,H,W,3).
 
-    Built about the same centre the estimator assumes, cx=(W-1)/2 and cy=(H-1)/2,
-    so recovery is exact and the principal-point assertion below is meaningful.
+    - built about the center the estimator assumes, cx=(W-1)/2 and cy=(H-1)/2, so recovery is exact
     """
     uu, vv = np.meshgrid(
         np.arange(w, dtype=np.float32) - (w - 1) / 2.0,
@@ -313,11 +300,13 @@ def _synthetic_local_points(h: int, w: int, fx: float, fy: float, depth: float =
 
 
 @pytest.mark.parametrize("fx,fy", [(320.0, 320.0), (352.0, 320.0)])
-def test_fit_recovers_known_intrinsics(fx, fy):
-    # The anisotropic row (fx/fy = 1.10) is what protects the aspect-ratio argument:
-    # our resize rounds each axis to a multiple of 14 independently, so a real camera
-    # genuinely produces fx != fy at model resolution. Any "simplification" that
-    # averages them fails here.
+def test_fit_recovers_known_intrinsics(fx: float, fy: float):
+    """
+    Exact pointmap recovers fx, fy and the centered principal point.
+
+    - anisotropic row (fx/fy = 1.10): resize rounds each axis to a multiple of 14 independently
+    - so a real camera has fx != fy at model resolution; averaging them fails here
+    """
     h, w = 224, 308
     pts = _synthetic_local_points(h, w, fx, fy)
     conf = np.ones((1, h, w), dtype=np.float32)
@@ -327,17 +316,22 @@ def test_fit_recovers_known_intrinsics(fx, fy):
     assert k.shape == (3, 3)
     assert k[0, 0] == pytest.approx(fx, rel=1e-3)
     assert k[1, 1] == pytest.approx(fy, rel=1e-3)
-    # cx/cy are decided by the estimator's own centred grid, not by the caller.
+
+    # cx/cy come from the estimator's own centered grid, not from the caller
     assert k[0, 2] == pytest.approx((w - 1) / 2.0)
     assert k[1, 2] == pytest.approx((h - 1) / 2.0)
     assert k[2, 2] == pytest.approx(1.0)
+
     if fx != fy:
         assert k[0, 0] != pytest.approx(k[1, 1], rel=1e-3)
 
 
 def test_fit_survives_confident_outliers():
-    # Corrupt 30% of pixels AND give them full confidence. A weighted median is
-    # unmoved; a least-squares fit would be dragged toward the corrupted focal.
+    """
+    30% corrupt pixels at full confidence leave the weighted median unmoved.
+
+    - a least-squares fit would be dragged toward the corrupted focal
+    """
     h, w = 112, 154
     fx = fy = 160.0
     pts = _synthetic_local_points(h, w, fx, fy)
@@ -363,17 +357,22 @@ def test_fit_survives_confident_outliers():
     ],
 )
 def test_degenerate_input_raises_instead_of_falling_back(mutate):
-    # No 1.2*max(W,H) fallback focal, by design: a silently-wrong K is exactly the
-    # regression class of be24be2, which produced a plausible mesh from a bad camera.
+    """
+    Degenerate pointmaps raise; no 1.2*max(W,H) fallback focal, by design.
+
+    - a silently-wrong K is the regression class of be24be2: a plausible mesh from a bad camera
+    """
     h, w = 56, 70
     pts, conf = mutate(_synthetic_local_points(h, w, 80.0, 80.0), np.ones((1, h, w), np.float32))
+
     with pytest.raises(RuntimeError, match="intrinsics fit failed"):
         estimate_intrinsics_from_points(pts, conf)
 
 
 def test_fit_accepts_trailing_axis_confidence():
-    # LoGeR's conf head emits (N,H,W,1); the estimator must not require a squeeze
-    # from its caller, since _forward and the tests reach it by different routes.
+    """
+    (N,H,W,1) confidence, as LoGeR's conf head emits, fits like (N,H,W) without a caller squeeze.
+    """
     h, w = 56, 70
     pts = _synthetic_local_points(h, w, 80.0, 80.0)
     k4 = estimate_intrinsics_from_points(pts, np.ones((1, h, w, 1), np.float32))
@@ -382,14 +381,16 @@ def test_fit_accepts_trailing_axis_confidence():
 
 
 def test_fit_weights_by_confidence_not_by_count():
-    # A plain np.median would follow the 60% majority; the weighted median follows the
-    # mass. Every other estimator test uses uniform confidence, so swapping np.median in
-    # survives all of them.
+    """
+    The weighted median follows the confidence mass, not the 60% majority by count.
+
+    - the only estimator test with non-uniform confidence: a plain np.median survives all others
+    """
     h, w = 112, 154
     good = _synthetic_local_points(h, w, 400.0, 400.0)
     bad = _synthetic_local_points(h, w, 800.0, 800.0)
 
-    # 60% of pixels carry the wrong focal, but only marginal confidence.
+    # 60% of pixels carry the wrong focal, but only marginal confidence
     rng = np.random.default_rng(3)
     is_bad = rng.random((1, h, w)) < 0.60
     pts = np.where(is_bad[..., None], bad, good)
@@ -402,75 +403,63 @@ def test_fit_weights_by_confidence_not_by_count():
 
 
 def test_conf_threshold_gates_below_the_floor():
-    # The gate is a hard floor, separate from the weighting: sub-floor pixels must not
-    # contribute at all. Deleting `conf > conf_threshold` from the validity mask leaves
-    # every other test green, because the one test using conf=0.0 is already caught by
-    # the weighted median's own zero-mass guard.
+    """
+    conf_threshold is a hard floor, separate from the weighting: sub-floor pixels never contribute.
+
+    - the only test that fails when `conf > conf_threshold` leaves the validity mask
+    - conf=0.0 elsewhere is already caught by the weighted median's zero-mass guard
+    """
     h, w = 56, 70
     pts = _synthetic_local_points(h, w, 80.0, 80.0)
 
-    # Uniformly just under the floor: nothing survives, so it must fail loudly.
+    # Uniformly just under the floor: nothing survives, so it must fail loudly
     with pytest.raises(RuntimeError, match="intrinsics fit failed"):
         estimate_intrinsics_from_points(pts, np.full((1, h, w), 0.09, np.float32))
 
-    # Just over it: the same pointmap fits cleanly.
+    # Just over it: the same pointmap fits cleanly
     k = estimate_intrinsics_from_points(pts, np.full((1, h, w), 0.11, np.float32))
     assert k[0, 0] == pytest.approx(80.0, rel=1e-3)
 
 
-def test_rotation_angle_deg():
-    """Geodesic angle: identity -> 0, known z-rotation -> its angle, clip guards trace noise."""
-    from collab_splats.geometry.transforms import rotation_angle_deg
-
-    assert rotation_angle_deg(np.eye(3)) == pytest.approx(0.0)
-    a = np.radians(30.0)
-    Rz = np.array([[np.cos(a), -np.sin(a), 0], [np.sin(a), np.cos(a), 0], [0, 0, 1]])
-    assert rotation_angle_deg(Rz) == pytest.approx(30.0, abs=1e-6)
-    # trace marginally above 3 from float error must not NaN through arccos
-    assert rotation_angle_deg(np.eye(3) * (1 + 1e-12)) == pytest.approx(0.0, abs=1e-3)
-
-
 def test_focal_bounds_reject_both_infinities():
-    # Non-finite focals pass the validity mask — `z > 1e-3` and `|x| > 1e-6` constrain
-    # the point, not the quotient — so ONLY the FOV bounds stop them. Both bounds are
-    # load-bearing, and this pins one each: fx is corrupted to -inf (caught by the lower
-    # bound) and fy to +inf (caught by the upper).
-    #
-    # The corrupted fraction has to exceed half. Every clean pixel here carries exactly
-    # fx=400, so a minority of leaked infinities would shift the half-mass index inside a
-    # constant array and change nothing — the mutation is only observable when the
-    # infinity is itself returned and trips the isfinite check.
+    """
+    Only the FOV bounds stop non-finite focals; this pins each bound once.
+
+    - validity mask constrains the point (`z > 1e-3`, `|x| > 1e-6`), not the quotient
+    - fx corrupted to -inf (lower bound), fy to +inf (upper bound)
+    - corrupted fraction exceeds half: clean pixels all carry fx=400, so a minority of infinities
+      moves the half-mass index inside a constant array and changes nothing
+    """
     h, w = 112, 154
     pts = _synthetic_local_points(h, w, 400.0, 400.0)
     conf = np.ones((1, h, w), dtype=np.float32)
 
-    # Give X the sign opposite to its centred column so u_c * Z / X is negative, then
-    # overflow it: |uu| * 1e38 already exceeds float32 range before the tiny divisor.
+    # X opposite in sign to its centered column, Z at 1e38: u_c * Z / X overflows to -inf
     uu = np.broadcast_to(np.arange(w, dtype=np.float32) - (w - 1) / 2.0, (1, h, w))
     rng = np.random.default_rng(11)
     hit = rng.random((1, h, w)) < 0.60
     pts[..., 0] = np.where(hit, -np.sign(uu) * 2e-6, pts[..., 0])
     pts[..., 2] = np.where(hit, np.float32(1e38), pts[..., 2])
 
-    # Y is untouched, so inflating Z drives fy = v_c * Z / Y to +inf on the same pixels.
+    # Y is untouched, so inflating Z drives fy = v_c * Z / Y to +inf on the same pixels
     k = estimate_intrinsics_from_points(pts, conf)
 
     assert k[0, 0] == pytest.approx(400.0, rel=1e-2)
     assert k[1, 1] == pytest.approx(400.0, rel=1e-2)
 
 
-
 ########################################################################
-########## Point-set alignment #########################################
+# Point-set alignment
 ########################################################################
 
 
 def test_umeyama_sim3_recovers_known_similarity():
-    """umeyama_sim3 recovers the (s, R, t) that generated the target points."""
-    from collab_splats.geometry.transforms import umeyama_sim3
-
+    """
+    umeyama_sim3 recovers the (s, R, t) that generated the target points.
+    """
     rng = np.random.default_rng(0)
     src = rng.normal(size=(12, 3))
+
     # Known 90 deg rotation about z, scale 2.5, translation (1, -2, 3)
     R_true = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     s_true, t_true = 2.5, np.array([1.0, -2.0, 3.0])
@@ -492,14 +481,15 @@ def test_umeyama_raises_on_fewer_than_three_points(fn):
 def test_umeyama_raises_on_zero_total_weight(fn):
     rng = np.random.default_rng(0)
     src = rng.normal(size=(5, 3))
+
     with pytest.raises(ValueError, match="zero total weight"):
         fn(src, src, weights=np.zeros(5))
 
 
 def test_umeyama_se3_recovers_known_rigid_transform():
-    """umeyama_se3 recovers a rigid transform as a (4,4) homogeneous matrix."""
-    from collab_splats.geometry.transforms import umeyama_se3
-
+    """
+    umeyama_se3 recovers a rigid transform as a (4,4) homogeneous matrix.
+    """
     rng = np.random.default_rng(1)
     src = rng.normal(size=(10, 3))
     R_true = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]])
@@ -513,25 +503,14 @@ def test_umeyama_se3_recovers_known_rigid_transform():
 
 
 def test_bundle_adjustment_does_not_import_loop_closure():
-    """BA and loop closure are siblings: BA must not depend on LC.
-
-    umeyama_sim3 used to live in loop_closure/graph.py. Importing it from there would
-    invert the layering and tie BA to that module's gtsam dependency, so it lives in
-    transforms.py instead.
     """
-    import ast
-    import pathlib
+    BA and loop closure are siblings: BA must not depend on LC.
 
-    import collab_splats.geometry.bundle_adjustment as ba_mod
-
+    - shared math such as umeyama_sim3 lives in transforms.py, not loop_closure
+    """
     tree = ast.parse(pathlib.Path(ba_mod.__file__).read_text(encoding="utf-8"))
-    imported = [
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module
-    ] + [
-        alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names
-    ]
+    imported = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
+    imported += [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
     assert not any("loop_closure" in m for m in imported), f"BA imports loop closure: {imported}"
 
 
@@ -544,7 +523,9 @@ def test_bundle_adjustment_does_not_import_loop_closure():
     ],
 )
 def test_model_to_original_rejects_bad_boxes(box):
-    """Zero width, negative height, NaN width: the crop size reaches rescale_intrinsics as a bad hw."""
+    """
+    Zero width, negative height, NaN width: the crop size reaches rescale_intrinsics as a bad hw.
+    """
     with pytest.raises(ValueError):
         _model_to_original(np.eye(3), np.array(box, dtype=float), (4, 4))
 
@@ -556,28 +537,34 @@ def test_rescale_intrinsics_rejects_bad_sizes(src_hw, dst_hw):
 
 
 def test_rescale_intrinsics_rejects_hw_stack_with_single_k():
-    """(3, 3) K can't pair with an (N, 2) hw stack: N doesn't broadcast into K's () leading dims."""
-    with pytest.raises(ValueError, match="broadcast"):
+    """
+    (3, 3) K can't pair with an (N, 2) hw stack: N doesn't broadcast into K's () leading dims.
+    """
+    with pytest.raises(ValueError):
         rescale_intrinsics(np.eye(3), (4, 4), np.full((2, 2), 8.0))
 
 
 def test_shift_intrinsics_rejects_offset_stack_with_single_k():
-    with pytest.raises(ValueError, match="broadcast"):
+    with pytest.raises(ValueError):
         shift_intrinsics(np.eye(3), np.zeros((2, 2)))
 
 
 ########################################################################
-########## fit_dominant_plane ##########################################
+# Floor plane
 ########################################################################
 
 
 def test_fit_dominant_plane_flat_z_up():
-    """Flat ground at z=-1 → R≈I, t brings floor to z=0."""
+    """
+    Flat ground at z=-1 → R≈I, t brings floor to z=0.
+    """
     rng = np.random.default_rng(42)
+
     # Ground plane at z = -1 with small noise
     xy = rng.uniform(-5, 5, (800, 2)).astype(np.float32)
     z = rng.normal(-1.0, 0.005, (800,)).astype(np.float32)
     ground = np.column_stack([xy, z])
+
     # Scatter above-ground points
     above_xy = rng.uniform(-5, 5, (100, 2)).astype(np.float32)
     above_z = rng.uniform(-0.5, 2.0, (100,)).astype(np.float32)
@@ -588,13 +575,16 @@ def test_fit_dominant_plane_flat_z_up():
 
     assert R.shape == (3, 3)
     assert t.shape == (3,)
+
     # After applying transform, floor z-mean should be ≈ 0
     pts_aligned = (R @ points[:800].T).T + t
     np.testing.assert_allclose(pts_aligned[:, 2].mean(), 0.0, atol=0.1)
 
 
 def test_fit_dominant_plane_returns_valid_rotation():
-    """R is a proper rotation matrix (det=1, orthogonal)."""
+    """
+    R is a proper rotation matrix (det=1, orthogonal).
+    """
     rng = np.random.default_rng(7)
     pts = rng.standard_normal((500, 3)).astype(np.float32)
     pts[:400, 2] = rng.normal(0, 0.01, 400)  # flat-ish ground at z=0
@@ -603,8 +593,15 @@ def test_fit_dominant_plane_returns_valid_rotation():
     np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-6)
 
 
+########################################################################
+# Pose batches
+########################################################################
+
+
 def test_transform_points_maps_one_point_set_through_a_pose_batch():
-    """(B, 4, 4) poses over (P, 3) points give (B, P, 3), each slice the 2-D result."""
+    """
+    (B, 4, 4) poses over (P, 3) points give (B, P, 3), each slice the 2-D result.
+    """
     rng = np.random.default_rng(0)
     points = torch.as_tensor(rng.standard_normal((50, 3)), dtype=torch.float32)
     poses = torch.eye(4).repeat(3, 1, 1)
@@ -613,13 +610,16 @@ def test_transform_points_maps_one_point_set_through_a_pose_batch():
 
     out = transform_points(points, poses)
     assert out.shape == (3, 50, 3)
+
     for b in range(3):
         torch.testing.assert_close(out[b], transform_points(points, poses[b]), rtol=0, atol=1e-6)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA")
 def test_transform_points_pose_batch_is_exact_fp32_under_tf32():
-    """Under "high" precision a pose batch still equals each one-pose result bit for bit."""
+    """
+    Under "high" precision a pose batch still equals each one-pose result bit for bit.
+    """
     gen = torch.Generator().manual_seed(0)
     points = (torch.rand(200_000, 3, generator=gen) * 10 - 5).cuda()
     poses = torch.eye(4).repeat(4, 1, 1)

@@ -32,7 +32,6 @@ def unproject(depth: Tensor, world_to_cam: Tensor, intrinsics: Tensor) -> Tensor
 
     - camera ray `((u - cx)/fx, (v - cy)/fy, 1)`, scaled by depth
     - `x_world = R^T (d * ray - t)`, written as `(p - t) @ R`
-    - inverse written out: transform_points applies T, not its inverse, and batches only (B, P, 3) points
 
     Args:
         depth: (..., H, W) z-depth.
@@ -82,6 +81,7 @@ def unproject_frames(
     Returns:
         (N, H, W, 3) float32 world points.
     """
+    # Host output array and device
     device = get_device()
     world_points = np.empty((*depth.shape, 3), dtype=np.float32)
 
@@ -125,7 +125,7 @@ def project(
     # World -> camera
     points_cam = transform_points(points_world, world_to_cam)
 
-    # One K: 0-dim scalars, as before the pose batch; a batch broadcasts (B, 1) over the points
+    # One K: 0-dim scalars; a batch broadcasts (B, 1) over the points
     if intrinsics.ndim == 2:
         fx, fy = intrinsics[0, 0], intrinsics[1, 1]
         cx, cy = intrinsics[0, 2], intrinsics[1, 2]
@@ -140,6 +140,37 @@ def project(
     return torch.stack([u, v], dim=-1), points_cam
 
 
+def reprojection_error(points: Tensor, world_to_cam: Tensor, intrinsics: Tensor, px: Tensor) -> Tensor:
+    """
+    Pixel distance from projected world points to observed pixels; inf where undefined.
+
+    - one camera for all points, or one camera per point (leading M on both pose and K)
+    - inf behind the camera or where the point or pixel is NaN
+
+    Args:
+        points: (M, 3) world points.
+        world_to_cam: (4, 4) w2c, or (M, 4, 4) one per point.
+        intrinsics: (3, 3) K, or (M, 3, 3) one per point.
+        px: (M, 2) observed pixels.
+
+    Returns:
+        (M,) distances in px, in the points' dtype.
+    """
+    # Per-point cameras project each point as a one-point batch
+    if world_to_cam.ndim == 3:
+        pixels, points_cam = project(points[:, None], world_to_cam, intrinsics)
+        pixels, points_cam = pixels[:, 0], points_cam[:, 0]
+    else:
+        pixels, points_cam = project(points, world_to_cam, intrinsics)
+
+    # Pixel distance to the observations
+    err = torch.linalg.norm(pixels - px, dim=-1)
+
+    # Behind-camera points and NaN never pass a threshold
+    bad = ~(points_cam[:, 2] > 0) | torch.isnan(err)
+    return err.masked_fill(bad, torch.inf)
+
+
 def sample_world_points(world_points: np.ndarray, px: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Bilinear world points at pixel coordinates (hloc interpolate_scan analog).
@@ -149,30 +180,24 @@ def sample_world_points(world_points: np.ndarray, px: np.ndarray) -> tuple[np.nd
 
     Args:
         world_points: (H, W, 3) per-pixel world points.
-        px: (K, 2) float32 xy on that grid.
+        px: (K, 2) xy on that grid.
 
     Returns:
         pts3d (K, 3) float32 and valid (K,) bool.
     """
+    # Map size
     H, W, _ = world_points.shape
 
     # Normalize to [-1, 1] for grid_sample
-    norm = px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1
-    norm = norm.astype(np.float32)
+    norm = (px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1).astype(np.float32)
     grid = torch.from_numpy(norm)
-    wp = torch.from_numpy(world_points).float()
-    wp = wp.permute(2, 0, 1)
-    sampled = F.grid_sample(wp[None], grid[None, None], align_corners=True, mode="bilinear")
-    interp = sampled[0, :, 0]
+    wp = torch.from_numpy(world_points).float().permute(2, 0, 1)
+    interp = F.grid_sample(wp[None], grid[None, None], align_corners=True, mode="bilinear")[0, :, 0]
 
     # NaN marks unmapped pixels; grid_sample pads out-of-bounds samples, so bounds are checked too
-    nan = torch.isnan(interp)
-    valid = ~nan.any(dim=0)
     in_bounds = (px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1)
-    valid = valid.numpy() & in_bounds
-
-    pts3d = interp.T.numpy()
-    return pts3d.astype(np.float32), valid
+    valid = ~interp.isnan().any(dim=0).numpy() & in_bounds
+    return interp.T.numpy(), valid
 
 
 ########################################################################
@@ -199,12 +224,8 @@ def depth_residual(
         depth: (H, W) z-depth of that view, or a (B, H, W) batch; 0 marks no depth.
 
     Returns:
-        (residual, expected, sampled, valid, pixels), each (P,) but pixels (P, 2); (B, P) and (B, P, 2) for a batch
-        - residual: expected minus sampled
-        - expected: the point's z in the camera
-        - sampled: the depth map at the projected pixel, 0 outside the grid
-        - valid: in front of the camera and projected in bounds
-        - pixels: project's (u, v) of each point
+        (residual = expected - sampled, expected z, sampled depth (0 outside), valid, pixels), each (P,)
+        but pixels (P, 2); a leading B for a batch.
     """
     # Depth grid size; a batch shares one H, W
     height, width = depth.shape[-2:]
@@ -254,6 +275,7 @@ def depth_agreement(
         - rel_residual: (sampled - expected) / expected; exactly -1 where sampled is 0
         - expected: the point's z in the camera
     """
+    # Residual, depths and validity against the view
     residual, expected, sampled, valid, _ = depth_residual(points_world, world_to_cam, intrinsics, depth)
 
     # Nearer sampled surface = occluded; farther = free-space violation, still seen
@@ -294,6 +316,7 @@ def multiview_depth_confidence(
         ValueError: N disagrees across the arrays, or the principal point lies outside the depth
             grid (model-res depth paired with original-res intrinsics).
     """
+    # Frame count and grid size
     n, h, w = depth.shape
 
     # Alignment contract: same N, K on the depth grid
@@ -301,7 +324,10 @@ def multiview_depth_confidence(
         raise ValueError(
             f"length mismatch: depth has {n} frames, intrinsics {len(intrinsics)}, extrinsics {len(extrinsics)}"
         )
+
+    # K must be on the depth grid: principal point inside it
     cx, cy = float(intrinsics[0][0, 2]), float(intrinsics[0][1, 2])
+
     if not (0 < cx < w and 0 < cy < h):
         raise ValueError(
             f"intrinsics/depth resolution mismatch: principal point ({cx:.1f}, {cy:.1f}) lies outside a "

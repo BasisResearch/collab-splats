@@ -6,7 +6,7 @@ from collab_splats.geometry.loop_closure.map import GraphMap
 from collab_splats.geometry.loop_closure.submap import Submap
 
 
-def _submap(sid, is_lc=False, k=2):
+def _submap(sid, k=2):
     return Submap(
         submap_id=sid,
         frames=None,
@@ -14,7 +14,6 @@ def _submap(sid, is_lc=False, k=2):
         intrinsics=np.tile(np.eye(3, dtype=np.float32), (k, 1, 1)),
         retrieval_vectors=np.zeros((k, 8), dtype=np.float32),
         image_paths=[f"s{sid}_{i}.jpg" for i in range(k)],
-        is_lc_submap=is_lc,
         frame_start=sid * k,
     )
 

@@ -191,9 +191,8 @@ class FeatureAutoencoder(nn.Module):
         pbar = tqdm(range(epochs), desc="fit autoencoder", unit="epoch")
 
         for epoch in pbar:
-            epoch_loss = 0.0
-            epoch_cos = 0.0
-            epoch_mse = 0.0
+            # Loss, cosine, mse sums stay on device; one host sync per epoch
+            epoch_sums = torch.zeros(3, dtype=torch.float64, device=device)
             n_batches = 0
 
             for b in torch.randperm(len(starts)).tolist():
@@ -225,12 +224,14 @@ class FeatureAutoencoder(nn.Module):
                     loss.backward()
                     optimizer.step()
 
-                    epoch_loss += loss.item()
-                    epoch_cos += cos.item()
-                    epoch_mse += mse.item()
+                    batch_stats = torch.stack(
+                        [loss.detach(), cos.detach(), mse.detach()]
+                    )
+                    epoch_sums += batch_stats.double()
                     n_batches += 1
 
             # At least one sample (checked above), so n_batches >= 1
+            epoch_loss, epoch_cos, epoch_mse = epoch_sums.tolist()
             avg_loss = epoch_loss / n_batches
             self.recon_cosine = epoch_cos / n_batches
             self.recon_mse = epoch_mse / n_batches

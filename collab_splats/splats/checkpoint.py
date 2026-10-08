@@ -26,7 +26,7 @@ from collab_splats.splats.cameras import CameraOpt
 from collab_splats.splats.gaussian import Gaussians
 from collab_splats.splats.rendering import render_views
 from collab_splats.splats.scaffold import Scaffold
-from collab_splats.utils.io import to_uint8_hwc, write_json
+from collab_splats.utils.io import write_json
 from collab_splats.utils.progress import progress
 
 # Annotation-only: a runtime import of the trainer would be circular
@@ -266,19 +266,33 @@ def render_tsdf_inputs(
     # Render every camera; only 2dgs offers a choice, so "median" falls back to "depth"
     key = "median_depth" if depth_source == "median" else "depth"
     depths, rendered = [], []
+    rgb_ok = torch.ones((), dtype=torch.bool, device=cam_to_world.device)
+
     for view in render_views(
         model, camera_opt, cam_to_world, intrinsics, height, width
     ):
+        # Zero depth where nothing rendered, masked on the device
         depth = view[key] if key in view else view["depth"]
-        depth = depth.detach().cpu().numpy().reshape(height, width, -1)[..., 0]
-        alpha = view["alpha"].detach().cpu().numpy().reshape(height, width, -1)[..., 0]
-        depths.append(np.where(alpha > 0, depth, 0.0).astype(np.float32))
+        depth = depth.detach().reshape(height, width, -1)[..., 0]
+        alpha = view["alpha"].detach().reshape(height, width, -1)[..., 0]
+        depth = torch.where(alpha > 0, depth, 0.0).float()
+        depths.append(depth.cpu().numpy())
 
+        # Rendered RGB to uint8 on the device, rounding as to_uint8_hwc (half to even, then clip)
         if rgbs is None:
-            rgb = view["rgb"].detach().cpu().numpy().reshape(height, width, -1)[..., :3]
-            rendered.append(to_uint8_hwc(rgb, channels_first=False))
+            rgb = view["rgb"].detach().reshape(height, width, -1)[..., :3]
+            rgb_ok &= torch.isfinite(rgb).all() & (rgb.amax() <= 1.5)
+            rgb = (rgb * 255.0).round()
+            rgb = rgb.clamp(0, 255).to(torch.uint8)
+            rendered.append(rgb.cpu().numpy())
 
+    # Non-finite or [0, 255] renders are refused, as to_uint8_hwc does; one sync for all views
     if rgbs is None:
+        if not rgb_ok.item():
+            raise ValueError(
+                "render_tsdf_inputs: rendered RGB is not finite or exceeds 1.5"
+            )
+
         rgbs = np.stack(rendered)
 
     # gsplat's corner K back to the pipeline's pixel-center convention

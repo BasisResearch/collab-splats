@@ -145,3 +145,12 @@ def test_render_tsdf_inputs_rejects_frame_size_mismatch(tmp_path, monkeypatch):
     _fake_rendering(monkeypatch, [_view(4, 6, 1.0)], [0], (4, 6))
     with pytest.raises(ValueError, match="checkpoint renders"):
         render_tsdf_inputs(tmp_path / "ckpt.pt", images_dir=images_dir, device="cpu")
+
+
+@pytest.mark.parametrize("bad", [255.0, float("nan")])
+def test_render_tsdf_inputs_refuses_an_out_of_range_render(tmp_path, monkeypatch, bad):
+    h, w = 4, 6
+    _fake_rendering(monkeypatch, [_view(h, w, depth=1.0, rgb=bad)], [0], (h, w))
+
+    with pytest.raises(ValueError, match="not finite or exceeds 1.5"):
+        render_tsdf_inputs(tmp_path / "ckpt.pt", device="cpu")

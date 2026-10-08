@@ -1,5 +1,7 @@
 """Tests for BaseQueryableExtractor contract and query API."""
 
+from unittest.mock import MagicMock
+
 import pytest
 import torch
 
@@ -184,3 +186,22 @@ def test_score_queries_logs_default_negative(caplog):
     with caplog.at_level("DEBUG", logger="collab_splats.semantics.features.base"):
         ext.score_queries(torch.randn(8, 2, 2), ["cat"])
     assert "1 negative" in caplog.text
+
+
+def test_maskclip_encode_text_zero_row_stays_finite():
+    """A zero-norm text embedding normalizes to zeros, not NaN, like talk2dino."""
+    pytest.importorskip("maskclip_onnx")
+    from collab_splats.semantics.features import MaskCLIPExtractor
+
+    # Extractor without weights: the stub model returns one zero and one 3-4-5 row
+    extractor = MaskCLIPExtractor.__new__(MaskCLIPExtractor)
+    torch.nn.Module.__init__(extractor)
+    extractor._device = "cpu"
+    extractor._maskclip_onnx = MagicMock()
+    extractor._maskclip_onnx.clip.tokenize.return_value = torch.zeros(2, 4)
+    extractor.model = MagicMock()
+    extractor.model.encode_text.return_value = torch.tensor([[0.0, 0.0], [3.0, 4.0]])
+
+    embed = extractor.encode_text(["", "a bird"])
+
+    assert torch.equal(embed, torch.tensor([[0.0, 0.0], [0.6, 0.8]]))

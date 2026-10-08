@@ -6,6 +6,7 @@ import os
 from typing import List, Optional
 
 import torch
+import torch.nn.functional as F
 import torchvision.transforms as T
 
 from collab_splats.semantics.features.base import BaseQueryableExtractor
@@ -109,5 +110,4 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
         with torch.no_grad():
             embed = self.model.encode_text(tokens).float()
 
-        embed /= embed.norm(dim=-1, keepdim=True)
-        return embed
+        return F.normalize(embed, dim=-1)

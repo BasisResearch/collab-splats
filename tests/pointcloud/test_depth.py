@@ -575,8 +575,8 @@ def test_missing_clone_raises_actionable_import_error(tmp_path, monkeypatch):
     # The ~1.5 GB fetch must not start when the clone that consumes it is absent
     monkeypatch.setattr(
         depth_mod,
-        "hf_hub_download",
-        lambda **kw: pytest.fail("downloaded before the clone guard"),
+        "load_hf_weights",
+        lambda *a, **kw: pytest.fail("downloaded before the clone guard"),
     )
     frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
 

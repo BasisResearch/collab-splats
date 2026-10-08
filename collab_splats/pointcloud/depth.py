@@ -18,7 +18,6 @@ import cv2
 import numpy as np
 import pycolmap
 import torch
-from huggingface_hub import hf_hub_download
 
 from collab_splats.geometry.projection import unproject
 from collab_splats.geometry.transforms import (
@@ -27,7 +26,12 @@ from collab_splats.geometry.transforms import (
     shift_intrinsics,
 )
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.utils.torch_utils import get_device, pytorch_gc, vendored_path
+from collab_splats.utils.torch_utils import (
+    get_device,
+    load_hf_weights,
+    pytorch_gc,
+    vendored_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -411,9 +415,9 @@ def _load_vda_model(device: str) -> torch.nn.Module:
 
     # Download the model weights from Hugging Face
     try:
-        ckpt = hf_hub_download(
-            repo_id="depth-anything/Metric-Video-Depth-Anything-Large",
-            filename="metric_video_depth_anything_vitl.pth",
+        ckpt = load_hf_weights(
+            "depth-anything/Metric-Video-Depth-Anything-Large",
+            "metric_video_depth_anything_vitl.pth",
         )
     except Exception as exc:
         raise RuntimeError(
@@ -425,7 +429,8 @@ def _load_vda_model(device: str) -> torch.nn.Module:
     model = VideoDepthAnything(
         encoder="vitl", features=256, out_channels=[256, 512, 1024, 1024], metric=True
     )
-    model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=True)
+    state_dict = torch.load(ckpt, map_location="cpu", weights_only=True)
+    model.load_state_dict(state_dict, strict=True)
 
     return model.to(device).eval()
 

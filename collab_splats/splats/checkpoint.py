@@ -182,7 +182,7 @@ def load_checkpoint(
     Raises:
         ValueError: the checkpoint's representation is unknown.
     """
-    ckpt = torch.load(Path(path), map_location=device, weights_only=False)
+    ckpt = torch.load(Path(path), map_location=device, weights_only=True)
     config = ckpt["config"]
 
     # Unknown representation: raise with the path and the allow-list

@@ -64,9 +64,15 @@ def test_dino_salad_tensor_input_matches_pil_input():
     extractor.backbone = lambda x: seen.append(x) or x
     extractor.aggregator = lambda x: x.flatten(1)
 
-    # Same 224x224 image as PIL and as a [0, 1] tensor
-    rgb = np.random.default_rng(0).integers(0, 256, (224, 224, 3), dtype=np.uint8)
-    extractor([Image.fromarray(rgb)])
-    extractor(torch.as_tensor(rgb).permute(2, 0, 1)[None].float() / 255.0)
+    # Same image as PIL and as a [0, 1] tensor: native size, then a downsized frame
+    rng = np.random.default_rng(0)
+    for shape, atol in [((224, 224, 3), 1e-5), ((294, 518, 3), 5e-3)]:
+        seen.clear()
+        rgb = rng.integers(0, 256, shape, dtype=np.uint8)
+        tensor = torch.as_tensor(rgb).permute(2, 0, 1)[None].float() / 255.0
+        extractor([Image.fromarray(rgb)])
+        extractor(tensor)
 
-    torch.testing.assert_close(seen[1], seen[0], atol=1e-5, rtol=0)
+        # Compare in [0, 1] space: undo the shared ImageNet normalization
+        std = torch.tensor(IMAGENET_STD).view(1, 3, 1, 1)
+        torch.testing.assert_close(seen[1] * std, seen[0] * std, atol=atol, rtol=0)

@@ -113,13 +113,9 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
             imgs = torch.stack([self._transform(img) for img in images])
         else:
             imgs = images.float()
-            if imgs.shape[-2] != self._INPUT_SIZE or imgs.shape[-1] != self._INPUT_SIZE:
-                imgs = torch.nn.functional.interpolate(
-                    imgs,
-                    size=(self._INPUT_SIZE, self._INPUT_SIZE),
-                    mode="bilinear",
-                    align_corners=False,
-                )
+            imgs = T.functional.resize(
+                imgs, [self._INPUT_SIZE, self._INPUT_SIZE], antialias=True
+            )
 
             # ImageNet stats, as the PIL path's transform applies
             imgs = T.functional.normalize(imgs, mean=IMAGENET_MEAN, std=IMAGENET_STD)

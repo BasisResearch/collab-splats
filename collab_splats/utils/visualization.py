@@ -249,6 +249,31 @@ def _resolve_mesh_kwargs(mesh: pv.PolyData, mesh_kwargs: dict) -> dict:
 # ── 3D Visualization ────────────────────────────────────────────────────────
 
 
+def apply_view(plotter: pv.Plotter, viz_kwargs: dict) -> None:
+    """
+    Pin a plotter's camera and add lights from viz_kwargs.
+
+    - missing camera keys fall back to the VIZ_KWARGS defaults; missing `lighting` adds none
+    - view_angle is set absolutely (30 / zoom), so re-applying does not compound like Zoom
+    - lights accumulate: callers re-applying to one plotter clear its lights first
+
+    Args:
+        plotter: plotter whose camera and lights are set.
+        viz_kwargs: position, focal_point, view_up, azimuth, elevation, zoom and lighting.
+    """
+    plotter.camera_position = [
+        viz_kwargs.get("position", (2, 2, 1)),
+        viz_kwargs.get("focal_point", (0, 0, 0)),
+        viz_kwargs.get("view_up", (0, 0, 1)),
+    ]
+    plotter.camera.azimuth = viz_kwargs.get("azimuth", 235)
+    plotter.camera.elevation = viz_kwargs.get("elevation", 15)
+    plotter.camera.view_angle = 30.0 / viz_kwargs.get("zoom", 0.9)
+
+    for light in viz_kwargs.get("lighting", []):
+        plotter.add_light(pv.Light(**light))
+
+
 def visualize_splat(
     mesh: Union[str, pv.PolyData],
     aligned_cameras: Optional[List[np.ndarray]] = None,
@@ -297,28 +322,8 @@ def visualize_splat(
 
             plotter.add_mesh(frustum, **kw)
 
-    # Set a specific camera position:
-    # camera_position = [camera_location, focal_point, view_up]
-    plotter.camera_position = [
-        viz_kwargs.get("position", (2, 2, 1)),  # Camera location
-        viz_kwargs.get("focal_point", (0, 0, 0)),  # Look-at point (focal point)
-        viz_kwargs.get("view_up", (0, 0, 1)),  # View-up vector
-    ]
-
-    # Rotate camera
-    plotter.camera.azimuth = viz_kwargs.get(
-        "azimuth", 235
-    )  # Rotate 45° horizontally around focal point
-    plotter.camera.elevation = viz_kwargs.get(
-        "elevation", 15
-    )  # Rotate 30° vertically around focal point
-
-    # Adjust zoom (zoom > 1 zooms in, < 1 zooms out)
-    plotter.camera.Zoom(viz_kwargs.get("zoom", 0.9))  # 1.5x zoom in
-
-    # Enhanced lighting
-    for light in viz_kwargs.get("lighting", []):
-        plotter.add_light(pv.Light(**light))
+    # Pin the camera and add the configured lights
+    apply_view(plotter, viz_kwargs)
 
     if out_fn is not None:
         plotter.screenshot(

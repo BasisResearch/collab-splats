@@ -25,6 +25,7 @@ from collab_splats.semantics.store import read_point_features
 from collab_splats.utils.visualization import PCD_KWARGS as _BASE_PCD_KWARGS
 from collab_splats.utils.visualization import (
     VIZ_KWARGS,
+    apply_view,
     apply_viridis,
     pointcloud_to_polydata,
 )
@@ -361,18 +362,8 @@ class SplitViewer:
         - without it pyvista auto-frames to data bounds, so one flyer shrinks the scene to a speck
         - idempotent: view_angle is set absolutely and lights cleared, since Zoom and add_light accumulate
         """
-        plotter.camera_position = [
-            VIZ_KWARGS["position"],
-            VIZ_KWARGS["focal_point"],
-            VIZ_KWARGS["view_up"],
-        ]
-        plotter.camera.azimuth = VIZ_KWARGS["azimuth"]
-        plotter.camera.elevation = VIZ_KWARGS["elevation"]
-        plotter.camera.view_angle = 30.0 / VIZ_KWARGS["zoom"]
         plotter.remove_all_lights()
-
-        for light in VIZ_KWARGS["lighting"]:
-            plotter.add_light(pv.Light(**light))
+        apply_view(plotter, VIZ_KWARGS)
 
     def _render_left(self) -> None:
         """

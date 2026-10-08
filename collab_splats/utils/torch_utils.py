@@ -155,10 +155,14 @@ def batch_iterator(batch_size: int, *args) -> Generator[List[Any], None, None]:
 
     Yields:
         A list of sliced sequences, one per input arg.
+
+    Raises:
+        ValueError: no sequences, or sequences of different lengths.
     """
-    assert len(args) > 0 and all(len(a) == len(args[0]) for a in args), (
-        "Batched iteration must have inputs of all the same size."
-    )
+    if not args or any(len(a) != len(args[0]) for a in args):
+        raise ValueError(
+            "batch_iterator needs one or more sequences of the same length"
+        )
     n_batches = len(args[0]) // batch_size + int(len(args[0]) % batch_size != 0)
     for b in range(n_batches):
         yield [arg[b * batch_size : (b + 1) * batch_size] for arg in args]

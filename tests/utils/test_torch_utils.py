@@ -54,7 +54,7 @@ def test_batch_iterator_multiple_args():
 
 
 def test_batch_iterator_mismatched_raises():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="same length"):
         list(batch_iterator(2, [1, 2], [3]))
 
 

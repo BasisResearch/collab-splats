@@ -218,3 +218,10 @@ def test_from_config_weight_decay_is_keyword_only():
         weight_decay=1e-3,
     )
     assert module.optimizers[0].param_groups[0]["weight_decay"] == pytest.approx(1e-3)
+
+
+def test_camera_refuses_ids_that_do_not_match_the_pose_batch():
+    module = CameraOpt(3)
+
+    with pytest.raises(ValueError, match="camera_ids"):
+        module.camera(torch.eye(4).expand(3, 4, 4), torch.arange(2))

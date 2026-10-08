@@ -304,10 +304,11 @@ def depth_loss(
 
     # Only pixels with a target contribute
     rendered_depth = render["depth"]
-    assert rendered_depth.shape == target_depth.shape, (
-        rendered_depth.shape,
-        target_depth.shape,
-    )
+    if rendered_depth.shape != target_depth.shape:
+        raise ValueError(
+            f"depth target {tuple(target_depth.shape)} != render {tuple(rendered_depth.shape)}"
+        )
+
     has_target = target_depth > 0
     rendered_depth = rendered_depth[has_target]
     target_depth = target_depth[has_target]

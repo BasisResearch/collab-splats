@@ -179,9 +179,11 @@ class CameraOpt(torch.nn.Module):
         if not self.has_pose:
             return cam_to_world
 
-        assert cam_to_world.shape[:-2] == camera_ids.shape, (
-            f"cam_to_world batch {cam_to_world.shape[:-2]} != camera_ids {camera_ids.shape}"
-        )
+        if cam_to_world.shape[:-2] != camera_ids.shape:
+            raise ValueError(
+                f"cam_to_world batch {cam_to_world.shape[:-2]} != camera_ids {camera_ids.shape}"
+            )
+
         batch_shape = cam_to_world.shape[:-2]
         assert self.translation is not None and self.rotation is not None
 

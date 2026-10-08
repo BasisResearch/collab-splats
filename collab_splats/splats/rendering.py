@@ -89,7 +89,10 @@ def render_gaussians(
         - with normals: `normal`, `depth_normal` (2DGS also `depth_normal_median`)
         - 2DGS only: `distortion`, `median_depth`; its `normal` is not unit length
     """
-    assert cam_to_world.shape[0] == 1, "render_gaussians renders one camera at a time"
+    if cam_to_world.shape[0] != 1:
+        raise ValueError(
+            f"render_gaussians renders one camera at a time, got {cam_to_world.shape[0]}"
+        )
 
     # Arguments shared by both rasterizers
     means = decoded["means"]

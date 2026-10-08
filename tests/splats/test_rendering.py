@@ -928,3 +928,10 @@ def test_3dgs_normals_do_not_change_rgb_or_depth():
     assert torch.equal(with_normals["depth"], without["depth"])
     assert {"normal", "depth_normal"} <= set(with_normals)
     assert not {"normal", "depth_normal"} & set(without)
+
+
+def test_render_gaussians_refuses_more_than_one_camera():
+    with pytest.raises(ValueError, match="one camera"):
+        render_gaussians(
+            "3dgs", {}, torch.eye(4).expand(2, 4, 4), torch.eye(3)[None], 4, 4, None
+        )

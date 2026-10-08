@@ -68,9 +68,13 @@ def lift_features(
             [0, num_classes); num_classes with dense maps.
     """
     # Required fields — fail loud at function entry, not deep in the kernel
-    for name in ("points", "depth", "extrinsics", "model_intrinsics"):
+    for name in ("points", "extrinsics", "model_intrinsics"):
         if getattr(result, name) is None:
             raise ValueError(f"lift_features requires result.{name}")
+
+    # Depth separately, so the check also narrows its Optional type
+    if result.depth is None:
+        raise ValueError("lift_features requires result.depth")
 
     N = result.extrinsics.shape[0]
 
@@ -87,8 +91,6 @@ def lift_features(
     # Extrinsics and depth are (N, 4, 4) / (N, H, W) by contract (see PointcloudResult) — fail loud otherwise
     if result.extrinsics.shape[-2:] != (4, 4):
         raise ValueError(f"extrinsics must be (N, 4, 4), got {result.extrinsics.shape}")
-    assert result.depth is not None
-
     if result.depth.ndim != 3:
         raise ValueError(f"depth must be (N, H, W), got {result.depth.shape}")
     extrinsics_c = np.ascontiguousarray(result.extrinsics)

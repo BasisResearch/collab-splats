@@ -582,3 +582,12 @@ def test_rescale_depth_units_leaves_the_callers_schedule_alone():
     }
     assert rescaled is not losses
     assert rescaled["distortion"] is not losses["distortion"]
+
+
+def test_depth_loss_refuses_a_target_of_another_shape():
+    schedule = {"depth": {"weight": 1.0}}
+    target = _target()
+    target["depth"] = target["depth"][:, :8]
+
+    with pytest.raises(ValueError, match="depth target"):
+        compute_losses(0, _render(), target, _gaussians(), schedule, 1.0)

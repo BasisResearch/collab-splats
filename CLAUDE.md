@@ -171,7 +171,7 @@ Conventional commits with scope: `feat(pointcloud):`, `fix(ba):`, `refactor(sema
 ## Development Commands
 
 ```bash
-black . && isort .                                                  # format
+make format                                                         # format (ruff check --fix + ruff format)
 /opt/venv/reconstruction/bin/python -m pytest tests/               # test
 /opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/7scenes.yaml --dry_run   # eval
 ```

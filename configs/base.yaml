@@ -28,7 +28,9 @@ pointcloud:
   clean:
     enabled: true
   loop_closure: false
-  bundle_adjustment: true   # skipped for sfm
+  bundle_adjustment:        # skipped for sfm
+    enabled: true
+    track_kwargs: {seed_fraction: 1.0}   # exhaustive tracks
   viz:
     enabled: false
     port: 8080
@@ -54,16 +56,24 @@ semantics:
 mesh:
   enabled: true
   source: feedforward          # feedforward | splats
-  voxel_depth_px: 4.0
-  voxel_ref_percentile: 50
-  sdf_trunc_mult: 4.0
+
+  # Depth filtering
   depth_trunc_percentile: 95   # required, max 99
   conf_percentile: 20          # null = off
   mask_sky: true
-  max_faces: 1500000
-  smooth_iterations: 10
-  texture: true                # CUDA only
+
+  # TSDF fusion
+  voxel_depth_px: 4.0
+  voxel_ref_percentile: 50
+  sdf_trunc_mult: 4.0
+
+  # Cleanup
   use_convex_hull: true
+  smooth_iterations: 10
+  max_faces: 1500000
+
+  # Texture
+  texture: true                # CUDA only
 
 
 ########################################

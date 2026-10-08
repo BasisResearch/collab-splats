@@ -14,7 +14,7 @@ preproc:
   fps: 2.0
   max_frames: 300        # vggt_omega OOMs above ~300
   n_workers: 16          # 1 during GPU runs
-  undistort: true
+  undistort: false
 
 
 ########################################

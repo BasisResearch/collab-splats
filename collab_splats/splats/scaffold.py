@@ -92,6 +92,9 @@ class ScaffoldConfig:
     # Decay horizon, fixed rather than the run length
     lr_max_steps: int = 30000
 
+    # bf16 autocast of the three decode heads; outputs return as float32; false for float32 heads
+    mlp_bf16: bool = True
+
     @classmethod
     def from_dict(cls, block: dict) -> "ScaffoldConfig":
         """
@@ -142,6 +145,7 @@ class ScaffoldMLPs(torch.nn.Module):
 
     - input: anchor feature + unit view direction; output: `n_offsets` values per anchor
     - opacity is tanh; a non-positive value hides that offset
+    - `mlp_bf16` runs the heads under bf16 autocast, forward and backward
     """
 
     def __init__(self, cfg: ScaffoldConfig, n_views: int = 0):
@@ -149,11 +153,12 @@ class ScaffoldMLPs(torch.nn.Module):
         Build the heads and, if enabled, the appearance embedding.
 
         Args:
-            cfg: scaffold config; `feat_dim`, `n_offsets` and `appearance_dim` are read.
+            cfg: scaffold config; `feat_dim`, `n_offsets`, `appearance_dim` and `mlp_bf16` are read.
             n_views: number of training views; 0 leaves out the appearance embedding.
         """
         super().__init__()
         self.n_offsets = cfg.n_offsets
+        self.bf16 = cfg.mlp_bf16
         width = cfg.feat_dim
 
         # Head input: anchor feature + unit view direction, no distance
@@ -200,21 +205,24 @@ class ScaffoldMLPs(torch.nn.Module):
         Returns:
             (opacity (A, K), covariance (A, 7K), color (A, 3K)), K = n_offsets.
         """
-        opacity = self.mlp_opacity(features)
-        cov = self.mlp_cov(features)
+        # Optional bf16 autocast; float32 (a no-op cast when off) for everything downstream
+        with torch.autocast(device_type=features.device.type, dtype=torch.bfloat16, enabled=self.bf16):
+            opacity = self.mlp_opacity(features)
+            cov = self.mlp_cov(features)
 
-        # Append this view's appearance embedding to the color input
-        color_input = features
+            # Append this view's appearance embedding to the color input
+            color_input = features
 
-        if self.embedding_appearance is not None:
-            if camera_id is None:
-                raise ValueError("scaffold.appearance_dim > 0 requires camera_id at decode time")
+            if self.embedding_appearance is not None:
+                if camera_id is None:
+                    raise ValueError("scaffold.appearance_dim > 0 requires camera_id at decode time")
 
-            embedding = self.embedding_appearance(camera_id[:1]).expand(len(features), -1)
-            color_input = torch.cat([features, embedding], dim=-1)
+                embedding = self.embedding_appearance(camera_id[:1]).expand(len(features), -1)
+                color_input = torch.cat([features, embedding], dim=-1)
 
-        color = self.mlp_color(color_input)
-        return opacity, cov, color
+            color = self.mlp_color(color_input)
+
+        return opacity.float(), cov.float(), color.float()
 
 
 ########################################
@@ -263,37 +271,35 @@ def _offsets_to_gaussians(
     n_offsets: int,
 ) -> tuple[Tensor, dict[str, Tensor]]:
     """
-    Neural Gaussians from the open offsets, plus the keep mask over all slots.
+    Neural Gaussians from the open offsets, plus the kept slot indices.
 
     - offsets with non-positive opacity are dropped
-    - if none is open, the most opaque is kept: gsplat needs at least one splat
+    - the most opaque is always kept: gsplat needs at least one splat; a no-op when any is open
+    - one `nonzero` (host sync) gathers every field, not one per boolean mask
     """
-    keep = (neural_opacity > 0).reshape(-1)
-
-    # None open: keep the most opaque offset so the output is never empty
-    if not bool(keep.any()):
-        flat_opacity = neural_opacity.reshape(-1)
-        keep = torch.zeros_like(keep)
-        keep[flat_opacity.argmax()] = True
+    flat_opacity = neural_opacity.reshape(-1)
+    keep = flat_opacity > 0
+    keep[flat_opacity.argmax(dim=0, keepdim=True)] = True
+    kept = torch.nonzero(keep).squeeze(-1)
 
     # Means: anchor + offset x offset extent
     offset_extent = scaling[:, None, :3]
     means = anchors[:, None, :] + offsets * offset_extent
-    means = means.reshape(-1, 3)[keep]
+    means = means.reshape(-1, 3)[kept]
 
     # Scales: anchor's Gaussian extent x sigmoid of the cov head
-    cov = cov.reshape(-1, 7)[keep]
-    extent = scaling[:, 3:6].repeat_interleave(n_offsets, dim=0)[keep]
+    cov = cov.reshape(-1, 7)[kept]
+    extent = scaling[:, 3:6].repeat_interleave(n_offsets, dim=0)[kept]
     modulation = torch.sigmoid(cov[:, :3])
     scales = extent * modulation
 
     # Rotation, opacity and color of the open slots
     quats = F.normalize(cov[:, 3:7], dim=-1)
-    opacities = neural_opacity.reshape(-1)[keep]
-    colors = color.reshape(-1, 3)[keep]
+    opacities = flat_opacity[kept]
+    colors = color.reshape(-1, 3)[kept]
 
     gaussians = {"means": means, "scales": scales, "quats": quats, "opacities": opacities, "colors": colors}
-    return keep, gaussians
+    return kept, gaussians
 
 
 class Scaffold:
@@ -539,11 +545,11 @@ class Scaffold:
         neural_opacity, cov, color = self.mlps(features, camera_id)
 
         # Keep open offsets and record which slot each came from
-        keep, gaussians = _offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, n_offsets)
+        kept, gaussians = _offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, n_offsets)
         slot_offsets = torch.arange(n_offsets, device=anchors.device)
         slot_index = anchor_ids[:, None] * n_offsets + slot_offsets
         slot_index = slot_index.reshape(-1)
-        decode_index = slot_index[keep]
+        decode_index = slot_index[kept]
         scales = gaussians["scales"]
 
         # 2DGS uses two scales; zero the third
@@ -856,11 +862,10 @@ class AnchorStrategy:
 
         index = info["decode_index"].to(self.device)
 
-        # Gradient sums per slot, rendered Gaussians only
-        rendered = info["radii"].reshape(len(grad_norm), -1).amax(dim=-1) > 0
-        grad_index = index[rendered.to(self.device)]
-        self.offset_gradient_accum.index_add_(0, grad_index, grad_norm[rendered].to(self.device))
-        self.offset_denom.index_add_(0, grad_index, torch.ones_like(grad_index, dtype=self.offset_denom.dtype))
+        # Gradient sums per slot, rendered Gaussians only; slots are unique, so unrendered ones add exactly 0
+        rendered = (info["radii"].reshape(len(grad_norm), -1).amax(dim=-1) > 0).to(self.device)
+        self.offset_gradient_accum.index_add_(0, index, torch.where(rendered, grad_norm.to(self.device), 0.0))
+        self.offset_denom.index_add_(0, index, rendered.to(self.offset_denom.dtype))
 
         # Opacity sums per anchor, divided later by visits
         anchor_index = torch.div(index, self.cfg.n_offsets, rounding_mode="floor")

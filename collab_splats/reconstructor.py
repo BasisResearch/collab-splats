@@ -1126,7 +1126,7 @@ class Reconstructor:
         cfg = SplatsConfig.from_dict(self.config["splats"])
         result = self.result
 
-        # CPU-resident frames in the zarr's row order; train() moves one view to the GPU at a time
+        # CPU-resident frames in the zarr's row order; train() caches each factor's targets on the GPU
         image_ids = [frames.frame_idx_from_path(p) for p in result.image_paths]
         rgbs = frames.read_frames(self.images_dir, image_ids)
 

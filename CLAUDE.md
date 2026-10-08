@@ -27,7 +27,6 @@ These tasks are started but not complete — do not assume their targets are don
 - **clean-final** — integration branch for the five cleanup efforts; all five landed (preproc, semantics, pointcloud, splats, mesh), not yet merged to trunk ([spec](docs/superpowers/specs/2026-09-06-clean-final-integration-design.md) · [plan](docs/superpowers/plans/2026-09-06-clean-final-integration.md))
 - **sky-mask** — PyTorch (smp) sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 - **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md)). **Refactor unfinished (2026-10-02):** `feat/batch-forward` (1a) still loops per pair and deviates from spec (assert not ValueError, no `supports_batches`); uncommitted xfeat `_extract_batch` there (9× extract) is really step 4 work; no `basis` branch, no pin — collab-splats still runs site-packages vismatch; `LocalMatcher.match_batch` lives only in the `rgbd-ba` worktree
-- **tutorial-rework** — rebuild the tutorial as nine self-contained notebooks on the clean/final API: no shared `data/outputs/` cache, each page builds its inputs into its own tempdir ([spec](docs/superpowers/specs/2026-09-09-tutorial-rework-design.md))
 - **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
 
 ## Recently Completed
@@ -35,11 +34,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **tutorial-rework** (2026-10-08)
 - **scene-viewer** (2026-10-08)
 - **semantics-storage** (2026-10-07)
 - **mesh-query-heat** (2026-10-07)
 - **rgbd-ba + lc-window-ba** (2026-10-06)
-- **localization-cleanup** (2026-10-06)
 
 Known test failures: `docs/known-test-failures.md`
 

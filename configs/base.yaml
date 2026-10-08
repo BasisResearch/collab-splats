@@ -110,7 +110,7 @@ semantics:
   enabled: true
   extractor: talk2dino        # talk2dino | dinov2 | maskclip | ocr_lens
   extractor_kwargs: {}        # constructor kwargs, e.g. {layer: 20} for ocr_lens; keys the 2D cache
-  n_components: 64            # AE code width stored in <extractor>_codes.zarr; null = full width; 128 for ocr_lens; changing it re-extracts
+  n_components: 64            # AE code width stored in <extractor>_codes.zarr; null = full width; changing it re-extracts
   # Stop training once mean reconstruction cosine hits this, with max_epochs as the
   # ceiling. Cross-scene comparison happens in decoded 768-D space, so fidelity is the
   # right stop signal — more epochs cannot align two scenes' 64-D bases.
@@ -165,6 +165,7 @@ splats:
   #   update_init_factor: 16    # level-0 growing grid, in voxels; later levels shrink it
   #   success_threshold: 0.8    # fraction of a refine window a slot/anchor must be seen for
   #   appearance_dim: 32        # Scaffold's per-image embedding, 0 = off; indep. of appearance_opt
+  #   mlp_bf16: true            # bf16 autocast of the decode heads; false for float32
   max_steps: 30000
   pose_opt: true             # refine camera poses jointly (CameraOpt)
   appearance_opt: false      # per-image affine color, train views only; regularized by losses.appearance_reg

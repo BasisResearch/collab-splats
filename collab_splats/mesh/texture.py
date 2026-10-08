@@ -160,7 +160,11 @@ def unwrap_view_charts(
     fv = verts[faces]
     fn = np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0])
     area = 0.5 * np.linalg.norm(fn, axis=1)
-    pixels, _ = project(torch.from_numpy(fv), torch.from_numpy(w2c[labels]), torch.from_numpy(K[labels]))
+    # One dtype for the matmul: Open3D vertices are float64, pipeline cameras float32
+    fv_t = torch.from_numpy(fv.astype(np.float64))
+    w2c_t = torch.from_numpy(w2c[labels].astype(np.float64))
+    K_t = torch.from_numpy(K[labels].astype(np.float64))
+    pixels, _ = project(fv_t, w2c_t, K_t)
     uv = pixels.numpy()
 
     # Unseen faces: each connected group of them gets one flat patch

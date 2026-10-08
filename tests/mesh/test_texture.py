@@ -101,6 +101,14 @@ def test_unwrap_view_charts_uvs_in_unit_square_at_one_texel_density():
     assert np.abs(ratio / np.median(ratio) - 1).max() < 0.02
 
 
+def test_unwrap_view_charts_accepts_float32_cameras():
+    """The pipeline's poses and intrinsics are float32; Open3D vertices are float64."""
+    mesh = _two_planes()
+    c2w, K = _camera()
+    uv, _ = unwrap_view_charts(mesh, c2w.astype(np.float32), K.astype(np.float32), (128, 128), tex_size=256)
+    assert uv.shape == (len(mesh.triangles), 3, 2)
+
+
 @cuda
 def test_unwrap_view_charts_faces_never_share_texels():
     mesh = _two_planes()

@@ -1,328 +1,243 @@
-# Tutorial notebook rework — self-contained pages on the clean/final API
+# Tutorial rework — shared scene, ten pages, landed on clean/final
 
-**Status:** design approved, plan pending
-**Branch:** `clean/final`
-**Date:** 2026-09-09
+**Status:** revised 2026-10-08 (supersedes the 2026-10-02 fourteen-page revision), plan pending
+**Branch:** `clean/tutorials` · **Worktree:** `.worktrees/tutorial-rework`
+**Date:** 2026-09-09 · revised 2026-10-02 · revised 2026-10-08
 
-## Problem
+## Revision 2026-10-08 — what changed and why
 
-The 14 tutorial notebooks are a *chain*, not a set. `tutorial_config.py` hands every
-notebook a shared `data/outputs/` directory, and each page asserts its way into the
-previous page's artifacts:
+The 2026-10-02 revision was carried out: fourteen pages, all executed on `clean/final` at
+`4781e72c` (rgbd-ba, LC-window BA and vismatch localization included). Since then 23 commits
+landed on `clean/final` (semantics-storage, mesh-query-heat, scene-viewer). A trial merge
+is textually clean, but the contract gate fails two pages: `lifting_and_query` and `ocr_lens`
+import `extract_feature_cache`, which is gone, and both point at the deleted
+`docs/examples/ocr_lens_viewer.py`.
 
-```python
-assert RECON.exists(), f"missing {RECON} — run 02_pointcloud/feedforward_methods.ipynb first"
-```
+A read of all fourteen pages also found the prose model-flavored (97 em-dashes, 49 bold
+phrases, slogans such as "the count is the contract", plan language such as "Package gap"),
+51 code lines over 100 characters, and pages that duplicate each other's compute.
 
-Three consequences, all of them now biting:
+This revision:
 
-- **No page runs on its own.** A reader opening 05 gets an `AssertionError`.
-- **Stale artifacts are indistinguishable from fresh ones.** `feedforward_methods`
-  carries an explicit "cache built from N frames; delete the zarr to re-run" branch —
-  a cache-invalidation problem the tutorial should never have had.
-- **Drift is invisible.** Because pages read artifacts instead of building them,
-  several have rotted against `clean/final` without anything failing until run:
-
-  | Notebook | Break |
-  |---|---|
-  | `01_preprocessing` | `preproc.sample_frames`, `preproc.score_frames` — neither exists |
-  | `02/slam_loop_closure` | `geometry.loop_closure.closure` — module gone (now `graph.py`) |
-  | `02/feedforward_mesh` | reads `OUTPUT_DIR/mapanything/reconstruction.zarr`, a layout nothing writes |
-  | `03/train_splats` | `train()` called without the required `image_ids=` kwarg |
-  | `03/train_splats` | imports `evals.scripts.eval_splats` behind a `sys.path.insert` |
-  | `evals/ground_truth_evals` | runs `evals/eval_gt.py` — path does not exist |
-  | `02/colmap_sfm` | 4-cell empty stub, `nerfstudio` kernel, predates `pointcloud/sfm/` |
+- replaces per-page isolation with **one shared scene** that pages build on
+- cuts fourteen pages to **ten**; the quickstart notebook becomes the README's Getting Started
+- moves the mesh to VGGT-Omega depth only (`mesh.source: feedforward`, the base default);
+  splats are trained on `train_splats` alone
+- adapts the two semantics pages to the codes-only store and the vertex arrays the
+  semantics stage now writes
+- adds a readability pass with gate checks
+- lands the branch on `clean/final`
 
 ## Goals
 
-1. Every notebook runs **top to bottom from a clean checkout**, building its own inputs.
-2. Every notebook writes **only** into its own temporary directory.
-3. The set is the **minimum** that explains the package — one clear subject per page.
-4. Every call matches the `clean/final` API.
+1. Every page runs top to bottom on its own: opened cold, it builds what it needs.
+2. Pages opened in order reuse each other's stage outputs; no stage runs twice.
+3. One clear subject per page; no page duplicates another page's compute.
+4. Plain, short prose and readable code, enforced by the contract gate.
+5. Every call matches `clean/final`; package functions are used wherever they exist.
 
 ## Non-goals
 
-- Changing any `collab_splats` API. This is a docs change; the one exception is
-  `notebook_utils.py`, which is tutorial-owned.
-- Teaching every backend. VGGT-Omega is the feedforward backend shown; the others get
-  a sentence.
-- Keeping the evaluation notebook. Ground-truth evals are CLI work over a gitignored
-  results tree and cannot be made self-contained.
+- Changing `collab_splats` APIs or behavior.
+- Teaching every backend. VGGT-Omega is the backend shown; the others get one line.
+- `remote`, `dashboard`, evals: named in prose only.
 
-## Notebook set
+## Shared scene
 
-Nine pages, renumbered `01`–`06`:
+`docs/source/tutorials/tutorial.py` owns one scene for every page:
+
+```python
+SCENE_DIR = REPO_ROOT / "data/tutorial_scene"   # gitignored; persists across sessions
+SCENE_CONFIG = {
+    "preproc": {"max_frames": 96},              # SfM needs ~1 s spacing; 96 serves every page
+    "mesh": {"texture": True},                  # source stays base.yaml's feedforward (VGGT-Omega)
+    "splats": {"representation": "scaffold", "primitive": "2dgs", "max_steps": 1000},
+    "semantics": {"extractor": "maskclip", "max_epochs": 20},
+}
+
+def tutorial_scene(*stages: str, extractor: str | None = None) -> Reconstructor
+def work_dir(page: str) -> Path
+```
+
+- `tutorial_scene(*stages)` builds a `Reconstructor` over `SCENE_DIR` with `input_path =
+  VIDEO_PATH` and `SCENE_CONFIG` merged over `base.yaml`, runs the named stages that are not
+  yet `done()`, and returns the scene. Dropping done stages before `run` avoids the named-leaf
+  refusal. Dependencies already on disk are reused by `Reconstructor.run` itself.
+- Splats are a terminal stage: `STAGES["splats"] = ("pointcloud",)` and nothing depends on it.
+  `enabled` filters only a bare `run()`; a named stage always runs. Only `train_splats` names
+  it, so splats train on that page alone and `splats.enabled` stays at the base default (false).
+- `extractor=` is the only per-page override. Each extractor writes its own
+  `<extractor>_codes.zarr` / `<extractor>_lifted.zarr`, so pages never collide.
+- `work_dir(page)` returns `SCENE_DIR/work/<page>/`, emptied and recreated on each call. A
+  page's own experiments (longhand creators, fusions, BA, LC) write there and never touch
+  stage outputs.
+- **Staleness is manual.** `done()` checks existence only. `index.rst` says: delete
+  `data/tutorial_scene/` after pulling code changes. The docs sweep always starts by deleting it.
+- Pages never call `mkdtemp`, never pass `overwrite=True`, never set config keys on the scene.
+
+The 96-frame budget removes the old special cases: no 16-vs-96 split, and `refinement` uses
+the production `submap_size` 20 (about five submaps), so the `SUBMAP_SIZE` knob goes.
+
+## Page set — ten
 
 ```
 docs/source/tutorials/
-  tutorial_config.py                      # committed inputs only
-  notebook_utils.py                       # backend selection + bootstrap helpers
+  tutorial.py
   index.rst
-  01_preprocessing/keyframe_extraction.ipynb
-  02_pointcloud/reconstruction.ipynb
+  01_preprocessing/preprocessing.ipynb          # video_quality + keyframe_extraction
+  02_pointcloud/reconstruction.ipynb            # + reconstruction_quality_report
   02_pointcloud/refinement.ipynb
   03_splats/train_splats.ipynb
-  04_semantics/feature_extraction.ipynb
-  04_semantics/segmentation.ipynb
-  04_semantics/lifting_and_query.ipynb
-  05_mesh/tsdf_mesh.ipynb
+  04_mesh/mesh.ipynb                            # tsdf_mesh + texturing
+  05_semantics/feature_extraction.ipynb
+  05_semantics/segmentation.ipynb
+  05_semantics/lifting_and_query.ipynb
+  05_semantics/ocr_lens.ipynb
   06_localization/localization.ipynb
 ```
 
-### Disposition of the current 14
+Every page has the same shape:
 
-| Current | Fate |
-|---|---|
-| `01_preprocessing/keyframe_extraction` | rewritten in place |
-| `02_pointcloud/feedforward_methods` | → `02_pointcloud/reconstruction` |
-| `02_pointcloud/colmap_sfm` | **deleted** (stub; SfM now lives in `reconstruction`) |
-| `02_pointcloud/bundle_adjustment` | → `02_pointcloud/refinement` §BA |
-| `02_pointcloud/slam_loop_closure` | → `02_pointcloud/refinement` §LC |
-| `02_pointcloud/feedforward_mesh` | **deleted** (duplicate of the mesh page's §1) |
-| `03_splats/train_splats` | rewritten in place |
-| `04_semantics/feature_extraction` | rewritten; absorbs the comparison page |
-| `04_semantics/maskclip_vs_talk2dino` | **deleted** (already §4 of `feature_extraction`) |
-| `04_semantics/segmentation` | rewritten in place |
-| `05_lifting/semantic_lifting` | → `04_semantics/lifting_and_query` |
-| `06_mesh/splats_mesh` | → `05_mesh/tsdf_mesh` |
-| `07_localization/localization` | → `06_localization/localization` |
-| `evals/ground_truth_evals` | **deleted** |
+1. `# Title` and one short paragraph: what goes in, what comes out.
+2. One setup cell: imports, then `scene = tutorial_scene(...)` (or the committed image).
+3. Numbered sections, `## 1. Title`.
+4. `## In a pipeline run`: the config keys that run the same thing in a stage.
 
-Directories `05_lifting/`, `06_mesh/`, `07_localization/`, `evals/` are removed;
-`index.rst` is rewritten to the nine pages above.
+## Page by page
 
-## Architecture
+`stages` = what the page passes to `tutorial_scene`.
 
-### Isolation contract
+### Quickstart → README
 
-Every notebook owns one temporary directory and writes nothing outside it.
+No notebook. `README.md` "Getting Started" is rewritten (it still lists the old seven-section
+layout and `06_mesh/splats_mesh.ipynb`): a five-line `Reconstructor` example, the
+`python -m collab_splats local` equivalent, `python -m collab_splats.viewer <backend_dir>`, and
+the stage → page table. `index.rst` carries the same table. Only that section of the README is
+touched; other uncommitted README edits in the main checkout are left alone.
 
-```python
-WORK = work_dir("reconstruction")     # mkdtemp, printed, left for inspection
-```
+### 01 · `preprocessing`
 
-`mkdtemp` honours `$TMPDIR`. The path is printed so a reader can open the artifacts
-afterwards; nothing deletes it, and the OS reaps it. Inside, every notebook uses the
-same layout the pipeline writes, so what a reader learns transfers:
+Stages: `preproc`.
+Reads the stage's `video_quality_report.json` (no second decode). Report plots
+(`plot_photometric`, `plot_motion`, `plot_correlation`, `plot_frame_extremes`), then
+`filter_frame_quality`, the three samplers and `plot_selection`, then the `images/` store the
+stage wrote. Undistortion is a short prose note with its config key (`preproc.undistort`, off
+by default); the 40-frame calibration demo is dropped.
 
-```
-$WORK/
-  images/                    frame_NNNNNN.png + frames.json
-  video_quality.json
-  pointcloud.zarr
-  splats/ckpt.pt
-  mesh/
-```
+### 02 · `reconstruction`
 
-`data/outputs/` disappears entirely. `tutorial_config.py` keeps only the committed
-inputs — `REPO_ROOT`, `VIDEO_PATH`, `QUERY_IMAGE`, and the missing-video check. Its
-`OUTPUT_DIR` / `IMAGES_DIR` / `RECON` / `TUTORIAL_CACHE` / `MAX_FRAMES` constants are
-deleted; frame counts vary per page and now live in each notebook's `§0`.
+Stages: `preproc`, `pointcloud`, `reconstruction_quality_report`.
+Feedforward: `scene.result` from the stage (VGGT-Omega), the `PointcloudResult` fields and the
+two intrinsics, `clean_pointcloud`, cloud and frustums. SfM: `InstantSfMCreator` longhand into
+`work_dir`. Judging both: the stage's report tables for feedforward,
+`compute_reconstruction_quality` called directly on the in-memory SfM result, one comparison
+figure, and how to read it. One SfM run per page, not two.
 
-### Bootstrap helpers
+### 02 · `refinement`
 
-Pages 02–06 need inputs that page 01 used to leave behind. Rather than repeat the
-build in six notebooks, `notebook_utils.py` grows four functions. Each is a thin
-composition of public API, prints what it built, and returns a path:
+Stages: `preproc`, `pointcloud`.
+`BundleAdjustment.refine` on the scene's VGGT-Omega result (what the `refine` stage does), then
+`LoopClosure(..., LoopClosureConfig(), ba=BundleAdjustmentConfig())` longhand into `work_dir`
+with production `submap_size`, since loop closure re-runs the backend per submap. Loss terms, focal change, camera shift, trajectories before and after.
 
-```python
-def work_dir(name: str) -> Path
-def bootstrap_keyframes(work: Path, *, n_frames: int) -> Path        # -> images/
-def bootstrap_reconstruction(work: Path, images_dir: Path) -> Path   # -> pointcloud.zarr
-def bootstrap_splats(work: Path, zarr: Path, images_dir: Path, *, max_steps: int) -> Path
-```
+### 03 · `train_splats`
 
-The rule for what belongs in a helper vs. the notebook body: **a notebook writes out
-in full the API it is teaching, and calls a helper for everything upstream of it.**
-The reconstruction page calls `bootstrap_keyframes` and then writes the creator calls
-out longhand; the mesh page calls all three helpers and writes out only the fusion.
+Stages: `preproc`, `pointcloud`, `splats`.
+The scaffold-2DGS config and its two rules (no `sh_degree*`, `opacity_reg` 0), the stage's
+quality report, `load_checkpoint` + `render_views` gallery. `train` is no longer called
+longhand: the frame / depth-target glue goes, and the scene trains once.
 
-`bootstrap_splats` carries the trainer glue, mirroring `Reconstructor.splats()`
-(`wrapper/reconstructor.py:1457-1561`) rather than the evals convenience wrapper:
-native frames from `images/` reordered onto `result.image_paths`, `result.extrinsics`
-and `result.intrinsics` used as-is (a `PointcloudResult`'s K is already native-res —
-no rescale), depth targets read from the zarr and masked with `confidence_mask`, then
-`train(..., image_ids=frame_indices)`.
+### 04 · `mesh`
 
-That glue is deliberately written twice: as `bootstrap_splats`, and longhand in nb03,
-which is the page that *teaches* it. The rule above makes this the expected outcome for
-every helper whose subject is also a page — the helper is the upstream convenience, the
-notebook is the lesson. `bootstrap_keyframes` / `bootstrap_reconstruction` duplicate 01
-and 02 the same way. Only `bootstrap_splats` has a single caller (05); it earns its place
-by keeping the mesh page about fusion rather than about training.
+Stages: `preproc`, `pointcloud`, `mesh`.
+TSDF prose (`sdf_trunc`, not `voxel_size`, sets the thinnest surviving structure). Longhand
+into `work_dir`: `frame_depths` from the VGGT-Omega zarr, `sky_masks`, `create_tsdf_mesh`,
+`clean_repair_mesh`, `prepare_mesh`. Then the stage's own `mesh.ply` and `texture/` (atlas,
+textured render) with the occluder / color-gain / view-chart explanation. No splat source.
 
-> `evals/scripts/eval_splats.py::inputs_from_pointcloud_zarr` is **not** the production
-> path — verified against `Reconstructor.splats()`, which never calls it. It exists for
-> evals, where inputs come from a zarr with no sibling `images/`. The tutorial follows
-> the pipeline; the `sys.path.insert(REPO_ROOT)` hack in the current nb03 goes away.
+### 05 · `feature_extraction`, `segmentation`
 
-### Cost profile
+No scene; `QUERY_IMAGE` only. Content unchanged apart from the readability pass.
 
-Each page pays its own compute. `§0` of every notebook opens with the knobs, and a
-comment giving the production value:
+### 05 · `lifting_and_query`
 
-```python
-MAX_FRAMES = 16      # pipeline runs 100s of frames; 16 keeps this page a few minutes
-MAX_STEPS  = 1000    # base.yaml splats.max_steps is 30000
-```
+Stages: `preproc`, `pointcloud`, `mesh`, `semantics` (maskclip).
+Longhand on points, since lifting is the subject: MaskCLIP `forward` over the keyframes in
+memory, `FeatureAutoencoder` fit, `lift_features` onto the points, `write_point_features` /
+`read_point_features` into `work_dir`. Vertices from the stage: read `vertex_features` from
+`maskclip_lifted.zarr`, `score_queries`, `transfer_features` smoothing, plot. Ends with
+`python -m collab_splats.viewer <backend_dir>`.
 
-Two pages need more than the default, for reasons that are properties of the code:
+### 05 · `ocr_lens`
 
-- **`refinement`: `MAX_FRAMES = 24`, `submap_size = 8`.** `LoopClosureConfig.submap_size`
-  defaults to 20 and `LoopClosure._enough_frames()` (`wrapper.py:207-210`) falls back to
-  plain inference below it — *silently*. At 16 frames the page would render a loop-closure
-  section that never ran loop closure. 24 frames at `submap_size=8` gives three submaps.
-- **`05_mesh`: pays a splat train**, because the page compares both fusion sources.
+Stages: `preproc`, `pointcloud`, `mesh`, `semantics` with `extractor="ocr_lens"`.
+Pipeline-first: read `vertex_word_ids`, `vertex_word_probs` and the `words` attr from
+`ocr_lens_lifted.zarr`; top words, one word probe on the mesh. Prose keeps why the stage
+decodes per frame before lifting (the decoder's RMSNorm is non-linear). Ends with the viewer.
+Needs the LLaVA-1.6 weights cached (`HF_HUB_OFFLINE=1`).
 
-## Page-by-page
+### 06 · `localization`
 
-### 01 · Preprocessing — `keyframe_extraction`
+Stages: `preproc`, `pointcloud`.
+`CameraLocalizer.from_pointcloud(..., extractor=LocalMatcher("loma"))`, then two queries:
 
-Subject: measure the video, then select from it.
+- **A. In-video frame** — `data/tutorial/tutorial_ref-frame.jpg`, frame 0 of the tutorial video
+  (committed from the stray `07_localization/ref_image.jpg`; mean pixel difference 0.12 vs
+  frame 0). `data/` ignores the whole tree and `!data/tutorial/` cannot re-include a child of
+  an excluded directory, so the file is added with `git add -f` like the existing assets. Compared against the reconstruction's fitted pose for the same source frame:
+  rotation error in degrees, translation error as a fraction of the trajectory extent. The plan
+  verifies frame 0 is in the 96-frame selection before the page is written.
+- **B. Cross-video frame** — `tutorial_example-frame.jpg` (GoPro `GX010119`): correspondences,
+  inlier distribution, pose in the scene, reprojection overlay. Visual check only.
 
-1. `get_video_info`, preview grid.
-2. **One QA pass over the whole clip:** `compute_video_quality(VIDEO_PATH,
-   output_path=WORK/"video_quality.json")`. Explicitly flagged as the expensive cell.
-3. Photometry and motion from the report — `plot_photometric`, `plot_motion`,
-   `plot_frame_extremes` (blur and exposure extremes), the correlation plots.
-4. `filter_frame_quality(report)` — the mask, and what `sharpness_k` /
-   `max_clipped_frac` do. The report carries measurements; **this** is where a verdict
-   is made.
-5. All three samplers over the same report: `sample_uniform` (count is the contract),
-   `sample_fps` (spacing is the contract, sharpest frame per slot), `sample_optical_flow`
-   (motion + coverage). `plot_selection` overlays them on one timeline.
-6. `frames.write_frames(WORK/"images", ...)` — the canonical store, `frame_NNNNNN.png`
-   plus `frames.json`.
+## Readability rules
 
-Replaces the dead `sample_frames` / `score_frames` imports and the JSON score cache
-with the real two-step `qa` → `sampling` API.
+- Plain statements. No slogans, no "X is the contract", no aphorisms.
+- At most two bold phrases per page; at most three em-dashes per page.
+- No plan language ("Package gap"), no development history ("registered 7 of 16").
+- `## 1. Title` headings; no `§`.
+- No `%load_ext autoreload` cell.
+- Code lines ≤ 100 characters; long imports parenthesized; one call per line, no nested calls;
+  no comprehension tricks.
+- One sentence after each figure on what to look for.
+- A cell stays only if it teaches the page's subject: no decorative prints, no duplicate plots.
 
-### 02 · Pointcloud — `reconstruction`
+## Contract gate
 
-Subject: keyframes in, sparse reconstruction out, by both routes.
+`tests/docs/test_tutorial_contract.py`:
 
-- `bootstrap_keyframes`.
-- **Feedforward:** `make_creator("vggt_omega")`, `creator.run(images_dir, device)`,
-  the `FeedforwardResult` fields, `clean_pointcloud`, PyVista cloud + frustums,
-  `save_zarr` to `WORK/pointcloud.zarr`. Prose names the other backends
-  (`vggtx`, `mapanything`, `loger`) and says they are the same call.
-- **SfM:** `generate_vda_depth(frames, WORK, names)` → `depth_vda/`, then
-  `InstantSfMCreator().reconstruct(WORK)`, then `result_from_reconstruction` to get a
-  COLMAP-scale `FeedforwardResult`. Prose covers why depth priors are the default
-  (`use_depths=True` — it raises without `depth_vda/`) and notes `retriangulation=True`
-  as the GLOMAP-style post-solve knob, shown but not run.
-- Short comparison of the two clouds.
+- kept: banned shared-cache tokens (`data/outputs`, `TUTORIAL_CACHE`, `OUTPUT_DIR`,
+  `IMAGES_DIR`), no `sys.path.insert`, no "run X first", imports resolve, no notebook-defined
+  functions, matplotlib cap, executed outputs present, index lists every page
+- changed: the page list is the ten above
+- new: no `mkdtemp`, no `overwrite=True`; no `§`, `Package gap` or `autoreload`; em-dash and
+  bold caps; code lines ≤ 100 characters
 
-### 02 · Pointcloud — `refinement`
+`tests/docs/test_tutorial_helpers.py` covers `tutorial_scene` (skips done stages, reuses
+`SCENE_DIR`, `extractor=` selects the store) and `work_dir` (emptied on each call).
 
-Subject: improving a first pass. Both passes here are feedforward-only — SfM refuses them.
+## Integration and landing
 
-- `bootstrap_keyframes(n_frames=24)`, then a VGGT-Omega run kept in memory.
-- **Bundle adjustment:** `BundleAdjustment(BundleAdjustmentConfig(capture_loss_history=True))`,
-  `.refine(result)`, then `result.reproject()`. Camera-centre trajectory before/after,
-  LM loss curve from `_last_loss_history`. Keeps the existing honest empty-history branch:
-  on a small-baseline scene the reprojection filter can admit no frames, and the notebook
-  says so rather than plotting nothing.
-- **Loop closure:** `LoopClosure(creator, LoopClosureConfig(submap_size=8))`, `.run(images_dir)`.
-  Submap structure, accepted matches, camera-centre gap per accepted pair before/after.
-  Imports come from `collab_splats.geometry.loop_closure` (the package `__getattr__`), never
-  the deleted `closure` module.
+1. Back up the tip to `refs/backup/tutorial-release/pre-rebase`; `git rebase clean/final`
+   (trial merge clean). Venv preflight: `gsplat.__version__`, GPU, cached LLaVA and LoMa.
+2. Rework pages and gate per the sections above.
+3. **Full sweep:** delete `data/tutorial_scene/`, then execute all ten pages in page order,
+   one at a time, with outputs committed. Then re-execute one late page (`localization`) on its
+   own after deleting the scene, to prove a cold start works.
+4. Gates: `tests/docs`, docstring contract, import style, Sphinx build of `docs/`, committed
+   notebook outputs ≤ 32 MB (21.3 MB today).
+5. Land on `clean/final`: cherry-pick `7a03db99` (`fix(mesh)`) and `0fd93dbb`
+   (`fix(semantics)`) as their own commits, then one squashed `docs(tutorials)` commit; append
+   the CHANGELOG entry, drop `tutorial-rework` from CLAUDE.md In-Flight, replace the stale spec
+   on `clean/final` with this file. Backup refs before the squash. Branch, worktree and the
+   stale `clean/localization` branch deleted only after the user confirms.
 
-### 03 · Splats — `train_splats`
-
-Subject: Scaffold-2DGS, the configuration in production use.
-
-- `bootstrap_keyframes` + `bootstrap_reconstruction`.
-- Trainer inputs assembled inline (this page teaches that glue).
-- One train:
-
-  ```python
-  cfg = SplatsConfig(
-      representation="scaffold",   # anchors + MLP decode
-      primitive="2dgs",            # surface-aligned kernel
-      scaffold={...},              # base.yaml defaults
-      max_steps=MAX_STEPS,
-      losses={..., "opacity_reg": {"weight": 0.0}},
-  )
-  ```
-
-  Prose separates the two axes — `representation` picks the model class, `primitive` the
-  rasterizer — and states the two rules the trainer enforces: `sh_degree` /
-  `sh_degree_interval` are vanilla-only (scaffold decodes RGB from `mlp_color`), and
-  `opacity_reg` must be 0 under scaffold, because opacity is decoded and its sign is the
-  offset visibility mask, so regularizing it shuts offsets.
-- **A vanilla run, shown not executed:** a markdown cell giving the
-  `representation="vanilla", primitive="3dgs"` config and what changes with it.
-- Outputs: `splats.ply` / `ckpt.pt` / `splats_quality_report.json`, per-frame PSNR bar,
-  then a render gallery via `load_checkpoint` + `render_views`.
-
-### 04 · Semantics — three pages
-
-- **`feature_extraction`** — MaskCLIP and Talk2DINO over one keyframe: `forward`,
-  `score_queries`, PCA-to-RGB, heatmaps, and the side-by-side per-query comparison
-  absorbed from the deleted `maskclip_vs_talk2dino`.
-- **`segmentation`** — `MobileSAMSegmentation` in both strategies, mask overlays,
-  then `aggregate_masked_features` into per-object features.
-- **`lifting_and_query`** — 2D → 3D. `bootstrap_keyframes` + `bootstrap_reconstruction`,
-  then extract per-frame features, train a `FeatureAutoencoder`, `lift_features` onto
-  the points, and score text queries per point. All the cache-hit / cache-miss branching
-  in the current notebook is deleted — one path, always computed.
-
-### 05 · Mesh — `tsdf_mesh`
-
-Subject: processed data in, mesh out — and what TSDF is actually doing.
-
-- `bootstrap_keyframes` + `bootstrap_reconstruction` + `bootstrap_splats`.
-- **Prose on the method**, before any call: TSDF fuses each view's depth into a voxel
-  grid of *truncated signed distances* — per voxel, the signed distance to the nearest
-  surface along the ray, clamped to ±`sdf_trunc`. Averaging those fields across views is
-  what cancels per-view noise; the mesh is the zero level set. Hence `sdf_trunc`
-  (derived as 4 × `voxel_size`), not `voxel_size`, sets the thinnest structure that can
-  survive, and cancellation needs *both* surfaces of a thin object to be seen.
-- **Source A — feedforward depth:** confidence-gate with `confidence_mask`, convert
-  `(N,3,H,W)` float images to `(N,H,W,3)` uint8, `invert_poses(ff.extrinsics)` for
-  camera-to-world, `fuse_tsdf`.
-- **Source B — splat renders:** `render_tsdf_inputs(ckpt)` returns depth, uint8 RGB,
-  camera-to-world and K with pose-opt deltas already applied — nothing to lift or re-pose.
-  `fuse_tsdf` on those.
-- Side-by-side: vertex/triangle counts, connected components, largest-component fraction,
-  two renders. Then `clean_repair_mesh` on both, and what its scale-relative thresholds mean.
-
-### 06 · Localization — `localization`
-
-Subject: one query image → a pose in a known map.
-
-- `bootstrap_keyframes` + `bootstrap_reconstruction`.
-- `CameraLocalizer.from_feedforward(result, images=..., ids=..., extractor=LocalMatcher("loma"))`,
-  then `.localize(query_image)` on `QUERY_IMAGE` — a frame from a *different* video.
-- Correspondence plot for the top-ranked reference frame, 3D scene view with the
-  localized pose in red. Prose notes the query K is seeded from image proportions, and
-  names the other matchers.
-
-## Verification
-
-The deliverable is nine notebooks that run. The proof is running them:
-
-1. Each notebook executed end-to-end, from a clean tempdir, in dependency-free order
-   (any page, any order — that is the point).
-2. Outputs committed. `nbsphinx_execute` stays `"never"`, so the committed outputs are
-   what the docs site renders.
-3. A grep gate: no `data/outputs`, no `TUTORIAL_CACHE`, no `sys.path.insert`, no
-   `assert .* run .* first` anywhere under `docs/source/tutorials/`.
-4. An import gate: every `collab_splats.*` / `evals.*` symbol imported by any notebook
-   resolves against the branch. (This is the check that caught the seven breaks above;
-   it becomes a small script so it can be re-run.)
-
-Notebooks are executed one at a time — a full A40 is needed for the splat trains, and
-concurrent runs risk OOM against the 46.6 GB cgroup cap.
+If `clean/final` moves during the work, rebase again and re-run the import gate before the sweep.
 
 ## Risks
 
-- **Wall-clock.** Nine pages, each paying its own feedforward run, plus two splat trains.
-  The fast profile is what keeps this tractable; if a page still runs long, the knob to
-  turn is `MAX_FRAMES`, never a reintroduced cache.
-- **Under-converged figures.** At `MAX_STEPS=1000` the splat renders are visibly softer
-  than production. Every such page states the production value next to the knob.
-- **Notebook size.** Committing outputs for nine executed pages grows the repo. The
-  current tutorials already carry 32 MB of committed outputs; this should land at or
-  below that, since four pages are being deleted.
+- **Wall-clock.** One full sweep is a scene build (96-frame VGGT-Omega, mesh with texture
+  bake, one splat train, maskclip and OCR semantics) plus each page's own longhand work (InstantSfM, LC, longhand TSDF).
+- **Stale scene after code changes.** Manual delete; stated on the index page and done by the sweep.
+- **Under-converged splats** at 1000 steps; the page states the production 30000.
+- **Notebook size** ≤ 32 MB: downscaled galleries, `n=2` montages, atlas shown at 1024 px.

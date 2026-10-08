@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch import Tensor
 
 from collab_splats.geometry.transforms import (
     invert_poses,
@@ -35,11 +36,10 @@ from collab_splats.splats.losses import (
 )
 from collab_splats.splats.scaffold import ScaffoldConfig
 from collab_splats.splats.utils import (
+    cached_target,
     compute_scene_scale,
     denormalize_cameras,
     downscale_factor,
-    downscale_image,
-    prepare_target,
     scene_normalization,
     view_order,
 )
@@ -229,7 +229,7 @@ def train(
             f"intrinsics {n_intrinsics}, image_ids {n_ids}, depth_targets {n_depth}"
         )
 
-    # Cameras to the GPU, optionally normalized to a unit cube (frames stay on the CPU)
+    # Cameras to the GPU, optionally normalized to a unit cube (frames reach the GPU through the target cache)
     cam_to_world_np = invert_poses(world_to_cam)
     world_extent = compute_scene_scale(torch.from_numpy(cam_to_world_np))
     loss_schedule = cfg.losses
@@ -279,23 +279,26 @@ def train(
 
     start_time = time.perf_counter()
     views = view_order(n_views)
-    loss_values: dict[str, float] = {}
+    loss_values: dict[str, Tensor] = {}
     normal_spec = loss_schedule.get("normal_consistency")
+
+    # GPU targets of the current downscale factor, built on each view's first visit
+    target_cache: dict[int, dict[int, dict]] = {}
+
+    # Camera ids on the GPU once: a per-step torch.tensor(..., device) syncs the stream
+    camera_ids = torch.arange(n_views, device=device)
 
     for step in progress(range(cfg.max_steps), desc=f"splats[{cfg.primitive}]"):
         # Next view in shuffled order
         view = next(views)
-        view_image = images[view]
-        view_depth_target = None if depth_targets is None else depth_targets[view]
 
-        # Downscale the view for coarse-to-fine; its target and refined camera
+        # Coarse-to-fine: the view's target at this factor and its refined camera
         factor = downscale_factor(step, cfg.num_downscales, cfg.resolution_schedule)
-        view_image = downscale_image(view_image, factor)
+        target = cached_target(target_cache, images, depth_targets, view, factor, device)
         view_intrinsics = intrinsics_by_factor[factor][view : view + 1]
-        step_height, step_width = view_image.shape[:2]
+        step_height, step_width = target["rgb"].shape[1:3]
 
-        target = prepare_target(view_image, view_depth_target, device)
-        camera_id = torch.tensor([view], device=device)
+        camera_id = camera_ids[view : view + 1]
         view_cam_to_world = refine.camera(cam_to_world[view : view + 1], camera_id)
 
         # Render; normals only once the normal-consistency loss is active
@@ -338,7 +341,7 @@ def train(
         model.post_backward(step, info)
 
         if step % cfg.log_every == 0:
-            rounded = {name: round(value, 4) for name, value in loss_values.items()}
+            rounded = {name: round(value.item(), 4) for name, value in loss_values.items()}
             logger.info(
                 "splats step %d loss %.4f %s %d %s",
                 step,
@@ -350,6 +353,7 @@ def train(
 
     # loss_values holds the last step's losses, not an average
     train_seconds = time.perf_counter() - start_time
+    final_losses = {name: value.item() for name, value in loss_values.items()}
 
     # Map model, cameras and pose deltas back to world units
     if cfg.normalize_scene:
@@ -360,10 +364,7 @@ def train(
     # Bake the pose deltas into the saved poses
     with torch.no_grad():
         corrected = torch.cat(
-            [
-                refine.camera(cam_to_world[view : view + 1], torch.tensor([view], device=device))
-                for view in range(n_views)
-            ]
+            [refine.camera(cam_to_world[view : view + 1], camera_ids[view : view + 1]) for view in range(n_views)]
         )
 
     # Write outputs: corrected poses for ckpt and renders, training poses for the ply
@@ -377,6 +378,6 @@ def train(
         intrinsics_gpu,
         out_dir,
         train_seconds,
-        loss_values,
+        final_losses,
         training_cam_to_world=cam_to_world,
     )

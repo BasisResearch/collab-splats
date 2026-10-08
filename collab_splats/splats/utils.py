@@ -2,7 +2,7 @@
 Helpers the splat trainer calls around its step loop.
 
 - scene geometry: scale, point spacing, normalization
-- coarse-to-fine: downscale schedule and per-view targets
+- coarse-to-fine: downscale schedule and per-view targets, cached per factor
 - view schedule: shuffled epochs of view indices
 """
 
@@ -160,6 +160,47 @@ def prepare_target(image: np.ndarray, depth: np.ndarray | None, device: str) -> 
     # Nearest, not bilinear, so "no target" zeros don't blend
     depth_nchw = F.interpolate(depth_nchw, size=(height, width), mode="nearest")
     return {"rgb": rgb, "depth": depth_nchw.permute(0, 2, 3, 1)}
+
+
+def cached_target(
+    cache: dict[int, dict[int, dict]],
+    images: np.ndarray,
+    depth_targets: np.ndarray | None,
+    view: int,
+    factor: int,
+    device: str,
+) -> dict:
+    """
+    One view's training targets at a downscale factor, built once and kept on `device`.
+
+    - same `downscale_image` + `prepare_target` as a per-step build, so identical tensors
+    - holds one factor at a time: a new factor drops the previous factor's targets
+
+    Args:
+        cache: {factor: {view: target}}, owned by the caller and updated in place.
+        images: (n_views, H, W, 3) uint8 frames.
+        depth_targets: (n_views, h, w) depth at any resolution, 0 = no target, or None.
+        view: row of `images`.
+        factor: integer divisor from `downscale_factor`.
+        device: torch device string.
+
+    Returns:
+        The `prepare_target` dict for this view at this factor.
+    """
+    # A new factor frees the previous factor's tensors
+    if factor not in cache:
+        cache.clear()
+        cache[factor] = {}
+
+    targets = cache[factor]
+
+    # Build on first visit only
+    if view not in targets:
+        image = downscale_image(images[view], factor)
+        depth = None if depth_targets is None else depth_targets[view]
+        targets[view] = prepare_target(image, depth, device)
+
+    return targets[view]
 
 
 ########################################

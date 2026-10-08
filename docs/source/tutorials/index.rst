@@ -1,21 +1,41 @@
 Tutorials
 =========
 
+The pages share one scene, built from ``data/tutorial/tutorial_example-video.mp4`` into
+``data/tutorial_scene/``. Each page runs top to bottom on its own: it builds the pipeline stages
+it needs that are not on disk yet, then shows its subject. Opened in order, later pages reuse what
+earlier pages built.
+
+After pulling code changes, delete ``data/tutorial_scene/`` so the stages are rebuilt.
+
+The scene uses a small profile (96 frames, short training); production values are in
+``configs/base.yaml``.
+
+=================================== ===============================
+Stage                               Page
+=================================== ===============================
+``preproc``                         01 · Preprocessing
+``pointcloud``                      02 · Reconstruction
+``reconstruction_quality_report``   02 · Reconstruction
+``refine``                          02 · Refinement
+``splats``                          03 · Train splats
+``mesh``                            04 · Mesh
+``semantics``                       05 · Lifting and query, OCR lens
+``localize``                        06 · Localization
+=================================== ===============================
+
 .. toctree::
    :maxdepth: 1
    :caption: 01 · Preprocessing
 
-   01_preprocessing/keyframe_extraction
+   01_preprocessing/preprocessing
 
 .. toctree::
    :maxdepth: 1
    :caption: 02 · Pointcloud
 
-   02_pointcloud/feedforward_methods
-   02_pointcloud/bundle_adjustment
-   02_pointcloud/slam_loop_closure
-   02_pointcloud/feedforward_mesh
-   02_pointcloud/colmap_sfm
+   02_pointcloud/reconstruction
+   02_pointcloud/refinement
 
 .. toctree::
    :maxdepth: 1
@@ -25,32 +45,21 @@ Tutorials
 
 .. toctree::
    :maxdepth: 1
-   :caption: 04 · Semantics
+   :caption: 04 · Mesh
 
-   04_semantics/feature_extraction
-   04_semantics/segmentation
-   04_semantics/maskclip_vs_talk2dino
+   04_mesh/mesh
 
 .. toctree::
    :maxdepth: 1
-   :caption: 05 · Lifting
+   :caption: 05 · Semantics
 
-   05_lifting/semantic_lifting
-
-.. toctree::
-   :maxdepth: 1
-   :caption: 06 · Mesh
-
-   06_mesh/splats_mesh
+   05_semantics/feature_extraction
+   05_semantics/segmentation
+   05_semantics/lifting_and_query
+   05_semantics/ocr_lens
 
 .. toctree::
    :maxdepth: 1
-   :caption: 07 · Localization
+   :caption: 06 · Localization
 
-   07_localization/localization
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Evaluation
-
-   evals/ground_truth_evals
+   06_localization/localization

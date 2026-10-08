@@ -97,6 +97,10 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
             (N, D) float32 embeddings on this extractor's device, unit-norm per row.
         """
         tokens = self._maskclip_onnx.clip.tokenize(text).to(self._device)
-        embed = self.model.encode_text(tokens).float()
+
+        # Inference only: without no_grad the embeddings carry autograd history into scores
+        with torch.no_grad():
+            embed = self.model.encode_text(tokens).float()
+
         embed /= embed.norm(dim=-1, keepdim=True)
         return embed

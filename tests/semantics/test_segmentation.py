@@ -11,6 +11,7 @@ from collab_splats.semantics.segmentation import (
     BaseSegmentation,
     MobileSAMSegmentation,
     SAM3Segmentation,
+    aggregate_masked_features,
     create_composite_mask,
     mobile_sam,
 )
@@ -292,3 +293,17 @@ def test_sam3_broken_transitive_dep_propagates():
         with pytest.raises(ModuleNotFoundError, match="timm") as exc:
             SAM3Segmentation()
     assert "huggingface-cli" not in str(exc.value)
+
+
+def test_aggregate_masked_features_paints_each_mask_mean():
+    """Each mask's pixels carry that mask's mean feature; uncovered pixels are zero."""
+    features = torch.arange(16, dtype=torch.float32).reshape(1, 4, 4)
+    masks = torch.zeros(2, 4, 4)
+    masks[0, :2] = 1
+    masks[1, 2:, :2] = 1
+
+    pooled = aggregate_masked_features(features, masks, (4, 4), (4, 4))
+
+    assert torch.allclose(pooled[0, :2], torch.full((2, 4), features[0, :2].mean()))
+    assert torch.allclose(pooled[0, 2:, :2], torch.full((2, 2), features[0, 2:, :2].mean()))
+    assert torch.all(pooled[0, 2:, 2:] == 0)

@@ -146,17 +146,28 @@ docker run --gpus all -it collab-splats:release bash
 
 ## Getting Started
 
-Tutorials in `docs/source/tutorials/`, numbered by pipeline stage:
+```python
+from collab_splats.reconstructor import Reconstructor
 
-| Stage | Topic |
-|-------|-------|
-| 01 · Preprocessing | Keyframe extraction |
-| 02 · Pointcloud | Feedforward methods, bundle adjustment, loop closure, COLMAP |
-| 03 · Splats | [Gaussian-splat training](docs/source/tutorials/03_splats/train_splats.ipynb) (3DGS on upstream gsplat, 2DGS config diff) |
-| 04 · Semantics | Feature extraction, segmentation |
-| 05 · Lifting | Semantic feature lifting |
-| 06 · Mesh | [Surface reconstruction](docs/source/tutorials/06_mesh/splats_mesh.ipynb) (TSDF from feedforward depth vs splat renders, semantic mesh query) |
-| 07 · Localization | Camera localization |
+scene = Reconstructor({"input_path": "video.mp4", "output_path": "out/"})
+scene.run()
+print(scene.outputs)
+```
+
+Same run from the shell: `reconstruct local video.mp4 --output-root out/` (writes to `out/video/`).
+Browse the result: `python -m collab_splats.viewer out/vggt_omega` (the CLI run: `out/video/vggt_omega`).
+
+Tutorials in `docs/source/tutorials/` share one scene and build on each other:
+
+| Stage | Tutorial |
+|-------|----------|
+| preproc | [Preprocessing](docs/source/tutorials/01_preprocessing/preprocessing.ipynb) |
+| pointcloud, quality report | [Reconstruction](docs/source/tutorials/02_pointcloud/reconstruction.ipynb) |
+| refine | [Refinement](docs/source/tutorials/02_pointcloud/refinement.ipynb) |
+| splats | [Train splats](docs/source/tutorials/03_splats/train_splats.ipynb) |
+| mesh | [Mesh](docs/source/tutorials/04_mesh/mesh.ipynb) |
+| semantics | [Features](docs/source/tutorials/05_semantics/feature_extraction.ipynb) · [Segmentation](docs/source/tutorials/05_semantics/segmentation.ipynb) · [Lifting and query](docs/source/tutorials/05_semantics/lifting_and_query.ipynb) · [OCR lens](docs/source/tutorials/05_semantics/ocr_lens.ipynb) |
+| localize | [Localization](docs/source/tutorials/06_localization/localization.ipynb) |
 
 ## Dashboard
 

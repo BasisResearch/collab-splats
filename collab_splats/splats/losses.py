@@ -202,9 +202,11 @@ def compute_losses(
     *,
     l1_weight: float = 0.8,
     ssim_weight: float = 0.2,
-) -> tuple[Tensor, dict[str, float]]:
+) -> tuple[Tensor, dict[str, Tensor]]:
     """
     Weighted sum of the losses active at `step`.
+
+    - values are detached 0-d tensors: no host sync until the caller reads them
 
     Args:
         step: current training step.
@@ -217,7 +219,7 @@ def compute_losses(
         ssim_weight: photometric (1 - SSIM) weight.
 
     Returns:
-        (total loss, {name: value}).
+        (total loss, {name: detached value}).
     """
     # Photometric: L1 + SSIM (ssim_loss wants NCHW)
     rendered_rgb = render["rgb"]
@@ -227,7 +229,7 @@ def compute_losses(
     l1 = gsplat_losses.l1_loss(rendered_rgb, target_rgb).mean()
     ssim = gsplat_losses.ssim_loss(rendered_nchw, target_nchw)
     total = l1_weight * l1 + ssim_weight * ssim
-    values = {"l1": l1.item(), "ssim": ssim.item()}
+    values = {"l1": l1.detach(), "ssim": ssim.detach()}
 
     # Optional losses: skip zero weights and missing inputs
     for name, spec in loss_schedule.items():
@@ -243,7 +245,7 @@ def compute_losses(
             continue
 
         total = total + weight * value
-        values[name] = value.item()
+        values[name] = value.detach()
 
     return total, values
 

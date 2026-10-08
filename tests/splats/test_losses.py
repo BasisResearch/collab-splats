@@ -108,6 +108,18 @@ def test_photometric_only_when_no_optional_losses():
     assert total.item() == pytest.approx(expected, rel=1e-5)
 
 
+def test_loss_values_stay_detached_scalars_on_the_device():
+    schedule = {"depth": {"weight": 0.5}}
+    render = _render()
+    render["rgb"].requires_grad_(True)
+    _, values = compute_losses(0, render, _target(), _gaussians(), schedule, 1.0)
+
+    # No .item() per step: the trainer reads them only when it logs
+    for value in values.values():
+        assert isinstance(value, torch.Tensor)
+        assert value.dim() == 0 and not value.requires_grad
+
+
 def test_loss_waits_for_its_start_step():
     schedule = {"depth": {"weight": 1.0, "start": 100}}
     _, before = compute_losses(99, _render(), _target(), _gaussians(), schedule, 1.0)

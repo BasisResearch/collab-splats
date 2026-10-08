@@ -118,6 +118,14 @@ def test_maskclip_is_queryable():
     assert isinstance(extractor, BaseQueryableExtractor)
 
 
+def test_maskclip_encode_text_has_no_grad():
+    """Text embeddings carry no autograd history, so scores convert to numpy directly."""
+    pytest.importorskip("maskclip_onnx")
+    from collab_splats.semantics.features import MaskCLIPExtractor
+    extractor = MaskCLIPExtractor()
+    assert not extractor.encode_text(["a bird"]).requires_grad
+
+
 def test_talk2dino_accepts_model_name():
     """Talk2DinoExtractor uses model_name, not hf_model_id."""
     pytest.importorskip("transformers")

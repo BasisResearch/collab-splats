@@ -114,6 +114,24 @@ def test_appearance_embedding_changes_color_only_when_enabled():
         on(features, camera_id=None)
 
 
+def test_mlp_bf16_returns_float32_close_to_the_float32_heads():
+    torch.manual_seed(0)
+    cfg = ScaffoldConfig(n_offsets=4, feat_dim=8, appearance_dim=6)
+    full = ScaffoldMLPs(cfg, n_views=5)
+    half = ScaffoldMLPs(ScaffoldConfig(n_offsets=4, feat_dim=8, appearance_dim=6, mlp_bf16=True), n_views=5)
+    half.load_state_dict(full.state_dict())
+    features = torch.randn(64, cfg.feat_dim + 3, requires_grad=True)
+    camera_id = torch.tensor([2])
+
+    # bf16 keeps ~3 significant digits; outputs and the input gradient come back as float32
+    for expected, actual in zip(full(features, camera_id), half(features, camera_id)):
+        assert actual.dtype == torch.float32
+        assert torch.allclose(actual, expected, atol=3e-2)
+
+    sum(head.sum() for head in half(features, camera_id)).backward()
+    assert features.grad.dtype == torch.float32
+
+
 def test_appearance_embedding_needs_view_count():
     with pytest.raises(ValueError, match="n_views"):
         ScaffoldMLPs(ScaffoldConfig(appearance_dim=6), n_views=0)
@@ -418,9 +436,9 @@ def test_offsets_to_gaussians_keeps_the_most_opaque_offset_when_all_are_closed()
     cov[:, 3] = 1.0
     color = torch.rand(6, 3)
 
-    keep, gaussians = scaffold_module._offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, 3)
+    kept, gaussians = scaffold_module._offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, 3)
 
-    assert keep.tolist() == [False, True, False, False, False, False]
+    assert kept.tolist() == [1]
     assert gaussians["opacities"].tolist() == pytest.approx([-0.1])
     assert set(gaussians) == {"means", "scales", "quats", "opacities", "colors"}
 

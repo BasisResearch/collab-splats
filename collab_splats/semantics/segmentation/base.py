@@ -222,6 +222,9 @@ def aggregate_masked_features(
     """
     Pool image features per segment mask and return a spatial feature map.
 
+    - each mask's pixels carry that mask's mean feature; overlaps take the later mask
+    - pixels no mask covers are zero
+
     Args:
         features: (C, H, W) image feature tensor.
         masks: (N, H, W) segmentation masks from SAM.
@@ -238,9 +241,15 @@ def aggregate_masked_features(
     masks = F.interpolate(masks.unsqueeze(1), size=resolution, mode="nearest").bool()[:, 0]
     masks = masks.to(features.device)
 
-    weighted_features = torch.einsum("nhw,chw->chw", masks.float(), features)
-    mask_counts = masks.sum(0).float()
-    aggregated_feat_map = weighted_features / (mask_counts + 1e-6).unsqueeze(0)
+    # Mean feature per mask: (N, C)
+    mask_sums = torch.einsum("nhw,chw->nc", masks.float(), features)
+    mask_means = mask_sums / (masks.sum((1, 2)).float().unsqueeze(1) + 1e-6)
+
+    # Paint each mask's mean back over its pixels
+    aggregated_feat_map = torch.zeros_like(features)
+
+    for mask, mean in zip(masks, mask_means):
+        aggregated_feat_map[:, mask] = mean.unsqueeze(1)
 
     aggregated_feat_map = F.interpolate(
         aggregated_feat_map.unsqueeze(0),

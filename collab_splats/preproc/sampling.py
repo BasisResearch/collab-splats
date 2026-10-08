@@ -390,6 +390,7 @@ def sample_fps(
     One frame every 1/fps seconds, each the sharpest eligible frame in its slot.
 
     - the slot is +/- half the target spacing, so picks stay within half a period of the grid
+    - slots are half-open and cut at the midpoint to each neighbor, so two never share a frame
     - ties break to the frame nearest the target, keeping exact spacing where sharpness is flat
     - a slot with no eligible frame is handled by on_empty_slot; picks never leave the slot
 
@@ -455,20 +456,23 @@ def sample_fps(
     # - the gate is video-wide, so nearest-in-time alone picks an arbitrary survivor
     targets = np.asarray(targets)
     half = max(int(np.median(np.diff(targets)) // 2), 1) if targets.size > 1 else 1
-    lo = np.searchsorted(pool, targets - half, side="left")
-    hi = np.searchsorted(pool, targets + half, side="right")
+
+    # Half-open slot [start, stop): +/- half, cut at the midpoint to each neighbor so no frame is shared
+    mid = (targets[:-1] + targets[1:] + 1) // 2
+    starts = np.maximum(targets - half, np.concatenate(([0], mid)))
+    stops = np.minimum(targets + half + 1, np.concatenate((mid, [total])))
+    lo = np.searchsorted(pool, starts, side="left")
+    hi = np.searchsorted(pool, stops, side="left")
 
     chosen = []
-    for target, start, stop in zip(targets.tolist(), lo.tolist(), hi.tolist()):
-        if start < stop:
-            chosen.append(_sharpest(pool[start:stop], target, laplacian))
+    for target, start, stop, slot_lo, slot_hi in zip(
+        targets.tolist(), starts.tolist(), stops.tolist(), lo.tolist(), hi.tolist()
+    ):
+        if slot_lo < slot_hi:
+            chosen.append(_sharpest(pool[slot_lo:slot_hi], target, laplacian))
         elif on_empty_slot == "rescue":
             # Slot holds no eligible frame: keep its sharpest frame anyway
-            window = np.arange(max(target - half, 0), min(target + half + 1, laplacian.size))
-            chosen.append(_sharpest(window, target, laplacian))
-
-    # Two targets either side of an excised stretch can land on the same survivor
-    chosen = sorted(set(chosen))
+            chosen.append(_sharpest(np.arange(start, stop), target, laplacian))
 
     return _decode_selection(
         video_path, chosen, report=report, on_progress=on_progress, desc="fps sampling", workers=workers

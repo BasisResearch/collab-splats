@@ -325,6 +325,17 @@ def test_sample_fps_respects_the_frame_band(tiny_video):
     assert len(frames) <= 5
 
 
+def test_sample_fps_slots_never_share_a_frame(tiny_video):
+    report = _synthetic_report(60)
+    report["frames"]["laplacian"][2] = 1000.0
+
+    _, records = sample_fps(tiny_video, fps=7.5, report=report)
+
+    picked = [r["frame_idx"] for r in records]
+    assert len(picked) == 15
+    assert picked[:2] == [0, 2]
+
+
 def test_sample_fps_rejects_a_missing_rate(tiny_video, clean_report):
     with pytest.raises(ValueError, match="positive fps"):
         sample_fps(tiny_video, fps=None, report=clean_report)

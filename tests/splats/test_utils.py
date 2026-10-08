@@ -9,6 +9,7 @@ import pytest
 import torch
 
 from collab_splats.splats.utils import (
+    cached_target,
     compute_scene_scale,
     denormalize_cameras,
     downscale_factor,
@@ -151,6 +152,53 @@ def test_prepare_target_keeps_missing_depth_exactly_zero():
     # - measured: bilinear puts 1.15625 at (3, 5) and leaves 4 exact zeros, not 16
     assert target["depth"][0, 3, 5, 0] == 0.0
     assert int((target["depth"] == 0).sum()) == 16
+
+
+def _views(n_views=3, height=37, width=22):
+    """
+    Random uint8 frames (odd sizes, so each factor floors) and coarser depth with holes.
+    """
+    rng = np.random.default_rng(0)
+    images = rng.integers(0, 256, (n_views, height, width, 3), dtype=np.uint8)
+    depths = rng.uniform(0.5, 4.0, (n_views, 9, 6)).astype(np.float32)
+    depths[:, ::3, ::2] = 0.0
+    return images, depths
+
+
+@pytest.mark.parametrize("factor", [1, 2, 4])
+def test_cached_target_matches_the_per_step_build(factor):
+    images, depths = _views()
+    cache = {}
+
+    for view in range(len(images)):
+        cached = cached_target(cache, images, depths, view, factor, "cpu")
+        expected = prepare_target(downscale_image(images[view], factor), depths[view], "cpu")
+
+        assert torch.equal(cached["rgb"], expected["rgb"])
+        assert torch.equal(cached["depth"], expected["depth"])
+
+
+def test_cached_target_builds_each_view_once_per_factor():
+    images, _ = _views()
+    cache = {}
+    first = cached_target(cache, images, None, 1, 2, "cpu")
+
+    assert cached_target(cache, images, None, 1, 2, "cpu") is first
+    assert first["depth"] is None
+
+
+def test_cached_target_drops_the_previous_factor():
+    images, depths = _views()
+    cache = {}
+
+    for view in range(len(images)):
+        cached_target(cache, images, depths, view, 4, "cpu")
+
+    target = cached_target(cache, images, depths, 0, 2, "cpu")
+
+    assert list(cache) == [2]
+    assert list(cache[2]) == [0]
+    assert target["rgb"].shape == (1, 18, 11, 3)
 
 
 def test_view_order_reproduces_the_measured_shuffle_and_pop_sequence():

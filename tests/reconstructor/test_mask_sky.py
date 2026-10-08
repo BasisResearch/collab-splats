@@ -13,14 +13,14 @@ import pytest
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.reconstructor import Reconstructor
-from tests.reconstructor._stubs import minimal_feedforward_result
+from tests.reconstructor._stubs import minimal_feedforward_result, stub_mesh_cleanup
 
 
 def _mesh_reconstructor(tmp_path, **mesh_overrides):
     """
     Reconstructor whose mesh block is base.yaml plus the given overrides.
     """
-    mesh_cfg = {"enabled": True, "voxel_size": 0.01, "depth_trunc": 2.0, **mesh_overrides}
+    mesh_cfg = {"enabled": True, "texture": False, **mesh_overrides}
     config = {"input_path": str(tmp_path / "video.mp4"), "output_path": str(tmp_path / "out"), "mesh": mesh_cfg}
 
     return Reconstructor(config)
@@ -33,9 +33,8 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **mesh_overrides):
     rec = _mesh_reconstructor(tmp_path, source="feedforward", **mesh_overrides)
     result = minimal_feedforward_result()
 
-    def spy_fuse(depths, rgbs, c2w, K, out_dir, **kw):
+    def spy_fuse(depths, rgbs, c2w, K, **kw):
         fused["depths"] = depths
-        return tmp_path / "mesh.ply"
 
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
@@ -44,9 +43,9 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **mesh_overrides):
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
         patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
-        patch("collab_splats.reconstructor.clean_repair_mesh"),
-        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
+        stub_mesh_cleanup(),
         patch("collab_splats.reconstructor.sky_masks", return_value=sky_return) as sky,
     ):
         rec.mesh()
@@ -105,9 +104,8 @@ def test_mask_sky_asks_for_splats_frames_in_checkpoint_order(tmp_path):
 
     fused = {}
 
-    def spy_fuse(depths, rgbs, c2w, K, out_dir, **kw):
+    def spy_fuse(depths, rgbs, c2w, K, **kw):
         fused["depths"] = depths
-        return tmp_path / "mesh.ply"
 
     # The stage refuses a missing checkpoint before rendering, so one must exist on disk
     rec = _mesh_reconstructor(tmp_path, source="splats", mask_sky=True)
@@ -117,9 +115,9 @@ def test_mask_sky_asks_for_splats_frames_in_checkpoint_order(tmp_path):
 
     with (
         patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered),
+        patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
-        patch("collab_splats.reconstructor.clean_repair_mesh"),
-        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
+        stub_mesh_cleanup(),
         patch("collab_splats.reconstructor.sky_masks", side_effect=fake_sky_masks) as sky,
     ):
         rec.mesh()

@@ -21,7 +21,7 @@ from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.reconstructor import Reconstructor, _build_localization_db
 from collab_splats.semantics.store import write_feature_cache
-from tests.reconstructor._stubs import minimal_feedforward_result
+from tests.reconstructor._stubs import minimal_feedforward_result, stub_mesh_cleanup
 
 RECONSTRUCTOR = "collab_splats.reconstructor"
 
@@ -267,18 +267,18 @@ def test_localization_db_reads_full_res_store_frames_not_model_images(tmp_path):
 
 def test_mesh_fuses_the_frames_the_zarr_rows_came_from(tmp_path):
     recon = _seed_subset_scene(tmp_path)
+    recon.config["mesh"].update(mask_sky=False, texture=False)
     fused = {}
 
-    def spy_fuse(depths, rgbs, c2w, K, out_dir, **kwargs):
+    def spy_fuse(depths, rgbs, c2w, K, **kwargs):
         fused["rgbs"] = rgbs
-        return tmp_path / "mesh.ply"
 
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
         patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch(f"{RECONSTRUCTOR}.compute_tsdf_voxel_size", return_value=0.01),
         patch(f"{RECONSTRUCTOR}.create_tsdf_mesh", side_effect=spy_fuse),
-        patch(f"{RECONSTRUCTOR}.clean_repair_mesh"),
-        patch(f"{RECONSTRUCTOR}.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
+        stub_mesh_cleanup(),
     ):
         recon.mesh()
 

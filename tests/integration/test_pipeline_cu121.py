@@ -180,7 +180,7 @@ def test_mapanything_postprocess_pipeline(tmp_path):
     assert result.extrinsics.shape == (N_FRAMES, 4, 4)
 
 
-def test_tsdf_mesh_synthetic(tmp_path):
+def test_tsdf_mesh_synthetic():
     """
     create_tsdf_mesh over synthetic depth + RGB frames.
 
@@ -198,6 +198,5 @@ def test_tsdf_mesh_synthetic(tmp_path):
     K = np.array([[50, 0, 32], [0, 50, 32], [0, 0, 1]], dtype=np.float32)
     intrinsics = np.tile(K, (n, 1, 1))
 
-    mesh_path = create_tsdf_mesh(depths, rgbs, c2w, intrinsics, tmp_path, voxel_size=0.05, depth_trunc=5.0)
-    assert isinstance(mesh_path, Path)
-    assert mesh_path.exists()
+    mesh = create_tsdf_mesh(depths, rgbs, c2w, intrinsics, voxel_size=0.05, depth_trunc=5.0)
+    assert len(mesh.triangles) > 0

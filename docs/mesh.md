@@ -6,7 +6,7 @@ them, because only the caller knows which resolution grid it is on.
 
 | File | Responsibility |
 | --- | --- |
-| `tsdf.py` | `create_tsdf_mesh` — integrate views into a TSDF voxel-block grid (CUDA when available), write `mesh.ply` |
+| `tsdf.py` | `create_tsdf_mesh` — integrate views into a TSDF voxel-block grid (CUDA when available), return the mesh |
 | `clean.py` | `get_scene_scale`, `remove_floaters`, `make_convex_hull` (+ `trim_mesh_edges`, `bridge_mesh_edges`), `fill_holes`, `clean_repair_mesh`; `prepare_mesh` (+ `decimate_mesh`, `make_manifold`) |
 | `texture.py` | `unwrap_view_charts`, `project_images_to_texture`, `create_texture_mesh` |
 | `utils.py` | `to_meshlib` / `from_meshlib`, `face_edge_ids`, `adjacent_face_pairs`, `face_components`, `face_areas`, `validate_views` |
@@ -18,42 +18,46 @@ them, because only the caller knows which resolution grid it is on.
 The pipeline runs this stage for you (`mesh:` in the yaml, `--stages mesh`). Direct use:
 
 ```python
-from pathlib import Path
-
 import open3d as o3d
 
-from collab_splats.mesh import clean_repair_mesh, create_tsdf_mesh, prepare_mesh
+from collab_splats.mesh import clean_repair_mesh, compute_tsdf_voxel_size, create_tsdf_mesh, prepare_mesh
 
-mesh_path = create_tsdf_mesh(
+voxel_size = compute_tsdf_voxel_size(depths, c2w, K, depth_fx=model_fx)   # 4 depth pixels at median depth
+mesh = create_tsdf_mesh(
     depths,       # (n, h, w) float32, 0 = no observation
     rgbs,         # (n, h, w, 3) uint8
     c2w,          # (n, 4, 4) camera-to-world
     K,            # (n, 3, 3) at the depth resolution
-    Path("scene/mesh"),
-    voxel_size=0.0025,
-    depth_trunc=1.5,
+    voxel_size=voxel_size,   # depth_trunc=None keeps every depth
 )
-clean_repair_mesh(mesh_path)   # rewrites mesh.ply in place
-cleaned = o3d.io.read_triangle_mesh(str(mesh_path))
-prepared = prepare_mesh(cleaned, voxel_size=0.0025)   # the mesh.ply the stage ships
+cleaned, real = clean_repair_mesh(mesh)   # real: the floater-cut surface, before hull and fill
+prepared = prepare_mesh(cleaned, voxel_size=voxel_size, max_faces=1_500_000)
+o3d.io.write_triangle_mesh("scene/mesh.ply", prepared)   # the stage writes this last
 ```
 
-`voxel_size` and `depth_trunc` are in **world units, and the world has no fixed scale**. The
-values above are `base.yaml`'s, tuned for feedforward backbones whose depth is normalized to
-roughly unit scale. A COLMAP-scale reconstruction (`pointcloud.method: sfm`) is typically one
-to two orders of magnitude larger — on GH010229 the median depth is 16.5 and the camera
-trajectory spans 145, so `depth_trunc=1.5` truncates every sample and fusion returns an empty
-mesh with only an `[Open3D WARNING] Write PLY failed: mesh has 0 vertices.` on stderr. Measure
-first: `np.percentile(depths[depths > 0], [50, 95])`, put `depth_trunc` near p95, and scale
-`voxel_size` by the same ratio.
+Nothing in `collab_splats.mesh` writes a PLY. The stage writes `mesh.ply` once, after every step
+(texturing too) has finished, and removes a stale one before fusing: `mesh.ply` is the stage's
+done marker, so a run that fails partway leaves none and is re-run, never skipped.
+
+The voxel is **derived, never set**: the world has no fixed scale (feedforward depth is roughly
+unit scale, a COLMAP-scale reconstruction one to two orders of magnitude larger), so an absolute
+voxel or depth cutoff tuned on one scene empties or explodes the next. `compute_tsdf_voxel_size`
+sizes the voxel from the depth's own pixel footprint, `depth / fx`, at a reference percentile
+(`mesh.voxel_depth_px` footprints at `mesh.voxel_ref_percentile`). `fx` is the focal of the grid
+the depth was predicted on — the model grid for feedforward, since depth upsampled to the frame
+grid carries no finer detail. It then counts the 16³ surface blocks the voxel would allocate and
+coarsens by the square root of the overshoot until they fit 8 GB. On GH010229 the default lands
+at 0.0023 on the 294-frame run (hand-tuned value was 0.0025) and 0.0056 on the 1039-frame run,
+whose depth is 2.4× larger. `mesh.depth_trunc_percentile` (default `null`) is the optional depth
+cutoff, in the same scene-relative terms. The cut depth is zeroed before the voxel is sized, so
+the 8 GB block count never coarsens the voxel for depth that will not be fused.
 
 `create_tsdf_mesh` raises rather than fusing quietly wrong: float RGB is rejected outright, and a
 principal point outside the depth grid raises, because pairing one grid's depth with the other
 grid's `K` collapses the mesh instead of failing (the 2026-08-11 regression). An out-of-scale
 `depth_trunc` is NOT in that set — Open3D treats it as a legitimately empty volume.
 
-`sdf_trunc` defaults to `4 × voxel_size` and is a keyword for callers doing parity work, not a
-tuning knob; the pipeline never sets it.
+`sdf_trunc` defaults to `4 × voxel_size`; the pipeline passes `mesh.sdf_trunc_mult × voxel_size`.
 
 ---
 
@@ -143,7 +147,7 @@ Masking applies to depth only, never to the splats stage's depth targets — tha
 
 ## Cleaning
 
-`clean_repair_mesh(mesh_path)` rewrites `mesh.ply` in place: drop floating components, then
+`clean_repair_mesh(mesh)` returns `(cleaned, real)`: drop floating components, then
 patch small holes with meshlib: every patch is triangulated, then one `subdivideMesh` over all the
 patches (to the mesh's edge length) and one cotan `positionVertsSmoothly` of their new vertices, so a
 patch does not read as a flat fan. Batching matters: per-hole `fillHoleNicely` costs ~40 ms a call on a
@@ -165,7 +169,7 @@ cloud, which ignores the stray far component that would otherwise set the scale.
 - `max_plain_edges` (`8`) — loops with at most this many edges get a flat lid even when
   `subdivide_fill` is on; `0` subdivides every patch
 
-Whatever the bound, a component's outer rim is never filled: its longest loop, when that loop
+Whatever the bound, a component's outer rim is never filled: its widest loop, when that loop
 spans at least half the component's bounding box. A sheet's rim spans all of it; a hole in a
 closed surface spans a fraction, so a sphere with one hole still gets it filled.
 
@@ -175,7 +179,7 @@ Cleaning is not optional in the pipeline. `remove_floaters`, `make_convex_hull` 
 
 ### Convex hull (`mesh.use_convex_hull`, on by default in `configs/base.yaml`; set `false` indoors and for objects)
 
-`clean_repair_mesh(mesh_path, use_convex_hull=True)` runs `make_convex_hull` between
+`clean_repair_mesh(mesh, use_convex_hull=True)` runs `make_convex_hull` between
 `remove_floaters` and `fill_holes`. It trims the ragged outer edge of a fused scene and patches
 the ground out to a rounded convex hull, so the outline is smooth and the edge has no strands:
 
@@ -216,7 +220,8 @@ this fill closes; the outermost edge is never lidded.
    at 4.0 × scene scale)
 2. `decimate_mesh` — `meshoptimizer` simplification to an error bound expressed in voxels
    (`decimate_max_error`, `0.5` × `voxel_size`), so the budget follows the fusion resolution
-   rather than a triangle count
+   rather than a triangle count; past `max_faces` (`mesh.max_faces`) a second QEM pass decimates
+   on to that count whatever error it costs, so texturing cost stays bounded
 3. `make_manifold` — split non-manifold vertices, drop degenerate, duplicate and fold-over
    faces
 4. `fill_holes` again with `subdivide_fill=False`, then `make_manifold` — flat lids over the
@@ -234,32 +239,35 @@ the best of four).
 
 `texture.py` bakes per-view color into a single albedo atlas, opt-in via `mesh.texture: true`:
 
-1. Color gains (`color_correct=True`) — one gain per view and channel, solved in log space
-   from depth-tested samples on the occluder, with a smoothness term between consecutive
-   frames; each view is divided by its gain, highlights rolling off above 200 instead of
-   clipping. Removes the exposure seams the weighted blend leaves (~7 s on 264 views)
-2. `unwrap_view_charts` — the source images are the charts. Each face takes the view in which
+1. `unwrap_view_charts` — the source images are the charts. Each face takes the view in which
    it owns at least 75% of its projected pixels in that view's nvdiffrast face-id buffer,
    smoothed toward its neighbors' views; its UVs are its pixel coordinates there. The z-buffer
    gives each pixel to one face, so faces in one camera chart cannot overlap. Faces no view
    sees get one flat patch per connected group. Charts are tiled, scaled to one texel
    density, shelf-packed; one atlas check turns flipped or overwritten faces into single flat
    charts and repacks once (~23 s on 1.1M faces, against ~30 min for the UVAtlas it replaced)
-3. `project_images_to_texture` — nvdiffrast rasterizes the atlas into per-texel world
+2. `project_images_to_texture` — nvdiffrast rasterizes the atlas into per-texel world
    position and normal, then two torch passes run over the covered texels. Occlusion is a
    per-view nvdiffrast depth render of the unfilled `occluder`: a texel is hidden when its
-   nearest raster pixel (`_nearest_depth`; the render centers pixel j on u = j, like `unproject`) holds a surface nearer by more than a voxel. Bilinear samples (`grid_sample`) are weighted by pixel
-   size at the texel, from the views that resolve it nearly as finely as its best view, then
-   `fill_missing_pixels` (push-pull) fills every texel no view reached
-4. `_dilate_chart_gutters` — each chart's edge texels grow into its own padding, so bilinear
+   nearest raster pixel (`_nearest_depth`; the render centers pixel j on u = j, like
+   `unproject`) holds a surface nearer by more than a voxel. Bilinear samples (`grid_sample`)
+   are weighted by pixel size at the texel, then `fill_missing_pixels` (push-pull) fills every texel no view reached.
+   Each image is split into two bands: a Gaussian-blurred base (`blur_pix_sigma=16` source
+   pixels) and its detail (image − base). Detail comes only from the views that resolve the
+   texel nearly as finely as its best view (`view_ratio=1.5`); the base averages every view
+   that sees it. Neighboring texels share nearly the same base views, so per-frame exposure
+   no longer steps where the sharp views change. This replaced a per-view gain solve, whose
+   gains drifted along the sequence (0.59–1.61 on GH010229) and blew out some frames
+3. `_dilate_chart_gutters` — each chart's edge texels grow into its own padding, so bilinear
    lookups never pull in a neighboring chart
-5. `write_textured_obj` (`utils/io.py`) — `mesh.obj` + `mesh.mtl` + `albedo.png`. Each
+4. `write_textured_obj` (`utils/io.py`) — `mesh.obj` + `mesh.mtl` + `albedo.png`. Each
    position and smooth normal (`vn`) is written once and faces index `v`/`vt`/`vn` separately,
    at 6 decimals (~2.8× smaller on GH010229: 409 → 146 MB). White diffuse (`Kd 1 1 1`):
    a grey `Kd` darkens the texture in every viewer
 
 `create_texture_mesh(mesh, occluder, out_dir, ...)` unwraps the prepared mesh as is and writes
-`out_dir/mesh.obj` + `mesh.mtl` + `albedo.png`; `occluder` is the cleaned mesh before the fill.
+`out_dir/mesh.obj` + `mesh.mtl` + `albedo.png`; `occluder` is the second mesh
+`clean_repair_mesh` returns: floaters removed, no hull or hole fill.
 The pipeline passes `<backend>/texture/`. UV seams add `vt` entries, never positions: the OBJ's
 `v` lines are the prepared mesh's vertices.
 

@@ -9,8 +9,6 @@ pytest.importorskip("meshoptimizer")
 from collab_splats.mesh import texture  # noqa: E402
 from collab_splats.mesh.clean import prepare_mesh  # noqa: E402
 from collab_splats.mesh.texture import (  # noqa: E402
-    _apply_view_gains,
-    _solve_view_gains,
     create_texture_mesh,
     project_images_to_texture,
     unwrap_view_charts,
@@ -74,60 +72,6 @@ def _constant_image(rgb=(51, 128, 204)):
     return np.full((1, 128, 128, 3), rgb, dtype=np.uint8)
 
 
-######## color gains
-
-
-def _gain_views(gains, n=40):
-    """
-    Views of a smooth albedo plane from 2 units up, each times its gain; plane spans the footprints.
-
-    - albedo varies per channel in [0.25, 0.65], so no gain pushes a sample past the clip gate
-    """
-    plane = _dense_plane(n)
-    verts = np.asarray(plane.vertices) * [4.0, 4.0, 0.0] - [1.5, 1.5, 0.0]
-    c2w, K = _camera()
-    poses, images = [], []
-    v, u = np.mgrid[:128, :128] + 0.5
-
-    for k, g in enumerate(gains):
-        # Ray from the camera through each pixel center hits z=0 at (X, Y)
-        center = np.array([0.3 + 0.1 * k, 0.4 + 0.05 * k])
-        x = center[0] + 2 * (u - 64) / 100
-        y = center[1] - 2 * (v - 64) / 100
-        albedo = np.stack([0.45 + 0.2 * np.sin(1.5 * x), 0.45 + 0.2 * np.cos(1.2 * y), 0.4 + 0.15 * np.sin(x + y)], -1)
-        images.append(np.round(255 * albedo * g).astype(np.uint8))
-        pose = c2w[0].copy()
-        pose[:2, 3] = center
-        poses.append(pose)
-
-    return verts, np.asarray(plane.triangles), np.stack(images), np.stack(poses), np.repeat(K, len(gains), 0)
-
-
-@cuda
-def test_solve_view_gains_recovers_injected_gains():
-    truth = np.array([[1.0, 1.0, 1.0], [1.2, 0.9, 1.1], [0.85, 1.1, 0.95], [1.1, 1.15, 0.8], [0.95, 0.85, 1.2]])
-    verts, faces, rgbs, c2w, K = _gain_views(truth)
-    gains = _solve_view_gains(verts, faces, rgbs, c2w, K, n_points=20_000, smooth=0.0)
-    error = np.log(gains) - np.log(truth)
-    assert np.abs(error - np.median(error, 0)).max() < 1e-2  # gains are only defined up to one shared scale
-
-
-@cuda
-def test_solve_view_gains_single_view_is_unity():
-    verts, faces, rgbs, c2w, K = _gain_views(np.ones((1, 3)))
-    gains = _solve_view_gains(verts, faces, rgbs, c2w, K, n_points=1_000)
-    assert np.array_equal(gains, np.ones((1, 3)))
-
-
-@cuda
-def test_apply_view_gains_divides_below_knee_and_rolls_off_above():
-    rgbs = np.array([[[[100, 100, 100], [250, 250, 250]]]], dtype=np.uint8)
-    out = _apply_view_gains(rgbs, np.array([[0.8, 0.8, 0.5]]))
-    assert out[0, 0, 0].tolist() == [125, 125, 200]  # exact division up to the knee
-    assert 200 < out[0, 0, 1].min() and out[0, 0, 1].max() <= 255  # 312 and 500 roll off, never wrap
-    assert rgbs[0, 0, 0].tolist() == [100, 100, 100]  # the input is not modified
-
-
 ######## unwrap_view_charts
 
 
@@ -184,6 +128,23 @@ def test_project_images_to_texture_constant_view_gives_constant_albedo():
     albedo = project_images_to_texture(*mesh, _constant_image(), c2w, K, tex_size=64, occlusion_eps=0.01)
     assert albedo.shape == (64, 64, 3) and albedo.dtype == np.uint8
     assert np.abs(albedo.astype(int) - [51, 128, 204]).max() <= 2  # the fill reaches every texel
+
+
+@cuda
+def test_project_images_to_texture_base_band_averages_views_the_detail_band_drops():
+    mesh = _squares([(0.0, (1, 1), (0, 0), (1, 1), False)])
+    c2w, K = _camera()
+
+    # Second camera twice as far: 2x the pixel size, outside view_ratio 1.5, so it votes in the base only
+    far = c2w.copy()
+    far[0, 2, 3] = 4.0
+    rgbs = np.concatenate([_constant_image((200, 100, 50)), _constant_image((50, 100, 200))])
+    c2w, K = np.concatenate([c2w, far]), np.repeat(K, 2, 0)
+
+    sharp = project_images_to_texture(*mesh, rgbs, c2w, K, tex_size=64, occlusion_eps=0.01, blur_pix_sigma=0.0)
+    split = project_images_to_texture(*mesh, rgbs, c2w, K, tex_size=64, occlusion_eps=0.01, blur_pix_sigma=4.0)
+    assert np.abs(sharp.astype(int) - [200, 100, 50]).max() <= 2  # near view only
+    assert np.abs(np.median(split.reshape(-1, 3), 0) - [150, 100, 100]).max() <= 5  # base weighted 1 : 0.5 at center
 
 
 def _two_color_image():
@@ -258,6 +219,24 @@ def test_create_texture_mesh_writes_obj_mtl_and_albedo(tmp_path):
     albedo = np.asarray(loaded.visual.material.image)
     assert albedo.shape[:2] == (64, 64) and np.abs(albedo[..., :3].astype(int) - [51, 128, 204]).max() <= 2
     assert len(plane.triangles) == 2 * 29 * 29  # the cleaned mesh is never modified
+
+
+@cuda
+def test_create_texture_mesh_takes_float32_poses(tmp_path):
+    plane = _dense_plane(30)
+    c2w, K = _camera()
+    prepared = prepare_mesh(plane, voxel_size=0.01)
+    out = create_texture_mesh(
+        prepared,
+        plane,
+        tmp_path / "texture",
+        _constant_image(),
+        c2w.astype(np.float32),
+        K.astype(np.float32),
+        voxel_size=0.01,
+        tex_size=64,
+    )
+    assert out.exists()
 
 
 def test_create_texture_mesh_refuses_without_cuda(tmp_path, monkeypatch):

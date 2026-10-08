@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 import numpy as np
+import open3d as o3d
 import pytest
 import torch
 import yaml
@@ -70,7 +71,7 @@ def test_run_pipeline_orders_steps_and_pushes(tmp_path):
         patch.object(pl.fr, "write_frames") as wz,
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "create_tsdf_mesh") as mesh,
-        patch.object(pl, "clean_repair_mesh"),
+        patch.object(pl, "clean_repair_mesh", return_value=(o3d.geometry.TriangleMesh.create_tetrahedron(), None)),
         patch.object(pl, "_extract_semantics") as sem,
         patch.object(pl, "_lift_and_compress") as liftc,
         patch.object(pl.threading, "Thread", _InlineThread),
@@ -124,7 +125,7 @@ def test_mesh_rgb_rounds_not_truncates(tmp_path):
         patch.object(pl.fr, "write_frames"),
         patch.object(pl, "_build_creator", return_value=creator),
         patch.object(pl, "create_tsdf_mesh") as mesh,
-        patch.object(pl, "clean_repair_mesh"),
+        patch.object(pl, "clean_repair_mesh", return_value=(o3d.geometry.TriangleMesh.create_tetrahedron(), None)),
         patch.object(pl, "_extract_semantics"),
         patch.object(pl, "_lift_and_compress"),
         patch.object(pl.threading, "Thread", _InlineThread),
@@ -190,7 +191,6 @@ def test_transfer_mesh_features_writes_decoded_features(tmp_path):
     instead of decoded fails on both counts — its only reader (viewer.read_mesh_vertex_features)
     scores against full-dim text embeddings and cannot decode.
     """
-    import open3d as o3d
 
     from collab_splats.dashboard import pipeline
 

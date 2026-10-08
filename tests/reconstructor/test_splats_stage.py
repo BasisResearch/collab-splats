@@ -19,7 +19,11 @@ from collab_splats.reconstructor import LEAF_STAGES, STAGES
 from collab_splats.splats.trainer import SplatsConfig
 from collab_splats.splats.utils import prepare_target
 from collab_splats.utils.image import upsample_depths
-from tests.reconstructor._stubs import _stub_reconstructor, minimal_feedforward_result
+from tests.reconstructor._stubs import (
+    _stub_reconstructor,
+    minimal_feedforward_result,
+    stub_mesh_cleanup,
+)
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
 
@@ -138,18 +142,15 @@ def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path):
     )
     with (
         patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered) as render,
-        patch(
-            "collab_splats.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply"
-        ) as fuse,
-        patch("collab_splats.reconstructor.clean_repair_mesh") as clean,
-        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
+        patch("collab_splats.reconstructor.create_tsdf_mesh") as fuse,
+        stub_mesh_cleanup() as clean,
     ):
         recon.mesh()
 
     assert render.call_args.args == (splats_dir / "ckpt.pt", recon.images_dir)
     fused = fuse.call_args.args[0]
     assert [float(fused[view].min()) for view in range(3)] == [1.0, 2.0, 3.0]
-    assert clean.call_args.args == (recon.backend_dir / "mesh.ply",)
+    assert clean.call_args.args == (fuse.return_value,)
 
 
 def test_mesh_source_unknown_raises(tmp_path):
@@ -195,9 +196,8 @@ def test_mesh_sfm_zarr_fuses(tmp_path):
 
     with (
         patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=sfm),
-        patch("collab_splats.reconstructor.create_tsdf_mesh", return_value=recon.backend_dir / "mesh.ply") as fuse,
-        patch("collab_splats.reconstructor.clean_repair_mesh"),
-        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
+        patch("collab_splats.reconstructor.create_tsdf_mesh") as fuse,
+        stub_mesh_cleanup(),
     ):
         recon.mesh()
 

@@ -21,7 +21,7 @@ from collab_splats.mesh.clean import (
 )
 
 
-def _holed_sphere_with_strays(path, radius=1.0, resolution=20, color=None):
+def _holed_sphere_with_strays(radius=1.0, resolution=20, color=None):
     """Sphere with one hole (last 12 triangles removed) plus a near and a far stray sphere."""
     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius, resolution=resolution)
     tris = np.asarray(sphere.triangles)
@@ -36,8 +36,7 @@ def _holed_sphere_with_strays(path, radius=1.0, resolution=20, color=None):
     if color is not None:
         combined.paint_uniform_color(color)
 
-    o3d.io.write_triangle_mesh(str(path), combined)
-    return path
+    return combined
 
 
 def _n_components(mesh):
@@ -56,15 +55,15 @@ def test_get_scene_scale_ignores_outliers():
     assert 1.6 < scale < 1.8  # ~sqrt(3) for the unit cube; the outlier would make it ~170
 
 
-def test_remove_floaters_drops_far_component_keeps_near(tmp_path):
-    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+def test_remove_floaters_drops_far_component_keeps_near():
+    mesh = _holed_sphere_with_strays()
     assert _n_components(mesh) == 3
     out = remove_floaters(mesh, max_gap_frac=0.1)
     assert out is mesh and _n_components(mesh) == 2
 
 
-def test_remove_floaters_area_floor_drops_small_components(tmp_path):
-    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+def test_remove_floaters_area_floor_drops_small_components():
+    mesh = _holed_sphere_with_strays()
     remove_floaters(mesh, min_area_frac=0.1, max_gap_frac=0.1)
     assert _n_components(mesh) == 1
 
@@ -74,8 +73,8 @@ def test_remove_floaters_empty_mesh_is_a_no_op():
     assert remove_floaters(mesh) is mesh
 
 
-def test_fill_holes_closes_small_hole(tmp_path):
-    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+def test_fill_holes_closes_small_hole():
+    mesh = _holed_sphere_with_strays()
     assert _n_boundary_edges(mesh) == 14
     filled = fill_holes(mesh, max_hole_perimeter_ratio=0.2)
     assert _n_boundary_edges(filled) == 0
@@ -86,8 +85,8 @@ def test_fill_holes_closes_small_hole(tmp_path):
     assert np.allclose(filled.get_axis_aligned_bounding_box().get_extent(), orig_extent, atol=1e-5)
 
 
-def test_fill_holes_without_subdivide_fill_adds_a_flat_lid(tmp_path):
-    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+def test_fill_holes_without_subdivide_fill_adds_a_flat_lid():
+    mesh = _holed_sphere_with_strays()
     flat = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=False)
     fine = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=True)
     assert _n_boundary_edges(flat) == 0
@@ -96,8 +95,8 @@ def test_fill_holes_without_subdivide_fill_adds_a_flat_lid(tmp_path):
     assert len(fine.triangles) > len(flat.triangles)
 
 
-def test_fill_holes_gives_small_loops_a_plain_lid_even_when_subdividing(tmp_path):
-    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+def test_fill_holes_gives_small_loops_a_plain_lid_even_when_subdividing():
+    mesh = _holed_sphere_with_strays()
     plain = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=True, max_plain_edges=14)
     nicely = fill_holes(mesh, max_hole_perimeter_ratio=0.2, subdivide_fill=True, max_plain_edges=13)
 
@@ -117,36 +116,55 @@ def test_fill_holes_keeps_outer_rim_open_at_any_bound():
     assert _n_boundary_edges(filled) == rim_edges  # the interior hole closes, the rim never does
 
 
-def test_fill_holes_leaves_large_holes_alone(tmp_path):
-    mesh = o3d.io.read_triangle_mesh(str(_holed_sphere_with_strays(tmp_path / "m.ply")))
+def test_fill_holes_keeps_outer_rim_open_when_an_interior_loop_is_longer():
+    plane = _dense_plane(60)
+    cells = np.floor(np.asarray(plane.vertices)[np.asarray(plane.triangles)].mean(axis=1)[:, :2] * 59).astype(int)
+
+    # Comb-shaped hole in the middle: a spine row plus every other column, longer than the rim but narrow
+    col, row = cells[:, 0], cells[:, 1]
+    in_box = (col >= 18) & (col < 42) & (row >= 18) & (row < 42)
+    plane.remove_triangles_by_mask(in_box & ((row == 18) | (col % 2 == 0)))
+    rim_edges = 4 * 59
+    assert _n_boundary_edges(plane) - rim_edges > rim_edges
+
+    filled = fill_holes(plane, max_hole_perimeter_ratio=100.0)
+    assert _n_boundary_edges(filled) == rim_edges  # the widest loop is the rim, not the longest
+
+
+def test_fill_holes_leaves_large_holes_alone():
+    mesh = _holed_sphere_with_strays()
     # Hole perimeter 0.75 over scene scale 10.38: fills above ratio 0.072, survives below
     filled = fill_holes(mesh, max_hole_perimeter_ratio=0.005)
     assert _n_boundary_edges(filled) == 14
 
 
-def test_clean_repair_mesh_writes_in_place(tmp_path):
-    mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply")
-    out = clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
-    assert out == mesh_path
-    after = o3d.io.read_triangle_mesh(str(mesh_path))
-    assert _n_components(after) == 2
-    assert _n_boundary_edges(after) == 0
+def test_clean_repair_mesh_drops_strays_and_fills_holes():
+    cleaned, _ = clean_repair_mesh(_holed_sphere_with_strays(), max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
+    assert _n_components(cleaned) == 2
+    assert _n_boundary_edges(cleaned) == 0
+
+
+def test_clean_repair_mesh_returns_the_floater_cut_surface_unfilled():
+    mesh = _holed_sphere_with_strays()
+    _, real = clean_repair_mesh(mesh, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
+    assert real is mesh  # the input, cut in place; the fill never touched it
+    assert _n_components(real) == 2
+    assert _n_boundary_edges(real) > 0
 
 
 @pytest.mark.parametrize("radius", [1.0, 10.0])
-def test_clean_repair_thresholds_follow_mesh_scale(tmp_path, radius):
-    mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply", radius=radius)
-    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
-    after = o3d.io.read_triangle_mesh(str(mesh_path))
-    assert (_n_components(after), _n_boundary_edges(after)) == (2, 0)
+def test_clean_repair_thresholds_follow_mesh_scale(radius):
+    cleaned, _ = clean_repair_mesh(
+        _holed_sphere_with_strays(radius=radius), max_gap_frac=0.1, max_hole_perimeter_ratio=0.5
+    )
+    assert (_n_components(cleaned), _n_boundary_edges(cleaned)) == (2, 0)
 
 
-def test_clean_repair_preserves_vertex_colors(tmp_path):
-    mesh_path = _holed_sphere_with_strays(tmp_path / "mesh.ply", color=(0.2, 0.6, 0.9))
-    clean_repair_mesh(mesh_path, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
-    after = o3d.io.read_triangle_mesh(str(mesh_path))
-    assert after.has_vertex_colors()
-    colors = np.asarray(after.vertex_colors)
+def test_clean_repair_preserves_vertex_colors():
+    mesh = _holed_sphere_with_strays(color=(0.2, 0.6, 0.9))
+    cleaned, _ = clean_repair_mesh(mesh, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)
+    assert cleaned.has_vertex_colors()
+    colors = np.asarray(cleaned.vertex_colors)
     assert np.allclose(colors, [0.2, 0.6, 0.9], atol=0.02)
 
 
@@ -299,18 +317,11 @@ def test_make_convex_hull_leaves_the_input_untouched():
     np.testing.assert_array_equal(np.asarray(scene.triangles), faces)
 
 
-def test_clean_repair_mesh_runs_the_convex_hull_only_when_asked(tmp_path):
-    paths = {name: tmp_path / f"{name}.ply" for name in ("default", "off", "on")}
-
-    for path in paths.values():
-        o3d.io.write_triangle_mesh(str(path), _ground_scene())
-
-    clean_repair_mesh(paths["default"])
-    clean_repair_mesh(paths["off"], use_convex_hull=False)
-    clean_repair_mesh(paths["on"], use_convex_hull=True)
-    assert paths["off"].read_bytes() == paths["default"].read_bytes()
-    on = o3d.io.read_triangle_mesh(str(paths["on"]))
-    default = o3d.io.read_triangle_mesh(str(paths["default"]))
+def test_clean_repair_mesh_runs_the_convex_hull_only_when_asked():
+    default, _ = clean_repair_mesh(_ground_scene())
+    off, _ = clean_repair_mesh(_ground_scene(), use_convex_hull=False)
+    on, _ = clean_repair_mesh(_ground_scene(), use_convex_hull=True)
+    np.testing.assert_array_equal(np.asarray(off.triangles), np.asarray(default.triangles))
     assert _loop_perimeters(on)[-1] < _loop_perimeters(default)[-1]
 
 
@@ -511,6 +522,15 @@ def test_decimate_mesh_never_moves_vertices():
     assert dist.max() < 1e-6
 
 
+def test_decimate_mesh_max_faces_caps_past_the_bound_without_moving_vertices():
+    m = _sphere(res=40)
+    free, _ = decimate_mesh(m, max_error=1e-5)
+    capped, _ = decimate_mesh(m, max_error=1e-5, max_faces=500)
+    assert len(free.triangles) > 500 >= len(capped.triangles) > 400
+    dist, _ = cKDTree(np.asarray(m.vertices)).query(np.asarray(capped.vertices))
+    assert dist.max() < 1e-6
+
+
 def test_prepare_mesh_smoothing_flattens_noise_and_keeps_faces():
     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=40)
     vertices = np.asarray(sphere.vertices)
@@ -526,3 +546,10 @@ def test_prepare_mesh_smoothing_flattens_noise_and_keeps_faces():
     assert radial_smooth.std() < 0.5 * radial_rough.std()
     assert abs(radial_smooth.mean() - radial_rough.mean()) < 0.01
     assert len(smooth.triangles) == len(rough.triangles)
+
+
+def test_prepare_mesh_max_faces_caps_the_face_count():
+    sphere = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=40)
+    free = prepare_mesh(sphere, voxel_size=1e-5)
+    capped = prepare_mesh(sphere, voxel_size=1e-5, max_faces=500)
+    assert len(free.triangles) > 500 >= len(capped.triangles)

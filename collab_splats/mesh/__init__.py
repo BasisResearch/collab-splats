@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from collab_splats.mesh.clean import clean_repair_mesh, prepare_mesh
 from collab_splats.mesh.texture import create_texture_mesh
-from collab_splats.mesh.tsdf import create_tsdf_mesh
+from collab_splats.mesh.tsdf import compute_tsdf_voxel_size, create_tsdf_mesh
 
 __all__ = [
     "clean_repair_mesh",
+    "compute_tsdf_voxel_size",
     "create_texture_mesh",
     "create_tsdf_mesh",
     "prepare_mesh",

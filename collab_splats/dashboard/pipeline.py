@@ -353,16 +353,16 @@ def run_pipeline(
 
             # images is [0, 1] on every backend; round to uint8 HWC once for the fusion
             rgbs = to_uint8_hwc(images, channels_first=True)
-            mesh_path = create_tsdf_mesh(
+            mesh = create_tsdf_mesh(
                 depths,
                 rgbs,
                 invert_poses(result.extrinsics),
                 result.model_intrinsics,
-                out_dir,
                 voxel_size=config.mesh_voxel_size,
                 depth_trunc=config.mesh_depth_trunc,
             )
-            clean_repair_mesh(mesh_path)
+            mesh, _ = clean_repair_mesh(mesh)
+            o3d.io.write_triangle_mesh(str(out_dir / "mesh.ply"), mesh)
             op_log.append_line(f"mesh: tsdf in {time.perf_counter() - t:.1f}s")
 
             # Extract and cache semantic patch features

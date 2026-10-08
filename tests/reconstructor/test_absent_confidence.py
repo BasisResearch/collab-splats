@@ -18,7 +18,7 @@ from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
 from collab_splats.reconstructor import Reconstructor
 from collab_splats.semantics.lifting import lift_features
-from tests.reconstructor._stubs import minimal_feedforward_result
+from tests.reconstructor._stubs import minimal_feedforward_result, stub_mesh_cleanup
 
 
 def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
@@ -27,12 +27,11 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
     """
     result = minimal_feedforward_result()
     fused = {}
-    mesh_cfg = {"enabled": True, "voxel_size": 0.01, "depth_trunc": 2.0, "conf_percentile": 20}
+    mesh_cfg = {"enabled": True, "mask_sky": False, "texture": False, "conf_percentile": 20}
     rec = Reconstructor({"input_path": str(tmp_path / "v.mp4"), "output_path": str(tmp_path), "mesh": mesh_cfg})
 
-    def spy_fuse(depths, rgbs, c2w, K, out_dir, **kwargs):
+    def spy_fuse(depths, rgbs, c2w, K, **kwargs):
         fused["depths"] = depths
-        return tmp_path / "mesh.ply"
 
     with (
         patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
@@ -41,9 +40,9 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
         patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
-        patch("collab_splats.reconstructor.clean_repair_mesh"),
-        patch("collab_splats.reconstructor.prepare_mesh", side_effect=lambda mesh, **kw: mesh),
+        stub_mesh_cleanup(),
         caplog.at_level("INFO"),
     ):
         rec.mesh()

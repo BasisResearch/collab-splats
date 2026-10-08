@@ -185,15 +185,15 @@ def validate_views(
         depths: optional (N, H, W) depth maps.
 
     Returns:
-        rgbs, c2w, K and depths as numpy arrays; depths stays None when not given.
+        rgbs, c2w and K (float64) and depths as numpy arrays; depths stays None when not given.
 
     Raises:
         ValueError: dtype, view count or resolution mismatch.
     """
-    # Plain numpy arrays, whatever came in
+    # Plain numpy arrays; float64 geometry so float32 poses never meet float64 vertices
     rgbs = np.asarray(rgbs)
-    c2w = np.asarray(c2w)
-    K = np.asarray(K)
+    c2w = np.asarray(c2w, dtype=np.float64)
+    K = np.asarray(K, dtype=np.float64)
 
     # Input contract: uint8 color, one view count, K at the image resolution
     if rgbs.dtype != np.uint8:

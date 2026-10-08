@@ -125,21 +125,23 @@ semantics:
 mesh:
   enabled: true
   source: feedforward      # feedforward | splats
-  voxel_size: 0.0025       # TSDF voxel, world units.
-  sdf_trunc_mult: 4.0      # truncation band = this x voxel_size. Sets the thin-structure floor:
+  voxel_depth_px: 4.0      # TSDF voxel edge in depth-pixel footprints (depth / fx of the depth's own grid)
+  voxel_ref_percentile: 50 # depth percentile that footprint is measured at; lower = finer near surfaces
+  sdf_trunc_mult: 4.0      # truncation band = this x the voxel. Sets the thin-structure floor:
                            # a TSDF cannot resolve anything thinner than 2 x sdf_trunc, and where
                            # both the front and back surface fall inside one band they cancel and
                            # the structure vanishes. 4.0 is Open3D's default for noisy sensor RGBD
                            # and makes the band 8 voxels wide — 4x coarser than the grid itself.
                            # Rendered splat depth is far cleaner, so 1.5-2.0 recovers thin geometry
                            # (fence posts, railings) at the SAME voxel size and memory.
-  depth_trunc: 1.5         # ignore depth beyond this, world units.
+  depth_trunc_percentile: null  # ignore depth beyond this percentile of the fused depth; null = keep all
   conf_percentile: 20      # drop depth below this confidence percentile (null = off); feedforward only
-  mask_sky: false          # zero depth where the `skywater` segmenter fires, before fusion; both
+  mask_sky: true           # zero depth where the `skywater` segmenter fires, before fusion; both
                            # mesh sources. Unlike conf_percentile it does NOT mask the splats
                            # stage's depth targets — see docs/mesh.md.
-  smooth_iterations: 0     # Taubin smoothing passes on mesh.ply after repair, before texturing; 0 = off
-  texture: false           # UV atlas + project the fused views onto mesh.ply; writes texture/; CUDA only
+  max_faces: 1500000       # face budget for mesh.ply after the error-bounded decimation; null = none
+  smooth_iterations: 10    # Taubin smoothing passes on mesh.ply after repair, before texturing; 0 = off
+  texture: true            # UV atlas + project the fused views onto mesh.ply; writes texture/; CUDA only
   use_convex_hull: true    # trim the ragged outer edge, patch the ground out to a rounded hull;
                            # ground-dominated height-field scenes only; set false indoors and for objects (raises)
 

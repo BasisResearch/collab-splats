@@ -143,12 +143,12 @@ def test_loop_closure_disabled_by_dict_is_not_refused_for_loger(tmp_path):
 def test_base_config_path_is_read(tmp_path):
     # A caller-supplied base.yaml replaces configs/base.yaml as the defaults
     cfg = _base_config()
-    cfg["mesh"]["voxel_size"] = 0.123
+    cfg["mesh"]["voxel_depth_px"] = 0.123
     base = tmp_path / "base.yaml"
     base.write_text(yaml.safe_dump(cfg))
 
     rec = Reconstructor({"input_path": "v.mp4", "output_path": str(tmp_path / "out")}, base_config=base)
-    assert rec.config["mesh"]["voxel_size"] == 0.123
+    assert rec.config["mesh"]["voxel_depth_px"] == 0.123
 
 
 def test_base_yaml_mesh_sdf_trunc_mult_default_is_four():

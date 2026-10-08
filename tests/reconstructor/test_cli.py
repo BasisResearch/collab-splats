@@ -25,7 +25,7 @@ PULLED_CONFIG = {
     "output_path": "/on/another/machine/out",
     "preproc": {"frame_selection": "uniform", "max_frames": 250},
     "pointcloud": {"method": "feedforward", "backend": "vggtx"},
-    "mesh": {"enabled": True, "voxel_size": 0.02},
+    "mesh": {"enabled": True, "voxel_depth_px": 0.02},
     "localization": {"enabled": True, "matcher": "xfeat"},
 }
 
@@ -195,10 +195,10 @@ def test_local_continues_past_a_failing_input(tmp_path):
 def test_set_overrides_parse_yaml_values_on_dotted_keys(tmp_path):
     video = tmp_path / "v.mp4"
     video.touch()
-    sets = ["--set", "mesh.voxel_size=0.02", "--set", "semantics.enabled=false"]
+    sets = ["--set", "mesh.voxel_depth_px=0.02", "--set", "semantics.enabled=false"]
     cli.main(["local", str(video), "--output-root", str(tmp_path), *sets])
     config = StubRecon.made[0].config
-    assert config["mesh"]["voxel_size"] == 0.02
+    assert config["mesh"]["voxel_depth_px"] == 0.02
     assert config["semantics"]["enabled"] is False
 
 
@@ -207,7 +207,7 @@ def test_set_without_equals_is_a_usage_error(tmp_path, capsys):
     video = tmp_path / "v.mp4"
     video.touch()
     with pytest.raises(SystemExit) as exc:
-        cli.main(["local", str(video), "--output-root", str(tmp_path), "--set", "mesh.voxel_size"])
+        cli.main(["local", str(video), "--output-root", str(tmp_path), "--set", "mesh.voxel_depth_px"])
 
     assert exc.value.code == 2
     assert "key=value" in capsys.readouterr().err
@@ -255,7 +255,7 @@ def test_overrides_are_not_mutated_across_runs(tmp_path):
     for video in videos:
         video.touch()
 
-    overrides = {"mesh": {"voxel_size": 0.02}, "pointcloud": {"method": "feedforward"}}
+    overrides = {"mesh": {"voxel_depth_px": 0.02}, "pointcloud": {"method": "feedforward"}}
     before = copy.deepcopy(overrides)
     args = argparse.Namespace(
         inputs=videos,
@@ -281,10 +281,10 @@ def test_config_file_merges_under_set(tmp_path):
     video = tmp_path / "v.mp4"
     video.touch()
     override = tmp_path / "o.yaml"
-    override.write_text(yaml.safe_dump({"mesh": {"voxel_size": 0.05, "texture": True}}))
+    override.write_text(yaml.safe_dump({"mesh": {"voxel_depth_px": 0.05, "texture": True}}))
     argv = ["local", str(video), "--output-root", str(tmp_path), "--config", str(override)]
-    cli.main([*argv, "--set", "mesh.voxel_size=0.02"])
-    assert StubRecon.made[0].config["mesh"] == {"voxel_size": 0.02, "texture": True}
+    cli.main([*argv, "--set", "mesh.voxel_depth_px=0.02"])
+    assert StubRecon.made[0].config["mesh"] == {"voxel_depth_px": 0.02, "texture": True}
 
 
 def test_stages_are_split_and_passed(tmp_path):
@@ -308,12 +308,12 @@ def test_run_config_is_rewritten_with_the_config_that_ran(tmp_path):
     video.touch()
     out = tmp_path / "out" / "v" / "vggt_omega"
     out.mkdir(parents=True)
-    (out / "run_config.yaml").write_text(yaml.dump({"mesh": {"voxel_size": 0.99}}))
+    (out / "run_config.yaml").write_text(yaml.dump({"mesh": {"voxel_depth_px": 0.99}}))
 
-    cli.main(["local", str(video), "--output-root", str(tmp_path / "out"), "--set", "mesh.voxel_size=0.777"])
+    cli.main(["local", str(video), "--output-root", str(tmp_path / "out"), "--set", "mesh.voxel_depth_px=0.777"])
     recorded = yaml.safe_load((out / "run_config.yaml").read_text())
     assert recorded == StubRecon.made[0].config
-    assert recorded["mesh"]["voxel_size"] == 0.777
+    assert recorded["mesh"]["voxel_depth_px"] == 0.777
 
 
 def test_keep_viewer_serves_the_last_viewer(tmp_path, monkeypatch):
@@ -670,10 +670,10 @@ def test_leaf_stages_pull_from_processed(tmp_path):
 @pytest.mark.parametrize("stages", [None, ["pointcloud", "mesh"]])
 def test_any_upstream_stage_fetches_the_curated_video(tmp_path, stages):
     source = FakeSource()
-    overrides = {"mesh": {"voxel_size": 0.001}}
+    overrides = {"mesh": {"voxel_depth_px": 0.001}}
     config = cli._prepare_scene(source, SCENE, tmp_path / SCENE, _args(tmp_path, stages=stages, overrides=overrides))
     assert config["input_path"] == str(tmp_path / SCENE / f"{SCENE}.mp4")
-    assert config["mesh"] == {"voxel_size": 0.001}
+    assert config["mesh"] == {"voxel_depth_px": 0.001}
     assert "pointcloud" not in config
     assert _ops(source, "pull") == []
 
@@ -736,15 +736,15 @@ def test_matching_backend_is_accepted(tmp_path):
 
 
 def test_override_wins_over_pulled(tmp_path):
-    args = _args(tmp_path, stages=["mesh"], overrides={"mesh": {"voxel_size": 0.001}})
+    args = _args(tmp_path, stages=["mesh"], overrides={"mesh": {"voxel_depth_px": 0.001}})
     config = cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, args)
-    assert config["mesh"] == {"voxel_size": 0.001}
+    assert config["mesh"] == {"voxel_depth_px": 0.001}
 
 
 def test_localize_drops_the_localization_section(tmp_path):
     config = cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["localize"]))
     assert "localization" not in config
-    assert config["mesh"]["voxel_size"] == 0.02
+    assert config["mesh"]["voxel_depth_px"] == 0.02
 
 
 def test_dropped_section_is_refilled_by_base_yaml_end_to_end(tmp_path):
@@ -754,7 +754,7 @@ def test_dropped_section_is_refilled_by_base_yaml_end_to_end(tmp_path):
 
     base_mesh = yaml.safe_load(BASE_YAML.read_text())["mesh"]
     assert rec.config["mesh"] == base_mesh
-    assert rec.config["mesh"]["voxel_size"] != PULLED_CONFIG["mesh"]["voxel_size"]
+    assert rec.config["mesh"]["voxel_depth_px"] != PULLED_CONFIG["mesh"]["voxel_depth_px"]
 
     # Stages not being re-run keep the pulled scene's provenance, not base.yaml's
     assert rec.config["pointcloud"]["backend"] == "vggtx"

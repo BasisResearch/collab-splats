@@ -8,11 +8,13 @@ gsplat stopped matching the pinned commit BOTH files became uncollectible — ta
 the only end-to-end exercise of the `Reconstructor.pointcloud` sfm branch, which needs no gsplat at all.
 """
 
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
+import open3d as o3d
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
@@ -30,9 +32,11 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
         "mesh": {
             "enabled": True,
             "source": "feedforward",
-            "voxel_size": 0.01,
+            "voxel_depth_px": 4.0,
+            "voxel_ref_percentile": 50,
             "sdf_trunc_mult": 4.0,
-            "depth_trunc": 1.0,
+            "depth_trunc_percentile": None,
+            "max_faces": None,
             "conf_percentile": 20,
             "mask_sky": False,
             "texture": False,
@@ -82,3 +86,19 @@ def stub_creator_cls(result):
     creator_cls = MagicMock()
     creator_cls.return_value.create_pointcloud.return_value = result
     return creator_cls
+
+
+@contextmanager
+def stub_mesh_cleanup():
+    """
+    clean_repair_mesh and prepare_mesh stubbed to one tetrahedron, so the stage still writes mesh.ply.
+
+    - yields the clean_repair_mesh mock
+    """
+    tet = o3d.geometry.TriangleMesh.create_tetrahedron()
+
+    with (
+        patch("collab_splats.reconstructor.clean_repair_mesh", return_value=(tet, tet)) as clean,
+        patch("collab_splats.reconstructor.prepare_mesh", return_value=tet),
+    ):
+        yield clean

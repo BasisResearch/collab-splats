@@ -2,9 +2,8 @@
 Texture a fused mesh: one albedo atlas baked from the source views.
 
 - input: prepare_mesh output (clean.py)
-- _solve_view_gains / _apply_view_gains: per-view color gains divided out before anything samples the images
 - unwrap_view_charts: UV atlas from camera-projection charts (nvdiffrast face ids)
-- project_images_to_texture: atlas texels, per-view depth test, two torch passes, fill_missing_pixels
+- project_images_to_texture: per-view depth test; detail from the sharpest views, blurred base from all, then fill
 - _dilate_chart_gutters: chart edges copied into their own padding
 - write_textured_obj (utils/io.py): mesh.obj + mesh.mtl + albedo.png
 """
@@ -20,16 +19,13 @@ import torch
 import torch.nn.functional as F
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
+from torchvision.transforms.functional import gaussian_blur
 
 import nvdiffrast.torch as dr
 
 from collab_splats.geometry.projection import project
-from collab_splats.geometry.transforms import (
-    extract_intrinsics,
-    invert_poses,
-    rescale_intrinsics,
-)
-from collab_splats.mesh.utils import adjacent_face_pairs, face_areas, validate_views
+from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
+from collab_splats.mesh.utils import adjacent_face_pairs, validate_views
 from collab_splats.utils.image import fill_missing_pixels
 from collab_splats.utils.io import to_uint8_hwc, write_textured_obj
 
@@ -51,26 +47,23 @@ def create_texture_mesh(
     *,
     voxel_size: float,
     tex_size: int = 8192,
-    color_correct: bool = True,
 ) -> Path:
     """
     Unwrap and texture a prepared mesh.
 
-    - the unfilled occluder hides surfaces, so invented patches never hide a real surface
-    - the occluder also supplies the color-gain samples: only real surfaces vote
+    - occlusion is tested against the occluder, so hole-fill patches never hide a real surface
     - voxel_size is the occlusion tolerance
     - writes out_dir/mesh.obj + mesh.mtl + albedo.png via write_textured_obj
 
     Args:
         mesh: prepare_mesh output.
-        occluder: the cleaned mesh before prepare_mesh.
+        occluder: the real surface, the second mesh clean_repair_mesh returns, with no hull or hole fill.
         out_dir: directory to create.
         rgbs: (N, H, W, 3) uint8 views that were fused.
         c2w: (N, 4, 4) camera-to-world poses.
         K: (N, 3, 3) intrinsics at image resolution.
         voxel_size: TSDF voxel the mesh was fused at, world units.
         tex_size: atlas edge in texels.
-        color_correct: divide a per-view, per-channel gain out of each image first.
 
     Returns:
         Path to out_dir/mesh.obj.
@@ -83,11 +76,6 @@ def create_texture_mesh(
         raise RuntimeError("create_texture_mesh needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines")
 
     rgbs, c2w, K, _ = validate_views(rgbs, c2w, K)
-
-    # Exposure gains solved on the occluder, divided out of a copy of the views
-    if color_correct:
-        gains = _solve_view_gains(np.asarray(occluder.vertices), np.asarray(occluder.triangles), rgbs, c2w, K)
-        rgbs = _apply_view_gains(rgbs, gains)
 
     # UVs, then smooth vertex normals on a copy; without normals viewers shade split corners flat
     uvs, boxes = unwrap_view_charts(mesh, c2w, K, rgbs.shape[1:3], tex_size)
@@ -105,187 +93,6 @@ def create_texture_mesh(
     out = write_textured_obj(out_dir, verts, faces, normals, uvs, albedo)
     logger.info("create_texture_mesh: %d faces -> %s", len(uvs), out)
     return out
-
-
-########################################################################
-# Color gains
-########################################################################
-
-
-def _solve_view_gains(
-    verts: np.ndarray,
-    faces: np.ndarray,
-    rgbs: np.ndarray,
-    c2w: np.ndarray,
-    K: np.ndarray,
-    *,
-    n_points: int = 300_000,
-    scale: float = 0.5,
-    blur: int = 5,
-    rel_tol: float = 0.01,
-    prior: float = 1e-2,
-    trim: float = 0.25,
-    smooth: float = 10.0,
-    seed: int = 0,
-) -> np.ndarray:
-    """
-    Per-view, per-channel gains so gain * albedo explains every observation, (V, 3).
-
-    - model: log observed = log gain[view] + log albedo[point], solved in log space
-    - smooth: weight on the squared log-gain change between consecutive frames
-    - prior: tiny pseudo-count anchoring each log gain at 0
-    - second solve drops observations whose absolute log residual exceeds trim
-    """
-    w2c = invert_poses(c2w)
-    point, view, color = _gain_samples(verts, faces, rgbs, w2c, K, n_points, scale, blur, rel_tol, seed)
-
-    # Keep points seen in at least two views; reindex
-    keep = np.bincount(point)[point] >= 2
-
-    if not keep.any():
-        logger.warning("view gains: no surface point seen in two views, gains left at 1")
-        return np.ones((len(rgbs), 3))
-
-    point, view, color = point[keep], view[keep], color[keep]
-    _, point = np.unique(point, return_inverse=True)
-    point = point.ravel()
-    n_obs, n_views, n_points_kept = len(point), len(rgbs), int(point.max()) + 1
-    log_color = np.log(color.astype(np.float64))
-
-    # Incidence matrices and the fixed part of the normal equations
-    rows = np.arange(n_obs)
-    A = coo_matrix((np.ones(n_obs), (rows, view)), shape=(n_obs, n_views)).tocsr()
-    B = coo_matrix((np.ones(n_obs), (rows, point)), shape=(n_obs, n_points_kept)).tocsr()
-    D = np.diff(np.eye(n_views), axis=0)
-    base = smooth * n_obs * (D.T @ D) / n_views + prior * np.eye(n_views) + np.ones((n_views, n_views)) / n_views
-
-    # Solve, trim outliers, solve again
-    weight = np.ones(n_obs)
-    log_gain, log_albedo = _solve_log_gains(A, B, view, log_color, weight, base)
-    residual = np.abs(log_color - log_gain[view] - log_albedo[point]).max(1)
-    weight = (residual < trim).astype(np.float64)
-    log_gain, _ = _solve_log_gains(A, B, view, log_color, weight, base)
-
-    gains = np.exp(log_gain)
-    logger.info(
-        "view gains: %d obs, %.0f%% trimmed, range [%.2f, %.2f]",
-        n_obs,
-        100 * (1 - weight.mean()),
-        gains.min(),
-        gains.max(),
-    )
-    return gains
-
-
-def _apply_view_gains(rgbs: np.ndarray, gains: np.ndarray, *, knee: float = 200.0) -> np.ndarray:
-    """
-    Each view divided by its gain, as a new uint8 array.
-
-    - values above knee roll off exponentially toward 255 instead of hard-clipping
-    """
-    out = np.empty_like(rgbs)
-
-    for k in range(len(rgbs)):
-        img = torch.from_numpy(rgbs[k]).cuda().float() / torch.from_numpy(gains[k].astype(np.float32)).cuda()
-
-        # Soft highlight rolloff, so brightened views do not blow out to flat white
-        over = (img - knee).clamp(min=0)
-        rolled = knee + (255 - knee) * (1 - torch.exp(-over / (255 - knee)))
-        img = torch.where(img > knee, rolled, img)
-        out[k] = img.round().clamp(0, 255).byte().cpu().numpy()
-
-    return out
-
-
-def _gain_samples(
-    verts: np.ndarray,
-    faces: np.ndarray,
-    rgbs: np.ndarray,
-    w2c: np.ndarray,
-    K: np.ndarray,
-    n_points: int,
-    scale: float,
-    blur: int,
-    rel_tol: float,
-    seed: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Depth-tested color samples of random surface points in every view.
-
-    - points: area-weighted face centroids
-    - colors read from a box-blurred image at `scale`, so residual misregistration averages out
-    - clipped (> 0.97) and near-black (< 0.02) samples dropped: the gain model does not hold there
-    - returns point index, view index and RGB in [0, 1] per observation
-    """
-    # Area-weighted face centroids
-    rng = np.random.default_rng(seed)
-    fv = verts[faces]
-    area = face_areas(verts, faces)
-    pick = rng.choice(len(faces), n_points, p=area / area.sum())
-    points = torch.from_numpy(fv[pick].mean(1).astype(np.float32)).cuda()
-
-    # Working grid and its intrinsics
-    ctx = dr.RasterizeCudaContext()
-    verts_h, faces_t = _to_cuda_mesh(verts, faces)
-    full_hw = rgbs.shape[1:3]
-    h, w = int(full_hw[0] * scale), int(full_hw[1] * scale)
-    K_small = rescale_intrinsics(K, full_hw, (h, w))
-    w2c_t = torch.from_numpy(w2c.astype(np.float32)).cuda()
-    K_t = torch.from_numpy(K_small.astype(np.float32)).cuda()
-    out_point, out_view, out_color = [], [], []
-
-    for k in range(len(rgbs)):
-        _, depth = _rasterize_view(ctx, verts_h, faces_t, w2c_t[k], K_t[k], h, w)
-
-        # Blurred image at working scale
-        img = torch.from_numpy(rgbs[k]).cuda().permute(2, 0, 1)[None].float() / 255.0
-        img = F.interpolate(img, size=(h, w), mode="area")
-        img = F.avg_pool2d(img, blur, stride=1, padding=blur // 2, count_include_pad=False)[0]
-
-        # Project samples; keep in-frame ones at the rendered depth
-        pixels, cam = project(points, w2c_t[k], K_t[k])
-        u = pixels[:, 0].round().long()
-        r = pixels[:, 1].round().long()
-        framed = (cam[:, 2] > 1e-3) & (u >= 0) & (u < w) & (r >= 0) & (r < h)
-        idx = torch.nonzero(framed)[:, 0]
-        d = _nearest_depth(depth, pixels[idx])
-        idx = idx[(d > 0) & ((cam[idx, 2] - d).abs() < rel_tol * d)]
-        color = img[:, r[idx], u[idx]].T
-
-        # Drop clipped and near-black samples
-        valid = (color.max(1).values < 0.97) & (color.min(1).values > 0.02)
-        idx = idx[valid]
-        out_point.append(idx.cpu().numpy())
-        out_view.append(np.full(len(idx), k, dtype=np.int32))
-        out_color.append(color[valid].cpu().numpy())
-
-    return np.concatenate(out_point), np.concatenate(out_view), np.concatenate(out_color)
-
-
-def _solve_log_gains(
-    A: coo_matrix, B: coo_matrix, view: np.ndarray, log_color: np.ndarray, weight: np.ndarray, base: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Weighted least squares log gains with the per-point log albedo eliminated exactly.
-
-    - A: (N, V) observation -> view, B: (N, P) observation -> point
-    - base: (V, V) prior + smoothness + sum-to-zero pin
-    - returns (V, 3) log gains, median-centered, and (P, 3) log albedo
-    """
-    Aw = A.multiply(weight[:, None]).tocsr()
-    Bw = B.multiply(weight[:, None]).tocsr()
-    inv_count = 1.0 / np.maximum(np.asarray(Bw.sum(0)).ravel(), 1e-9)
-
-    # Reduced normal equations: points eliminated by Schur complement
-    BtA = (B.T @ Aw).toarray()
-    lhs = (A.T @ Aw).toarray() - BtA.T @ (BtA * inv_count[:, None]) + base
-    rhs = A.T @ (weight[:, None] * log_color) - BtA.T @ ((Bw.T @ log_color) * inv_count[:, None])
-    log_gain = np.linalg.solve(lhs, rhs)
-
-    # Typical view is the reference, so the texture keeps a typical exposure
-    log_gain -= np.median(log_gain, 0)
-    log_albedo = (Bw.T @ (log_color - log_gain[view])) * inv_count[:, None]
-    return log_gain, log_albedo
 
 
 ########################################################################
@@ -356,7 +163,7 @@ def unwrap_view_charts(
     pixels, _ = project(torch.from_numpy(fv), torch.from_numpy(w2c[labels]), torch.from_numpy(K[labels]))
     uv = pixels.numpy()
 
-    # Unseen faces: connected unseen groups (every seen face keyed alone) become plane patches
+    # Unseen faces: each connected group of them gets one flat patch
     patch = _same_key_components(np.where(unseen, 0, 1 + np.arange(n_faces)), pairs, n_faces)
     patch_normal = np.zeros((int(patch.max()) + 1, 3))
     np.add.at(patch_normal, patch[unseen], fn[unseen])
@@ -626,6 +433,7 @@ def project_images_to_texture(
     occlusion_eps: float,
     occluder: tuple[np.ndarray, np.ndarray] | None = None,
     view_ratio: float = 1.5,
+    blur_pix_sigma: float = 16.0,
 ) -> np.ndarray:
     """
     Visibility-weighted projection of images into a mesh's UV atlas.
@@ -633,6 +441,9 @@ def project_images_to_texture(
     - texels no view reaches take a push-pull fill from their seen surroundings
     - a hole-filled mesh hides its own observed surface, so pass the pre-fill mesh as occluder
     - view_ratio 1.0 is single-best-view (sharpest, seam-prone); large values average everything
+    - each image splits into a blurred base (blur_pix_sigma) and the detail left over
+    - base color averages every view that sees the texel, so color does not jump where the sharpest view changes
+    - detail comes only from the view_ratio views, so the texture stays sharp
 
     Args:
         verts: (P, 3) vertex positions.
@@ -646,6 +457,7 @@ def project_images_to_texture(
         occlusion_eps: depth-test tolerance in world units (≈ voxel size); stops self-occlusion.
         occluder: (verts, faces) to depth-test against instead of the mesh.
         view_ratio: keep views whose pixel size at the texel is within this factor of the texel's best.
+        blur_pix_sigma: base band Gaussian sigma in source pixels; 0 takes the whole image from the view_ratio views.
 
     Returns:
         (tex_size, tex_size, 3) uint8 albedo.
@@ -677,30 +489,44 @@ def project_images_to_texture(
         px_size, _ = _visible_pixel_size(points, dirs, depth, w2c[k], K_t[k], occlusion_eps)
         best = torch.minimum(best, px_size)
 
-    # Pass two: bilinear color from the views within view_ratio of each texel's best
-    rgb_acc = torch.zeros(len(points), 3, device="cuda")
-    w_acc = torch.zeros(len(points), device="cuda")
+    # Pass two: detail from the views within view_ratio of each texel's best, base from every view
+    detail_acc = torch.zeros(len(points), 3, device="cuda")
+    detail_w = torch.zeros(len(points), device="cuda")
+    base_acc = torch.zeros(len(points), 3, device="cuda")
+    base_w = torch.zeros(len(points), device="cuda")
     frame = torch.tensor([width - 1, height - 1], device="cuda")
 
     for k in range(len(rgbs)):
         _, depth = _rasterize_view(ctx, verts_h, faces_t, w2c[k], K_t[k], height, width)
         px_size, pixels = _visible_pixel_size(points, dirs, depth, w2c[k], K_t[k], occlusion_eps)
-        keep = torch.isfinite(px_size) & (px_size <= best * view_ratio)
+        vis = torch.isfinite(px_size)
+        keep = vis & (px_size <= best * view_ratio)
+
+        # Blurred base; with blur_pix_sigma 0 the base is zero and the detail is the whole image
+        image = torch.from_numpy(rgbs[k]).cuda().permute(2, 0, 1)[None].float() / 255.0
+        low = torch.zeros_like(image)
+
+        if blur_pix_sigma > 0:
+            low = gaussian_blur(image, 2 * int(3 * blur_pix_sigma) + 1, blur_pix_sigma)
 
         # Pixel positions to grid_sample's [-1, 1] frame; corners are pixel centers
-        grid = pixels[keep] / frame * 2 - 1
-        image = torch.from_numpy(rgbs[k]).cuda().permute(2, 0, 1)[None].float() / 255.0
-        color = F.grid_sample(image, grid[None, None], align_corners=True)[0, :, 0].T
+        grid = pixels[vis] / frame * 2 - 1
+        bands = torch.cat([image - low, low], 1)
+        color = F.grid_sample(bands, grid[None, None], align_corners=True)[0, :, 0].T
 
-        # Weight by how finely this view resolves the texel
-        weight = best[keep] / px_size[keep]
-        rgb_acc[keep] += color * weight[:, None]
-        w_acc[keep] += weight
+        # Weight each view by how finely it resolves the texel
+        weight = best[vis] / px_size[vis]
+        near = keep[vis]
+        detail_acc[keep] += color[near, :3] * weight[near, None]
+        detail_w[keep] += weight[near]
+        base_acc[vis] += color[:, 3:] * weight[:, None]
+        base_w[vis] += weight
 
-    # Normalize the weighted sum back into the atlas
-    hit = w_acc > 0
+    # Color = weighted mean detail + weighted mean base; texels no sharp view reached stay black
+    hit = detail_w > 0
     albedo = torch.zeros(tex_size, tex_size, 3, device="cuda")
-    albedo[covered] = rgb_acc / w_acc.clamp(min=1e-12)[:, None] * hit[:, None]
+    color = detail_acc / detail_w.clamp(min=1e-12)[:, None] + base_acc / base_w.clamp(min=1e-12)[:, None]
+    albedo[covered] = color.clamp(0, 1) * hit[:, None]
     seen = torch.zeros(tex_size, tex_size, dtype=torch.bool, device="cuda")
     seen[covered] = hit
 

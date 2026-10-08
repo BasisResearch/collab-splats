@@ -40,6 +40,7 @@ from collab_splats.localization.localizer import (
 )
 from collab_splats.mesh import (
     clean_repair_mesh,
+    compute_tsdf_voxel_size,
     create_texture_mesh,
     create_tsdf_mesh,
     prepare_mesh,
@@ -1011,6 +1012,7 @@ class Reconstructor:
                 raise FileNotFoundError(f"mesh.source: splats needs {ckpt}; run the splats stage first")
 
             depths, rgbs, c2w, intrinsics, image_ids = render_tsdf_inputs(ckpt, self.images_dir)
+            depth_fx = float(np.median(intrinsics[:, 0, 0]))
 
         # Feedforward source: the zarr's depth on the zarr's own frames
         elif source == "feedforward":
@@ -1020,6 +1022,12 @@ class Reconstructor:
             depths = frame_depths(pointcloud, rgbs, conf_percentile=cfg["conf_percentile"])
             c2w = invert_poses(pointcloud.extrinsics)
             intrinsics = pointcloud.intrinsics
+
+            # Depth was predicted on the model grid; its pixels, not the frame's, set the voxel
+            depth_fx = float(np.median(pointcloud.model_intrinsics[:, 0, 0]))
+
+            # Free the zarr's model-grid arrays; only poses and intrinsics are used from here
+            del pointcloud
 
         else:
             raise ValueError(f"mesh.source must be 'feedforward' or 'splats', got {source!r}")
@@ -1038,31 +1046,57 @@ class Reconstructor:
             dropped = np.count_nonzero(sky & (depths > 0)) / n_valid
             depths = np.where(sky, 0.0, depths)
             logger.info("mesh.mask_sky: dropped %.2f%% of valid depth pixels as sky", 100 * dropped)
+            del sky
 
-        # Fuse, then clean in place
-        mesh_path = create_tsdf_mesh(
+        # Depth cutoff zeroed first, so the voxel's memory guard never counts cut depth
+        if cfg["depth_trunc_percentile"] is not None:
+            sub = depths[:, ::8, ::8]
+            depth_trunc = float(np.percentile(sub[sub > 0], cfg["depth_trunc_percentile"]))
+            depths = np.where(depths > depth_trunc, 0.0, depths)
+
+        # Voxel from this scene's own depth; the world has no fixed scale
+        voxel_size = compute_tsdf_voxel_size(
+            depths,
+            c2w,
+            intrinsics,
+            depth_fx=depth_fx,
+            depth_px=cfg["voxel_depth_px"],
+            ref_percentile=cfg["voxel_ref_percentile"],
+        )
+
+        # mesh.ply marks the stage done, so a stale one must not outlive a failed re-run
+        mesh_path = self.outputs["mesh"]
+        mesh_path.unlink(missing_ok=True)
+
+        # Fuse every view into one TSDF mesh
+        mesh = create_tsdf_mesh(
             depths,
             rgbs,
             c2w,
             intrinsics,
-            self.backend_dir,
-            voxel_size=cfg["voxel_size"],
-            depth_trunc=cfg["depth_trunc"],
-            sdf_trunc=cfg["sdf_trunc_mult"] * cfg["voxel_size"],
+            voxel_size=voxel_size,
+            sdf_trunc=cfg["sdf_trunc_mult"] * voxel_size,
         )
-        clean_repair_mesh(mesh_path, use_convex_hull=cfg["use_convex_hull"])
 
-        # Prepare mesh.ply; keep the cleaned mesh as the texture occluder
-        mesh_file = str(mesh_path)
-        cleaned = o3d.io.read_triangle_mesh(mesh_file)
-        prepared = prepare_mesh(cleaned, voxel_size=cfg["voxel_size"], smooth_iterations=cfg["smooth_iterations"])
-        o3d.io.write_triangle_mesh(mesh_file, prepared)
+        # Free the fused depth before cleanup; nothing below reads it
+        del depths
 
-        # Optionally UV-unwrap mesh.ply and project the fused views onto it
+        # Clean; the floater-cut real surface comes back as the texture occluder
+        cleaned, real = clean_repair_mesh(mesh, use_convex_hull=cfg["use_convex_hull"])
+
+        # Fill, decimate and repair; the full-density cleaned mesh is freed before texturing
+        prepared = prepare_mesh(
+            cleaned, voxel_size=voxel_size, smooth_iterations=cfg["smooth_iterations"], max_faces=cfg["max_faces"]
+        )
+        del cleaned
+
+        # Optionally UV-unwrap the prepared mesh and project the fused views onto it
         if cfg["texture"]:
             texture_dir = self.backend_dir / "texture"
-            create_texture_mesh(prepared, cleaned, texture_dir, rgbs, c2w, intrinsics, voxel_size=cfg["voxel_size"])
+            create_texture_mesh(prepared, real, texture_dir, rgbs, c2w, intrinsics, voxel_size=voxel_size)
 
+        # Write mesh.ply last, so it exists only when every step above finished
+        o3d.io.write_triangle_mesh(str(mesh_path), prepared)
         logger.info("Mesh saved to %s", mesh_path)
 
     def localize(self) -> None:

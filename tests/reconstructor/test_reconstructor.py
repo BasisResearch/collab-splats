@@ -20,7 +20,6 @@ from mergedeep import merge
 from collab_splats import reconstructor as R
 from collab_splats.geometry import metrics
 from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
-from collab_splats.mesh import create_tsdf_mesh
 from collab_splats.pointcloud import utils as pointcloud_utils
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
@@ -28,7 +27,11 @@ from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.reconstructor import STAGES, Reconstructor
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.store import write_feature_cache, write_point_features
-from tests.reconstructor._stubs import minimal_feedforward_result, stub_creator_cls
+from tests.reconstructor._stubs import (
+    minimal_feedforward_result,
+    stub_creator_cls,
+    stub_mesh_cleanup,
+)
 
 
 def _make_config(tmp_path, overrides=None):
@@ -45,7 +48,7 @@ def _make_config(tmp_path, overrides=None):
             "clean": {"enabled": False},
         },
         "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
-        "mesh": {"enabled": False, "voxel_size": 0.01, "depth_trunc": 1.0},
+        "mesh": {"enabled": False},
         "localization": {"enabled": False},
     }
     if overrides:
@@ -662,38 +665,6 @@ def test_run_skips_mesh_if_ply_exists(tmp_path):
     assert calls == ["reconstruction_quality_report"]
 
 
-def test_mesh_done_check_matches_tsdf_writer_filename(tmp_path):
-    """done("mesh") fires on the file the real TSDF writer actually laid down.
-
-    Neither filename is hardcoded here: the mesher writes the file and done() looks for it,
-    so the test breaks if either side renames the mesh independently of the other.
-    """
-    config = _make_config(tmp_path, {"mesh": {"enabled": True}})
-    rec = Reconstructor(config)
-
-    # Genuine write path: a tiny synthetic TSDF run produces the mesh file itself
-    depths = np.ones((2, 32, 32), dtype=np.float32)
-    c2w = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)
-    intrinsics = np.eye(3, dtype=np.float32)[None].repeat(2, axis=0)
-    intrinsics[:, 0, 0] = intrinsics[:, 1, 1] = 32.0
-    intrinsics[:, 0, 2] = intrinsics[:, 1, 2] = 16.0
-    written = create_tsdf_mesh(
-        depths,
-        np.full((2, 32, 32, 3), 128, np.uint8),
-        c2w,
-        intrinsics,
-        rec.backend_dir,
-        voxel_size=0.05,
-        depth_trunc=2.0,
-    )
-    # Pin the writer side separately, so a writer regression is not read as a reader one
-    assert written.exists()
-
-    # The marker is that exact file, so run() skips the stage instead of re-running TSDF
-    assert rec.outputs["mesh"] == written
-    assert rec.done("mesh") is True
-
-
 def test_mesh_runs_tsdf(tmp_path, monkeypatch):
     fuse = _mesh_fuse(tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)))
 
@@ -750,15 +721,17 @@ def _mesh_fuse(tmp_path, monkeypatch, ff, upsample=_unit_upsample, **mesh_overri
 
     - upsample stands in for the frame-grid lift inside frame_depths
     """
-    mesh_cfg = {"enabled": True, "source": "feedforward", "voxel_size": 0.01, **mesh_overrides}
+    mesh_cfg = {"enabled": True, "source": "feedforward", "mask_sky": False, "texture": False, **mesh_overrides}
     rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
 
     monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(pointcloud_utils, "upsample_depths", upsample)
-    fuse = MagicMock(return_value=tmp_path / "mesh.ply")
+    fuse = MagicMock()
+    tet = o3d.geometry.TriangleMesh.create_tetrahedron()
+    monkeypatch.setattr(R, "compute_tsdf_voxel_size", MagicMock(return_value=0.01))
     monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
-    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock(return_value=(tet, tet)))
     monkeypatch.setattr(R, "prepare_mesh", lambda mesh, **kw: mesh)
 
     rec.mesh()
@@ -818,6 +791,23 @@ def test_mesh_uses_zarr_poses(tmp_path, monkeypatch):
     np.testing.assert_allclose(fuse.call_args.args[2], np.linalg.inv(ff.extrinsics), atol=1e-5)
 
 
+def test_mesh_depth_trunc_zeroes_depth_before_voxel_sizing(tmp_path, monkeypatch):
+    """
+    depth_trunc_percentile zeroes the cut depth before compute_tsdf_voxel_size sees it.
+
+    - the voxel's 8 GB block guard counted cut depth: GH010229 coarsened 0.0059 -> 0.0134
+    """
+    ramp = np.tile(np.linspace(1.0, 10.0, 32 * 32, dtype=np.float32).reshape(32, 32), (2, 1, 1))
+
+    fuse = _mesh_fuse(
+        tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), upsample=lambda *a: ramp, depth_trunc_percentile=50
+    )
+
+    sized = R.compute_tsdf_voxel_size.call_args.args[0]
+    assert 1.0 < sized.max() < 10.0
+    np.testing.assert_array_equal(fuse.call_args.args[0], sized)
+
+
 def test_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
     """
     conf_percentile zeroes the depth under the percentile before it reaches the fusion.
@@ -838,67 +828,80 @@ def test_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
     assert masked.max() == ff.depth.max()
 
 
-def _run_prepared_mesh(tmp_path, monkeypatch, texture):
+def _run_prepared_mesh(tmp_path, monkeypatch, texture, texture_error=None):
     """
-    Run rec.mesh() with fusion writing a real mesh; return (rec, cleaned, prepared, prepare, texture mocks).
+    Run rec.mesh() over a stale mesh.ply; return (rec, fused, cleaned, real, prepared, prepare, texture mocks).
+
+    - texture_error is raised by the texture step, to fail the stage after fusion
     """
-    mesh_cfg = {"enabled": True, "source": "feedforward", "voxel_size": 0.01, "texture": texture}
+    mesh_cfg = {"enabled": True, "source": "feedforward", "mask_sky": False, "texture": texture}
     rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
     ff = _tsdf_mesh_ff(model_hw=(16, 16))
     monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
     monkeypatch.setattr(pointcloud_utils, "upsample_depths", _unit_upsample)
 
-    # Fusion writes a real sphere to mesh.ply; cleaning is a no-op on it
+    # A previous run's mesh.ply, which this run must replace or remove
+    rec.backend_dir.mkdir(parents=True, exist_ok=True)
+    (rec.backend_dir / "mesh.ply").write_text("stale")
+
+    # Fusion, cleaning and the floater-cut surface are three distinct meshes
+    fused = o3d.geometry.TriangleMesh.create_octahedron()
     cleaned = o3d.geometry.TriangleMesh.create_sphere(radius=0.5, resolution=10)
-    mesh_path = rec.backend_dir / "mesh.ply"
-
-    def fuse(*args, **kwargs):
-        mesh_path.parent.mkdir(parents=True, exist_ok=True)
-        o3d.io.write_triangle_mesh(str(mesh_path), cleaned)
-        return mesh_path
-
-    monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
-    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock())
+    real = o3d.geometry.TriangleMesh.create_tetrahedron()
+    monkeypatch.setattr(R, "compute_tsdf_voxel_size", MagicMock(return_value=0.01))
+    monkeypatch.setattr(R, "create_tsdf_mesh", MagicMock(return_value=fused))
+    monkeypatch.setattr(R, "clean_repair_mesh", MagicMock(return_value=(cleaned, real)))
 
     # prepare_mesh returns a box, so mesh.ply's triangle count tells which mesh was written
     prepared = o3d.geometry.TriangleMesh.create_box()
     prepare = MagicMock(return_value=prepared)
     monkeypatch.setattr(R, "prepare_mesh", prepare)
-    texture_mesh = MagicMock()
+    texture_mesh = MagicMock(side_effect=texture_error)
     monkeypatch.setattr(R, "create_texture_mesh", texture_mesh)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
 
     rec.mesh()
 
-    return rec, cleaned, prepared, prepare, texture_mesh
+    return rec, fused, cleaned, real, prepared, prepare, texture_mesh
 
 
 def test_mesh_writes_the_prepared_mesh_without_texture(tmp_path, monkeypatch):
     """mesh.ply is prepare_mesh's output even with texture off, prepared from the cleaned mesh."""
-    rec, cleaned, prepared, prepare, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=False)
+    rec, fused, cleaned, _, prepared, prepare, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=False)
 
-    assert len(prepare.call_args.args[0].triangles) == len(cleaned.triangles)
-    assert prepare.call_args.kwargs == {"voxel_size": 0.01, "smooth_iterations": 0}
+    assert R.clean_repair_mesh.call_args.args == (fused,)
+    assert prepare.call_args.args == (cleaned,)
+    assert prepare.call_args.kwargs == {"voxel_size": 0.01, "smooth_iterations": 10, "max_faces": 1_500_000}
     written = o3d.io.read_triangle_mesh(str(rec.backend_dir / "mesh.ply"))
     assert len(written.triangles) == len(prepared.triangles)
+    assert rec.done("mesh")
     texture_mesh.assert_not_called()
 
 
-def test_mesh_textures_the_prepared_mesh_behind_the_cleaned_occluder(tmp_path, monkeypatch):
-    """Texturing unwraps the same mesh.ply geometry; the unfilled cleaned mesh is the occluder."""
-    rec, cleaned, prepared, _, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=True)
+def test_mesh_failing_after_fusion_leaves_no_mesh_ply(tmp_path, monkeypatch):
+    """A step failing after fusion leaves no mesh.ply, not even the stale one, so the stage never reads as done."""
+    with pytest.raises(RuntimeError, match="texture failed"):
+        _run_prepared_mesh(tmp_path, monkeypatch, texture=True, texture_error=RuntimeError("texture failed"))
+
+    rec = Reconstructor(_make_config(tmp_path, {"mesh": {"enabled": True}}))
+    assert not rec.done("mesh")
+
+
+def test_mesh_textures_the_prepared_mesh_behind_the_real_surface(tmp_path, monkeypatch):
+    """Texturing unwraps the same mesh.ply geometry; the floater-cut surface cleaning returns is the occluder."""
+    rec, _, _, real, prepared, _, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=True)
 
     mesh, occluder, out_dir = texture_mesh.call_args.args[:3]
     assert mesh is prepared
-    assert len(occluder.triangles) == len(cleaned.triangles)
+    assert occluder is real
     assert out_dir == rec.backend_dir / "texture"
     assert texture_mesh.call_args.kwargs == {"voxel_size": 0.01}
 
 
 def test_mesh_texture_without_cuda_raises_before_fusion(tmp_path, monkeypatch):
     """texture on a CPU-only machine fails at stage start, not after fusing and cleaning."""
-    mesh_cfg = {"enabled": True, "source": "feedforward", "voxel_size": 0.01, "texture": True}
+    mesh_cfg = {"enabled": True, "source": "feedforward", "texture": True}
     rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     load = MagicMock()
@@ -1526,7 +1529,7 @@ def test_mesh_reads_frames_and_poses_from_the_zarr_on_disk(tmp_path):
     """
     `--stages mesh` on a pulled scene: rows, frames and poses all follow pointcloud.zarr.
     """
-    config = _make_config(tmp_path, {"mesh": {"enabled": True, "texture": False}})
+    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mask_sky": False, "texture": False}})
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
 
@@ -1536,9 +1539,8 @@ def test_mesh_reads_frames_and_poses_from_the_zarr_on_disk(tmp_path):
     fr.write_frames(rec.images_dir, frame_stack, [2, 16])
 
     with (
-        patch.object(R, "create_tsdf_mesh", return_value=rec.backend_dir / "mesh.ply") as fuse,
-        patch.object(R, "clean_repair_mesh"),
-        patch.object(R, "prepare_mesh", side_effect=lambda mesh, **kw: mesh),
+        patch.object(R, "create_tsdf_mesh") as fuse,
+        stub_mesh_cleanup(),
     ):
         rec.mesh()
 
@@ -1617,17 +1619,20 @@ def test_base_yaml_mesh_has_fidelity_keys():
     assert set(cfg["mesh"]) == {
         "enabled",
         "source",
-        "voxel_size",
+        "voxel_depth_px",
+        "voxel_ref_percentile",
         "sdf_trunc_mult",
-        "depth_trunc",
+        "depth_trunc_percentile",
         "conf_percentile",
         "mask_sky",
+        "max_faces",
         "texture",
         "use_convex_hull",
         "smooth_iterations",
     }
     assert cfg["mesh"]["source"] == "feedforward"
-    assert cfg["mesh"]["texture"] is False
+    assert cfg["mesh"]["texture"] is True
+    assert cfg["mesh"]["mask_sky"] is True
 
 
 ########################################

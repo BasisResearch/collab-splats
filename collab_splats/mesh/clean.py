@@ -1,7 +1,7 @@
 """
 Mesh cleanup at full density, then preparation for UV unwrapping.
 
-- clean_repair_mesh: remove_floaters, optional make_convex_hull, fill_holes; PLY rewritten in place
+- clean_repair_mesh: remove_floaters, optional make_convex_hull, fill_holes
 - remove_floaters: drop components that are small or far from the main body
 - fill_holes: patch interior loops under a perimeter bound; the outer rim stays open
 - make_convex_hull: trim_mesh_edges, patch the ground out to a rounded hull, bridge_mesh_edges
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import cv2
 import meshlib.mrmeshnumpy as mn
@@ -44,18 +43,20 @@ logger = logging.getLogger(__name__)
 
 
 def clean_repair_mesh(
-    mesh_path: Path | str,
+    mesh: o3d.geometry.TriangleMesh,
     min_area_frac: float = 6e-6,
     max_gap_frac: float = 0.01,
     max_hole_perimeter_ratio: float = 0.014,
     subdivide_fill: bool = True,
     use_convex_hull: bool = False,
-) -> Path:
+) -> tuple[o3d.geometry.TriangleMesh, o3d.geometry.TriangleMesh]:
     """
-    Remove floaters, fill small holes, and overwrite the mesh file.
+    Remove floaters and fill small holes; also returns the surface right after the floater cut.
+
+    - the floater cut edits mesh in place; the hull and the hole fill build new meshes
 
     Args:
-        mesh_path: PLY path; rewritten in place.
+        mesh: fused mesh, edited in place by the floater cut.
         min_area_frac: see remove_floaters.
         max_gap_frac: see remove_floaters.
         max_hole_perimeter_ratio: see fill_holes.
@@ -63,18 +64,12 @@ def clean_repair_mesh(
         use_convex_hull: run make_convex_hull between the floater cut and the hole fill.
 
     Returns:
-        Path to mesh_path.
+        The cleaned mesh, and mesh itself after the floater cut: only fused faces, no hull or hole fill.
     """
-    mesh_path = Path(mesh_path)
-    mesh = o3d.io.read_triangle_mesh(str(mesh_path))
-    remove_floaters(mesh, min_area_frac=min_area_frac, max_gap_frac=max_gap_frac)
-
-    if use_convex_hull:
-        mesh = make_convex_hull(mesh)
-
-    mesh = fill_holes(mesh, max_hole_perimeter_ratio=max_hole_perimeter_ratio, subdivide_fill=subdivide_fill)
-    o3d.io.write_triangle_mesh(str(mesh_path), mesh)
-    return mesh_path
+    real = remove_floaters(mesh, min_area_frac=min_area_frac, max_gap_frac=max_gap_frac)
+    cleaned = make_convex_hull(real) if use_convex_hull else real
+    cleaned = fill_holes(cleaned, max_hole_perimeter_ratio=max_hole_perimeter_ratio, subdivide_fill=subdivide_fill)
+    return cleaned, real
 
 
 ########################################################################
@@ -149,7 +144,7 @@ def fill_holes(
     """
     Fill interior boundary loops under a perimeter bound: small loops plain, the rest smooth patches.
 
-    - outer rim: a component's longest loop spanning half its extent; never filled, whatever the bound
+    - outer rim: a component's widest loop spanning half its extent; never filled, whatever the bound
     - scene_scale: diagonal of the 1st-99th percentile bounding box (get_scene_scale)
     - patches: all triangulated, then one subdivide + cotan smooth; fillHoleNicely per hole scales with the mesh
     - loops of at most max_plain_edges edges take meshlib's plain fillHole: a flat lid
@@ -188,17 +183,23 @@ def fill_holes(
     np.minimum.at(comp_lo, cluster_ids, tri_pts.min(axis=1))
     np.maximum.at(comp_hi, cluster_ids, tri_pts.max(axis=1))
 
-    # Find each component's outer rim: its longest loop, if that loop spans half the component or more
-    mesh_pts = mn.getNumpyVerts(mmesh)
-    longest = {hole_comp[i]: i for i in np.argsort(perimeters)}
+    # Walk each loop once: its edge count and its bounding-box diagonal
+    points = mn.getNumpyVerts(mmesh)
+    n_edges = np.zeros(len(holes), dtype=np.int64)
+    extents = np.zeros(len(holes))
+
+    for i, hole in enumerate(holes):
+        loop, extents[i] = _boundary_loop(mmesh, points, hole)
+        n_edges[i] = len(loop)
+
+    # Find each component's outer rim: its widest loop, if that loop spans half the component or more
+    widest = {hole_comp[i]: i for i in np.argsort(extents)}
     rims = set()
 
-    for i in longest.values():
-        loop = [mmesh.topology.org(edge).get() for edge in mm.trackRightBoundaryLoop(mmesh.topology, holes[i])]
-        loop_extent = np.linalg.norm(mesh_pts[loop].max(axis=0) - mesh_pts[loop].min(axis=0))
+    for i in widest.values():
         comp_extent = np.linalg.norm(comp_hi[hole_comp[i]] - comp_lo[hole_comp[i]])
 
-        if loop_extent >= 0.5 * comp_extent:
+        if extents[i] >= 0.5 * comp_extent:
             rims.add(i)
 
     # Split the interior loops under the gate into plain lids and nice patches
@@ -208,8 +209,7 @@ def fill_holes(
         if i in rims or perimeters[i] >= gate:
             continue
 
-        loop = mm.trackRightBoundaryLoop(mmesh.topology, hole)
-        (plain if len(loop) <= max_plain_edges else nice).append(hole)
+        (plain if n_edges[i] <= max_plain_edges else nice).append(hole)
 
     # Triangulate every nice patch; one degenerate hole must not cost the rest
     edge_len = mmesh.averageEdgeLength()
@@ -625,13 +625,16 @@ def _connect_mesh_hull(
 ########################################################################
 
 
-def decimate_mesh(mesh: o3d.geometry.TriangleMesh, *, max_error: float) -> tuple[o3d.geometry.TriangleMesh, float]:
+def decimate_mesh(
+    mesh: o3d.geometry.TriangleMesh, *, max_error: float, max_faces: int | None = None
+) -> tuple[o3d.geometry.TriangleMesh, float]:
     """
     QEM decimation to an absolute surface-deviation bound; vertices are removed, never moved.
 
     Args:
         mesh: input mesh; not modified.
         max_error: largest allowed surface deviation in world units.
+        max_faces: most faces to keep, reached past max_error if need be; None = no limit.
 
     Returns:
         The decimated mesh and the result error in world units.
@@ -643,8 +646,16 @@ def decimate_mesh(mesh: o3d.geometry.TriangleMesh, *, max_error: float) -> tuple
     settings.optimizeVertexPos = False
     settings.packMesh = True
     settings.subdivideParts = 64
-    result = mm.decimateMesh(mmesh, settings)
-    return from_meshlib(mmesh, mesh), float(result.errorIntroduced)
+    error = float(mm.decimateMesh(mmesh, settings).errorIntroduced)
+    n_faces = mmesh.topology.numValidFaces()
+
+    # Over the face limit: decimate on to max_faces with no error bound
+    if max_faces is not None and n_faces > max_faces:
+        settings.maxError = float(np.finfo(np.float32).max)
+        settings.maxDeletedFaces = n_faces - max_faces
+        error = max(error, float(mm.decimateMesh(mmesh, settings).errorIntroduced))
+
+    return from_meshlib(mmesh, mesh), error
 
 
 def make_manifold(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
@@ -781,6 +792,7 @@ def prepare_mesh(
     max_hole_perimeter_ratio: float = 3.9,
     decimate_max_error: float = 0.5,
     smooth_iterations: int = 0,
+    max_faces: int | None = None,
 ) -> o3d.geometry.TriangleMesh:
     """
     Fill, decimate and repair a cleaned mesh into a clean manifold mesh; the input is not modified.
@@ -788,19 +800,21 @@ def prepare_mesh(
     - fill at full density, decimate, make_manifold; lid the pinholes that opens, repair again
     - smoothing runs last so decimation never sees it; a final repair drops the faces it folds
     - outer rims stay open whatever max_hole_perimeter_ratio (see fill_holes)
+    - max_faces caps the decimated face count, past the error bound, so texturing time stays bounded
 
     Args:
-        mesh: cleaned mesh (clean_repair_mesh output).
+        mesh: the cleaned mesh, the first one clean_repair_mesh returns.
         voxel_size: TSDF voxel the mesh was fused at; sets the decimation bound.
         max_hole_perimeter_ratio: patch holes with a perimeter under this × scene_scale.
         decimate_max_error: decimation bound as a multiple of voxel_size.
         smooth_iterations: Taubin smoothing passes; 0 skips smoothing.
+        max_faces: most faces to keep after decimation; None = no limit.
 
     Returns:
         The filled, decimated, manifold mesh.
     """
     filled = fill_holes(mesh, max_hole_perimeter_ratio=max_hole_perimeter_ratio)
-    decimated, err = decimate_mesh(filled, max_error=decimate_max_error * voxel_size)
+    decimated, err = decimate_mesh(filled, max_error=decimate_max_error * voxel_size, max_faces=max_faces)
     manifold = make_manifold(decimated)
 
     # Decimation and repair open pinholes; flat lids close them, then repair what the lids fold
@@ -888,15 +902,35 @@ def _fill_each(mmesh: mm.Mesh, holes: list, params: mm.FillHoleParams) -> int:
 
 def _outer_rim_loop(mmesh: mm.Mesh) -> list:
     """
-    Edges of the longest boundary loop, the outer rim; empty when the mesh has no boundary.
+    Edges of the widest boundary loop, the outer rim, as fill_holes picks it; empty with no boundary.
+
+    - a loop's bounding-box diagonal is at most sqrt(3) / 2 of its perimeter, so short loops are skipped
     """
-    holes = mmesh.topology.findHoleRepresentiveEdges()
+    holes = list(mmesh.topology.findHoleRepresentiveEdges())
+    perimeters = np.array([mmesh.holePerimeter(hole) for hole in holes])
+    points = mn.getNumpyVerts(mmesh)
+    widest, widest_extent = [], -1.0
 
-    if not holes:
-        return []
+    # Longest first; stop once no remaining loop can be wider than the widest so far
+    for i in np.argsort(-perimeters):
+        if np.sqrt(3) / 2 * perimeters[i] < widest_extent:
+            break
 
-    outer = max(holes, key=mmesh.holePerimeter)
-    return list(mm.trackRightBoundaryLoop(mmesh.topology, outer))
+        loop, extent = _boundary_loop(mmesh, points, holes[i])
+
+        if extent > widest_extent:
+            widest, widest_extent = loop, extent
+
+    return widest
+
+
+def _boundary_loop(mmesh: mm.Mesh, points: np.ndarray, hole: mm.EdgeId) -> tuple[list, float]:
+    """
+    Edges of the boundary loop through one hole edge, and the bounding-box diagonal of its vertices.
+    """
+    loop = list(mm.trackRightBoundaryLoop(mmesh.topology, hole))
+    loop_pts = points[[mmesh.topology.org(edge).get() for edge in loop]]
+    return loop, float(np.linalg.norm(loop_pts.max(axis=0) - loop_pts.min(axis=0)))
 
 
 def _median_edge(verts: np.ndarray, faces: np.ndarray) -> float:

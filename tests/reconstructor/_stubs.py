@@ -35,7 +35,7 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "voxel_depth_px": 4.0,
             "voxel_ref_percentile": 50,
             "sdf_trunc_mult": 4.0,
-            "depth_trunc_percentile": None,
+            "depth_trunc_percentile": 95,
             "max_faces": None,
             "conf_percentile": 20,
             "mask_sky": False,

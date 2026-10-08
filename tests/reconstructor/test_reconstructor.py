@@ -2,7 +2,6 @@ import contextlib
 import hashlib
 import itertools
 import json
-import re
 import weakref
 from pathlib import Path
 from unittest.mock import MagicMock, create_autospec, patch
@@ -54,21 +53,6 @@ def _make_config(tmp_path, overrides=None):
     if overrides:
         config = merge({}, config, overrides)
     return config
-
-
-def test_no_inline_defaults_in_source():
-    """No cfg.get(key, default) with a VALUE default remains — base.yaml is the only source.
-
-    Structural {}/[] defaults (e.g. validate_config's config.get("pointcloud", {}) on a raw
-    partial config) are allowed.
-    """
-    src = Path("collab_splats/reconstructor.py").read_text()
-    # Capture the default expression of each two-arg .get("key", <default>)
-    defaults = re.findall(r"\.get\(\s*['\"][^'\"]+['\"]\s*,\s*([^)]+)\)", src)
-    # Structural {}/[] defaults are allowed; so is ocr_lens's model_id, a constructor default not in base.yaml
-    allowed = ("{}", "[]", '"llava-hf/llava-v1.6-vicuna-7b-hf"')
-    offenders = [d.strip() for d in defaults if d.strip() not in allowed]
-    assert offenders == [], f"inline value defaults still present: {offenders}"
 
 
 def _video_reconstructor(tmp_path, preproc):
@@ -806,6 +790,17 @@ def test_mesh_depth_trunc_zeroes_depth_before_voxel_sizing(tmp_path, monkeypatch
     sized = R.compute_tsdf_voxel_size.call_args.args[0]
     assert 1.0 < sized.max() < 10.0
     np.testing.assert_array_equal(fuse.call_args.args[0], sized)
+
+
+@pytest.mark.parametrize("pct", [None, 0, 99.5, 100])
+def test_mesh_depth_trunc_percentile_required(tmp_path, monkeypatch, pct):
+    """
+    A null or out-of-range depth_trunc_percentile raises before any fusion.
+
+    - an uncut far tail (tutorial scene: p99 2.65, max 24) crashed Open3D's extract_triangle_mesh
+    """
+    with pytest.raises(ValueError, match="depth_trunc_percentile"):
+        _mesh_fuse(tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), depth_trunc_percentile=pct)
 
 
 def test_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):

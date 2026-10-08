@@ -48,8 +48,8 @@ the depth was predicted on — the model grid for feedforward, since depth upsam
 grid carries no finer detail. It then counts the 16³ surface blocks the voxel would allocate and
 coarsens by the square root of the overshoot until they fit 8 GB. On GH010229 the default lands
 at 0.0023 on the 294-frame run (hand-tuned value was 0.0025) and 0.0056 on the 1039-frame run,
-whose depth is 2.4× larger. `mesh.depth_trunc_percentile` (default `null`) is the optional depth
-cutoff, in the same scene-relative terms. The cut depth is zeroed before the voxel is sized, so
+whose depth is 2.4× larger. `mesh.depth_trunc_percentile` (default `95`, required, at most 99) is the depth
+cutoff, in the same scene-relative terms; left uncut, a far depth tail crashed Open3D's extraction. The cut depth is zeroed before the voxel is sized, so
 the 8 GB block count never coarsens the voxel for depth that will not be fused.
 
 `create_tsdf_mesh` raises rather than fusing quietly wrong: float RGB is rejected outright, and a

@@ -2,7 +2,7 @@
 Config-driven reconstruction pipeline, one output tree per scene.
 
 - stages: preproc, pointcloud, refine, splats, mesh, semantics, localize, quality report
-- configs/base.yaml holds every default; a run config merges over it
+- a run config merges over configs/base.yaml; keys it omits take the module defaults
 """
 
 from __future__ import annotations
@@ -249,7 +249,7 @@ class Reconstructor:
         if base_config is None:
             base_config = Path(__file__).parents[1] / "configs" / "base.yaml"
 
-        # Deep-merge the caller's config over base.yaml, the single source of defaults
+        # Deep-merge the caller's config over base.yaml
         text = Path(base_config).read_text()
         defaults = yaml.safe_load(text) or {}
         merged = merge({}, defaults, config)
@@ -272,7 +272,7 @@ class Reconstructor:
         """
         Reject a config that would fail mid-run, before any stage starts.
 
-        - only cross-field checks: required paths, method/backend pairing, BA/LC/sfm/LoGeR exclusions
+        - only cross-field checks: required paths, method/backend pairing, LC/sfm/LoGeR exclusions
         - per-argument bounds live in the creators and create_tsdf_mesh
         - pointcloud.loop_closure and bundle_adjustment are normalized in place to dicts carrying `enabled`
 
@@ -334,13 +334,6 @@ class Reconstructor:
             BundleAdjustmentConfig(**{k: v for k, v in ba.items() if k != "enabled"})
         except ValueError as e:
             raise ValueError(f"pointcloud.bundle_adjustment: {e}") from e
-
-        # Refuse BA with sfm: every sfm mapper runs its own
-        if method == "sfm" and ba["enabled"]:
-            raise ValueError(
-                "pointcloud.bundle_adjustment is not supported with method: sfm — "
-                "every sfm backend runs its own bundle adjustment"
-            )
 
         # Refuse LC with sfm: LC wraps a feedforward creator in sequential submaps
         if method == "sfm" and lc["enabled"]:
@@ -547,11 +540,14 @@ class Reconstructor:
         """
         named = stages is not None
 
-        # Default stage set from the enable flags; BA with LC runs inside pointcloud, not refine
+        # Default stage set from the enable flags
         if stages is None:
             pc = self.config["pointcloud"]
+            # BA is skipped for sfm (its mapper runs its own) and with LC (it runs inside each window)
             enabled = {
-                "refine": pc["bundle_adjustment"]["enabled"] and not pc["loop_closure"]["enabled"],
+                "refine": pc["bundle_adjustment"]["enabled"]
+                and pc["method"] == "feedforward"
+                and not pc["loop_closure"]["enabled"],
                 "semantics": self.config["semantics"]["enabled"],
                 "splats": self.config["splats"]["enabled"],
                 "mesh": self.config["mesh"]["enabled"],
@@ -657,16 +653,21 @@ class Reconstructor:
             total = get_video_info(str(input_path))["total_frames"]
             report_path = self.images_dir.parent / "video_quality_report.json"
             report = load_video_quality(input_path, report_path, workers=cfg["n_workers"])
-            common = {"report": report, "quality": cfg["quality"], "max_frames": cfg["max_frames"]}
+            common = {"report": report, "max_frames": cfg["max_frames"]}
+
+            # Optional sampler knobs; unset ones take the sampler defaults
+            if "quality" in cfg:
+                common["quality"] = cfg["quality"]
+
+            fps_opts = {k: cfg[k] for k in ("min_frames", "on_empty_slot") if k in cfg}
 
             # Each selection method gets only its own knobs
             if cfg["frame_selection"] == "fps":
                 rgbs, records = sample_fps(
                     str(input_path),
                     fps=cfg["fps"],
-                    min_frames=cfg["min_frames"],
-                    on_empty_slot=cfg["on_empty_slot"],
                     workers=cfg["n_workers"],
+                    **fps_opts,
                     **common,
                 )
             elif cfg["frame_selection"] == "uniform":
@@ -733,11 +734,9 @@ class Reconstructor:
             creator_cls = get_creator(backend)
             creator = creator_cls(
                 max_points=cfg["max_points"],
-                min_views=cfg["min_views"],
-                mv_rel_thresh=cfg["mv_rel_thresh"],
                 clean=cfg["clean"]["enabled"],
                 frames=self._frames,
-                **cfg[backend],
+                **cfg.get(backend, {}),
             )
 
             # Wrap in loop closure when enabled; the remaining keys are its config
@@ -769,7 +768,9 @@ class Reconstructor:
             warnings.warn(
                 "pointcloud.method='sfm' is experimental and not production-tested.", UserWarning, stacklevel=2
             )
-            creator = SFM_CREATORS[backend](clean=cfg["clean"]["enabled"], max_points=cfg["max_points"], **cfg[backend])
+            creator = SFM_CREATORS[backend](
+                clean=cfg["clean"]["enabled"], max_points=cfg["max_points"], **cfg.get(backend, {})
+            )
 
         # Drop a stale refine marker before touching the artifacts it describes
         self.outputs["refine"].unlink(missing_ok=True)
@@ -1015,11 +1016,18 @@ class Reconstructor:
 
         Raises:
             FileNotFoundError: the splats source has no ckpt.pt on disk.
-            ValueError: mesh.source is neither feedforward nor splats, or sky masks mismatch the depths.
+            ValueError: mesh.source is neither feedforward nor splats, mesh.depth_trunc_percentile is outside
+                (0, 99], or sky masks mismatch the depths.
             RuntimeError: mesh.texture is on but no CUDA device is available.
         """
         cfg = self.config["mesh"]
         source = cfg["source"]
+
+        # Uncut far depth crashes Open3D extraction
+        trunc_pct = cfg["depth_trunc_percentile"]
+
+        if trunc_pct is None or not 0 < trunc_pct <= 99:
+            raise ValueError(f"mesh.depth_trunc_percentile must be in (0, 99], got {trunc_pct!r}")
 
         # Texturing is CUDA-only; refuse before fusion rather than after it
         if cfg["texture"] and not torch.cuda.is_available():
@@ -1076,11 +1084,10 @@ class Reconstructor:
             logger.info("mesh.mask_sky: dropped %.2f%% of valid depth pixels as sky", 100 * dropped)
             del sky
 
-        # Depth cutoff zeroed first, so the voxel's memory guard never counts cut depth
-        if cfg["depth_trunc_percentile"] is not None:
-            sub = depths[:, ::8, ::8]
-            depth_trunc = float(np.percentile(sub[sub > 0], cfg["depth_trunc_percentile"]))
-            depths = np.where(depths > depth_trunc, 0.0, depths)
+        # Cut far depth before voxel sizing
+        sub = depths[:, ::8, ::8]
+        depth_trunc = float(np.percentile(sub[sub > 0], trunc_pct))
+        depths = np.where(depths > depth_trunc, 0.0, depths)
 
         # Voxel from this scene's own depth; the world has no fixed scale
         voxel_size = compute_tsdf_voxel_size(
@@ -1201,7 +1208,7 @@ class Reconstructor:
         # Every table from arrays, keyed by frame name
         names = [Path(str(p)).name for p in pointcloud.image_paths]
 
-        # Optional pair pruning; 0.0 (base.yaml) keeps every ordered pair
+        # Optional pair pruning; 0.0 keeps every ordered pair
         min_pair_overlap = self.config["reconstruction_quality_report"]["min_pair_overlap"]
 
         tables = compute_reconstruction_quality(

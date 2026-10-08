@@ -421,12 +421,14 @@ parameter and raises.
 | `semantics.enabled` | bool | `true` | Extract and lift semantic features |
 | `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
 | `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
+| `semantics.target_cosine` | float | `0.95` | Stop autoencoder training at this mean reconstruction cosine, `max_epochs` the ceiling. Measured on the training set, so on small scenes a pass means "fit completed", not "features trustworthy"; at production scale (10^5-10^6 patches) the gap largely closes |
+| `semantics.max_epochs` | int | `100` | Autoencoder training ceiling |
 | `mesh.enabled` | bool | `true` | Fuse a TSDF mesh after the pointcloud stage, writing `<backend>/mesh.ply` |
 | `mesh.source` | str | `feedforward` | `feedforward` fuses `pointcloud.zarr` depth lifted onto the original frames; `splats` fuses depth and color rendered from the splats stage's `ckpt.pt` (needs the splats stage, which is never auto-run) |
 | `mesh.voxel_depth_px` | float | `4.0` | TSDF voxel edge in depth pixels: `voxel = voxel_depth_px × depth / fx` at the `voxel_ref_percentile` depth, `fx` on the depth's own grid (model grid for feedforward). Derived per scene, so it follows the reconstruction's scale; coarsened further when the surface blocks would exceed 8 GB. `4.0` reproduces the hand-tuned `0.0025` of the 294-frame GH010229 run |
 | `mesh.voxel_ref_percentile` | float | `50` | Depth percentile the voxel footprint is taken at; lower favors near surfaces with a finer voxel |
 | `mesh.sdf_trunc_mult` | float | `4.0` | Truncation band as a multiple of `voxel_size`. This, not `voxel_size`, sets the thin-structure floor: a TSDF cannot resolve anything thinner than `2 × sdf_trunc`, and where a structure's front and back surface both fall inside one band they cancel and it disappears entirely. A bar seen only from the front does not cancel — it is fattened to the floor width instead, which is how a railing survives fusion as a slab and then dies as a floater. At the default the floor is `8 × voxel_size`, four times coarser than the voxel grid itself. `4.0` is Open3D's default for noisy sensor RGBD; rendered splat depth is much cleaner, so `1.5`–`2.0` recovers fence posts and railings at the same voxel size and the same memory. Must be `>= 1.0` — a band narrower than a voxel punctures the surface |
-| `mesh.depth_trunc_percentile` | float\|null | `null` | Ignore depth beyond this percentile of the scene's depth (`null` = keep every depth) |
+| `mesh.depth_trunc_percentile` | float | `95` | Zero depth beyond this percentile of the scene's depth before the voxel is sized and fused. Required, in (0, 99]; `null` or more is a `ValueError`, because an uncut far tail (one stray 24-unit depth against a 0.34 median) crashes Open3D's `extract_triangle_mesh` |
 | `mesh.conf_percentile` | float\|null | `20` | Drop depth below this global confidence percentile before fusing (`null` = off). `source: feedforward` only; a reconstruction that carries no confidence (sfm) fuses unmasked and logs that it did |
 | `mesh.mask_sky` | bool | `true` | Zero depth wherever the sky segmenter fires before fusing, so sky never seeds floaters |
 | `mesh.max_faces` | int\|null | `1500000` | Face budget for the prepared mesh: past the error-bound decimation, a second QEM pass down to this count so texturing cost stays bounded (`null` = no cap) |
@@ -435,6 +437,8 @@ parameter and raises.
 | `mesh.use_convex_hull` | bool | `true` | Trim the ragged outer edge and patch the ground out to a rounded convex hull before hole filling (`make_convex_hull`). Ground-dominated outdoor scenes only; a mesh without a dominant ground raises, so set it `false` indoors and for objects. See `docs/mesh.md` |
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the `pointcloud.zarr` poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
+| `splats.representation` | str | `vanilla` | `vanilla` (per-Gaussian) or `scaffold` (anchors + MLP; set `losses.opacity_reg` weight 0) |
+| `splats.scaffold` | dict | absent | Scaffold-only overrides, unset by default: `n_offsets` 10, `feat_dim` 32, `voxel_multiplier` 1.0 (× median kNN seed spacing), `update_from` 1500, `update_until` 15000, `refine_every` 100, `grad_threshold` 2.0e-4, `min_opacity` 0.005, `update_init_factor` 16, `success_threshold` 0.8, `appearance_dim` 32 (0 = off), `mlp_bf16` true |
 | `splats.max_steps` | int | `30000` | Training iterations |
 | `splats.pose_opt` | bool | `true` | Refine camera poses jointly (`CameraOpt`) |
 | `splats.sh_degree` | int | `3` | Max spherical-harmonics degree |

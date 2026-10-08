@@ -94,13 +94,15 @@ def render_gaussians(
             f"render_gaussians renders one camera at a time, got {cam_to_world.shape[0]}"
         )
 
+    # General inverse: refined and loaded poses are not guaranteed orthonormal; _ex skips the sync
+    world_to_cam, _ = torch.linalg.inv_ex(cam_to_world)
+
     # Arguments shared by both rasterizers
     means = decoded["means"]
     quats = decoded["quats"]
     scales = decoded["scales"]
     opacities = decoded["opacities"]
     colors = decoded["colors"]
-    world_to_cam = torch.linalg.inv(cam_to_world)
     shared_kwargs = dict(
         means=means,
         quats=quats,
@@ -216,10 +218,10 @@ def render_views(
         One render dict per view: `rgb` (1, H, W, 3) in [0, 1], `depth`, `alpha`, `normal`
         (2DGS also `median_depth`).
     """
-    device = cam_to_world.device
+    view_ids = torch.arange(len(cam_to_world), device=cam_to_world.device)
 
     for view in range(len(cam_to_world)):
-        camera_id = torch.tensor([view], device=device)
+        camera_id = view_ids[view : view + 1]
         render, _ = model.render(
             cam_to_world[view : view + 1],
             intrinsics[view : view + 1],

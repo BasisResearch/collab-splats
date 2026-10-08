@@ -217,18 +217,18 @@ def make_factory(
 
 
 def run_app(
+    base_dir: str,
     host: str = "0.0.0.0",
     port: int = 7860,
-    base_dir: str = "/workspace/outputs",
     websocket_origin: str | list[str] | None = None,
 ) -> None:
     """
     Serve the dashboard, binding BEFORE the heavy stack imports.
 
     Args:
+        base_dir: local outputs root, one directory per scene.
         host: bind address.
         port: bind port.
-        base_dir: local outputs root, one directory per scene.
         websocket_origin: allowed Origin host:port list, or "*"; None allows host:port and localhost:port.
     """
     # The run job's preproc stage draws QA figures on the worker thread; force the thread-safe Agg backend

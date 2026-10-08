@@ -158,7 +158,7 @@ class SplatsApp:
     def __init__(
         self,
         gpu_worker: GpuWorker,
-        base_dir: Path = Path("/workspace/outputs"),
+        base_dir: Path,
         source: SceneSource | None = None,
         op_log: OperationLog | None = None,
     ) -> None:

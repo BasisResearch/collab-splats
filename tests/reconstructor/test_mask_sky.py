@@ -138,3 +138,9 @@ def test_mask_sky_asks_for_splats_frames_in_checkpoint_order(tmp_path):
     assert sky.call_args.kwargs["idxs"] == [7, 0]
     assert np.all(fused["depths"][0] == 0.0)
     assert np.all(fused["depths"][1] == 1.0)
+
+
+def test_mask_sky_over_every_pixel_refuses_with_a_clear_error(tmp_path):
+    # All-sky leaves no depth to take the trunc percentile of
+    with pytest.raises(ValueError, match="no positive depth"):
+        _run_feedforward_mesh(tmp_path, {}, np.ones((2, 8, 8), bool), mask_sky=True)

@@ -1232,7 +1232,7 @@ class Reconstructor:
         Raises:
             FileNotFoundError: the splats source has no ckpt.pt on disk.
             ValueError: mesh.source is neither feedforward nor splats, mesh.depth_trunc_percentile is outside
-                (0, 99], or sky masks mismatch the depths.
+                (0, 99], sky masks mismatch the depths, or no positive depth is left to fuse.
             RuntimeError: mesh.texture is on but no CUDA device is available.
         """
         cfg = self.config["mesh"]
@@ -1319,9 +1319,16 @@ class Reconstructor:
             )
             del sky
 
-        # Cut far depth before voxel sizing
+        # Cut far depth before voxel sizing; refuse depth that masking emptied
         sub = depths[:, ::8, ::8]
-        depth_trunc = float(np.percentile(sub[sub > 0], trunc_pct))
+        sub = sub[sub > 0]
+
+        if sub.size == 0:
+            raise ValueError(
+                f"mesh: no positive depth left on the ::8 grid after masking ({source} source)"
+            )
+
+        depth_trunc = float(np.percentile(sub, trunc_pct))
         depths = np.where(depths > depth_trunc, 0.0, depths)
 
         # Voxel from this scene's own depth; the world has no fixed scale

@@ -64,7 +64,7 @@ pointcloud:
     max_reproj_error: 4.0      # pre-solve pixel reprojection gate; null skips the filter
     min_inliers_per_frame: 64  # frames below this inlier count sit out the solve
     solver: schur              # schur eliminates points (less GPU); lm solves the joint system
-    dtype: float32             # solve precision: float32 | float64
+    dtype: float64             # solve precision: float32 | float64
     lm_steps: 40               # max LM steps without photometric; photometric runs up to its 30-step schedule
     lm_tol: 1.0e-4             # relative loss drop below which an LM step counts as stalled
     lm_patience: 2             # stalled steps in a row that end the solve, or one photometric re-sample

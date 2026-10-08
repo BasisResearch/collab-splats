@@ -402,7 +402,7 @@ parameter and raises.
 | `pointcloud.bundle_adjustment.max_reproj_error` | float\|null | `4.0` | Pre-solve pixel reprojection gate; `null` skips the filter |
 | `pointcloud.bundle_adjustment.min_inliers_per_frame` | int | `64` | Frames below this inlier count sit out the solve |
 | `pointcloud.bundle_adjustment.solver` | str | `schur` | `schur` eliminates points (camera-only PCG, less GPU); `lm` solves the joint system. `schur` with `refine_focal` and `shared_camera` is a `ValueError` |
-| `pointcloud.bundle_adjustment.dtype` | str | `float32` | Solve precision, `float32` or `float64`; anything else is a `ValueError` |
+| `pointcloud.bundle_adjustment.dtype` | str | `float64` | Solve precision, `float32` or `float64`; anything else is a `ValueError` |
 | `pointcloud.bundle_adjustment.lm_steps` | int | `40` | Max LM steps for a solve without photometric. Ignored with `use_photometric`, which runs up to (3, 2, 1) scale re-samples x 5 IRLS steps, 30 in all |
 | `pointcloud.bundle_adjustment.lm_tol` | float | `1.0e-4` | Relative loss drop below which an LM step counts as stalled; `ValueError` below 0 |
 | `pointcloud.bundle_adjustment.lm_patience` | int | `2` | Stalled steps in a row that end the solve, or one photometric re-sample; `ValueError` below 1 |

@@ -1,5 +1,5 @@
 """
-Sky segmentation over the skywater ONNX SegFormer, plus a cached per-scene mask stack.
+Sky segmentation over the skywater SegFormer in PyTorch, plus a cached per-scene mask stack.
 
 - SkyWaterSegmentation ("skywater"): MiT-B2 fine-tuned on ADE20K sky/water/person
 - sky_masks: (N, H, W) mask stack over a cached sky-probability PNG per frame, order-preserving
@@ -9,20 +9,29 @@ Sky segmentation over the skywater ONNX SegFormer, plus a cached per-scene mask 
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from pathlib import Path
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 import torch
 from PIL import Image
+from safetensors.torch import load_file
+from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
+
+import segmentation_models_pytorch as smp
 
 from collab_splats.preproc import frames
 from collab_splats.semantics.segmentation.base import BaseSegmentation
 from collab_splats.utils.image import IMAGENET_MEAN, IMAGENET_STD, open_image
-from collab_splats.utils.torch_utils import load_hf_weights
+from collab_splats.utils.torch_utils import (
+    batch_iterator,
+    full_fp32_matmul,
+    get_device,
+    load_hf_weights,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,29 +48,46 @@ class SkyWaterSegmentation(BaseSegmentation):
     - water and person are segmented too but unused; the mesh stage masks sky alone
     - the probability is resized to the frame BEFORE thresholding, so the mask boundary
       aliases onto the frame grid and not the model's square one
+    - weights are the repo's smp checkpoint, of which its ONNX file is an export
 
     Args:
         threshold: probability above which a pixel is sky.
-        repo_id: Hugging Face repo holding the ONNX file.
-        filename: ONNX file within that repo.
+        repo_id: Hugging Face repo holding config.json and model.safetensors.
         input_size: the network's fixed square input edge; aspect ratio is not preserved.
         sky_class: sky's index along the (background, sky, water, person) logit axis.
+        device: torch device; None picks one with get_device.
     """
 
     def __init__(
         self,
         threshold: float = 0.5,
         repo_id: str = "Realcat/skywater_seg",
-        filename: str = "skywater_segformer_b2_fp32.onnx",
         input_size: int = 384,
         sky_class: int = 1,
+        device: str | None = None,
     ) -> None:
-        # CUDA first when available; naming a missing provider only warns, so filter
-        providers = [
-            p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in ort.get_available_providers()
-        ]
-        self._session = ort.InferenceSession(str(load_hf_weights(repo_id, filename)), providers=providers)
-        self._input_name = self._session.get_inputs()[0].name
+        # Build the SegFormer from the repo config; the checkpoint replaces the ImageNet init
+        config_path = load_hf_weights(repo_id, "config.json")
+
+        with open(config_path) as f:
+            config = json.load(f)
+
+        model = smp.Segformer(
+            encoder_name=config["encoder_name"],
+            encoder_weights=None,
+            decoder_segmentation_channels=config["decoder_channels"],
+            in_channels=config["in_channels"],
+            classes=config["classes"],
+        )
+
+        # The checkpoint wraps the smp model as `_model`; strip that prefix, then load strictly
+        weights_path = load_hf_weights(repo_id, "model.safetensors")
+        state_dict = load_file(weights_path)
+        consume_prefix_in_state_dict_if_present(state_dict, "_model.")
+        model.load_state_dict(state_dict)
+
+        self._device = device or get_device()
+        self._model = model.to(self._device).eval()
         self._threshold = threshold
         self._input_size = input_size
         self._sky_class = sky_class
@@ -77,24 +103,45 @@ class SkyWaterSegmentation(BaseSegmentation):
             (mask, metadata) — mask (H, W) bool at input resolution, True where sky;
             metadata carries 'raw', the (H, W) float32 probability map.
         """
-        rgb = np.asarray(open_image(image).convert("RGB"))
-        height, width = rgb.shape[:2]
+        return self.segment_batch([image])[0]
+
+    def segment_batch(self, images: Sequence[np.ndarray | Image.Image | Path | str]) -> list[tuple[torch.Tensor, dict]]:
+        """
+        Sky masks for several frames in one forward pass.
+
+        - frames may differ in size: each is squared for the model, then resized back to its own
+
+        Args:
+            images: the frames to segment, each coerced through `utils.image.open_image`.
+
+        Returns:
+            One (mask, metadata) per image, in order, shaped as `segment` returns them.
+        """
+        rgbs = [np.asarray(open_image(image).convert("RGB")) for image in images]
 
         # The model's own preprocessing: square resize, /255, ImageNet normalize, NCHW
-        square = cv2.resize(rgb, (self._input_size, self._input_size)).astype(np.float32) / 255.0
-        square = (square - np.asarray(IMAGENET_MEAN, np.float32)) / np.asarray(IMAGENET_STD, np.float32)
-        tensor = square.transpose(2, 0, 1)[None].astype(np.float32)
+        squares = np.stack([cv2.resize(rgb, (self._input_size, self._input_size)) for rgb in rgbs])
+        squares = squares.astype(np.float32) / 255.0
+        squares = (squares - np.asarray(IMAGENET_MEAN, np.float32)) / np.asarray(IMAGENET_STD, np.float32)
+        squares = np.ascontiguousarray(squares.transpose(0, 3, 1, 2))
+        batch = torch.from_numpy(squares).to(self._device)
 
-        # Softmax the (1, 4, h, w) output: it is class logits, not probabilities
-        # - max-subtracted, since a large logit overflows exp()
-        # - upstream skyseg's per-image min-max rescale stays dropped: it stretches a dim
-        #   frame's maximum to 1.0 and invents sky where the model reported none
-        logits = np.asarray(self._session.run(None, {self._input_name: tensor})[0])[0].astype(np.float32)
-        exp = np.exp(logits - logits.max(axis=0, keepdims=True))
-        prob = (exp / exp.sum(axis=0))[self._sky_class]
+        # Full fp32 forward: cuDNN's default TF32 convs drift the probability ~1e-3 from the ONNX export
+        precision = torch.backends.cudnn.flags(enabled=True, allow_tf32=False)
 
-        raw = cv2.resize(prob, (width, height), interpolation=cv2.INTER_LINEAR)
-        return torch.from_numpy(raw > self._threshold), {"raw": raw}
+        # Softmax over the class axis: the output is logits; skyseg's min-max rescale stays dropped
+        with torch.inference_mode(), precision, full_fp32_matmul():
+            logits = self._model(batch)
+            probs = torch.softmax(logits, dim=1)[:, self._sky_class].cpu().numpy()
+
+        # Resize each probability to its own frame BEFORE thresholding
+        results = []
+
+        for rgb, prob in zip(rgbs, probs):
+            raw = cv2.resize(prob, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
+            results.append((torch.from_numpy(raw > self._threshold), {"raw": raw}))
+
+        return results
 
 
 ########################################################
@@ -107,6 +154,7 @@ def sky_masks(
     idxs: Sequence[int] | None = None,
     cache_dir: Path | str | None = None,
     threshold: float = 0.5,
+    batch_size: int = 16,
 ) -> np.ndarray:
     """
     Sky masks for a keyframe directory, segmenting only what is not already cached.
@@ -126,6 +174,7 @@ def sky_masks(
             sibling sky/.
         threshold: sky probability above which a pixel is sky; applied on read, so
             changing it needs no re-segmentation.
+        batch_size: uncached frames decoded and segmented per forward pass.
 
     Returns:
         (N, H, W) bool, True where sky, in the order `idxs` names.
@@ -150,19 +199,19 @@ def sky_masks(
     wanted = [frames.frame_idx_from_path(p) for p in paths]
     path_of = dict(zip(wanted, paths))
 
-    # Segment only the cache misses, one frame at a time
-    # - segment() opens the path itself, so no decode step here
-    # - frames.read_frames would stack every miss in RAM at once
+    # Segment only the cache misses, batch_size frames per pass, never every miss in RAM at once
     cache_dir.mkdir(parents=True, exist_ok=True)
     todo = [i for i in wanted if not (cache_dir / f"frame_{i:06d}.png").exists()]
 
     if todo:
         model = BaseSegmentation.get("skywater")()
 
-        for idx in todo:
-            _, meta = model.segment(path_of[idx])
-            prob8 = np.rint(np.clip(meta["raw"], 0.0, 1.0) * 255).astype(np.uint8)
-            cv2.imwrite(str(cache_dir / f"frame_{idx:06d}.png"), prob8)
+        for (chunk,) in batch_iterator(batch_size, todo):
+            results = model.segment_batch([path_of[idx] for idx in chunk])
+
+            for idx, (_, meta) in zip(chunk, results):
+                prob8 = np.rint(np.clip(meta["raw"], 0.0, 1.0) * 255).astype(np.uint8)
+                cv2.imwrite(str(cache_dir / f"frame_{idx:06d}.png"), prob8)
 
         logger.info("sky_masks: segmented %d of %d frames into %s", len(todo), len(wanted), cache_dir)
 

@@ -7,7 +7,8 @@ The skywater sky backend and its mask cache.
 - the cache is keyed only by frame_idx, so a warm call must reproduce a cold one exactly
 """
 
-from types import SimpleNamespace
+import io
+import json
 from unittest.mock import MagicMock
 
 import cv2
@@ -21,21 +22,32 @@ from collab_splats.semantics.segmentation import sky
 ######## Fakes
 
 
-class _FakeSession:
+class _FakeModel(torch.nn.Module):
     """
-    Stand-in for onnxruntime.InferenceSession returning one canned output tensor.
+    Stand-in for the smp SegFormer returning canned (4, h, w) logits per image.
+
+    - logits_for(n) gives the n-th image's logits, counted from 1 across every forward
+    - batch_sizes records each forward's batch, so batching is observable
     """
 
-    def __init__(self, output):
-        self._output = output.astype(np.float32)
+    def __init__(self, logits_for):
+        super().__init__()
+        self.logits_for = logits_for
         self.calls = 0
+        self.batch_sizes = []
 
-    def get_inputs(self):
-        return [SimpleNamespace(name="input")]
+    def load_state_dict(self, state_dict, strict=True):
+        return None
 
-    def run(self, output_names, feed):
-        self.calls += 1
-        return [self._output]
+    def forward(self, batch):
+        self.batch_sizes.append(batch.shape[0])
+        out = []
+
+        for _ in range(batch.shape[0]):
+            self.calls += 1
+            out.append(np.asarray(self.logits_for(self.calls), np.float32))
+
+        return torch.from_numpy(np.stack(out))
 
 
 class _ConstantBackend:
@@ -55,6 +67,13 @@ class _ConstantBackend:
         raw = np.where(mask, 0.9, 0.0).astype(np.float32)
         return torch.from_numpy(mask), {"raw": raw}
 
+    def segment_batch(self, images):
+        return [self.segment(image) for image in images]
+
+
+# The repo's config.json fields the backend reads
+_CONFIG = {"encoder_name": "mit_b2", "decoder_channels": 256, "in_channels": 3, "classes": 4}
+
 
 def _logits_for(prob: np.ndarray) -> np.ndarray:
     """
@@ -64,21 +83,23 @@ def _logits_for(prob: np.ndarray) -> np.ndarray:
     return np.stack([rest, np.log(np.clip(prob, 1e-12, None)), rest, rest]).astype(np.float32)
 
 
-def _wire(monkeypatch, output, threshold=0.5):
+def _wire(monkeypatch, logits, threshold=0.5):
     """
-    A SkyWaterSegmentation wired to a fake session over `output`; no download, no ONNX.
+    A SkyWaterSegmentation over a fake model emitting `logits` (4, h, w); no download, no weights.
     """
-    session = _FakeSession(output)
-    monkeypatch.setattr(sky, "load_hf_weights", lambda repo_id, filename: "model.onnx")
-    monkeypatch.setattr(sky.ort, "InferenceSession", lambda path, providers=None: session)
-    return sky.SkyWaterSegmentation(threshold=threshold), session
+    model = _FakeModel(lambda n: logits)
+    monkeypatch.setattr(sky, "load_hf_weights", lambda repo_id, filename: filename)
+    monkeypatch.setattr(sky, "open", lambda path: io.StringIO(json.dumps(_CONFIG)), raising=False)
+    monkeypatch.setattr(sky, "load_file", lambda path: {})
+    monkeypatch.setattr(sky.smp, "Segformer", lambda **kwargs: model)
+    return sky.SkyWaterSegmentation(threshold=threshold, device="cpu"), model
 
 
 def _backend(monkeypatch, prob, threshold=0.5):
     """
     A SkyWaterSegmentation over a probability map, encoded back into four-class logits.
     """
-    return _wire(monkeypatch, _logits_for(prob)[None], threshold=threshold)
+    return _wire(monkeypatch, _logits_for(prob), threshold=threshold)
 
 
 ######## Polarity and threshold
@@ -136,7 +157,7 @@ def test_softmax_picks_the_sky_class(monkeypatch):
     logits[1] = 4.0
     logits[0, 192:] = 8.0
 
-    backend, _ = _wire(monkeypatch, logits[None])
+    backend, _ = _wire(monkeypatch, logits)
     mask, meta = backend.segment(np.zeros((64, 96, 3), np.uint8))
 
     assert mask[:30].all()
@@ -151,7 +172,7 @@ def test_the_output_is_logits_not_probabilities(monkeypatch):
     logits[0] = 5.0
     logits[1] = 2.0
 
-    backend, _ = _wire(monkeypatch, logits[None])
+    backend, _ = _wire(monkeypatch, logits)
     mask, meta = backend.segment(np.zeros((32, 32, 3), np.uint8))
 
     assert not mask.any()
@@ -167,7 +188,7 @@ def test_probabilities_sum_to_one_across_classes(monkeypatch):
 
     per_class = []
     for c in range(4):
-        backend, _ = _wire(monkeypatch, np.roll(logits, -c, axis=0)[None])
+        backend, _ = _wire(monkeypatch, np.roll(logits, -c, axis=0))
         per_class.append(backend.segment(image)[1]["raw"])
 
     assert np.allclose(np.sum(per_class, axis=0), 1.0, atol=1e-5)
@@ -190,49 +211,43 @@ def test_skywater_is_registered_and_exported():
 
 def _scene(tmp_path, monkeypatch, prob, frame_idxs=(0, 5, 7)):
     """
-    An images/ dir plus a registry whose "skywater" entry is the fake-session backend.
+    An images/ dir plus a registry whose "skywater" entry is the fake-model backend.
     """
     images = [np.full((16, 16, 3), idx, np.uint8) for idx in frame_idxs]
     fr.write_frames(tmp_path / "images", images, frame_idxs)
 
-    backend, session = _backend(monkeypatch, prob)
+    backend, model = _backend(monkeypatch, prob)
     monkeypatch.setattr(sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: backend))
-    return tmp_path / "images", session
+    return tmp_path / "images", model
 
 
 def test_sky_masks_reads_every_frame_in_filename_order(tmp_path, monkeypatch):
     prob = np.zeros((384, 384), np.float32)
     prob[:192] = 0.9
-    images_dir, session = _scene(tmp_path, monkeypatch, prob)
+    images_dir, model = _scene(tmp_path, monkeypatch, prob)
 
     masks = sky.sky_masks(images_dir)
 
     assert masks.shape == (3, 16, 16)
     assert masks.dtype == bool
     assert masks[:, :6].all() and not masks[:, 10:].any()
-    assert session.calls == 3
+    assert model.calls == 3
 
 
 @pytest.mark.parametrize("threshold", [-0.1, 1.0, 1.5])
 def test_sky_masks_rejects_threshold_outside_unit_interval(tmp_path, monkeypatch, threshold):
     """A threshold that makes every pixel sky, or none, raises before any frame is segmented."""
-    images_dir, session = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
+    images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
 
     with pytest.raises(ValueError, match="threshold"):
         sky.sky_masks(images_dir, threshold=threshold)
-    assert session.calls == 0
+    assert model.calls == 0
 
 
 def test_sky_masks_returns_masks_in_the_order_idxs_names_them(tmp_path, monkeypatch):
     # Per-frame probability so a permutation is detectable: frame_idx 7 is the only sky one
-    calls = {"n": 0}
-
-    def _logits_for_call():
-        calls["n"] += 1
-        return _logits_for(np.full((384, 384), 0.9 if calls["n"] == 3 else 0.0, np.float32))
-
-    images_dir, session = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
-    monkeypatch.setattr(session, "run", lambda names, feed: [_logits_for_call()[None]])
+    images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
+    model.logits_for = lambda n: _logits_for(np.full((384, 384), 0.9 if n == 3 else 0.0, np.float32))
 
     # Filename order is (0, 5, 7), so the third segmented frame is frame_idx 7
     sky.sky_masks(images_dir)
@@ -245,7 +260,7 @@ def test_sky_masks_returns_masks_in_the_order_idxs_names_them(tmp_path, monkeypa
 def test_sky_masks_caches_probability_as_8bit(tmp_path, monkeypatch):
     prob = np.zeros((384, 384), np.float32)
     prob[:192] = 0.9
-    images_dir, session = _scene(tmp_path, monkeypatch, prob)
+    images_dir, model = _scene(tmp_path, monkeypatch, prob)
 
     sky.sky_masks(images_dir)
     cached = cv2.imread(str(tmp_path / "sky" / "frame_000005.png"), cv2.IMREAD_GRAYSCALE)
@@ -299,22 +314,19 @@ def test_sky_masks_second_call_runs_the_model_zero_times(tmp_path, monkeypatch):
     # Each frame gets a DIFFERENT sky band, so the warm call is compared and not merely counted
     # - a uniform fixture makes every row identical, and then a cache that returned the wrong
     #   frame, or the rows in the wrong order, would still satisfy the assertions below
-    calls = {"n": 0}
-
-    def _logits_for_call():
-        calls["n"] += 1
+    def _band_logits(n):
         prob = np.zeros((384, 384), np.float32)
-        prob[: 96 * calls["n"]] = 0.9
+        prob[: 96 * n] = 0.9
         return _logits_for(prob)
 
-    images_dir, session = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
-    monkeypatch.setattr(session, "run", lambda names, feed: [_logits_for_call()[None]])
+    images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
+    model.logits_for = _band_logits
 
     first = sky.sky_masks(images_dir)
-    assert calls["n"] == 3
+    assert model.calls == 3
 
     again = sky.sky_masks(images_dir)
-    assert calls["n"] == 3
+    assert model.calls == 3
     assert np.array_equal(first, again)
 
     # The three frames must be mutually distinguishable, or the equality above proves nothing
@@ -344,10 +356,55 @@ def test_sky_masks_asks_the_registry_for_skywater(tmp_path, monkeypatch):
 
 def test_sky_masks_segments_without_stacking_every_uncached_frame(tmp_path, monkeypatch):
     # read_frames returns one np.stack of every miss — ~10 GB for an 853-frame scene, on top
-    # of whatever fusion buffers the mesh stage is already holding. Segmenting reads one at a
-    # time, so this whole run must never reach read_frames.
+    # of whatever fusion buffers the mesh stage is already holding. Segmenting reads one batch
+    # at a time, so this whole run must never reach read_frames.
     images_dir, _ = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
     monkeypatch.setattr(sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: _ConstantBackend(True)))
     monkeypatch.setattr(sky.frames, "read_frames", lambda *a, **k: pytest.fail("sky_masks called read_frames"))
 
     assert sky.sky_masks(images_dir).all()
+
+
+######## Batching
+
+
+def test_sky_masks_segments_misses_in_batches_of_batch_size(tmp_path, monkeypatch):
+    # Five misses at batch_size=2 are three forwards; only the third frame is sky
+    images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32), frame_idxs=(0, 1, 2, 3, 4))
+    model.logits_for = lambda n: _logits_for(np.full((384, 384), 0.9 if n == 3 else 0.0, np.float32))
+
+    masks = sky.sky_masks(images_dir, batch_size=2)
+
+    assert model.batch_sizes == [2, 2, 1]
+    assert [bool(m.all()) for m in masks] == [False, False, True, False, False]
+
+
+def test_segment_batch_returns_each_frame_at_its_own_size(monkeypatch):
+    prob = np.zeros((384, 384), np.float32)
+    prob[:192] = 0.9
+    backend, model = _backend(monkeypatch, prob)
+
+    results = backend.segment_batch([np.zeros((64, 96, 3), np.uint8), np.zeros((20, 10, 3), np.uint8)])
+
+    assert model.batch_sizes == [2]
+    assert [mask.shape for mask, _ in results] == [(64, 96), (20, 10)]
+    assert [meta["raw"].shape for _, meta in results] == [(64, 96), (20, 10)]
+    assert results[0][0][:30].all() and not results[0][0][34:].any()
+
+
+######## Real checkpoint
+
+
+@pytest.mark.slow
+def test_real_checkpoint_batched_matches_single_on_cpu():
+    # Downloads the smp checkpoint; batch and single forwards must agree to float rounding
+    backend = sky.SkyWaterSegmentation(device="cpu")
+    rng = np.random.default_rng(0)
+    images = [rng.integers(0, 256, (48, 64, 3), dtype=np.uint8) for _ in range(2)]
+
+    batched = backend.segment_batch(images)
+    single = [backend.segment(image) for image in images]
+
+    for (_, b), (_, s) in zip(batched, single):
+        assert np.allclose(b["raw"], s["raw"], atol=1e-5)
+        assert 0.0 <= b["raw"].min() and b["raw"].max() <= 1.0

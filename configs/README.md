@@ -821,8 +821,7 @@ this repo reads it; drop it when convenient with
   - remote (backend-keyed, as published by the remote driver):
     `rclone moveto <remote>:environments-processed/<scene>/<backend>/feedforward.zarr \
       <remote>:environments-processed/<scene>/<backend>/pointcloud.zarr`
-  - remote (flat, the layout the dashboard pulls — `pull_zarr_members` in
-    `collab_splats/remote.py`):
+  - remote (flat, the layout the dashboard pulls):
     `rclone moveto <remote>:environments-processed/<scene>/feedforward.zarr \
       <remote>:environments-processed/<scene>/pointcloud.zarr`
 

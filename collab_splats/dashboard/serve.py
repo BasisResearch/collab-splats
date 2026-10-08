@@ -1,22 +1,24 @@
-# collab_splats/dashboard/serve.py
-"""Fast-binding dashboard server: page up in seconds, heavy imports stream to the page.
+"""
+Fast-binding dashboard server: page up in seconds, heavy imports stream to the page.
 
-The CLI binds the HTTP server BEFORE the heavy reconstruction stack (torch models,
-creators, pipeline) is imported. Until the stack is warm, every session gets a light
-loading page whose progress strip polls the shared OperationLog — the same status UI
-the dashboard uses for run progress — and the page reloads itself into the real
-dashboard when the stack is ready.
-
-This module must stay light: no torch / pyvista / dashboard.app imports at module
-level (the package __init__ is lazy for the same reason).
+- binds the HTTP server BEFORE the heavy reconstruction stack (torch, creators, pipeline) imports
+- until warm, every session gets a loading page polling the shared OperationLog
+- the loading page reloads itself into the real dashboard once the stack is ready
+- must stay light: no torch / pyvista / dashboard.app imports at module level
 """
 
 from __future__ import annotations
 
+import atexit
 import importlib
 import logging
+import os
+import shutil
+import subprocess
 import threading
+import time
 from pathlib import Path
+from typing import Callable
 
 import panel as pn
 
@@ -24,79 +26,131 @@ from collab_splats.dashboard.operation_log import OperationLog
 
 logger = logging.getLogger(__name__)
 
-# Heavy modules the warm thread imports, in order, with user-facing labels. torch is
-# listed first so the biggest single import gets its own progress line.
+# Heavy modules the warm thread imports, in order, with user-facing labels; torch first
 _WARM_MODULES = (
     ("torch", "torch runtime"),
     ("collab_splats.dashboard.app", "dashboard core (viewer + models)"),
-    ("collab_splats.dashboard.pipeline", "reconstruction pipeline"),
-    ("collab_splats.semantics.features.base", "semantic extractors"),
-    ("collab_splats.localization.localizer", "localization stack"),
 )
 
 
+########
+# Warm-up
+########
+
+
 class ServerState:
-    """Warm/ready state shared between the warm thread and per-session factories."""
+    """
+    Warm/ready state shared between the warm thread and per-session factories.
+
+    - gpu_worker is built post-warm: GpuWorker's import pulls torch
+    """
 
     def __init__(self) -> None:
+        """
+        Start cold, with no GPU worker.
+        """
         self.ready = False
-        self.failed = False
-        self.gpu_worker = None  # constructed post-warm: GpuWorker's import pulls torch
+        self.gpu_worker = None
+
+
+def _ensure_display() -> None:
+    """
+    Start a headless Xvfb display if none is set, so VTK gets an OpenGL context.
+
+    - pn.pane.VTK builds a vtkXOpenGLRenderWindow per document; with no DISPLAY it blocks in C
+    """
+    if os.environ.get("DISPLAY"):
+        return
+
+    if not shutil.which("Xvfb"):
+        logger.warning("no DISPLAY and Xvfb not installed; VTK rendering will fail on a headless host")
+        return
+
+    # Software GL via Mesa; containers rarely expose GLX on the GPU
+    os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+    display = ":99"
+    proc = subprocess.Popen(
+        ["Xvfb", display, "-screen", "0", "1280x1024x24", "-nolisten", "tcp"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    atexit.register(proc.terminate)
+    os.environ["DISPLAY"] = display
+    time.sleep(1.0)  # let Xvfb come up before VTK probes the display
+    logger.info("started Xvfb on %s for headless VTK rendering", display)
 
 
 def _finalize(state: ServerState) -> None:
-    """Post-import setup: headless display + the shared GPU worker (warm thread)."""
-    from collab_splats.dashboard.app import _ensure_display
+    """
+    Post-import setup on the warm thread: headless display and the shared GPU worker.
+    """
+    # GpuWorker's module imports torch, so it loads only once the stack is warm
     from collab_splats.dashboard.gpu_worker import GpuWorker
 
     _ensure_display()  # Xvfb must exist before the first real session builds VTK panes
     state.gpu_worker = GpuWorker()
 
 
-def warm(state: ServerState, op_log: OperationLog, modules=_WARM_MODULES, finalize=_finalize) -> None:
-    """Import the heavy stack, streaming per-module progress into the op log."""
+def warm(
+    state: ServerState,
+    op_log: OperationLog,
+    modules: tuple[tuple[str, str], ...] = _WARM_MODULES,
+    finalize: Callable[[ServerState], None] = _finalize,
+) -> None:
+    """
+    Import the heavy stack, streaming per-module progress into the op log.
+
+    - any failure stops startup: the op log shows the error and state.ready stays False
+
+    Args:
+        state: shared server state; ready flips True on success.
+        op_log: shared log the loading page polls.
+        modules: (module name, user-facing label) pairs, imported in order.
+        finalize: post-import setup step, given the state.
+    """
     op_log.start_op("starting dashboard")
     total = len(modules) + 1  # +1 for the display/worker finalize step
-    core_ok = True
-    for i, (name, label) in enumerate(modules):
-        op_log.update_progress(int(100 * i / total), f"importing {label}")
-        try:
+
+    try:
+        for i, (name, label) in enumerate(modules):
+            op_log.update_progress(int(100 * i / total), f"importing {label}")
+
             with op_log.step(f"import {label}"):
                 importlib.import_module(name)
-        except Exception:
-            logger.exception("warm import failed: %s", name)
-            # Only dashboard core is load-bearing; optional stacks may be absent.
-            if name.endswith("dashboard.app"):
-                core_ok = False
-    op_log.update_progress(int(100 * len(modules) / total), "preparing display + GPU worker")
-    if not core_ok:
-        op_log.error_op("dashboard startup failed: core import error (see server log)")
-        state.failed = True
-        return
-    try:
+
+        op_log.update_progress(int(100 * len(modules) / total), "preparing display + GPU worker")
         finalize(state)
     except Exception as exc:
-        logger.exception("dashboard warm finalize failed")
-        op_log.error_op(f"dashboard startup failed: {exc}")
-        state.failed = True
+        logger.exception("dashboard warm-up failed")
+        failure = f"dashboard startup failed: {exc}"
+        op_log.error_op(failure)
         return
+
     state.ready = True
     op_log.finish_op()
 
 
+########
+# Pages
+########
+
+
 def _loading_page(state: ServerState, op_log: OperationLog) -> pn.template.MaterialTemplate:
-    """Session shown while the stack warms: live import progress, then self-reload."""
+    """
+    Session shown while the stack warms: live import progress, then self-reload.
+    """
     progress = pn.pane.HTML(op_log.render_html(), sizing_mode="stretch_width")
 
     def _tick() -> None:
         progress.object = op_log.render_html()
+
+        # Stack is warm: reload this session; the factory now serves the real page
         if state.ready:
-            # Stack is warm: reload this session; the factory now serves the real shell.
             pn.state.location.reload = True
 
     try:
         pn.state.add_periodic_callback(_tick, period=300, start=True)
-    except Exception:
+    except RuntimeError:
         logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
 
     body = pn.Column(
@@ -112,39 +166,59 @@ def _loading_page(state: ServerState, op_log: OperationLog) -> pn.template.Mater
     return pn.template.MaterialTemplate(title="splats", main=[body], header_background="#2596be")
 
 
-def make_factory(base_dir, state: ServerState, op_log: OperationLog):
-    """Return the per-session page factory: loading page until warm, then the real shell."""
+def make_factory(
+    base_dir: str | Path, state: ServerState, op_log: OperationLog
+) -> Callable[[], pn.template.MaterialTemplate]:
+    """
+    Per-session page factory: the loading page until warm, then the real dashboard.
+
+    Args:
+        base_dir: local outputs root, one directory per scene.
+        state: shared server state the factory checks for readiness.
+        op_log: shared log handed to every page.
+
+    Returns:
+        Zero-argument callable building one session's page.
+    """
 
     def factory() -> pn.template.MaterialTemplate:
         if not state.ready:
             return _loading_page(state, op_log)
-        # Import stays local: shell pulls the heavy app stack, guaranteed warm here.
-        from collab_splats.dashboard.shell import DashboardShell
 
-        return DashboardShell(base_dir=Path(base_dir), gpu_worker=state.gpu_worker, op_log=op_log).view()
+        # Import stays local: app pulls the heavy stack, guaranteed warm here
+        from collab_splats.dashboard.app import SplatsApp
+
+        return SplatsApp(base_dir=Path(base_dir), gpu_worker=state.gpu_worker, op_log=op_log).view()
 
     return factory
+
+
+########
+# Server
+########
 
 
 def run_app(
     host: str = "0.0.0.0",
     port: int = 7860,
     base_dir: str = "/workspace/outputs",
-    websocket_origin: "str | list[str] | None" = None,
+    websocket_origin: str | list[str] | None = None,
 ) -> None:
-    """Serve the dashboard, binding BEFORE the heavy stack imports.
-
-    websocket_origin=None restricts connections to host:port + localhost:port. Pass an
-    explicit list (or "*") to allow remote-IP / SSH-tunnel access.
     """
-    # Worker threads build matplotlib figures; force the thread-safe Agg backend before
-    # any pyplot import can auto-select a GUI toolkit.
+    Serve the dashboard, binding BEFORE the heavy stack imports.
+
+    Args:
+        host: bind address.
+        port: bind port.
+        base_dir: local outputs root, one directory per scene.
+        websocket_origin: allowed Origin host:port list, or "*"; None allows host:port and localhost:port.
+    """
+    # The run job's preproc stage draws QA figures on the worker thread; force the thread-safe Agg backend
     import matplotlib
 
     matplotlib.use("Agg")
 
-    # inline=True serves all JS/CSS from this server (headless hosts can't reach CDNs);
-    # registering the vtk extension is JS-side only and does not import python vtk.
+    # inline=True serves all JS/CSS locally; the vtk extension is JS-side only
     pn.extension("vtk", inline=True)
 
     op_log = OperationLog()
@@ -152,14 +226,11 @@ def run_app(
     threading.Thread(target=warm, args=(state, op_log), name="warm", daemon=True).start()
 
     if websocket_origin is None:
-        origin: "str | list[str]" = [f"{host}:{port}", f"localhost:{port}"]
+        origin: str | list[str] = [f"{host}:{port}", f"localhost:{port}"]
     else:
         origin = websocket_origin
 
-    print(
-        f"dashboard listening on http://{host}:{port} — open it now; import progress shows on the page",
-        flush=True,
-    )
+    logger.info("dashboard listening on http://%s:%s — open it now; import progress shows on the page", host, port)
     pn.serve(
         make_factory(base_dir, state, op_log),
         address=host,

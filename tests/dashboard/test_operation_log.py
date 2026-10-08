@@ -1,3 +1,5 @@
+"""Tests for OperationLog: op lifecycle, progress, capped log lines, logging bridge, HTML render."""
+
 import logging
 
 import pytest
@@ -5,7 +7,7 @@ import pytest
 from collab_splats.dashboard.operation_log import OperationLog
 
 
-def test_operation_log_defaults():
+def test_operation_log_starts_idle_and_empty():
     log = OperationLog()
     assert log.current_op == ""
     assert log.progress == 0
@@ -13,7 +15,7 @@ def test_operation_log_defaults():
     assert log.log_lines == []
 
 
-def test_start_op():
+def test_start_op_marks_running_at_zero():
     log = OperationLog()
     log.start_op("Extracting frames")
     assert log.current_op == "Extracting frames"
@@ -21,7 +23,7 @@ def test_start_op():
     assert log.progress == 0
 
 
-def test_update_progress():
+def test_update_progress_sets_percent_and_logs_the_message():
     log = OperationLog()
     log.start_op("Test op")
     log.update_progress(50, "halfway")
@@ -36,7 +38,7 @@ def test_update_progress_clamps_to_100():
     assert log.progress == 100
 
 
-def test_finish_op():
+def test_finish_op_stops_at_100():
     log = OperationLog()
     log.start_op("Test")
     log.finish_op()
@@ -44,7 +46,7 @@ def test_finish_op():
     assert log.progress == 100
 
 
-def test_error_op():
+def test_error_op_stops_and_logs_the_message():
     log = OperationLog()
     log.start_op("Test")
     log.error_op("something failed")
@@ -52,21 +54,25 @@ def test_error_op():
     assert any("something failed" in line for line in log.log_lines)
 
 
-def test_log_lines_capped_at_100():
+def test_log_lines_keep_the_newest_100():
     log = OperationLog()
     log.start_op("Test")
+
     for i in range(150):
         log.update_progress(0, f"line {i}")
-    assert len(log.log_lines) <= 100
+
+    assert len(log.log_lines) == 100
+    assert log.log_lines[-1] == "line 149"
 
 
 def test_attach_logging_bridges_module_logs():
     log = OperationLog()
     lg = logging.getLogger("collab_splats.dummy_bridge")
-    with log.attach_logging("collab_splats"):
+    with log.attach_logging():
         lg.info("extract_and_cache: 12/50 frames written")
     assert any("12/50 frames" in line for line in log.log_lines)
-    # After detach, further records are not captured.
+
+    # After detach, further records are not captured
     n = len(log.log_lines)
     lg.info("after detach")
     assert len(log.log_lines) == n
@@ -79,14 +85,6 @@ def test_rclone_progress_forwards_percent_to_status():
     on_line("Transferred: 1 GiB / 2 GiB, 42%, 10 MiB/s")
     assert log.progress == 42
     assert log.current_op == "⬇ pulling from server"
-
-
-def test_panel_returns_component():
-    import panel as pn
-
-    log = OperationLog()
-    result = log.panel()
-    assert result is not None
 
 
 def test_step_logs_start_and_elapsed():
@@ -113,10 +111,22 @@ def test_version_bumps_on_mutation_only():
     log.append_line("a")
     v1 = log.version
     assert v1 > v0
-    log.append_line("a")  # consecutive dupe is collapsed -> no bump
+
+    # A consecutive duplicate is collapsed, so the version does not move
+    log.append_line("a")
     assert log.version == v1
     log.start_op("x")
     log.update_progress(10, "y")
     log.finish_op()
     log.error_op("z")
     assert log.version > v1
+
+
+def test_render_html_escapes_log_text():
+    """Log lines are shown as text, never parsed as markup."""
+    log = OperationLog()
+    log.start_op("<b>op</b>")
+    log.append_line("<script>x</script>")
+    out = log.render_html()
+    assert "<script>" not in out and "&lt;script&gt;" in out
+    assert "<b>op</b>" not in out

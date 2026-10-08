@@ -255,7 +255,7 @@ Full suite (`/opt/venv/reconstruction/bin/python -m pytest tests/ -q`): **1121 p
 
 Pass count dropped from ~1200 (pre-cleanup) to 1121 **entirely by retiring scripts + their covering tests** (allowed: deleting a script deletes its test) — no behavior regressions. Retired test files: `test_cross_model_runner`, `test_run_lc_parity`, `test_build_benchmark_table`, `test_build_parity_table`, `test_lc_loop_pr`, `test_visualize_lc_correction`, `test_loop_ablation`, `test_loop_ablation_json`, `test_reconstruction_quality`, `test_lc_parity_common`, `test_lc_decisions`, `test_ate_utils_tum`, `test_run_vggt_slam_lc` (folded into `test_run_vggt_slam`). New tests added: `test_eval_config`, extended `test_datasets`.
 
-Known flaky (pre-existing, unrelated): `tests/dashboard/test_viz_utils.py::test_view_transform_scales_to_target_radius` — nondeterministic, fails ~1/3 of runs on identical code; surfaces intermittently, not a regression.
+Known flaky (pre-existing, unrelated): `tests/dashboard/test_viz_utils.py::test_view_transform_scales_to_target_radius` — nondeterministic, fails ~1/3 of runs on identical code; surfaces intermittently, not a regression. **Gone 2026-10-08:** `test_viz_utils.py` deleted with `dashboard/viz_utils.py` (dashboard release).
 
 ---
 
@@ -311,7 +311,8 @@ Three structural unblocks (deps-by-default, `tests/nerfstudio_methods` rename, t
   fails ~1/3 of runs even in isolation on identical code (verified 2026-07-15: FAIL/PASS/PASS across
   three isolated runs at the same commit). Unseeded randomness or float-tolerance issue in the
   view-transform scaling math — pre-dates the localization-dashboard work; needs a seed or looser
-  tolerance. Retry on failure until fixed.
+  tolerance. Retry on failure until fixed. **Gone 2026-10-08:** the test file was deleted with
+  `dashboard/viz_utils.py` (dashboard release), so this flake no longer exists.
 
 ## numpy version note (env, not a code bug)
 

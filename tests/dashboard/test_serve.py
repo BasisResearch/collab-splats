@@ -13,8 +13,9 @@ def test_factory_serves_loading_page_until_ready(tmp_path):
     state = ServerState()
     op_log = OperationLog()
     factory = make_factory(tmp_path, state, op_log)
+
+    # Before warm() finishes the factory serves the cheap loading page
     tmpl = factory()
-    # Loading page is a template with no tabs — cheap to build, no heavy imports.
     assert isinstance(tmpl, pn.template.MaterialTemplate)
     assert not state.ready
 
@@ -22,29 +23,21 @@ def test_factory_serves_loading_page_until_ready(tmp_path):
 def test_warm_flips_ready_and_streams_progress():
     state = ServerState()
     op_log = OperationLog()
-    # Stand-in modules + finalize keep the test light (no torch import, no Xvfb).
+    # Stand-in modules + finalize keep the test light (no torch import, no Xvfb)
     warm(state, op_log, modules=(("json", "json"), ("math", "math")), finalize=lambda s: None)
-    assert state.ready and not state.failed
+    assert state.ready
     joined = "\n".join(op_log.log_lines)
     assert "import json…" in joined
     assert "import json done (" in joined
-    assert not op_log.is_running  # finish_op ran
+    assert not op_log.is_running
 
 
-def test_warm_core_import_failure_marks_failed():
+def test_warm_import_failure_stops_startup():
     state = ServerState()
     op_log = OperationLog()
-    # A missing module whose name ends in dashboard.app is load-bearing -> failed.
-    warm(state, op_log, modules=(("no.such.dashboard.app", "core"),), finalize=lambda s: None)
-    assert state.failed and not state.ready
+    warm(state, op_log, modules=(("no.such.module", "missing"),), finalize=lambda s: None)
+    assert not state.ready
     assert op_log.log_lines[-1].startswith("ERROR")
-
-
-def test_warm_optional_import_failure_tolerated():
-    state = ServerState()
-    op_log = OperationLog()
-    warm(state, op_log, modules=(("no.such.optional.stack", "optional"),), finalize=lambda s: None)
-    assert state.ready and not state.failed
 
 
 def test_light_import_path_stays_light():

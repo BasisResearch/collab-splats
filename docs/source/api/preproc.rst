@@ -29,7 +29,7 @@ The preprocess stage decodes the source video exactly once and writes
 PNGs named by SOURCE video frame index. The selection settings live in
 ``<backend>/run_config.yaml`` and the per-frame quality in ``video_quality_report.json``.
 This is the sole persistent frame artifact. Every pixel consumer (pointcloud,
-semantics, localization, dashboard) reads the directory instead of re-decoding
+semantics, localization) reads the directory instead of re-decoding
 the video, and path-locked consumers take the directory itself, so nothing
 stages a second copy.
 
@@ -51,12 +51,3 @@ colorization at the model's inference resolution.
 See ``docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb`` for
 the full frame-selection walkthrough (fps vs. uniform vs. optical-flow sampling,
 blur/exposure gating).
-
-Known limitations
-------------------
-
-- **Dashboard localization thumbnails read two directories.** Reference frames
-  that came from the reconstruction live in ``images/``; ``localized`` frames are
-  appended post-hoc and are never written there, so they are read from
-  ``localized_frames/`` instead (``_build_result_figures`` in
-  ``collab_splats/dashboard/localize.py``).

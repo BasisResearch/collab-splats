@@ -69,14 +69,9 @@ def _run_scene(config: dict, args: argparse.Namespace) -> Reconstructor:
     """
     Build one Reconstructor, record its config beside the outputs, run it.
     """
-    # Build the reconstructor and create its backend dir
+    # Build the reconstructor and record its config
     recon = Reconstructor(config, base_config=args.base_config)
-    run_cfg = Reconstructor.run_config_path(recon.config["output_path"], recon.config["pointcloud"]["backend"])
-    run_cfg.parent.mkdir(parents=True, exist_ok=True)
-
-    # Always rewrite: the recorded config must be the one that ran
-    with open(run_cfg, "w") as f:
-        yaml.dump(recon.config, f, default_flow_style=False, sort_keys=False)
+    recon.write_run_config()
 
     recon.run(args.stages, overwrite=args.overwrite)
     return recon

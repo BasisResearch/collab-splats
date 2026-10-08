@@ -87,7 +87,6 @@ def _runs(client):
 # Memoized processed-state probes and their answer for an absent path (GCS: exit 0 + [])
 _PROBES = {
     "has_processed": (lambda src: src.has_processed("s"), False),
-    "list_localization_dbs": (lambda src: src.list_localization_dbs("s"), []),
     "list_processed_scenes": (lambda src: src.list_processed_scenes(), []),
 }
 
@@ -245,12 +244,6 @@ def test_list_processed_scenes_reads_processed_bucket():
 def test_has_processed_true_when_listing_nonempty():
     listings = {"fake:environments-processed/s": _files("transforms.json")}
     assert SceneSource(FakeClient(listings=listings)).has_processed("s") is True
-
-
-def test_list_localization_dbs_returns_extractor_dirs():
-    path = "fake:environments-processed/s/pointcloud.zarr/local_features"
-    listings = {path: _dirs("xfeat", "disk") + _files("zarr.json")}
-    assert SceneSource(FakeClient(listings=listings)).list_localization_dbs("s") == ["disk", "xfeat"]
 
 
 @pytest.mark.parametrize("probe", sorted(_PROBES))
@@ -500,19 +493,6 @@ def test_pull_processed_copies_and_passes_exclude_flags(tmp_path):
     assert exclude == ("/images/**",)
 
 
-def test_pull_zarr_members_includes_each_bare_member(tmp_path):
-    """Members are zarr-root-relative bare names, pulled as `<name>/**`."""
-    client = FakeClient()
-    SceneSource(client).pull_zarr_members("s", tmp_path, members=("pixel_indices", "depth"))
-    kind, args = client.calls[0]
-    assert kind == "run_streaming"
-
-    # The remote is already rooted at pointcloud.zarr, so an --include may not repeat that prefix
-    assert args[:3] == ("copy", "fake:environments-processed/s/pointcloud.zarr", str(tmp_path / "pointcloud.zarr"))
-    includes = [args[i + 1] for i, arg in enumerate(args) if arg == "--include"]
-    assert includes == ["pixel_indices/**", "depth/**"]
-
-
 ########
 # Verify
 ########
@@ -637,16 +617,14 @@ def test_push_outputs_invalidates_processed_listings(tmp_path):
         listings={
             "fake:environments-processed/s": _files("transforms.json"),
             "fake:environments-processed": _dirs("2026_07_20-birds-C0043"),
-            "fake:environments-processed/s/pointcloud.zarr/local_features": _dirs("disk"),
         }
     )
     source = SceneSource(client)
     source.has_processed("s")
-    source.list_localization_dbs("s")
     source.list_processed_scenes()
 
     # Each producer key must be cached before the push, so a renamed key fails here
-    keys = [("has_processed", "s"), ("list_localization_dbs", "s"), ("list_processed_scenes",)]
+    keys = [("has_processed", "s"), ("list_processed_scenes",)]
     for key in keys:
         assert key in source._listing_cache
 

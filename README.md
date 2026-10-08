@@ -56,8 +56,8 @@ uv sync --all-extras             # everything (what setup.sh does)
 
 `collab-data` is a private BasisResearch repo, locked as a path dependency at `/workspace/collab-data` — `uv sync` cannot resolve without it. `setup.sh` clones it there if missing (needs GitHub credentials).
 
-**Data access (rclone remote).** The dashboard reads and writes scenes over an rclone
-remote named `collab-data` (Google Cloud Storage). Set it up once.
+**Data access (rclone remote).** The dashboard and `reconstruct remote` read and write
+scenes over an rclone remote named `collab-data` (Google Cloud Storage). Set it up once.
 
 Install `rclone` and `jq`:
 
@@ -171,8 +171,9 @@ Tutorials in `docs/source/tutorials/` share one scene and build on each other:
 
 ## Dashboard
 
-Browse scenes, reconstruct, mesh, lift features, and query the pointcloud or mesh by text.
-Needs the dashboard extra (`uv sync --extra dashboard`).
+Single-page Panel app: pick a remote scene and a backend, run `Reconstructor` stages, view
+the pointcloud or mesh, and query semantics by text. Needs the dashboard extra
+(`uv sync --extra dashboard`).
 
 ```bash
 /opt/venv/reconstruction/bin/python -m collab_splats.dashboard
@@ -182,9 +183,15 @@ Then open `http://localhost:7860`. Override defaults with `--port`, `--host`, or
 `--base-dir` (defaults: `7860`, `0.0.0.0`, `/workspace/outputs`). Restart the process to
 pick up code changes — there is no autoreload.
 
-Use the view toggle to switch the left pane between `pointcloud` and `mesh`. Type a query
-to colour the right pane by similarity. Pointcloud and mesh share the same features, so
-both panes answer the same query.
+The scene dropdown lists remote scene ids only; every backend reconstructs from the same
+scene `images/`, so switching backends compares them on one scene. Run executes the selected
+stages (empty = every enabled stage); the overrides YAML box merges over the config and is
+recorded into `<backend>/run_config.yaml`. Force re-run overwrites finished stages.
+
+The view toggle switches between `pointcloud` and `mesh`. A text query (maskclip or
+talk2dino) colors the view by similarity; mesh mode reads the stored `vertex_features` from
+`<backend>/semantics/<extractor>_lifted.zarr`. OCR-lens word queries live only in the scene
+viewer (`python -m collab_splats.viewer <backend_dir>`).
 
 ## Live Scene Viewer
 

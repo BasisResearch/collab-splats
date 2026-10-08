@@ -1,15 +1,10 @@
-"""Single serialized worker that runs all heavy/CUDA dashboard jobs off the IOLoop.
+"""
+Single serialized worker that runs every heavy dashboard job off the IOLoop.
 
-Panel/Bokeh serve on a single asyncio IOLoop thread. Heavy imports (vggt pulls a
-module-level torch.compile -> inductor compile-worker pool) and CUDA inference must
-never run on that thread: they block the websocket long enough for the bokeh session
-token to expire, and the page never renders.
-
-This worker owns ALL such work on one daemon thread, so jobs are serialized (no parallel
-model loads -> no GPU/RAM OOM, no shared-state races) and torch.compile warms once. The
-result is marshalled back to the IOLoop via doc.add_next_tick_callback, where VTK/panel
-mutation is safe. The doc is captured by the caller at enqueue time — never pn.state.curdoc
-inside the worker (it is thread-local and None off the IOLoop).
+- Panel/Bokeh serve on one IOLoop thread; a run, load or CUDA query there freezes every page
+- one daemon thread serializes jobs: no parallel model loads (GPU/RAM OOM), no shared-state races
+- results return to the IOLoop via doc.add_next_tick_callback, where VTK/Panel mutation is safe
+- callers capture doc at enqueue time; pn.state.curdoc is thread-local and None on the worker
 """
 
 from __future__ import annotations
@@ -24,38 +19,60 @@ from collab_splats.utils.torch_utils import pytorch_gc
 logger = logging.getLogger(__name__)
 
 
+########
+# GpuWorker
+########
+
+
 class GpuWorker:
-    """One daemon thread draining a job queue; pytorch_gc after every job."""
+    """
+    One daemon thread draining a job queue.
+
+    - pytorch_gc runs after every job
+    - busy stays True while any job is queued, running, or finishing on the IOLoop
+    """
 
     def __init__(self) -> None:
+        """
+        Start the worker thread on an empty queue.
+
+        - _inflight is an explicit counter, not queue.unfinished_tasks: task_done races _finish
+        """
         self._queue: queue.Queue = queue.Queue()
         self.busy = False
-        # In-flight job count (queued + executing + finish pending on the IOLoop). An explicit
-        # counter, not queue.unfinished_tasks: _loop's task_done() races the IOLoop running
-        # _finish, so unfinished_tasks can read 1 at _finish time and leave busy stuck True.
         self._inflight = 0
         self._flight_lock = threading.Lock()
         self._thread = threading.Thread(target=self._loop, name="gpu-worker", daemon=True)
         self._thread.start()
 
     def submit(self, job_fn: Callable[[], Any], on_done: Callable[[Any], None], doc: Any) -> None:
-        """Enqueue job_fn (runs on the worker); on_done(result_or_exception) runs on the IOLoop.
+        """
+        Enqueue a job for the worker thread; its callback runs on the IOLoop.
 
-        doc is None (tests / non-served) -> run inline, synchronously, for testability.
+        - doc None (tests, non-served) runs the job inline and synchronously
+
+        Args:
+            job_fn: work to run on the worker thread.
+            on_done: receives the job's result or raised exception, on the IOLoop.
+            doc: Bokeh document the callback is scheduled on.
         """
         if doc is None:
             result = self._run(job_fn)
             on_done(result)
             return
-        # Count before enqueue so any poll between put() and _finish observes busy.
+
+        # Count before enqueue so any poll between put() and _finish observes busy
         with self._flight_lock:
             self._inflight += 1
             self.busy = True
+
         self._queue.put((job_fn, on_done, doc))
 
     @staticmethod
     def _run(job_fn: Callable[[], Any]) -> Any:
-        """Run a job, returning its result or the raised exception; always gc."""
+        """
+        Run a job, returning its result or the raised exception; always gc.
+        """
         try:
             return job_fn()
         except Exception as exc:  # surface, never crash the worker
@@ -65,34 +82,38 @@ class GpuWorker:
             pytorch_gc()
 
     def _loop(self) -> None:
+        """
+        Worker thread body: run each queued job and marshal its result to the IOLoop.
+        """
         while True:
             job_fn, on_done, doc = self._queue.get()
+
             try:
                 result = self._run(job_fn)
-                # Marshal the result back to the IOLoop; render + busy reset happen there.
+
+                # Marshal the result back to the IOLoop; render and busy reset happen there
                 try:
                     doc.add_next_tick_callback(lambda r=result, cb=on_done: self._finish(cb, r))
-                except Exception:
-                    # Session gone (token expired / tab closed): the doc's callback manager is
-                    # torn down and add_next_tick_callback raises. Drop the result and keep the
-                    # worker alive so a reconnecting session still gets a working dashboard.
+                except (RuntimeError, AttributeError):
+                    # Destroyed session: drop the result, keep the worker alive for reconnects
                     logger.debug("dropping result for a destroyed session", exc_info=True)
                     self._job_done()
             finally:
                 self._queue.task_done()
 
     def _finish(self, on_done: Callable[[Any], None], result: Any) -> None:
-        """Runs on the IOLoop: clear busy (if nothing else in flight) then deliver the result."""
+        """
+        IOLoop side: clear busy (if nothing else is in flight), then deliver the result.
+        """
         self._job_done()
         on_done(result)
 
     def _job_done(self) -> None:
-        """Retire one in-flight job; drop busy only when no job is queued, running, or finishing."""
+        """
+        Retire one in-flight job; drop busy only when no job is queued, running, or finishing.
+        """
         with self._flight_lock:
             self._inflight -= 1
+
             if self._inflight == 0:
                 self.busy = False
-
-    def wait_idle(self, timeout: float = 5.0) -> None:
-        """Test helper: block until the queue is drained (best-effort)."""
-        self._queue.join()

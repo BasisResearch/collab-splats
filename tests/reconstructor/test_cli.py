@@ -44,6 +44,7 @@ class StubRecon:
         StubRecon.made.append(self)
 
     run_config_path = staticmethod(Reconstructor.run_config_path)
+    write_run_config = Reconstructor.write_run_config
 
     def run(self, stages=None, overwrite=False):
         self.ran = (stages, overwrite)

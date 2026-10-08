@@ -284,30 +284,6 @@ class SceneSource:
     # Processed state
     ########################################
 
-    def list_localization_dbs(self, scene: str) -> list[str]:
-        """
-        Extractors with a localization feature DB in the processed zarr.
-
-        Args:
-            scene: processed scene id.
-
-        Returns:
-            Sorted dir names under pointcloud.zarr/local_features; empty when absent.
-        """
-
-        def _produce() -> list[str]:
-            # List the zarr's local_features group
-            path = f"{scene}/pointcloud.zarr/local_features"
-            entries = self._lsjson(self.processed, path)
-
-            if not entries:
-                logger.info("no localization DBs for %s: %s/%s listed empty", scene, self.processed, path)
-                return []
-
-            return sorted(e["Name"] for e in entries if e.get("IsDir"))
-
-        return self._cached(("list_localization_dbs", scene), _produce)
-
     def list_processed_scenes(self) -> list[str]:
         """
         Scene ids with processed outputs.
@@ -380,31 +356,6 @@ class SceneSource:
 
         return dest_dir
 
-    def pull_zarr_members(
-        self,
-        scene: str,
-        dest_dir: Path,
-        members: tuple[str, ...],
-        on_line: Callable[[str], None] | None = None,
-    ) -> None:
-        """
-        Copy named pointcloud.zarr members that a pull excluded.
-
-        Args:
-            scene: processed scene id.
-            dest_dir: local scene directory; members land under its pointcloud.zarr/.
-            members: member names relative to the zarr root.
-            on_line: receives each rclone output line.
-        """
-        # Create the local zarr root
-        dest = Path(dest_dir) / "pointcloud.zarr"
-        dest.mkdir(parents=True, exist_ok=True)
-
-        # Copy only the named members via --include globs
-        remote = self._path(self.processed, f"{scene}/pointcloud.zarr")
-        includes = [arg for member in members for arg in ("--include", f"{member}/**")]
-        self._require_client().run_streaming("copy", remote, str(dest), *includes, *STATS_ARGS, on_line=on_line)
-
     def push_outputs(
         self,
         local_dir: Path,
@@ -436,7 +387,6 @@ class SceneSource:
 
         # Drop memoized listings the push made stale
         self.invalidate(("has_processed", scene))
-        self.invalidate(("list_localization_dbs", scene))
         self.invalidate(("list_processed_scenes",))
 
     def verify_push(self, local_dir: Path, scene: str, *, checkers: int = 16) -> bool:

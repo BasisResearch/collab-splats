@@ -116,6 +116,16 @@ LEAF_STAGES = frozenset(s for s in STAGES if not any(s in deps for deps in STAGE
 ########################################
 
 
+def backends() -> dict[str, list[str]]:
+    """
+    Registered pointcloud backend names per method.
+
+    Returns:
+        Method ("feedforward" or "sfm") to its sorted backend names.
+    """
+    return {"feedforward": sorted(BaseFeedforwardCreator._registry), "sfm": sorted(SFM_CREATORS)}
+
+
 def store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
     """
     Rows of the images/ store holding each named frame, in the order named.
@@ -284,14 +294,14 @@ class Reconstructor:
         pc = config["pointcloud"]
         method = pc["method"]
         backend = pc["backend"]
-        backends = {"feedforward": set(BaseFeedforwardCreator._registry), "sfm": set(SFM_CREATORS)}
+        registered = backends()
 
-        if method not in backends:
-            raise ValueError(f"pointcloud.method must be one of {sorted(backends)}, got {method!r}")
+        if method not in registered:
+            raise ValueError(f"pointcloud.method must be one of {sorted(registered)}, got {method!r}")
 
-        if backend not in backends[method]:
+        if backend not in registered[method]:
             raise ValueError(
-                f"pointcloud.backend must be one of {sorted(backends[method])} for method {method!r}, got {backend!r}"
+                f"pointcloud.backend must be one of {registered[method]} for method {method!r}, got {backend!r}"
             )
 
         # Normalize loop_closure to a dict carrying `enabled`
@@ -365,6 +375,23 @@ class Reconstructor:
             <output_path>/<backend>/run_config.yaml.
         """
         return Path(output_path) / backend / "run_config.yaml"
+
+    def write_run_config(self) -> Path:
+        """
+        Record this run's config beside its outputs.
+
+        - always rewritten: the recorded config must be the one that ran
+
+        Returns:
+            The written run_config.yaml path.
+        """
+        path = self.run_config_path(self.config["output_path"], self.config["pointcloud"]["backend"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(path, "w") as f:
+            yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
+
+        return path
 
     @property
     def backend_dir(self) -> Path:

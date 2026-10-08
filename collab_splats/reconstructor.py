@@ -1,13 +1,14 @@
 """
 Config-driven reconstruction pipeline, one output tree per scene.
 
-- stages: preproc, pointcloud, refine, semantics, splats, mesh, localize, quality report
+- stages: preproc, pointcloud, refine, splats, mesh, semantics, localize, quality report
 - configs/base.yaml holds every default; a run config merges over it
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import itertools
 import logging
 import shutil
@@ -57,7 +58,16 @@ from collab_splats.preproc.sampling import (
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.preproc.viz import plot_motion, plot_photometric
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.features import BaseFeatureExtractor
+from collab_splats.semantics.features import (
+    BaseFeatureExtractor,
+    BaseQueryableExtractor,
+)
+from collab_splats.semantics.features.ocr_lens import (
+    load_decoder,
+    load_processor,
+    word_probabilities,
+    word_vocabulary,
+)
 from collab_splats.semantics.lifting import lift_features
 from collab_splats.semantics.segmentation import sky_masks
 from collab_splats.semantics.store import (
@@ -83,14 +93,14 @@ logger = logging.getLogger(__name__)
 # Constants
 ########################################
 
-# Stage -> stages it needs; dict order is run order
+# Stage -> stages it needs; dict order is run order; semantics after mesh lifts onto its vertices
 STAGES: dict[str, tuple[str, ...]] = {
     "preproc": (),
     "pointcloud": ("preproc",),
     "refine": ("pointcloud",),
-    "semantics": ("pointcloud",),
     "splats": ("pointcloud",),
     "mesh": ("pointcloud",),
+    "semantics": ("pointcloud",),
     "localize": ("pointcloud",),
     "reconstruction_quality_report": ("pointcloud",),
 }
@@ -453,7 +463,8 @@ class Reconstructor:
             stage: a key of STAGES.
 
         Returns:
-            True when the marker exists; pointcloud also needs the COLMAP model.
+            True when the marker exists; pointcloud also needs the COLMAP model; semantics with a recorded mesh hash
+            also needs mesh.ply to match it.
         """
         # localize lives inside pointcloud.zarr; pointcloud also needs its COLMAP model
         if stage == "localize":
@@ -462,6 +473,11 @@ class Reconstructor:
 
         if stage == "pointcloud":
             return self.pointcloud_zarr.exists() and self.colmap_model_dir.exists()
+
+        # Semantics with vertex arrays is stale when mesh.ply changed since their lift
+        if stage == "semantics" and self.outputs["semantics"].exists() and self.outputs["mesh"].exists():
+            recorded = zarr.open(str(self.outputs["semantics"]), mode="r").attrs.get("mesh_sha256")
+            return recorded is None or recorded == hashlib.sha256(self.outputs["mesh"].read_bytes()).hexdigest()
 
         return self.outputs[stage].exists()
 
@@ -849,6 +865,8 @@ class Reconstructor:
           of them, encodes every frame, then deletes them; n_components null keeps full width, no AE
         - lift reads one frame of codes at a time; rows follow the zarr's frames (maybe a subset)
         - lifted store written atomically with its own autoencoder.pt; codes and lifted stores are pushed
+        - with mesh.ply: ocr_lens also stores each vertex's top-64 words (decode, then lift), queryable
+          extractors `vertex_features` (codes on vertices); both record the mesh's sha256
         """
         cfg = self.config["semantics"]
         name = cfg["extractor"]
@@ -907,8 +925,59 @@ class Reconstructor:
         rows = store_rows(self.images_dir, pointcloud.image_paths)
         lifted = lift_features(partial(_load_frame, codes, rows, None), pointcloud)
 
-        # Write the per-point codes; the lifted store is the stage's done marker
-        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae)
+        # Store attrs; the viewer rebuilds a queryable extractor from them
+        attrs = {"extractor": name, "extractor_kwargs": extractor_kwargs}
+        vertex_arrays = {}
+        mesh_path = self.outputs["mesh"]
+
+        # Mesh vertices as points over the same cameras; no source pixel, unseen vertices stay zero
+        if mesh_path.exists():
+            vertices = np.asarray(o3d.io.read_triangle_mesh(str(mesh_path)).vertices, dtype=np.float32)
+            colors = np.zeros((len(vertices), 3), dtype=np.uint8)
+            vertex_cloud = dataclasses.replace(pointcloud, points=vertices, colors=colors, pixel_indices=None)
+
+            # ocr_lens: each frame's top-64 words per patch, lifted as indexed maps; each vertex keeps its top-64
+            if name == "ocr_lens":
+                model_id = extractor_kwargs.get("model_id", "llava-hf/llava-v1.6-vicuna-7b-hf")
+                vocab = word_vocabulary(load_processor(model_id).tokenizer)
+                decoder = load_decoder(model_id)
+
+                if ae is not None:
+                    ae.to(get_device())
+
+                maps = []
+
+                for i in range(len(rows)):
+                    # Patch codes as rows, then word probabilities per patch, top-64 kept as an indexed map
+                    fmap = _load_frame(codes, rows, None, i)
+                    channels, height, width = fmap.shape
+                    states = fmap.reshape(channels, -1).T
+                    probs = torch.cat([p for p, _ in word_probabilities(states, decoder, vocab, ae=ae)])
+                    top = probs.topk(64, dim=1)
+                    maps.append((top.indices.T.reshape(64, height, width), top.values.T.reshape(64, height, width)))
+
+                del decoder
+                pytorch_gc()
+
+                # One lift, no chunking: host RAM plus GPU bound it, ~14 KB/vertex for the (V, n_words) float32 on CPU
+                lifted_words = lift_features(maps.__getitem__, vertex_cloud, num_classes=len(vocab.words))
+                top = lifted_words.to(get_device()).topk(64, dim=1)
+                vertex_arrays["vertex_word_ids"] = to_numpy(top.indices).astype(np.int16)
+                vertex_arrays["vertex_word_probs"] = to_numpy(top.values).astype(np.float16)
+                attrs["words"] = vocab.words
+                del maps, lifted_words
+
+            # Queryable: codes lifted like the points, decoded at read
+            elif issubclass(BaseFeatureExtractor.get(name), BaseQueryableExtractor):
+                vertex_codes = lift_features(partial(_load_frame, codes, rows, None), vertex_cloud)
+                vertex_arrays["vertex_features"] = to_numpy(vertex_codes).astype(np.float16)
+
+            # Record the mesh the vertex arrays index into
+            if vertex_arrays:
+                attrs["mesh_sha256"] = hashlib.sha256(mesh_path.read_bytes()).hexdigest()
+
+        # Write points, vertex arrays and attrs together; the lifted store is the stage's done marker
+        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae, vertex_arrays=vertex_arrays, attrs=attrs)
 
     def mesh(self) -> None:
         """

@@ -245,3 +245,30 @@ def test_write_point_features_stores_fp16_and_reads_float32_unit_rows(tmp_path):
     out = read_point_features(store_path)
     assert out.dtype == np.float32
     np.testing.assert_allclose(np.linalg.norm(out, axis=1), 1.0, rtol=1e-5)
+
+
+def test_write_point_features_adds_vertex_arrays_and_attrs_in_one_write(tmp_path):
+    store_path = tmp_path / "ocr_lens_lifted.zarr"
+    ids = np.arange(8, dtype=np.int16).reshape(4, 2)
+    probs = np.full((4, 2), 0.5, np.float16)
+    attrs = {"extractor": "ocr_lens", "words": ["a", "b"], "mesh_sha256": "abc"}
+    vertex_arrays = {"vertex_word_ids": ids, "vertex_word_probs": probs}
+    write_point_features(store_path, np.ones((3, 2), np.float32), None, vertex_arrays=vertex_arrays, attrs=attrs)
+
+    store = zarr.open(str(store_path), mode="r")
+    assert store["vertex_word_ids"].dtype == np.int16
+    assert store["vertex_word_probs"].dtype == np.float16
+    np.testing.assert_array_equal(store["vertex_word_ids"][:], ids)
+    assert dict(store.attrs) == {"input_dim": 2, "latent_dim": 2, **attrs}
+    assert not (tmp_path / "ocr_lens_lifted.zarr.tmp").exists()
+
+
+def test_read_point_features_decodes_a_named_array(tmp_path):
+    store_path = tmp_path / "talk2dino_lifted.zarr"
+    vertex = np.random.default_rng(0).random((5, 3), dtype=np.float32)
+    vertex_arrays = {"vertex_features": vertex.astype(np.float16)}
+    write_point_features(store_path, np.ones((2, 3), np.float32), None, vertex_arrays=vertex_arrays)
+
+    out = read_point_features(store_path, name="vertex_features")
+    assert out.shape == (5, 3) and out.dtype == np.float32
+    np.testing.assert_allclose(out, vertex / np.linalg.norm(vertex, axis=1, keepdims=True), rtol=1e-3)

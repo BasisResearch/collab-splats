@@ -4,19 +4,35 @@ Browser 3D scene viewer over viser: arrays in, named scene nodes out.
 - nodes upsert by name: re-adding a name replaces the node, which is how callers refresh one
 - point clouds, camera frusta, line sets and meshes; meshes add vertex picking, label lists and a heat overlay
 - served at http://<host>:<port> over a websocket; no display needed on the host
+- `python -m collab_splats.viewer <scene>/<backend>`: the mesh, plus a Semantics dropdown
+  over its lifted stores' vertex arrays
+
+Usage:
+    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\
+        /workspace/outputs/<scene>/<backend> --port 8080
 """
 
+import argparse
+import hashlib
 import logging
 import threading
 import zlib
+from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 import matplotlib
 import numpy as np
 import open3d as o3d
+import torch
 import trimesh
 import viser
 import viser.transforms as viser_tf
+import zarr
+from PIL import Image
+
+from collab_splats.semantics.features import BaseFeatureExtractor
+from collab_splats.semantics.store import read_point_features
+from collab_splats.utils.torch_utils import pytorch_gc
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +61,8 @@ class Viewer:
         self.mesh_clicks: dict[str, Callable[[int], None]] = {}
         self.label_lists: dict[str, tuple[viser.GuiFolderHandle, list[viser.GuiButtonHandle]]] = {}
         self.heats: dict[str, viser.GlbHandle] = {}
+        self.heat_shifts: dict[str, np.ndarray] = {}
+        self._click_registered = False
         self._stop = threading.Event()
 
         # Camera visibility and flat per-node colors (shows node boundaries)
@@ -178,6 +196,7 @@ class Viewer:
         faces32 = o3d.core.Tensor(faces.astype(np.uint32))
         rays.add_triangles(vertices32, faces32)
         self.meshes[name] = (vertices, faces, rays)
+        self.heat_shifts.pop(name, None)
 
         # Display the texture when given, else the vertex colors
         shown = textured
@@ -242,12 +261,14 @@ class Viewer:
         Overlay a per-vertex score on a mesh as a vertex-colored `<name>/heat` sub-mesh.
 
         - faces with any vertex at or above `floor` are drawn; colors blend across each face
+        - faces touching a NaN vertex are skipped, so no heat blends onto vertices without data
         - viridis over the drawn vertices' scores, min-max normalized
         - the mesh itself is never re-sent: only the drawn sub-mesh goes over the wire
+        - lift direction: whole-mesh vertex normals times median edge length, computed once per mesh
 
         Args:
             name: mesh node name, already added with add_mesh.
-            scores: (V,) score per mesh vertex; None clears the overlay.
+            scores: (V,) score per mesh vertex, NaN = no data: faces touching it are never drawn; None clears.
             floor: score a face needs on one vertex to be drawn.
             offset: shift along vertex normals, in median edge lengths, against z-fighting.
         """
@@ -258,9 +279,10 @@ class Viewer:
         if scores is None:
             return
 
-        # Faces reaching the floor, remapped onto the vertices they use
+        # Faces reaching the floor and touching no NaN vertex, remapped onto the vertices they use
         vertices, faces, _ = self.meshes[name]
-        keep = (scores[faces] >= floor).any(axis=1)
+        face_scores = scores[faces]
+        keep = (face_scores >= floor).any(axis=1) & ~np.isnan(face_scores).any(axis=1)
 
         if not keep.any():
             return
@@ -273,12 +295,15 @@ class Viewer:
         span = values.max() - values.min()
         normalized = (values - values.min()) / span if span > 0 else np.zeros_like(values)
         rgb = (matplotlib.colormaps["viridis"](normalized)[:, :3] * 255).astype(np.uint8)
-        heat = trimesh.Trimesh(vertices[used], sub_faces, vertex_colors=rgb, process=False)
+
+        # Whole-mesh lift direction, computed on the first overlay of this mesh
+        if name not in self.heat_shifts:
+            surface = trimesh.Trimesh(vertices, faces, process=False)
+            self.heat_shifts[name] = np.median(surface.edges_unique_length) * surface.vertex_normals
 
         # Lift off the base surface along vertex normals
-        if offset > 0:
-            shift = offset * np.median(heat.edges_unique_length) * heat.vertex_normals
-            heat.vertices = heat.vertices + shift
+        lifted = vertices[used] + offset * self.heat_shifts[name][used]
+        heat = trimesh.Trimesh(lifted, sub_faces, vertex_colors=rgb, process=False)
 
         self.heats[name] = self.server.scene.add_mesh_trimesh(f"{name}/heat", heat)
 
@@ -297,10 +322,11 @@ class Viewer:
             name: mesh node name, already added with add_mesh.
             callback: receives the picked vertex index.
         """
-        # Register the scene-wide click handler once, on the first clickable mesh
-        if not self.mesh_clicks:
+        # Register the scene-wide click handler once; mode switches must not stack it
+        if not self._click_registered:
             register = self.server.scene.on_click()
             register(self._dispatch_click)
+            self._click_registered = True
 
         self.mesh_clicks[name] = callback
 
@@ -444,3 +470,310 @@ def _compact_count(value: float) -> str:
         return f"{value:.0f}"
 
     return f"{value / 1000:.1f}k"
+
+
+def _chart(title: str, words: list[str], probs: np.ndarray) -> str:
+    """
+    SVG bar chart of word probabilities, pinned to the viewport's top left.
+
+    - x: words, labels tilted 35 degrees; y: probability on a fixed 0-1 axis
+    """
+    width, height, left, bottom, top = 420, 230, 34, 80, 24
+    plot_h = height - bottom - top
+    step = (width - left - 8) / max(len(words), 1)
+    parts = [f'<text x="{left}" y="15" fill="#ddd" font-size="12" font-weight="bold">{title}</text>']
+
+    # Gridlines and y ticks every 0.25
+    for tick in (0.0, 0.25, 0.5, 0.75, 1.0):
+        y = top + plot_h * (1 - tick)
+        parts.append(f'<line x1="{left}" x2="{width - 8}" y1="{y:.1f}" y2="{y:.1f}" stroke="#555" stroke-width="0.5"/>')
+        parts.append(
+            f'<text x="{left - 4}" y="{y + 3:.1f}" fill="#aaa" font-size="9" text-anchor="end">{tick:.2f}</text>'
+        )
+
+    # One bar per word, its label tilted under it
+    for i, (word, p) in enumerate(zip(words, probs)):
+        x = left + i * step
+        bar_h = plot_h * float(p)
+        cx = x + step / 2
+        base = top + plot_h
+        parts.append(
+            f'<rect x="{x + 2:.1f}" y="{base - bar_h:.1f}" width="{step - 4:.1f}" height="{bar_h:.1f}" fill="#ff5000"/>'
+        )
+        parts.append(
+            f'<text x="{cx:.1f}" y="{base + 10:.1f}" fill="#ddd" font-size="10" text-anchor="end" '
+            f'transform="rotate(-35 {cx:.1f} {base + 10:.1f})">{word}</text>'
+        )
+
+    svg = f'<svg width="{width}" height="{height}">{"".join(parts)}</svg>'
+    return (
+        '<div style="position:fixed;top:12px;left:12px;z-index:10;padding:6px;'
+        f'background:#1a1b1ee6;border-radius:6px">{svg}</div>'
+    )
+
+
+########################################################################
+# Scene: mesh + optional semantics
+########################################################################
+
+
+def _find_stores(backend_dir: Path) -> dict[str, Path]:
+    """
+    Lifted stores holding mesh-vertex arrays, extractor name -> store path.
+
+    - listed: `<backend>/semantics/*_lifted.zarr` with `vertex_word_ids` or `vertex_features`
+    - a store lifted onto another mesh.ply (`mesh_sha256` differs) is stale and skipped
+    """
+    mesh_sha256 = hashlib.sha256((backend_dir / "mesh.ply").read_bytes()).hexdigest()
+    stores = {}
+
+    for path in sorted((backend_dir / "semantics").glob("*_lifted.zarr")):
+        store = zarr.open(str(path), mode="r")
+
+        # Points-only stores (dinov2) have nothing on the mesh
+        if "vertex_word_ids" not in store and "vertex_features" not in store:
+            continue
+
+        # Stale against the mesh: skip, a semantics re-run rewrites it
+        if store.attrs.get("mesh_sha256") != mesh_sha256:
+            logger.warning("%s was lifted onto another mesh.ply; re-run semantics with that extractor", path)
+            continue
+
+        stores[store.attrs["extractor"]] = path
+
+    return stores
+
+
+def _split(text: str) -> list[str]:
+    """
+    Comma-separated entries, stripped, empties dropped.
+    """
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
+def _word_mode(viewer: Viewer, store_path: Path) -> list:
+    """
+    Word query, mass-ranked label list and click probe over an ocr_lens store; returns GUI handles.
+
+    - heat: per vertex, summed probability of the query words within its stored top-k
+    - unobserved vertices (top probability 0) score NaN and probe as unobserved
+    - probe: the clicked vertex's top-10 scene terms (words in some observed vertex's top-10), renormalized
+    """
+    store = zarr.open(str(store_path), mode="r")
+    word_ids = np.asarray(store["vertex_word_ids"])
+    word_probs = np.asarray(store["vertex_word_probs"], dtype=np.float32)
+    words = list(store.attrs["words"])
+    row_of = {word: row for row, word in enumerate(words)}
+    observed = word_probs[:, 0] > 0
+
+    # Scene terms: every word in some observed vertex's top-10
+    is_term = np.zeros(len(words), dtype=bool)
+    is_term[np.unique(word_ids[observed, :10])] = True
+
+    # Probe chart, query box, floor, Search and the unknown-word note
+    panel = viewer.server.gui.add_html("")
+    query = viewer.server.gui.add_text("Query", initial_value="")
+    floor = viewer.server.gui.add_slider("Query min p", min=0.0, max=1.0, step=0.01, initial_value=0.3)
+    search_button = viewer.server.gui.add_button("Search")
+    note = viewer.server.gui.add_markdown("")
+    vertices = viewer.meshes["mesh"][0]
+    marker_radius = 0.005 * float(np.linalg.norm(np.ptp(vertices, axis=0)))
+
+    def search(_=None) -> None:
+        """
+        Draw the summed probability of the query words as heat; faces under the floor hidden.
+        """
+        typed = [word.lower() for word in _split(query.value)]
+        known = [word for word in typed if word in row_of]
+        unknown = [word for word in typed if word not in row_of]
+        note.content = f"not in vocabulary: {', '.join(unknown)}" if unknown else ""
+
+        # Empty query clears; a word outside a vertex's top-k reads as 0 there
+        scores = None
+
+        if known:
+            hit = np.isin(word_ids, [row_of[word] for word in known])
+            scores = (word_probs * hit).sum(axis=1)
+            scores[~observed] = np.nan
+
+        viewer.show_heat("mesh", scores, floor.value)
+
+    def select(word: Optional[str]) -> None:
+        """
+        Put a label-list word in the query box (Clear empties it) and search.
+        """
+        query.value = word or ""
+        search()
+
+    def show(vertex: int) -> None:
+        """
+        Mark the clicked vertex and chart its top-10 scene terms in the top left.
+        """
+        viewer.server.scene.add_icosphere(
+            "/probe", radius=marker_radius, color=(255, 0, 255), position=vertices[vertex]
+        )
+
+        if not observed[vertex]:
+            panel.content = _chart(f"vertex {vertex}: unobserved", [], np.zeros(0))
+            return
+
+        # Scene terms among its stored words, already sorted, renormalized
+        ids = word_ids[vertex]
+        probs = word_probs[vertex]
+        keep = is_term[ids] & (probs > 0)
+        ids = ids[keep]
+        probs = probs[keep] / probs[keep].sum()
+        panel.content = _chart(f"vertex {vertex}", [words[j] for j in ids[:10]], probs[:10])
+
+    # Words ranked by probability mass (expected vertex count); a click on the mesh probes
+    mass = np.bincount(word_ids.ravel(), weights=word_probs.ravel(), minlength=len(words))
+    viewer.add_label_list("mesh", words, mass, select)
+    search_button.on_click(search)
+    viewer.on_click("mesh", show)
+    return [panel, query, floor, search_button, note]
+
+
+def _text_mode(viewer: Viewer, store_path: Path) -> list:
+    """
+    Text query GUI over a queryable extractor's lifted store; returns its handles.
+
+    - features decoded once on entry; the extractor is built on the first Search
+    - features move to the extractor's device once, so each Search copies nothing
+    - unobserved vertices (all-zero raw codes) score NaN: decoded zero codes are not zero
+    - both die with the handles' callbacks when the mode is switched away
+    """
+    store = zarr.open(str(store_path), mode="r")
+    name = store.attrs["extractor"]
+    kwargs = store.attrs.get("extractor_kwargs", {})
+    observed = np.asarray(store["vertex_features"]).any(axis=1)
+    features = torch.from_numpy(read_point_features(store_path, name="vertex_features"))
+    extractor = None
+
+    # Query, negatives (Talk2DINO's "object" convention), floor, Search
+    query = viewer.server.gui.add_text("Query", initial_value="")
+    negatives = viewer.server.gui.add_text("Negatives", initial_value="object")
+    floor = viewer.server.gui.add_slider("Query min score", min=0.0, max=1.0, step=0.01, initial_value=0.5)
+    search_button = viewer.server.gui.add_button("Search")
+
+    def search(_=None) -> None:
+        """
+        Draw the contrastive score of the query against the negatives as heat.
+        """
+        nonlocal extractor, features
+        positives = _split(query.value)
+
+        # Empty query clears
+        if not positives:
+            viewer.show_heat("mesh", None, floor.value)
+            return
+
+        if extractor is None:
+            extractor = BaseFeatureExtractor.get(name)(**kwargs)
+            features = features.to(extractor.device)
+
+        with torch.no_grad():
+            scores = extractor.score_queries(features, positives, _split(negatives.value))
+
+        scores = scores.float().cpu().numpy()
+        scores[~observed] = np.nan
+        viewer.show_heat("mesh", scores, floor.value)
+
+    search_button.on_click(search)
+    return [query, negatives, floor, search_button]
+
+
+def _build(viewer: Viewer, backend_dir: Path, textured: bool, texture_size: int) -> Optional[viser.GuiDropdownHandle]:
+    """
+    Add the mesh and, when vertex stores exist, the Semantics dropdown that switches modes.
+
+    - default selection: ocr_lens when listed, else the first by name; `none` clears
+    - switching clears heat and probe, removes the previous mode's GUI and handlers, builds the new one
+
+    Args:
+        viewer: viewer to populate.
+        backend_dir: `<scene>/<backend>` holding mesh.ply.
+        textured: show texture/mesh.obj; picks stay on mesh.ply.
+        texture_size: displayed texture edge, pixels.
+
+    Returns:
+        The Semantics dropdown, or None when no store has vertex arrays.
+    """
+    # mesh.ply with its vertex colors, light grey when it has none
+    mesh = trimesh.load(backend_dir / "mesh.ply", process=False)
+    vertices = np.asarray(mesh.vertices, dtype=np.float32)
+    faces = np.asarray(mesh.faces)
+
+    if mesh.visual.kind == "vertex":
+        colors = np.array(mesh.visual.vertex_colors[:, :3])
+    else:
+        colors = np.full((len(vertices), 3), 200, dtype=np.uint8)
+
+    # Corner-split OBJ of the same surface, when asked; texture downscaled for display
+    shown = None
+
+    if textured:
+        shown = trimesh.load(backend_dir / "texture" / "mesh.obj", process=False)
+        material = shown.visual.material
+        material.image = material.image.resize((texture_size, texture_size), Image.LANCZOS)
+
+    viewer.add_mesh("mesh", vertices, faces, colors, textured=shown)
+    stores = _find_stores(backend_dir)
+
+    if not stores:
+        return None
+
+    initial = "ocr_lens" if "ocr_lens" in stores else next(iter(stores))
+    dropdown = viewer.server.gui.add_dropdown("Semantics", options=("none", *stores), initial_value=initial)
+    handles = []
+
+    def switch(_=None) -> None:
+        """
+        Tear down the current mode, then build the selected one.
+        """
+        # Heat, probe, label list and click handler of the previous mode
+        viewer.show_heat("mesh", None, 0.0)
+        viewer.server.scene.remove_by_name("/probe")
+        viewer.mesh_clicks.pop("mesh", None)
+
+        if "mesh" in viewer.label_lists:
+            viewer.label_lists.pop("mesh")[0].remove()
+
+        for handle in handles:
+            handle.remove()
+
+        handles.clear()
+        pytorch_gc()
+
+        if dropdown.value == "none":
+            return
+
+        # Word arrays select word mode, codes text mode
+        path = stores[dropdown.value]
+        mode = _word_mode if "vertex_word_ids" in zarr.open(str(path), mode="r") else _text_mode
+        handles.extend(mode(viewer, path))
+
+    dropdown.on_update(switch)
+    switch()
+    return dropdown
+
+
+def main() -> None:
+    """
+    Serve a backend's mesh with its queryable semantics; blocks until interrupted.
+    """
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("backend_dir", type=Path)
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--textured", action="store_true", help="show texture/mesh.obj over the same surface")
+    parser.add_argument("--texture_size", type=int, default=4096, help="displayed texture edge, pixels")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO)
+
+    viewer = Viewer(port=args.port)
+    viewer.server.gui.configure_theme(control_layout="fixed")
+    _build(viewer, args.backend_dir, args.textured, args.texture_size)
+    viewer.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

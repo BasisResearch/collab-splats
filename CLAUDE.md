@@ -35,11 +35,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **scene-viewer** (2026-10-08)
 - **semantics-storage** (2026-10-07)
 - **mesh-query-heat** (2026-10-07)
 - **rgbd-ba + lc-window-ba** (2026-10-06)
 - **localization-cleanup** (2026-10-06)
-- **mesh-hull-perf** (2026-10-04)
 
 Known test failures: `docs/known-test-failures.md`
 

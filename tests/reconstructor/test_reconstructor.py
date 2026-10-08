@@ -1,4 +1,6 @@
 import contextlib
+import hashlib
+import itertools
 import json
 import re
 import weakref
@@ -25,7 +27,7 @@ from collab_splats.preproc import frames as fr
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.reconstructor import STAGES, Reconstructor
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.store import write_feature_cache
+from collab_splats.semantics.store import write_feature_cache, write_point_features
 from tests.reconstructor._stubs import minimal_feedforward_result, stub_creator_cls
 
 
@@ -60,8 +62,9 @@ def test_no_inline_defaults_in_source():
     src = Path("collab_splats/reconstructor.py").read_text()
     # Capture the default expression of each two-arg .get("key", <default>)
     defaults = re.findall(r"\.get\(\s*['\"][^'\"]+['\"]\s*,\s*([^)]+)\)", src)
-    # Structural {}/[] defaults (validate_config's standalone guards) are allowed; value defaults are not
-    offenders = [d.strip() for d in defaults if d.strip() not in ("{}", "[]")]
+    # Structural {}/[] defaults are allowed; so is ocr_lens's model_id, a constructor default not in base.yaml
+    allowed = ("{}", "[]", '"llava-hf/llava-v1.6-vicuna-7b-hf"')
+    offenders = [d.strip() for d in defaults if d.strip() not in allowed]
     assert offenders == [], f"inline value defaults still present: {offenders}"
 
 
@@ -558,7 +561,7 @@ def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
     assert (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").is_file()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert store["features"].shape == (1, 8) and store["features"].dtype == np.float16
-    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8}
+    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8, "extractor": "dinov2", "extractor_kwargs": {}}
 
 
 def test_semantics_second_run_neither_extracts_nor_fits(tmp_path):
@@ -640,7 +643,7 @@ def test_semantics_uncompressed_writes_full_dim_and_no_weights(tmp_path):
     assert not (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").exists()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert np.asarray(store["features"]).shape == (1, 32)
-    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 32}
+    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 32, "extractor": "dinov2", "extractor_kwargs": {}}
 
 
 def test_run_skips_mesh_if_ply_exists(tmp_path):
@@ -921,7 +924,7 @@ def test_run_calls_stages_in_order(tmp_path):
     rec.mesh = lambda: calls.append("mesh") or tmp_path
 
     rec.run(["preproc", "pointcloud", "semantics", "mesh"])
-    assert calls == ["preproc", "pointcloud", "semantics", "mesh"]
+    assert calls == ["preproc", "pointcloud", "mesh", "semantics"]
 
 
 def test_run_subset(tmp_path):
@@ -1116,7 +1119,12 @@ def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
     """BA + LC: LoopClosure gets a BA config with the window_ba cache dir; the zarr records window_ba."""
     config = _make_config(
         tmp_path,
-        {"pointcloud": {"loop_closure": {"submap_size": 32}, "bundle_adjustment": {"enabled": True, "dtype": "float64"}}},
+        {
+            "pointcloud": {
+                "loop_closure": {"submap_size": 32},
+                "bundle_adjustment": {"enabled": True, "dtype": "float64"},
+            }
+        },
     )
     rec = Reconstructor(config)
     creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
@@ -1321,6 +1329,178 @@ def test_done_semantics_is_per_extractor(tmp_path):
     (sem_dir / "talk2dino_lifted.zarr").mkdir()
     assert rec.done("semantics") is False
     (sem_dir / "dinov2_lifted.zarr").mkdir()
+    assert rec.done("semantics") is True
+
+
+def _seed_mesh(rec):
+    """A two-triangle quad as the backend's mesh.ply, its last vertex behind the cameras; returns its vertices."""
+    vertices = np.array([[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, -1]], dtype=np.float64)
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(np.array([[0, 1, 2], [1, 3, 2]]))
+    )
+    rec.backend_dir.mkdir(parents=True, exist_ok=True)
+    o3d.io.write_triangle_mesh(str(rec.outputs["mesh"]), mesh)
+    return vertices.astype(np.float32)
+
+
+def _mesh_semantics_rec(tmp_path, extractor, extractor_kwargs=None, dim=4):
+    """Uncompressed codes seeded (no extraction), a one-point reconstruction and a quad mesh.ply."""
+    semantics = {
+        "enabled": True,
+        "extractor": extractor,
+        "extractor_kwargs": extractor_kwargs or {},
+        "n_components": None,
+    }
+    rec = _semantics_rec(tmp_path, semantics)
+    _seed_codes(rec, extractor, [np.ones((dim, 2, 2), np.float16)] * 2, extractor_kwargs=extractor_kwargs)
+    return rec, _seed_mesh(rec)
+
+
+def _arange_lift(calls):
+    """
+    lift_features stub: records (result, num_classes, frame 0's map), returns arange rows of the lifted width.
+
+    - points behind the cameras (z < 0) get a zero row, as the real lift leaves unobserved vertices
+    """
+
+    def lift(frame_features, result, num_classes=None):
+        frame = frame_features(0)
+        calls.append((result, num_classes, frame))
+        width = num_classes or frame.shape[0]
+        rows = torch.arange(len(result.points) * width, dtype=torch.float32).reshape(-1, width)
+        rows[torch.from_numpy(result.points[:, 2] < 0)] = 0
+        return rows
+
+    return lift
+
+
+def test_semantics_lifts_queryable_codes_onto_mesh_vertices(tmp_path):
+    rec, vertices = _mesh_semantics_rec(tmp_path, "talk2dino")
+    calls = []
+
+    with patch.object(R, "lift_features", side_effect=_arange_lift(calls)):
+        rec.semantics()
+
+    # Second lift is the vertices, over the same cameras, no source pixel
+    vertex_cloud = calls[1][0]
+    np.testing.assert_array_equal(vertex_cloud.points, vertices)
+    assert vertex_cloud.pixel_indices is None
+
+    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    assert store["vertex_features"].dtype == np.float16
+    expected = np.arange(16, dtype=np.float16).reshape(4, 4)
+    expected[3] = 0
+    np.testing.assert_array_equal(store["vertex_features"][:], expected)
+
+    # The vertex behind the cameras stays all zero
+    assert not store["vertex_features"][3].any()
+    assert store.attrs["mesh_sha256"] == hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
+    assert rec.done("semantics")
+
+
+def test_semantics_without_vertex_mode_writes_points_only(tmp_path):
+    rec, _ = _mesh_semantics_rec(tmp_path, "dinov2")
+    calls = []
+
+    with patch.object(R, "lift_features", side_effect=_arange_lift(calls)):
+        rec.semantics()
+
+    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    assert len(calls) == 1
+    assert "vertex_features" not in store and "vertex_word_ids" not in store
+    assert "mesh_sha256" not in store.attrs
+    assert rec.done("semantics")
+
+
+def test_semantics_without_mesh_writes_points_only(tmp_path):
+    rec = _semantics_rec(tmp_path, {"extractor": "talk2dino", "n_components": None})
+    _seed_codes(rec, "talk2dino", [np.ones((4, 2, 2), np.float16)] * 2)
+    calls = []
+
+    with patch.object(R, "lift_features", side_effect=_arange_lift(calls)):
+        rec.semantics()
+
+    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    assert len(calls) == 1 and "vertex_features" not in store and "mesh_sha256" not in store.attrs
+
+
+@contextlib.contextmanager
+def _stub_lens(n_words=70):
+    """
+    Processor, vocabulary, decoder and word_probabilities stubbed.
+
+    - patch j's probabilities are arange(n_words) rolled by 7 * j, normalized: word (k + 7j) % n_words ranks k-th
+    """
+    vocab = MagicMock()
+    vocab.words = [f"w{i}" for i in range(n_words)]
+
+    def probabilities(states, decoder, vocab, ae=None):
+        ramp = torch.arange(n_words, dtype=torch.float32)
+        rows = torch.stack([ramp.roll(7 * j) for j in range(len(states))])
+        yield rows / rows.sum(dim=1, keepdim=True), None
+
+    with (
+        patch.object(R, "load_processor") as processor,
+        patch.object(R, "word_vocabulary", return_value=vocab),
+        patch.object(R, "load_decoder") as decoder,
+        patch.object(R, "word_probabilities", side_effect=probabilities) as decode,
+    ):
+        yield processor, decoder, decode
+
+
+def test_semantics_stores_each_vertex_top_64_words(tmp_path):
+    rec, _ = _mesh_semantics_rec(tmp_path, "ocr_lens", extractor_kwargs={"model_id": "local/llava"})
+    calls = []
+
+    with (
+        _stub_lens() as (processor, decoder, decode),
+        patch.object(R, "lift_features", side_effect=_arange_lift(calls)),
+    ):
+        rec.semantics()
+
+    # The extracting checkpoint's lens; one decode per frame; one word lift over the vocabulary
+    processor.assert_called_once_with("local/llava")
+    decoder.assert_called_once_with("local/llava")
+    assert decode.call_count == 2
+    assert calls[1][1] == 70
+
+    # Frame 0's indexed map: patch (r, c) lists word (69 - m + 7 * (2r + c)) % 70 at rank m
+    ids, vals = calls[1][2]
+    assert ids.shape == (64, 2, 2) and vals.shape == (64, 2, 2)
+
+    for r, c in itertools.product(range(2), range(2)):
+        expected_ids = [(69 - m + 7 * (2 * r + c)) % 70 for m in range(64)]
+        assert ids[:, r, c].cpu().tolist() == expected_ids
+
+    # Each seen vertex keeps the top-64 of its lifted row, descending
+    expected = torch.arange(4 * 70, dtype=torch.float32).reshape(4, 70).topk(64, dim=1)
+    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    assert store["vertex_word_ids"].dtype == np.int16 and store["vertex_word_probs"].dtype == np.float16
+    np.testing.assert_array_equal(store["vertex_word_ids"][:3], expected.indices.numpy()[:3])
+    np.testing.assert_array_equal(store["vertex_word_probs"][:3], expected.values.numpy()[:3].astype(np.float16))
+
+    # The vertex behind the cameras has no word mass
+    assert store["vertex_word_probs"][3].max() == 0
+    assert store.attrs["words"] == [f"w{i}" for i in range(70)]
+    assert "vertex_features" not in store
+
+
+def test_done_semantics_is_stale_once_mesh_ply_changes(tmp_path):
+    rec = Reconstructor(_make_config(tmp_path, {"semantics": {"extractor": "dinov2"}}))
+    _seed_mesh(rec)
+    sha = hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
+    write_point_features(rec.outputs["semantics"], np.zeros((1, 2), np.float32), None, attrs={"mesh_sha256": sha})
+    assert rec.done("semantics") is True
+
+    rec.outputs["mesh"].write_bytes(rec.outputs["mesh"].read_bytes() + b"\n")
+    assert rec.done("semantics") is False
+
+
+def test_done_semantics_without_a_recorded_mesh_stays_done(tmp_path):
+    # Points-only store (dinov2, or lifted before any mesh): nothing on the mesh to go stale
+    rec = Reconstructor(_make_config(tmp_path, {"semantics": {"extractor": "dinov2"}}))
+    write_point_features(rec.outputs["semantics"], np.zeros((1, 2), np.float32), None)
+    _seed_mesh(rec)
     assert rec.done("semantics") is True
 
 

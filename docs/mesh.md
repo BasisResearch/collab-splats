@@ -278,4 +278,5 @@ averages the depth-consistent samples; a vertex no frame sees stays zero (unobse
 `transfer_features(targets, points, features, k=5, max_dist=0.03)` smooths features over k
 neighbors by Gaussian-weighted k-NN. `collab_splats.semantics.utils.cluster_points`, given the
 vertex positions, then groups high-scoring vertices into spatially connected clusters.
-`docs/examples/ocr_lens_viewer.py` shows the lift on `mesh.ply`.
+The semantics stage (after mesh) stores this lift in `<extractor>_lifted.zarr`;
+`python -m collab_splats.viewer <scene>/<backend>` reads it.

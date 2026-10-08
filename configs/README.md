@@ -45,6 +45,10 @@ reconstruct local --output-root /workspace/outputs \
 `mesh.enabled` / `localization.enabled`), or when named explicitly via `--stages`.
 With loop closure on, `refine` is not planned: BA runs inside the pointcloud stage, one
 solve per window.
+`semantics` runs after `mesh` and also lifts onto `mesh.ply`'s vertices; after a mesh rebuild
+it re-runs from the cached codes (the store's `mesh_sha256` no longer matches).
+A store written before `mesh.ply` existed records no hash and counts as done: re-run
+semantics with `overwrite` to add its vertex arrays.
 
 ### Where outputs land
 
@@ -69,6 +73,7 @@ folder name:
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × latent_dim)
                                  (+ autoencoder.pt inside if semantics.n_components set)
+                                 (+ mesh-vertex arrays + mesh_sha256 attr, if mesh.ply existed)
 ```
 
 ---
@@ -749,6 +754,7 @@ the mapper database is rebuilt every run.
     semantics/
       <extractor>_lifted.zarr  ← lifted 3D features (N_points × n_components)
                                  (+ autoencoder.pt inside, needed to decode them, if n_components set)
+                                 (+ mesh-vertex arrays + mesh_sha256 attr, if mesh.ply existed)
 ```
 
 The 2D patch cache sits at the scene root because it depends only on the frames; the lift is
@@ -766,6 +772,7 @@ A processed scene (`environments-processed/<scene>/`) carries:
 | `<backend>/mesh.ply` | any pipeline |
 | `<backend>/texture/mesh.obj` + `mesh.mtl` + `albedo.png` | any pipeline — textured mesh (only if `mesh.texture: true`) |
 | `<backend>/semantics/<extractor>_lifted.zarr` | per-point latent codes (`semantics.n_components`-D) |
+| `<backend>/semantics/<extractor>_lifted.zarr` vertex arrays | per-mesh-vertex: ocr_lens `vertex_word_ids` + `vertex_word_probs` (top-64), maskclip/talk2dino `vertex_features` codes; read by `python -m collab_splats.viewer` |
 | `<backend>/semantics/<extractor>_lifted.zarr/autoencoder.pt` | decoder to full 768-D + `recon_cosine` / `recon_mse` |
 | `<backend>/splats/splats.ply` | trained Gaussians (standard 3DGS PLY layout), COLMAP world frame — any splat viewer |
 | `<backend>/splats/ckpt.pt` | trainer checkpoint: Gaussian params + pose-opt state, for resuming or re-rendering |

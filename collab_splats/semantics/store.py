@@ -2,7 +2,8 @@
 Semantics stores: the 2D patch cache and the lifted per-point store.
 
 - `<extractor>_codes.zarr` (`_features.zarr` while extracting): `features` (N, D, H_p, W_p) float16, one chunk per frame
-- `<extractor>_lifted.zarr`: `features` (P, latent), plus `autoencoder.pt` when compressed
+- `<extractor>_lifted.zarr`: `features` (P, latent), plus `autoencoder.pt` when compressed, plus mesh-vertex
+  arrays (`vertex_word_ids` / `vertex_word_probs` or `vertex_features`) when the mesh existed
 - paths come from `Reconstructor`
 """
 
@@ -20,6 +21,7 @@ import zarr
 from collab_splats.preproc.frames import frame_paths
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.utils.io import open_valid, to_json_safe
+from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -141,16 +143,25 @@ def write_feature_cache(
 ########################################################
 
 
-def write_point_features(store_path: Path, codes: np.ndarray, ae: Optional[FeatureAutoencoder]) -> None:
+def write_point_features(
+    store_path: Path,
+    codes: np.ndarray,
+    ae: Optional[FeatureAutoencoder],
+    vertex_arrays: Optional[dict[str, np.ndarray]] = None,
+    attrs: Optional[dict[str, Any]] = None,
+) -> None:
     """
     Write the lifted store atomically via a `.tmp` dir renamed into place.
 
     - codes stored fp16; read_point_features returns them float32
+    - vertex arrays stored in the dtype they arrive in (caller picks fp16 / int16)
 
     Args:
         store_path: the lifted store path.
         codes: (P, latent) codes, or (P, D) when `ae` is None.
         ae: autoencoder that decodes `codes`, or None.
+        vertex_arrays: mesh-vertex arrays by name, e.g. `vertex_features`; None for none.
+        attrs: extra store attrs, e.g. `extractor`, `mesh_sha256`; None for none.
     """
     store_path = Path(store_path)
     tmp = store_path.with_name(f"{store_path.name}.tmp")
@@ -160,16 +171,19 @@ def write_point_features(store_path: Path, codes: np.ndarray, ae: Optional[Featu
     store_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(tmp, ignore_errors=True)
 
-    # Codes, weights, then attrs into the tmp dir; a failure removes it
+    # Codes, vertex arrays, weights, then attrs into the tmp dir; a failure removes it
     try:
         store = zarr.open(str(tmp), mode="w")
         store["features"] = codes.astype(np.float16)
+
+        for key, array in (vertex_arrays or {}).items():
+            store[key] = array
 
         if ae is not None:
             ae.save(tmp / "autoencoder.pt")
 
         input_dim = int(ae.input_dim) if ae is not None else width
-        store.attrs.update({"input_dim": input_dim, "latent_dim": width})
+        store.attrs.update({"input_dim": input_dim, "latent_dim": width, **to_json_safe(attrs or {})})
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
@@ -179,13 +193,16 @@ def write_point_features(store_path: Path, codes: np.ndarray, ae: Optional[Featu
     tmp.rename(store_path)
 
 
-def read_point_features(store_path: Path, batch_size: int = 65_536) -> np.ndarray:
+def read_point_features(store_path: Path, batch_size: int = 65_536, name: str = "features") -> np.ndarray:
     """
     Read the lifted store, decoding latent codes back to full dim.
+
+    - decodes on get_device(); the result is copied back to host
 
     Args:
         store_path: the lifted store path.
         batch_size: points per decode chunk.
+        name: array to read, `features` (points) or `vertex_features`.
 
     Returns:
         (P, D) float32, L2-normalized per row.
@@ -195,7 +212,7 @@ def read_point_features(store_path: Path, batch_size: int = 65_536) -> np.ndarra
     """
     store_path = Path(store_path)
     store = zarr.open(str(store_path), mode="r")
-    codes = np.asarray(store["features"], dtype=np.float32)
+    codes = np.asarray(store[name], dtype=np.float32)
     codes = torch.from_numpy(codes)
     weights = store_path / "autoencoder.pt"
 
@@ -207,14 +224,14 @@ def read_point_features(store_path: Path, batch_size: int = 65_536) -> np.ndarra
         return F.normalize(codes, dim=1).numpy()
 
     # Decode in chunks into one preallocated array; row-wise ops, so chunking is exact
-    ae = FeatureAutoencoder.load(weights)
+    ae = FeatureAutoencoder.load(weights).to(get_device())
     decoded = torch.empty((codes.shape[0], ae.input_dim), dtype=torch.float32)
 
     start = 0
 
     for chunk in ae.iter_decode(codes, batch_size):
         end = start + len(chunk)
-        decoded[start:end] = F.normalize(chunk, dim=1)
+        decoded[start:end] = F.normalize(chunk, dim=1).cpu()
         start = end
 
     return decoded.numpy()

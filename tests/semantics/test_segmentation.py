@@ -194,8 +194,22 @@ def test_mobilesamv2_no_detections_returns_empty_stack():
     seg.object_model.return_value = []
     masks, results = seg.segment(np.zeros((5, 7, 3), dtype=np.uint8))
     assert masks.shape == (0, 5, 7)
-    assert masks.dtype == torch.float32
+    assert masks.dtype == torch.bool
     assert results == []
+
+
+def test_mobilesamv2_stack_masks_is_bool():
+    """SAM's bool segmentations stack as an (N, H, W) bool tensor, like sam3's masks."""
+    seg = np.zeros((5, 7), dtype=bool)
+    seg[1:3, 2:4] = True
+
+    masks = mobile_sam._stack_masks(
+        [{"segmentation": seg}, {"segmentation": ~seg}], 5, 7
+    )
+
+    assert masks.dtype == torch.bool
+    assert torch.equal(masks[0], torch.from_numpy(seg))
+    assert torch.equal(masks[1], torch.from_numpy(~seg))
 
 
 def test_mobilesamv2_auto_empty_returns_empty_stack(monkeypatch):
@@ -313,10 +327,12 @@ def test_aggregate_masked_features_paints_each_mask_mean():
     masks[0, :2] = 1
     masks[1, 2:, :2] = 1
 
-    pooled = aggregate_masked_features(features, masks, (4, 4), (4, 4))
+    # Float and bool mask stacks pool identically
+    for stack in (masks, masks.bool()):
+        pooled = aggregate_masked_features(features, stack, (4, 4), (4, 4))
 
-    assert torch.allclose(pooled[0, :2], torch.full((2, 4), features[0, :2].mean()))
-    assert torch.allclose(
-        pooled[0, 2:, :2], torch.full((2, 2), features[0, 2:, :2].mean())
-    )
-    assert torch.all(pooled[0, 2:, 2:] == 0)
+        assert torch.allclose(pooled[0, :2], torch.full((2, 4), features[0, :2].mean()))
+        assert torch.allclose(
+            pooled[0, 2:, :2], torch.full((2, 2), features[0, 2:, :2].mean())
+        )
+        assert torch.all(pooled[0, 2:, 2:] == 0)

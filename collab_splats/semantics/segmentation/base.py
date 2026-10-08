@@ -48,7 +48,7 @@ class BaseSegmentation(RegistryMixin, ABC):
 
         Returns:
             (masks, metadata) — masks rank and dtype are backend-specific: (H, W) bool
-            for insid3 and skywater, (N, H, W) float32 for mobilesamv2, (N, 1, H, W) bool
+            for insid3 and skywater, (N, H, W) bool for mobilesamv2, (N, 1, H, W) bool
             for sam3.
             metadata is backend-specific.
         """
@@ -233,7 +233,7 @@ def aggregate_masked_features(
 
     Args:
         features: (C, H, W) image feature tensor.
-        masks: (N, H, W) segmentation masks from SAM.
+        masks: (N, H, W) bool or float segmentation masks from SAM.
         resolution: intermediate spatial resolution for feature interpolation.
         final_resolution: output spatial resolution.
 
@@ -244,6 +244,8 @@ def aggregate_masked_features(
         features.unsqueeze(0), size=resolution, mode="bilinear", align_corners=False
     )[0]
 
+    # Nearest-resize masks as float (interpolate rejects bool), then back to bool
+    masks = masks.float()
     masks = F.interpolate(masks.unsqueeze(1), size=resolution, mode="nearest").bool()[
         :, 0
     ]

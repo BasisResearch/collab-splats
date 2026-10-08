@@ -201,7 +201,7 @@ def overlay_masks(
 
     Args:
         image: Original image (H, W, 3) uint8.
-        masks: Binary masks (N, H, W) float32, one per detected object.
+        masks: Binary masks (N, H, W) bool or float, one per detected object.
         alpha: Blend weight for mask colors (0=image only, 1=colors only).
 
     Returns:
@@ -225,6 +225,7 @@ def overlay_masks(
     for i in range(N):
         mask = masks_np[i]  # (mH, mW)
         if mask.shape != (H, W):
+            mask = mask.astype(np.uint8)
             mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
         color = np.array(cmap(i % 20)[:3]) * 255  # RGB in [0,255]
         overlay[mask > 0.5] = (1 - alpha) * base[mask > 0.5] + alpha * color

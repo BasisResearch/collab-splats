@@ -50,21 +50,22 @@ def _load_mobile_sam(
 
 def _stack_masks(results: list[dict], height: int, width: int) -> torch.Tensor:
     """
-    Stack SAM result masks as float32, (0, H, W) when there are none.
+    Stack SAM result masks as bool, (0, H, W) when there are none.
 
     Args:
-        results: SAM dicts with a "segmentation" (H, W) array.
+        results: SAM dicts with a "segmentation" (H, W) bool array.
         height: frame rows, for the empty stack.
         width: frame columns, for the empty stack.
 
     Returns:
-        (N, H, W) float32.
+        (N, H, W) bool.
     """
     if not results:
-        return torch.zeros((0, height, width), dtype=torch.float32)
-    return torch.stack(
-        [torch.tensor(m["segmentation"]).to(torch.float32) for m in results]
-    )
+        return torch.zeros((0, height, width), dtype=torch.bool)
+
+    # One numpy stack, then a zero-copy tensor view
+    stacked = np.stack([m["segmentation"] for m in results])
+    return torch.from_numpy(stacked)
 
 
 ########################################################
@@ -112,7 +113,7 @@ class MobileSAMSegmentation(BaseSegmentation):
             image: (H, W, 3) uint8 array.
 
         Returns:
-            (masks, results): masks (N, H, W) float32, N = 0 when nothing is detected;
+            (masks, results): masks (N, H, W) bool, N = 0 when nothing is detected;
             results are the raw SAM dicts, one per mask.
         """
         if self.strategy == "object":

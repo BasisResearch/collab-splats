@@ -109,7 +109,9 @@ def write_feature_cache(
     for fmap in maps:
         # Too many maps: stop before zarr's out-of-bounds write
         if n_written == n_frames:
-            raise ValueError(f"write_feature_cache: more than {n_frames} frame maps for {store_path}")
+            raise ValueError(
+                f"write_feature_cache: more than {n_frames} frame maps for {store_path}"
+            )
 
         # First map fixes (D, H_p, W_p); one chunk per frame, so reading frame i loads 1 chunk
         if arr is None:
@@ -127,7 +129,11 @@ def write_feature_cache(
 
     # Too few maps: leave the store without attrs, so it reads invalid
     if n_written != n_frames:
-        raise ValueError(f"write_feature_cache: got {n_written} of {n_frames} frame maps for {store_path}")
+        raise ValueError(
+            f"write_feature_cache: got {n_written} of {n_frames} frame maps for {store_path}"
+        )
+
+    assert arr is not None
 
     # Decoder weights beside the codes, before the attrs mark the store valid
     if ae is not None:
@@ -183,7 +189,9 @@ def write_point_features(
             ae.save(tmp / "autoencoder.pt")
 
         input_dim = int(ae.input_dim) if ae is not None else width
-        store.attrs.update({"input_dim": input_dim, "latent_dim": width, **to_json_safe(attrs or {})})
+        store.attrs.update(
+            {"input_dim": input_dim, "latent_dim": width, **to_json_safe(attrs or {})}
+        )
     except Exception:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
@@ -193,7 +201,9 @@ def write_point_features(
     tmp.rename(store_path)
 
 
-def read_point_features(store_path: Path, batch_size: int = 65_536, name: str = "features") -> np.ndarray:
+def read_point_features(
+    store_path: Path, batch_size: int = 65_536, name: str = "features"
+) -> np.ndarray:
     """
     Read the lifted store, decoding latent codes back to full dim.
 
@@ -219,7 +229,9 @@ def read_point_features(store_path: Path, batch_size: int = 65_536, name: str = 
     # No weights: full-dim codes are returned normalized; latent codes cannot be read
     if not weights.exists():
         if store.attrs["latent_dim"] < store.attrs["input_dim"]:
-            raise FileNotFoundError(f"{store_path} holds latent codes but no autoencoder.pt; re-run semantics")
+            raise FileNotFoundError(
+                f"{store_path} holds latent codes but no autoencoder.pt; re-run semantics"
+            )
 
         return F.normalize(codes, dim=1).numpy()
 

@@ -12,7 +12,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import panel as pn
 import param
@@ -64,7 +64,9 @@ def _scene_options(scenes: list[str], processed: set[str]) -> dict[str, str]:
     """
     options = {"— select a scene —": ""}
     options.update({(f"{s} ✓" if s in processed else s): s for s in scenes})
-    options.update({f"{s} ✓ (no source video)": s for s in sorted(processed - set(scenes))})
+    options.update(
+        {f"{s} ✓ (no source video)": s for s in sorted(processed - set(scenes))}
+    )
     return options
 
 
@@ -174,8 +176,12 @@ class SplatsApp:
         self._gpu = gpu_worker
         self._op_log = op_log if op_log is not None else OperationLog()
         self._cache = SceneCache()
-        self._current_key: tuple[str, str] | None = None  # (scene, backend) currently displayed
-        self._loading_key: tuple[str, str] | None = None  # (scene, backend) whose load is in flight
+        self._current_key: tuple[str, str] | None = (
+            None  # (scene, backend) currently displayed
+        )
+        self._loading_key: tuple[str, str] | None = (
+            None  # (scene, backend) whose load is in flight
+        )
         self._extractor_name = ""  # extractor of the displayed backend's semantics run
         self._viewer = SplitViewer(self._op_log)
 
@@ -184,7 +190,9 @@ class SplatsApp:
         self._state = self._load_state()
         self._state_dirty = False  # set by _persist_state, cleared by _flush_state
         self._restored_selection = False  # scene restored once, after options load
-        self._suppress_autoload = False  # gate _on_scene during programmatic option/restore churn
+        self._suppress_autoload = (
+            False  # gate _on_scene during programmatic option/restore churn
+        )
         self._build_sidebar()
         self._refresh_scenes()
 
@@ -242,7 +250,9 @@ class SplatsApp:
         self.stages = pn.widgets.MultiChoice(
             name="Stages",
             options=list(STAGES),
-            value=[st for st in s.get("stages", ["preproc", "pointcloud"]) if st in STAGES],
+            value=[
+                st for st in s.get("stages", ["preproc", "pointcloud"]) if st in STAGES
+            ],
         )
         self.overrides = pn.widgets.TextAreaInput(
             name="Config overrides (YAML)",
@@ -251,16 +261,24 @@ class SplatsApp:
             value=s.get("overrides", ""),
         )
         self.pos_query = pn.widgets.TextInput(
-            name="Positive query", placeholder="e.g. chair, stool", value=s.get("pos_query", "")
+            name="Positive query",
+            placeholder="e.g. chair, stool",
+            value=s.get("pos_query", ""),
         )
         self.neg_query = pn.widgets.TextInput(
-            name="Negative query", placeholder="e.g. floor, wall", value=s.get("neg_query", "background, sky")
+            name="Negative query",
+            placeholder="e.g. floor, wall",
+            value=s.get("neg_query", "background, sky"),
         )
         self.run_query_btn = pn.widgets.Button(label="Run query", button_type="primary")
         self.max_display_points = pn.widgets.IntInput(
-            name="Max display points", value=s.get("max_display_points", 500_000), step=50_000
+            name="Max display points",
+            value=s.get("max_display_points", 500_000),
+            step=50_000,
         )
-        self.view_mode = pn.widgets.RadioButtonGroup(options=["pointcloud", "mesh"], value="pointcloud")
+        self.view_mode = pn.widgets.RadioButtonGroup(
+            options=["pointcloud", "mesh"], value="pointcloud"
+        )
 
         # Density change reloads the displayed scene; the cache stays valid since decimation happens in viewer.load
         def _on_density(event: param.parameterized.Event) -> None:
@@ -288,7 +306,9 @@ class SplatsApp:
         self.backend.param.watch(self._on_scene, "value")
         self.run_query_btn.on_click(self._on_query)
         self.view_mode.param.watch(self._on_view_mode, "value")
-        self.normalize_view.param.watch(lambda e: self._viewer.set_normalize_view(e.new), "value")
+        self.normalize_view.param.watch(
+            lambda e: self._viewer.set_normalize_view(e.new), "value"
+        )
 
         # Push the restored normalize toggle into the viewer
         self._viewer.set_normalize_view(self.normalize_view.value)
@@ -316,7 +336,13 @@ class SplatsApp:
             self.scene_select,
             self.backend,
             pn.Card(self.stages, self.overrides, title="Run", collapsed=False),
-            pn.Card(self.pos_query, self.neg_query, self.run_query_btn, title="Semantics", collapsed=False),
+            pn.Card(
+                self.pos_query,
+                self.neg_query,
+                self.run_query_btn,
+                title="Semantics",
+                collapsed=False,
+            ),
             self.max_display_points,
             "### View",
             self.view_mode,
@@ -392,7 +418,9 @@ class SplatsApp:
 
             self._apply_scenes(scenes, processed, doc)
 
-        self._scene_thread = threading.Thread(target=work, name="scene-list", daemon=True)
+        self._scene_thread = threading.Thread(
+            target=work, name="scene-list", daemon=True
+        )
         self._scene_thread.start()
 
     def _apply_scenes(self, scenes: list[str], processed: set[str], doc: Any) -> None:
@@ -407,7 +435,9 @@ class SplatsApp:
 
             try:
                 if not scenes and not processed:
-                    self.scene_select.options = {"— listing failed; reload the page to retry —": ""}
+                    self.scene_select.options = {
+                        "— listing failed; reload the page to retry —": ""
+                    }
                 else:
                     self.scene_select.options = _scene_options(scenes, processed)
 
@@ -462,21 +492,33 @@ class SplatsApp:
     # Run
     ########
 
-    def _reconstructor(self, scene: str, backend: str, overrides: dict | None = None) -> Reconstructor:
+    def _reconstructor(
+        self, scene: str, backend: str, overrides: dict | None = None
+    ) -> Reconstructor:
         """
         Reconstructor for one scene's backend: recorded run config, then overrides, then local paths.
         """
         out = self._base_dir / scene
         recorded = Reconstructor.run_config_path(out, backend)
-        config = (yaml.safe_load(recorded.read_text()) or {}) if recorded.exists() else {}
+        config = (
+            (yaml.safe_load(recorded.read_text()) or {}) if recorded.exists() else {}
+        )
         method = next(m for m, names in backends().items() if backend in names)
 
         # input_path is only read by preproc; the run swaps in the video when preproc must run
-        paths = {"input_path": str(out), "output_path": str(out), "pointcloud": {"method": method, "backend": backend}}
+        paths = {
+            "input_path": str(out),
+            "output_path": str(out),
+            "pointcloud": {"method": method, "backend": backend},
+        }
         return Reconstructor(merge({}, config, overrides or {}, paths))
 
     def _pulled_reconstructor(
-        self, scene: str, backend: str, overrides: dict | None, excludes: tuple[str, ...]
+        self,
+        scene: str,
+        backend: str,
+        overrides: dict | None,
+        excludes: tuple[str, ...],
     ) -> Reconstructor:
         """
         Reconstructor for the backend, pulling the scene first when its pointcloud is not done locally.
@@ -485,12 +527,18 @@ class SplatsApp:
         """
         rec = self._reconstructor(scene, backend, overrides)
 
-        if rec.done("pointcloud") or not self._source.check_available() or not self._source.has_processed(scene):
+        if (
+            rec.done("pointcloud")
+            or not self._source.check_available()
+            or not self._source.has_processed(scene)
+        ):
             return rec
 
         with self._op_log.step(f"{scene}: pulling from server"):
             on_line = self._op_log.rclone_progress("⬇ pulling from server")
-            self._source.pull_processed(scene, self._base_dir / scene, excludes=excludes, on_line=on_line)
+            self._source.pull_processed(
+                scene, self._base_dir / scene, excludes=excludes, on_line=on_line
+            )
 
         return self._reconstructor(scene, backend, overrides)
 
@@ -518,9 +566,16 @@ class SplatsApp:
             self._op_log.append_line("push: uploading to environments-processed")
 
             try:
-                self._source.push_outputs(self._base_dir / scene, scene, on_line=self._op_log.append_line)
-                self._op_log.append_line(f"push: done in {time.perf_counter() - t0:.1f}s")
-            except (RuntimeError, OSError) as exc:  # non-fatal: outputs already on local disk
+                self._source.push_outputs(
+                    self._base_dir / scene, scene, on_line=self._op_log.append_line
+                )
+                self._op_log.append_line(
+                    f"push: done in {time.perf_counter() - t0:.1f}s"
+                )
+            except (
+                RuntimeError,
+                OSError,
+            ) as exc:  # non-fatal: outputs already on local disk
                 logger.exception("push failed")
                 self._op_log.append_line(f"push: FAILED ({exc})")
 
@@ -552,9 +607,22 @@ class SplatsApp:
             self._op_log.error_op("overrides must be a YAML mapping")
             return
 
-        self._start_run(scene, self.backend.value, list(self.stages.value) or None, overrides, overwrite=force)
+        self._start_run(
+            scene,
+            self.backend.value,
+            list(self.stages.value) or None,
+            overrides,
+            overwrite=force,
+        )
 
-    def _start_run(self, scene: str, backend: str, stages: list[str] | None, overrides: dict, overwrite: bool) -> None:
+    def _start_run(
+        self,
+        scene: str,
+        backend: str,
+        stages: list[str] | None,
+        overrides: dict,
+        overwrite: bool,
+    ) -> None:
         """
         Enqueue a Reconstructor run on the GPU worker, then reload the backend.
         """
@@ -566,7 +634,9 @@ class SplatsApp:
             rec = self._pulled_reconstructor(scene, backend, overrides, other_backends)
 
             # Fetch the video only when preproc will run; it reads input_path then
-            runs_preproc = (stages is None or "preproc" in stages) and (overwrite or not rec.done("preproc"))
+            runs_preproc = (stages is None or "preproc" in stages) and (
+                overwrite or not rec.done("preproc")
+            )
 
             if runs_preproc:
                 rec.config["input_path"] = str(self._ensure_local_video(scene))
@@ -624,10 +694,12 @@ class SplatsApp:
 
             if cached is not None:
                 self._op_log.append_line(f"{scene}/{backend}: using in-memory cache")
-                return cached
+                return cast(tuple, cached)
 
             # Viewing pulls the scene root and this backend without the dense per-pixel arrays
-            rec = self._pulled_reconstructor(scene, backend, None, PULL_EXCLUDES + other_backends)
+            rec = self._pulled_reconstructor(
+                scene, backend, None, PULL_EXCLUDES + other_backends
+            )
 
             if not rec.done("pointcloud"):
                 return None
@@ -666,7 +738,12 @@ class SplatsApp:
             n_shown = min(n_pts, max_points) if max_points > 0 else n_pts
 
             with self._op_log.step(f"rendering {n_shown:,} points × 2 panes"):
-                self._viewer.load(result, mesh_path=mesh_path, lifted_store=lifted_store, max_points=max_points)
+                self._viewer.load(
+                    result,
+                    mesh_path=mesh_path,
+                    lifted_store=lifted_store,
+                    max_points=max_points,
+                )
 
             self._extractor_name = extractor_name
             self._current_key = key
@@ -750,7 +827,9 @@ class SplatsApp:
         doc = pn.state.curdoc
 
         def job() -> Any:
-            return self._viewer.score_query(positive=positive, negative=negative, extractor_name=extractor_name)
+            return self._viewer.score_query(
+                positive=positive, negative=negative, extractor_name=extractor_name
+            )
 
         def on_done(res: Any) -> None:
             # Sync, not unconditional re-enable: another queued job must keep widgets locked
@@ -783,7 +862,9 @@ class SplatsApp:
             The page template.
         """
         # Resizable console showing the shared op log
-        self._progress = pn.pane.HTML(self._op_log.render_html(), sizing_mode="stretch_both")
+        self._progress = pn.pane.HTML(
+            self._op_log.render_html(), sizing_mode="stretch_both"
+        )
         self._console = pn.Column(
             self._progress,
             sizing_mode="stretch_width",
@@ -804,12 +885,19 @@ class SplatsApp:
             pn.state.add_periodic_callback(self._tick, period=300, start=True)
             pn.state.on_session_destroyed(lambda _ctx: self._flush_state())
         except RuntimeError:
-            logger.debug("no server doc; busy state, console and state flush are static", exc_info=True)
+            logger.debug(
+                "no server doc; busy state, console and state flush are static",
+                exc_info=True,
+            )
 
         return pn.template.MaterialTemplate(
             title="splats",
             sidebar=[self._sidebar],
-            main=[pn.Column(self._viewer.layout, self._console, sizing_mode="stretch_both")],
+            main=[
+                pn.Column(
+                    self._viewer.layout, self._console, sizing_mode="stretch_both"
+                )
+            ],
             header_background="#2596be",
             sidebar_width=340,
         )

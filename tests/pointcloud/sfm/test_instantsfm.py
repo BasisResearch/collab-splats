@@ -26,8 +26,16 @@ def test_creator_retriangulation_flag_flips_skip_retriangulation():
     from instantsfm.controllers.config import GENERAL_OPTIONS
 
     # Default off matches upstream; enabling must flip only the copied dict
-    assert instantsfm.InstantSfMCreator()._build_config().OPTIONS["skip_retriangulation"] is True
-    assert instantsfm.InstantSfMCreator(retriangulation=True)._build_config().OPTIONS["skip_retriangulation"] is False
+    assert (
+        instantsfm.InstantSfMCreator()._build_config().OPTIONS["skip_retriangulation"]
+        is True
+    )
+    assert (
+        instantsfm.InstantSfMCreator(retriangulation=True)
+        ._build_config()
+        .OPTIONS["skip_retriangulation"]
+        is False
+    )
     assert GENERAL_OPTIONS["skip_retriangulation"] is True
 
 
@@ -114,7 +122,9 @@ def test_bae_pcg_patch_keeps_column_shape():
 
 
 def test_nudge_edge_keypoints_pulls_exact_edge_inward_only():
-    feats = np.array([[10.0, 20.0], [1918.0, 5.0], [7.0, 1078.0], [1930.0, 3.0]], dtype=np.float32)
+    feats = np.array(
+        [[10.0, 20.0], [1918.0, 5.0], [7.0, 1078.0], [1930.0, 3.0]], dtype=np.float32
+    )
     out = instantsfm._nudge_edge_keypoints(feats, 1918, 1078)
 
     # Exact-edge coords move just inside; interior and beyond-edge coords are untouched
@@ -137,7 +147,10 @@ def test_instantsfm_random_seed_reaches_runtime_options():
 
     # Upstream SolveGlobalMapper reads RUNTIME_OPTIONS['random_seed'] with .get(key, None),
     # so an unset seed must leave the key ABSENT rather than write a default in
-    assert "random_seed" not in instantsfm.InstantSfMCreator()._build_config().RUNTIME_OPTIONS
+    assert (
+        "random_seed"
+        not in instantsfm.InstantSfMCreator()._build_config().RUNTIME_OPTIONS
+    )
 
     # A set seed must reach the option verbatim — a hardcoded or coerced value silently
     # makes every scene reproduce to the same wrong reconstruction
@@ -154,7 +167,12 @@ def test_instantsfm_min_num_view_per_track_reaches_track_establishment_options()
     from instantsfm.config.colmap import CONFIG
 
     # Unset must leave the upstream cut of 3 in place — the knob is opt-in
-    assert instantsfm.InstantSfMCreator()._build_config().TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] == 3
+    assert (
+        instantsfm.InstantSfMCreator()
+        ._build_config()
+        .TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"]
+        == 3
+    )
 
     # A set value must reach the option verbatim; FindTracksForProblem compares against it
     cut = instantsfm.InstantSfMCreator(min_num_view_per_track=6)._build_config()
@@ -192,7 +210,10 @@ def _insfm_scene(image_dir):
         images.world2cams[i, :3, :3] = Rotation.random(random_state=i).as_matrix()
         images.world2cams[i, :3, 3] = rng.normal(size=3)
         images.features[i] = rng.uniform(1, 40, size=(5, 2)).astype(np.float32)
-        cv2.imwrite(str(image_dir / images.filenames[i]), np.full((48, 64, 3), (30, 20 + i, 10 * i), np.uint8))
+        cv2.imwrite(
+            str(image_dir / images.filenames[i]),
+            np.full((48, 64, 3), (30, 20 + i, 10 * i), np.uint8),
+        )
 
     # Five tracks exercising the filters
     tracks = Tracks(5)
@@ -225,13 +246,21 @@ def test_to_pycolmap_matches_upstream_writer_selection(tmp_path):
 
     # Registered cluster-0 images keep full keypoint lists; ids only where a track round-trips
     none = pycolmap.INVALID_POINT3D_ID
-    point3d_ids = {0: [none, 0, 3, none, none], 2: [0, none, none, 3, none], 3: [none, none, 0, 2, 3]}
+    point3d_ids = {
+        0: [none, 0, 3, none, none],
+        2: [0, none, none, 3, none],
+        3: [none, none, 0, 2, 3],
+    }
     assert sorted(recon.reg_image_ids()) == [0, 2, 3]
     for i, image in recon.images.items():
         assert (image.name, image.camera_id) == (images.filenames[i], images.cam_ids[i])
         assert [p.point3D_id for p in image.points2D] == point3d_ids[i]
-        np.testing.assert_array_equal([p.xy for p in image.points2D], images.features[i])
-        np.testing.assert_allclose(image.cam_from_world().matrix(), images.world2cams[i, :3], atol=1e-12)
+        np.testing.assert_array_equal(
+            [p.xy for p in image.points2D], images.features[i]
+        )
+        np.testing.assert_allclose(
+            image.cam_from_world().matrix(), images.world2cams[i, :3], atol=1e-12
+        )
 
     # Every track is a point; colors are truncated means of the flat RGB (10i, 20+i, 30) frames
     points = {
@@ -245,7 +274,9 @@ def test_to_pycolmap_matches_upstream_writer_selection(tmp_path):
         3: ([16, 21, 30], [(0, 2), (2, 3), (3, 4)]),
         4: ([7, 7, 7], []),
     }
-    np.testing.assert_array_equal([recon.points3D[i].xyz for i in range(5)], tracks.xyzs)
+    np.testing.assert_array_equal(
+        [recon.points3D[i].xyz for i in range(5)], tracks.xyzs
+    )
     assert all(p.error == 0.0 for p in recon.points3D.values())
 
     # One cluster is kept whole, whatever its id; several need a cluster 0; none registered raises

@@ -43,7 +43,13 @@ def test_exposes_no_shared_cache_names(ns):
     """
     The retired names threaded state between pages; their absence is the isolation property.
     """
-    for gone in ("OUTPUT_DIR", "IMAGES_DIR", "RECON", "TUTORIAL_CACHE", "set_notebook_backend"):
+    for gone in (
+        "OUTPUT_DIR",
+        "IMAGES_DIR",
+        "RECON",
+        "TUTORIAL_CACHE",
+        "set_notebook_backend",
+    ):
         assert gone not in ns, f"{gone} should be gone"
 
 
@@ -66,7 +72,11 @@ def scene_ns(ns, monkeypatch, tmp_path):
     """
     monkeypatch.setitem(ns["tutorial_scene"].__globals__, "SCENE_DIR", tmp_path)
     runs = []
-    monkeypatch.setattr(Reconstructor, "run", lambda self, stages=None, overwrite=False: runs.append(stages))
+    monkeypatch.setattr(
+        Reconstructor,
+        "run",
+        lambda self, stages=None, overwrite=False: runs.append(stages),
+    )
     ns["_runs"] = runs
     return ns
 

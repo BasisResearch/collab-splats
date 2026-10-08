@@ -73,7 +73,10 @@ def _crop_boxes(sizes: list[tuple[int, int]]) -> np.ndarray:
 
 
 def _preprocess_frame(
-    rgb: np.ndarray, *, target_shape: Callable[[float, int, int], tuple[int, int]], resolution: int
+    rgb: np.ndarray,
+    *,
+    target_shape: Callable[[float, int, int], tuple[int, int]],
+    resolution: int,
 ) -> torch.Tensor:
     """
     One frame through upstream's aspect-ratio crop and bicubic resize, as a [0, 1] tensor.
@@ -113,7 +116,9 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
     # Loop-closure settings for VGGT-Omega, calibrated in docs/parity.md
     _lc_layer_index: ClassVar[int] = 13
     default_verify_match_ratio: ClassVar[float] = 1.55
-    _lc_token_offset: ClassVar[int] = 5  # VGGT's 5 leading tokens work better here than Omega's own 17
+    _lc_token_offset: ClassVar[int] = (
+        5  # VGGT's 5 leading tokens work better here than Omega's own 17
+    )
 
     model_path: str | None = None
     resolution: int = 512
@@ -124,7 +129,9 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         Reject an unknown resize_mode.
         """
         if self.resize_mode not in {"balanced", "max_size"}:
-            raise ValueError(f"resize_mode must be one of {{'balanced', 'max_size'}}, got {self.resize_mode!r}")
+            raise ValueError(
+                f"resize_mode must be one of {{'balanced', 'max_size'}}, got {self.resize_mode!r}"
+            )
 
     def _load_model(self, device: str) -> Any:
         """
@@ -134,7 +141,9 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         - bf16 params would crash the heads' fp32 LayerNorms
         """
         # Use the local checkpoint if given, otherwise download it from HuggingFace
-        ckpt = self.model_path or load_hf_weights(VGGT_OMEGA_HF_REPO, VGGT_OMEGA_DEFAULT_FILENAME)
+        ckpt = self.model_path or load_hf_weights(
+            VGGT_OMEGA_HF_REPO, VGGT_OMEGA_DEFAULT_FILENAME
+        )
 
         # Build the model on the device, skipping CPU random init
         with torch.device(device):
@@ -186,7 +195,11 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         chunks = [files[i : i + size] for i in range(0, n, size)]
 
         # Crop and resize each chunk with upstream's own preprocessing
-        load = partial(load_and_preprocess_images, image_resolution=self.resolution, mode=self.resize_mode)
+        load = partial(
+            load_and_preprocess_images,
+            image_resolution=self.resolution,
+            mode=self.resize_mode,
+        )
 
         with ThreadPoolExecutor(workers) as pool:
             parts = list(pool.map(load, chunks))
@@ -197,7 +210,9 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
 
         return torch.cat(parts)
 
-    def _preprocess_arrays(self, arrays: list[np.ndarray], *, workers: int = 8) -> torch.Tensor:
+    def _preprocess_arrays(
+        self, arrays: list[np.ndarray], *, workers: int = 8
+    ) -> torch.Tensor:
         """
         RGB arrays through upstream's per-image crop, resize and padding, on a thread pool.
 
@@ -207,8 +222,14 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         - imports upstream's private load_fn helpers; the bit-exact test guards drift
         """
         # Crop, resize and tensorize every frame
-        target_shape = _balanced_target_shape if self.resize_mode == "balanced" else _max_size_target_shape
-        preprocess = partial(_preprocess_frame, target_shape=target_shape, resolution=self.resolution)
+        target_shape = (
+            _balanced_target_shape
+            if self.resize_mode == "balanced"
+            else _max_size_target_shape
+        )
+        preprocess = partial(
+            _preprocess_frame, target_shape=target_shape, resolution=self.resolution
+        )
 
         with ThreadPoolExecutor(workers) as pool:
             images = list(pool.map(preprocess, arrays))
@@ -238,9 +259,14 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
             predictions = model(images)
 
         # Convert the predictions into poses, intrinsics and depth maps, as upstream's demo does
-        return {"images": images, **_decode_depth_head(predictions, views.shape[-2:], encoding_to_camera)}
+        return {
+            "images": images,
+            **_decode_depth_head(predictions, views.shape[-2:], encoding_to_camera),
+        }
 
-    def extract_intermediate_features(self, frames: torch.Tensor, layer_index: int) -> dict[str, Any]:
+    def extract_intermediate_features(
+        self, frames: torch.Tensor, layer_index: int
+    ) -> dict[str, Any]:
         """
         Hook inter_frame_blocks[layer_index].attn.qkv on a 2-frame forward.
 

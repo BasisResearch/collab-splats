@@ -1,13 +1,18 @@
 # tests/semantics/test_insid3_segmentation.py
 """Tests for INSID3 in-context segmentation backend."""
+
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
+from PIL import Image
 
 
 def test_agglomerative_clustering_returns_integer_labels():
     from collab_splats.semantics.segmentation.insid3 import _agglomerative_clustering
+
     X = F.normalize(torch.randn(16, 32), p=2, dim=1)
     labels = _agglomerative_clustering(X, tau=0.6)
     assert labels.shape == (16,)
@@ -17,6 +22,7 @@ def test_agglomerative_clustering_returns_integer_labels():
 
 def test_agglomerative_clustering_device_preserved():
     from collab_splats.semantics.segmentation.insid3 import _agglomerative_clustering
+
     X = F.normalize(torch.randn(8, 16), p=2, dim=1)
     labels = _agglomerative_clustering(X, tau=0.6)
     assert labels.device == X.device
@@ -24,6 +30,7 @@ def test_agglomerative_clustering_device_preserved():
 
 def test_cluster_prototypes_shape_and_normalized():
     from collab_splats.semantics.segmentation.insid3 import _cluster_prototypes
+
     X = F.normalize(torch.randn(20, 32), p=2, dim=1)
     labels = torch.tensor([0, 0, 1, 1, 2, 2, 0, 1, 2, 0, 1, 2, 0, 0, 1, 1, 2, 2, 0, 1])
     K = 3
@@ -45,6 +52,7 @@ def test_agglomerative_clustering_identical_vectors_merge():
 
 def test_downsample_mask_reduces_to_patch_resolution():
     from collab_splats.semantics.segmentation.insid3 import _downsample_mask
+
     mask = torch.zeros(64, 64, dtype=torch.bool)
     mask[20:44, 20:44] = True
     down = _downsample_mask(mask, h=8, w=8)
@@ -65,6 +73,7 @@ def test_downsample_mask_tiny_mask_fallback():
 
 def test_locate_candidates_returns_bool_mask():
     from collab_splats.semantics.segmentation.insid3 import _locate_candidates
+
     D, H, W = 16, 6, 6
     tgt = F.normalize(torch.randn(D, H, W), p=2, dim=0)
     ref = F.normalize(torch.randn(D, H, W), p=2, dim=0)
@@ -94,14 +103,18 @@ def test_locate_candidates_perfect_match():
 
 def test_downsample_mask_all_zero_returns_empty():
     from collab_splats.semantics.segmentation.insid3 import _downsample_mask
+
     mask = torch.zeros(64, 64, dtype=torch.bool)
     down = _downsample_mask(mask, h=8, w=8)
     assert down.shape == (8, 8)
-    assert not down.any(), "all-zero mask should produce all-zero output without crashing"
+    assert not down.any(), (
+        "all-zero mask should produce all-zero output without crashing"
+    )
 
 
 def test_upsample_mask_basic():
     from collab_splats.semantics.segmentation.insid3 import _upsample_mask
+
     mask = torch.zeros(8, 8, dtype=torch.bool)
     mask[2:5, 2:5] = True
     up = _upsample_mask(mask, H=64, W=64)
@@ -112,6 +125,7 @@ def test_upsample_mask_basic():
 
 def test_tensor_to_pil_shape_and_mode():
     from collab_splats.semantics.segmentation.insid3 import _tensor_to_pil
+
     t = torch.rand(3, 32, 32)
     img = _tensor_to_pil(t)
     assert img.size == (32, 32)
@@ -120,6 +134,7 @@ def test_tensor_to_pil_shape_and_mode():
 
 def test_seed_and_aggregate_returns_bool_mask():
     from collab_splats.semantics.segmentation.insid3 import _seed_and_aggregate
+
     D, H, W = 16, 6, 6
     feat = F.normalize(torch.randn(D, H, W), p=2, dim=0)
     feat_deb = F.normalize(torch.randn(D, H, W), p=2, dim=0)
@@ -129,32 +144,33 @@ def test_seed_and_aggregate_returns_bool_mask():
     labels = torch.zeros(H, W, dtype=torch.long)
     labels[::2, ::2] = 1
     K = 2
-    out = _seed_and_aggregate(candidate_mask, feat, feat_deb, proto, labels, K, merge_threshold=0.2)
+    out = _seed_and_aggregate(
+        candidate_mask, feat, feat_deb, proto, labels, K, merge_threshold=0.2
+    )
     assert out.shape == (H, W)
     assert out.dtype == torch.bool
 
 
 def test_seed_and_aggregate_empty_candidate_returns_empty():
     from collab_splats.semantics.segmentation.insid3 import _seed_and_aggregate
+
     D, H, W = 16, 6, 6
     feat = F.normalize(torch.randn(D, H, W), p=2, dim=0)
     feat_deb = F.normalize(torch.randn(D, H, W), p=2, dim=0)
     proto = F.normalize(torch.randn(D), p=2, dim=0)
     candidate_mask = torch.zeros(H, W, dtype=torch.bool)  # all-zero
     labels = torch.zeros(H, W, dtype=torch.long)
-    out = _seed_and_aggregate(candidate_mask, feat, feat_deb, proto, labels, K=1, merge_threshold=0.2)
+    out = _seed_and_aggregate(
+        candidate_mask, feat, feat_deb, proto, labels, K=1, merge_threshold=0.2
+    )
     assert out.shape == (H, W)
     assert not out.any()
-
-
-from unittest.mock import MagicMock
-
-from PIL import Image
 
 
 def _make_seg_with_mock_extractor(D=16, H_p=6, W_p=6):
     """Helper: INSID3Segmentation with mocked DINOFeatureExtractor."""
     from collab_splats.semantics.segmentation.insid3 import INSID3Segmentation
+
     feat = F.normalize(torch.randn(D, H_p, W_p), p=2, dim=0)
     extractor = MagicMock()
     extractor.forward.return_value = [feat.clone()]
@@ -227,11 +243,13 @@ def test_set_context_empty_mask_raises_before_extraction():
 def test_registered_as_insid3():
     from collab_splats.semantics.segmentation.base import BaseSegmentation
     from collab_splats.semantics.segmentation.insid3 import INSID3Segmentation
+
     assert BaseSegmentation.get("insid3") is INSID3Segmentation
 
 
 def test_segment_raises_without_context():
     from collab_splats.semantics.segmentation.insid3 import INSID3Segmentation
+
     seg = INSID3Segmentation.__new__(INSID3Segmentation)
     seg._prototype = None
     seg._ref_feat_deb = None
@@ -298,6 +316,7 @@ def test_segment_with_mask_clears_context_when_segment_raises():
 def test_agglomerative_labels_cover_every_cluster():
     """Cluster labels are compact: every id in 0..K-1 has a member."""
     from collab_splats.semantics.segmentation.insid3 import _agglomerative_clustering
+
     X = F.normalize(torch.randn(40, 16), p=2, dim=1)
     labels = _agglomerative_clustering(X, tau=0.6)
     K = int(labels.max()) + 1
@@ -307,6 +326,7 @@ def test_agglomerative_labels_cover_every_cluster():
 def test_locate_candidates_fallback_quantile():
     """With no positive-similarity patch, the fallback keeps the top (1 - q) share."""
     from collab_splats.semantics.segmentation.insid3 import _locate_candidates
+
     D = 4
     prototype = F.normalize(torch.ones(D), dim=0)
     tgt = -F.normalize(torch.rand(D, 4, 5) + 0.1, dim=0)
@@ -321,6 +341,7 @@ def test_locate_candidates_fallback_quantile():
 def test_insid3_forwards_device_to_extractor(monkeypatch, device):
     """INSID3 passes device through untouched; DINOFeatureExtractor resolves None itself."""
     from collab_splats.semantics.segmentation import insid3
+
     seen = {}
     monkeypatch.setattr(insid3, "DINOFeatureExtractor", lambda **kw: seen.update(kw))
     insid3.INSID3Segmentation(device=device)
@@ -329,6 +350,7 @@ def test_insid3_forwards_device_to_extractor(monkeypatch, device):
 
 def test_segment_forwards_fallback_quantile(monkeypatch):
     from collab_splats.semantics.segmentation import insid3
+
     seg, extractor, feat = _make_seg_with_mock_extractor(D=16, H_p=6, W_p=6)
     seg._fallback_quantile = 0.5
     ref_image = Image.fromarray(np.zeros((48, 48, 3), dtype=np.uint8))

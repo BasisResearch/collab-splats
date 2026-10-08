@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 import torch
 import trimesh
-import zarr
 from PIL import Image
 
 import collab_splats.viewer as viewer_module
@@ -52,7 +51,9 @@ def test_add_points_upserts_by_name(viewer):
 
 def test_add_frustum(viewer):
     pose = np.eye(4, dtype=np.float32)  # world-to-cam identity
-    intrinsic = np.array([[500.0, 0, 320], [0, 500.0, 240], [0, 0, 1]], dtype=np.float32)
+    intrinsic = np.array(
+        [[500.0, 0, 320], [0, 500.0, 240], [0, 0, 1]], dtype=np.float32
+    )
     viewer.add_frustum("cams/frame_0", pose, intrinsic)
     assert "cams/frame_0" in viewer.frustums
     assert viewer.frustums["cams/frame_0"].visible
@@ -60,7 +61,9 @@ def test_add_frustum(viewer):
 
 def test_add_frustum_with_image(viewer):
     pose = np.eye(4, dtype=np.float32)
-    intrinsic = np.array([[500.0, 0, 320], [0, 500.0, 240], [0, 0, 1]], dtype=np.float32)
+    intrinsic = np.array(
+        [[500.0, 0, 320], [0, 500.0, 240], [0, 0, 1]], dtype=np.float32
+    )
     image = np.zeros((480, 640, 3), dtype=np.uint8)
     viewer.add_frustum("cams/frame_1", pose, intrinsic, image=image)
     assert "cams/frame_1" in viewer.frustums
@@ -93,20 +96,28 @@ def test_add_mesh_registers_node(viewer):
     assert "quad" in viewer.meshes
 
 
-def test_add_mesh_shows_the_texture_and_picks_on_the_given_vertices(viewer, monkeypatch):
+def test_add_mesh_shows_the_texture_and_picks_on_the_given_vertices(
+    viewer, monkeypatch
+):
     vertices, faces, colors = _quad()
     corners = vertices[faces].reshape(-1, 3)
     uv = corners[:, :2]
     image = Image.fromarray(np.zeros((4, 4, 3), np.uint8))
     visual = trimesh.visual.TextureVisuals(uv=uv, image=image)
-    textured = trimesh.Trimesh(corners, np.arange(6).reshape(2, 3), visual=visual, process=False)
+    textured = trimesh.Trimesh(
+        corners, np.arange(6).reshape(2, 3), visual=visual, process=False
+    )
     shown = []
-    monkeypatch.setattr(viewer.server.scene, "add_mesh_trimesh", lambda name, mesh: shown.append(mesh))
+    monkeypatch.setattr(
+        viewer.server.scene, "add_mesh_trimesh", lambda name, mesh: shown.append(mesh)
+    )
 
     viewer.add_mesh("textured_quad", vertices, faces, colors, textured=textured)
 
     assert shown == [textured]
-    assert viewer._pick_vertex("textured_quad", (0.9, 0.9, 1.0), (0.0, 0.0, -1.0))[1] == 3
+    assert (
+        viewer._pick_vertex("textured_quad", (0.9, 0.9, 1.0), (0.0, 0.0, -1.0))[1] == 3
+    )
 
 
 def test_pick_vertex_returns_the_hit_triangles_nearest_vertex(viewer):
@@ -138,7 +149,9 @@ def _capture_heat(viewer, monkeypatch):
     return sent
 
 
-def test_show_heat_keeps_faces_reaching_the_floor_on_their_used_vertices(viewer, monkeypatch):
+def test_show_heat_keeps_faces_reaching_the_floor_on_their_used_vertices(
+    viewer, monkeypatch
+):
     vertices, faces, colors = _quad()
     viewer.add_mesh("quad", vertices, faces, colors)
     sent = _capture_heat(viewer, monkeypatch)
@@ -152,7 +165,9 @@ def test_show_heat_keeps_faces_reaching_the_floor_on_their_used_vertices(viewer,
     assert heat.faces.tolist() == [[0, 2, 1]]
 
 
-def test_show_heat_lifts_along_whole_mesh_normals_cached_until_the_mesh_changes(viewer, monkeypatch):
+def test_show_heat_lifts_along_whole_mesh_normals_cached_until_the_mesh_changes(
+    viewer, monkeypatch
+):
     sent = _capture_heat(viewer, monkeypatch)
     vertices, faces, colors = _quad()
     scores = np.array([0.0, 0.0, 0.0, 1.0])
@@ -203,7 +218,9 @@ def test_show_heat_offset_lifts_along_normals(viewer, monkeypatch):
     assert np.allclose(sent[0][1].vertices[:, :2], vertices[:, :2])
 
 
-def test_show_heat_replaces_clears_and_sends_nothing_below_the_floor(viewer, monkeypatch):
+def test_show_heat_replaces_clears_and_sends_nothing_below_the_floor(
+    viewer, monkeypatch
+):
     viewer.add_mesh("quad", *_quad())
     viewer.heats.pop("quad", None)
     removed = []
@@ -238,7 +255,12 @@ def test_add_label_list_ranks_by_weight_and_hands_words_to_on_select(viewer):
 
     viewer.add_label_list("quad", words, weights, selected.append, top_n=5)
     _, buttons = viewer.label_lists["quad"]
-    assert [b.label for b in buttons] == ["Clear", "tree (~28.7k)", "sky (~950)", "rock (~12)"]
+    assert [b.label for b in buttons] == [
+        "Clear",
+        "tree (~28.7k)",
+        "sky (~950)",
+        "rock (~12)",
+    ]
 
     # Word buttons hand their word over; Clear hands None
     buttons[1]._impl.update_cb[0](None)
@@ -251,7 +273,9 @@ def test_add_label_list_ranks_by_weight_and_hands_words_to_on_select(viewer):
     assert [b.label for b in buttons] == ["Clear", "tree (~28.7k)"]
 
 
-def test_on_click_registers_one_scene_handler_and_the_nearest_mesh_wins(viewer, monkeypatch):
+def test_on_click_registers_one_scene_handler_and_the_nearest_mesh_wins(
+    viewer, monkeypatch
+):
     registered = []
     monkeypatch.setattr(viewer.server.scene, "on_click", lambda: registered.append)
     monkeypatch.setattr(viewer, "mesh_clicks", {})
@@ -298,7 +322,9 @@ def test_reset_view_frames_a_mesh_only_scene(viewer, monkeypatch):
     camera = SimpleNamespace(look_at=None, position=None)
     monkeypatch.setattr(viewer, "points", {})
     monkeypatch.setattr(viewer, "meshes", {})
-    monkeypatch.setattr(viewer.server, "get_clients", lambda: {0: SimpleNamespace(camera=camera)})
+    monkeypatch.setattr(
+        viewer.server, "get_clients", lambda: {0: SimpleNamespace(camera=camera)}
+    )
 
     viewer.add_mesh("quad", *_quad())
     viewer._reset_view()
@@ -346,21 +372,42 @@ def _sha(backend):
 def _vertex_store(backend, extractor, codes, kwargs=None, mesh_sha256=None):
     """Lifted store with full-width vertex codes, lifted onto the backend's mesh.ply unless told otherwise."""
     path = backend / "semantics" / f"{extractor}_lifted.zarr"
-    attrs = {"extractor": extractor, "extractor_kwargs": kwargs or {}, "mesh_sha256": mesh_sha256 or _sha(backend)}
+    attrs = {
+        "extractor": extractor,
+        "extractor_kwargs": kwargs or {},
+        "mesh_sha256": mesh_sha256 or _sha(backend),
+    }
     vertex_arrays = {"vertex_features": np.asarray(codes, np.float16)}
-    write_point_features(path, np.ones((1, 2), np.float32), None, vertex_arrays=vertex_arrays, attrs=attrs)
+    write_point_features(
+        path,
+        np.ones((1, 2), np.float32),
+        None,
+        vertex_arrays=vertex_arrays,
+        attrs=attrs,
+    )
     return path
 
 
 def _word_store(backend, word_ids, word_probs, words):
     """ocr_lens lifted store with per-vertex word ids + probs."""
     path = backend / "semantics" / "ocr_lens_lifted.zarr"
-    attrs = {"extractor": "ocr_lens", "extractor_kwargs": {}, "mesh_sha256": _sha(backend), "words": words}
+    attrs = {
+        "extractor": "ocr_lens",
+        "extractor_kwargs": {},
+        "mesh_sha256": _sha(backend),
+        "words": words,
+    }
     vertex_arrays = {
         "vertex_word_ids": np.asarray(word_ids, np.int16),
         "vertex_word_probs": np.asarray(word_probs, np.float16),
     }
-    write_point_features(path, np.ones((1, 2), np.float32), None, vertex_arrays=vertex_arrays, attrs=attrs)
+    write_point_features(
+        path,
+        np.ones((1, 2), np.float32),
+        None,
+        vertex_arrays=vertex_arrays,
+        attrs=attrs,
+    )
     return path
 
 
@@ -372,7 +419,9 @@ def test_find_stores_lists_vertex_stores_only(tmp_path):
     backend = _backend(tmp_path)
     text = _vertex_store(backend, "stub_text", np.eye(4, 2))
     words = _word_store(backend, [[0], [0], [0], [0]], [[1.0]] * 4, ["a"])
-    write_point_features(backend / "semantics" / "dinov2_lifted.zarr", np.ones((1, 2), np.float32), None)
+    write_point_features(
+        backend / "semantics" / "dinov2_lifted.zarr", np.ones((1, 2), np.float32), None
+    )
 
     assert _find_stores(backend) == {"ocr_lens": words, "stub_text": text}
 
@@ -406,14 +455,20 @@ def _inputs(viewer):
 def _record_heat(viewer, monkeypatch):
     """Record every show_heat call as (name, scores, floor)."""
     calls = []
-    monkeypatch.setattr(viewer, "show_heat", lambda name, scores, floor: calls.append((name, scores, floor)))
+    monkeypatch.setattr(
+        viewer,
+        "show_heat",
+        lambda name, scores, floor: calls.append((name, scores, floor)),
+    )
     return calls
 
 
 def test_build_greys_a_mesh_without_vertex_colors(tmp_path, fresh_viewer, monkeypatch):
     added = []
     monkeypatch.setattr(
-        fresh_viewer, "add_mesh", lambda name, v, f, c, textured=None: added.append((v, f, c, textured))
+        fresh_viewer,
+        "add_mesh",
+        lambda name, v, f, c, textured=None: added.append((v, f, c, textured)),
     )
     _build(fresh_viewer, _backend(tmp_path), textured=False, texture_size=64)
 
@@ -430,13 +485,19 @@ def test_build_without_stores_shows_the_mesh_and_no_dropdown(tmp_path, fresh_vie
     assert "Semantics" not in _inputs(fresh_viewer)
 
 
-def test_text_mode_heat_is_score_queries_with_unobserved_nan(tmp_path, fresh_viewer, stub_text, monkeypatch):
+def test_text_mode_heat_is_score_queries_with_unobserved_nan(
+    tmp_path, fresh_viewer, stub_text, monkeypatch
+):
     # Vertex 2 has all-zero codes: unobserved (NaN), though its contrast score would be 0.5
     codes = np.array([[1, 0], [0, 1], [0, 0], [1, 1]], np.float32)
     path = _vertex_store(_backend(tmp_path), "stub_text", codes, {"scale": 2.0})
     expected = (
         stub_text()
-        .score_queries(torch.from_numpy(read_point_features(path, name="vertex_features")), ["x"], ["object"])
+        .score_queries(
+            torch.from_numpy(read_point_features(path, name="vertex_features")),
+            ["x"],
+            ["object"],
+        )
         .numpy()
     )
     expected[2] = np.nan
@@ -458,7 +519,9 @@ def test_text_mode_heat_is_score_queries_with_unobserved_nan(tmp_path, fresh_vie
     assert stub_text.last.scale == 2.0
 
 
-def test_text_mode_empty_query_clears_the_heat(tmp_path, fresh_viewer, stub_text, monkeypatch):
+def test_text_mode_empty_query_clears_the_heat(
+    tmp_path, fresh_viewer, stub_text, monkeypatch
+):
     _vertex_store(_backend(tmp_path), "stub_text", np.eye(4, 2))
     calls = _record_heat(fresh_viewer, monkeypatch)
     _build(fresh_viewer, tmp_path, textured=False, texture_size=64)
@@ -469,18 +532,24 @@ def test_text_mode_empty_query_clears_the_heat(tmp_path, fresh_viewer, stub_text
     assert stub_text.built == 0
 
 
-def test_switching_to_none_clears_heat_and_removes_the_mode_gui(tmp_path, fresh_viewer, stub_text, monkeypatch):
+def test_switching_to_none_clears_heat_and_removes_the_mode_gui(
+    tmp_path, fresh_viewer, stub_text, monkeypatch
+):
     _vertex_store(_backend(tmp_path), "stub_text", np.eye(4, 2))
     calls = _record_heat(fresh_viewer, monkeypatch)
     dropdown = _build(fresh_viewer, tmp_path, textured=False, texture_size=64)
     assert set(dropdown.options) == {"none", "stub_text"}
 
     assert dropdown.value == "stub_text"
-    assert {"Query", "Negatives", "Query min score", "Search"} <= set(_inputs(fresh_viewer))
+    assert {"Query", "Negatives", "Query min score", "Search"} <= set(
+        _inputs(fresh_viewer)
+    )
 
     dropdown.value = "none"
     assert calls[-1] == ("mesh", None, 0.0)
-    assert not {"Query", "Negatives", "Query min score", "Search"} & set(_inputs(fresh_viewer))
+    assert not {"Query", "Negatives", "Query min score", "Search"} & set(
+        _inputs(fresh_viewer)
+    )
     assert "Semantics" in _inputs(fresh_viewer)
 
 
@@ -506,14 +575,18 @@ def test_build_selects_ocr_lens_by_default(tmp_path, fresh_viewer):
     assert "Query min p" in _inputs(fresh_viewer)
 
 
-def test_word_mode_heat_is_the_summed_probability_of_the_query_words(tmp_path, fresh_viewer, monkeypatch):
+def test_word_mode_heat_is_the_summed_probability_of_the_query_words(
+    tmp_path, fresh_viewer, monkeypatch
+):
     calls = _record_heat(fresh_viewer, monkeypatch)
 
     # Markdown handles are not tracked by viser; keep the unknown-word note
     notes = []
     add_markdown = fresh_viewer.server.gui.add_markdown
     monkeypatch.setattr(
-        fresh_viewer.server.gui, "add_markdown", lambda *a, **k: notes.append(add_markdown(*a, **k)) or notes[-1]
+        fresh_viewer.server.gui,
+        "add_markdown",
+        lambda *a, **k: notes.append(add_markdown(*a, **k)) or notes[-1],
     )
     _build(fresh_viewer, _word_backend(tmp_path), textured=False, texture_size=64)
     inputs = _inputs(fresh_viewer)
@@ -530,20 +603,34 @@ def test_word_mode_label_list_ranks_words_by_probability_mass(tmp_path, fresh_vi
     _build(fresh_viewer, _word_backend(tmp_path), textured=False, texture_size=64)
 
     _, buttons = fresh_viewer.label_lists["mesh"]
-    assert [b.label for b in buttons] == ["Clear", "sky (~2)", "apple (~1)", "tree (~1)"]
+    assert [b.label for b in buttons] == [
+        "Clear",
+        "sky (~2)",
+        "apple (~1)",
+        "tree (~1)",
+    ]
 
 
-def test_word_mode_probe_charts_scene_terms_and_flags_unobserved(tmp_path, fresh_viewer, monkeypatch):
+def test_word_mode_probe_charts_scene_terms_and_flags_unobserved(
+    tmp_path, fresh_viewer, monkeypatch
+):
     # 11 stored words per vertex; w10 sits only past an observed top-10, w12 only on unobserved vertex 3
     backend = _backend(tmp_path)
     words = [f"w{i}" for i in range(13)]
     ids = [[*range(10), 11], [*range(11)], [*range(10), 11], [12, *range(10)]]
-    probs = [[0.5, 0.25] + [0.0] * 9, [0.3] + [0.05] * 10, [1.0] + [0.0] * 10, [0.0] * 11]
+    probs = [
+        [0.5, 0.25] + [0.0] * 9,
+        [0.3] + [0.05] * 10,
+        [1.0] + [0.0] * 10,
+        [0.0] * 11,
+    ]
     _word_store(backend, ids, probs, words)
 
     charts = []
     monkeypatch.setattr(
-        viewer_module, "_chart", lambda title, words, probs: charts.append((title, list(words), probs)) or ""
+        viewer_module,
+        "_chart",
+        lambda title, words, probs: charts.append((title, list(words), probs)) or "",
     )
     _build(fresh_viewer, backend, textured=False, texture_size=64)
 
@@ -556,22 +643,33 @@ def test_word_mode_probe_charts_scene_terms_and_flags_unobserved(tmp_path, fresh
 
     # Vertex 1: w10 is no scene term, so the top 10 renormalize over 0.75
     assert charts[1][:2] == ("vertex 1", [f"w{i}" for i in range(10)])
-    np.testing.assert_allclose(charts[1][2], np.array([0.3] + [0.05] * 9) / 0.75, rtol=1e-3)
+    np.testing.assert_allclose(
+        charts[1][2], np.array([0.3] + [0.05] * 9) / 0.75, rtol=1e-3
+    )
     assert charts[2][0] == "vertex 3: unobserved"
 
 
-def test_switching_away_from_word_mode_removes_labels_clicks_and_probe(tmp_path, fresh_viewer):
-    dropdown = _build(fresh_viewer, _word_backend(tmp_path), textured=False, texture_size=64)
+def test_switching_away_from_word_mode_removes_labels_clicks_and_probe(
+    tmp_path, fresh_viewer
+):
+    dropdown = _build(
+        fresh_viewer, _word_backend(tmp_path), textured=False, texture_size=64
+    )
     fresh_viewer.mesh_clicks["mesh"](0)
     dropdown.value = "none"
 
-    assert "mesh" not in fresh_viewer.label_lists and "mesh" not in fresh_viewer.mesh_clicks
+    assert (
+        "mesh" not in fresh_viewer.label_lists
+        and "mesh" not in fresh_viewer.mesh_clicks
+    )
     assert "/probe" not in fresh_viewer.server.scene._handle_from_node_name
     assert not {"Query", "Query min p", "Search"} & set(_inputs(fresh_viewer))
 
 
 def test_reentering_word_mode_keeps_one_click_dispatcher(tmp_path, fresh_viewer):
-    dropdown = _build(fresh_viewer, _word_backend(tmp_path), textured=False, texture_size=64)
+    dropdown = _build(
+        fresh_viewer, _word_backend(tmp_path), textured=False, texture_size=64
+    )
     dropdown.value = "none"
     dropdown.value = "ocr_lens"
     dropdown.value = "none"
@@ -583,12 +681,17 @@ def test_reentering_word_mode_keeps_one_click_dispatcher(tmp_path, fresh_viewer)
 def test_viewer_module_never_imports_the_reconstructor():
     # reconstructor imports Viewer; the reverse would be a cycle
     code = "import sys, collab_splats.viewer; print('collab_splats.reconstructor' in sys.modules)"
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
     assert out.stdout.strip() == "False"
 
 
 def test_main_runs_as_a_module():
     out = subprocess.run(
-        [sys.executable, "-m", "collab_splats.viewer", "--help"], capture_output=True, text=True, check=True
+        [sys.executable, "-m", "collab_splats.viewer", "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert "backend_dir" in out.stdout and "--texture_size" in out.stdout

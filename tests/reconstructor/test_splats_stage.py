@@ -37,8 +37,18 @@ def test_splats_is_a_leaf_stage():
 
 def test_base_yaml_defaults():
     cfg = yaml.safe_load((CONFIG_DIR / "base.yaml").read_text())["splats"]
-    assert cfg["enabled"] is False and cfg["primitive"] == "3dgs" and cfg["cap_max"] == 1_000_000
-    assert set(cfg["losses"]) == {"depth", "normal_consistency", "opacity_reg", "scale_reg", "appearance_reg"}
+    assert (
+        cfg["enabled"] is False
+        and cfg["primitive"] == "3dgs"
+        and cfg["cap_max"] == 1_000_000
+    )
+    assert set(cfg["losses"]) == {
+        "depth",
+        "normal_consistency",
+        "opacity_reg",
+        "scale_reg",
+        "appearance_reg",
+    }
 
     # The block must round-trip through from_dict (enabled stripped) and equal dataclass defaults
     parsed = SplatsConfig.from_dict(cfg)
@@ -57,30 +67,48 @@ def test_splats_stage_assembles_arrays_in_image_path_order(tmp_path):
         image_paths=recon.result.image_paths,
         depth=depth,
         confidence=torch.ones(3, 4, 4),
-        original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)
+        ),  # full-frame box
     )
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
+        patch(
+            "collab_splats.pointcloud.base.PointcloudResult.load_zarr",
+            return_value=feedforward,
+        ),
     ):
         recon.splats()
 
-    cfg, images, world_to_cam, intrinsics, points, colors, out_dir = train.call_args.args
+    cfg, images, world_to_cam, intrinsics, points, colors, out_dir = (
+        train.call_args.args
+    )
     depth_targets = train.call_args.kwargs["depth_targets"]
     assert cfg.max_steps == 1
-    assert images[0, 0, 0, 0] == 20 and images[2, 0, 0, 0] == 0  # follows image_paths (reversed), not store order
-    assert world_to_cam.shape == (3, 4, 4) and intrinsics.shape == (3, 3, 3) and points.shape == (200, 3)
+    assert (
+        images[0, 0, 0, 0] == 20 and images[2, 0, 0, 0] == 0
+    )  # follows image_paths (reversed), not store order
+    assert (
+        world_to_cam.shape == (3, 4, 4)
+        and intrinsics.shape == (3, 3, 3)
+        and points.shape == (200, 3)
+    )
     assert out_dir == recon.backend_dir / "splats"
     # Model-res depth is lifted onto the 8x8 frames through each row's crop box
     assert depth_targets.shape == (3, 8, 8)
     # Depth rows pair with the frames read for them: row 0 is frame 2, row 2 is frame 0
-    assert depth_targets[0, 0, 0] == pytest.approx(3, rel=1e-5) and depth_targets[2, 0, 0] == pytest.approx(1, rel=1e-5)
+    assert depth_targets[0, 0, 0] == pytest.approx(3, rel=1e-5) and depth_targets[
+        2, 0, 0
+    ] == pytest.approx(1, rel=1e-5)
 
 
 def test_splats_stage_requires_pointcloud_zarr_for_depth_loss(tmp_path):
     recon = _stub_reconstructor(tmp_path)
-    with patch("collab_splats.splats.trainer.train"), pytest.raises(FileNotFoundError, match="pointcloud.zarr"):
+    with (
+        patch("collab_splats.splats.trainer.train"),
+        pytest.raises(FileNotFoundError, match="pointcloud.zarr"),
+    ):
         recon.splats()
 
 
@@ -95,7 +123,10 @@ def test_splats_stage_skips_depth_targets_when_depth_loss_off(tmp_path):
 def test_splats_stage_refuses_when_output_exists(tmp_path):
     recon = _stub_reconstructor(tmp_path)
     recon.done = lambda stage: stage in ("preproc", "pointcloud", "splats")
-    with patch("collab_splats.splats.trainer.train") as train, pytest.raises(ValueError, match="already exists"):
+    with (
+        patch("collab_splats.splats.trainer.train") as train,
+        pytest.raises(ValueError, match="already exists"),
+    ):
         recon.run(["splats"])
     train.assert_not_called()
 
@@ -141,7 +172,9 @@ def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path):
         [0, 1, 2],
     )
     with (
-        patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered) as render,
+        patch(
+            "collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered
+        ) as render,
         patch("collab_splats.reconstructor.create_tsdf_mesh") as fuse,
         stub_mesh_cleanup() as clean,
     ):
@@ -171,20 +204,27 @@ def test_splats_sfm_uses_zarr_depth(tmp_path):
         image_paths=recon.result.image_paths,
         depth=depth,
         confidence=None,  # sfm scenes carry no confidence — unmasked targets
-        original_coords=np.tile(np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, 8, 8, 8, 8], np.float32), (3, 1)
+        ),  # full-frame box
     )
     group = zarr.open_group(recon.backend_dir / "pointcloud.zarr", mode="w")
     group.attrs["depth_scale"] = "colmap"
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
+        patch(
+            "collab_splats.pointcloud.base.PointcloudResult.load_zarr",
+            return_value=feedforward,
+        ),
     ):
         recon.splats()
 
     depth_targets = train.call_args.kwargs["depth_targets"]
     assert depth_targets.shape == (3, 8, 8)
     # Row 0 is frame 2, row 2 is frame 0
-    assert depth_targets[0, 0, 0] == pytest.approx(3, rel=1e-5) and depth_targets[2, 0, 0] == pytest.approx(1, rel=1e-5)
+    assert depth_targets[0, 0, 0] == pytest.approx(3, rel=1e-5) and depth_targets[
+        2, 0, 0
+    ] == pytest.approx(1, rel=1e-5)
 
 
 def test_mesh_sfm_zarr_fuses(tmp_path):
@@ -195,7 +235,9 @@ def test_mesh_sfm_zarr_fuses(tmp_path):
     sfm.image_paths = [Path(f"frame_{view:06d}.jpg") for view in range(3)]
 
     with (
-        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=sfm),
+        patch(
+            "collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=sfm
+        ),
         patch("collab_splats.reconstructor.create_tsdf_mesh") as fuse,
         stub_mesh_cleanup(),
     ):
@@ -220,7 +262,9 @@ def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
     # Store rows 0..2; each frame's crop sits at a different offset inside the 20x10 frame
     ramp = np.tile(np.arange(1, 9, dtype=np.float32), (4, 1))
     depth = np.stack([ramp * (view + 1) for view in range(3)])
-    boxes = np.array([[2 + view, 1, 18 + view, 9, 20, 10] for view in range(3)], np.float32)
+    boxes = np.array(
+        [[2 + view, 1, 18 + view, 9, 20, 10] for view in range(3)], np.float32
+    )
 
     # The zarr holds those rows in the result's order: image_paths is reversed store order
     order = [2, 1, 0]
@@ -233,7 +277,10 @@ def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
+        patch(
+            "collab_splats.pointcloud.base.PointcloudResult.load_zarr",
+            return_value=feedforward,
+        ),
     ):
         recon.splats()
 
@@ -241,7 +288,12 @@ def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
     images = train.call_args.args[1]
     depth_targets = train.call_args.kwargs["depth_targets"]
     seen = np.stack(
-        [prepare_target(images[row], depth_targets[row], "cpu")["depth"][0, ..., 0].numpy() for row in range(3)]
+        [
+            prepare_target(images[row], depth_targets[row], "cpu")["depth"][
+                0, ..., 0
+            ].numpy()
+            for row in range(3)
+        ]
     )
 
     # Outside each crop box there is no target; a full-frame stretch fills it
@@ -253,4 +305,6 @@ def test_splats_depth_targets_lift_through_each_frames_crop_box(tmp_path):
         assert np.all(seen[row][inside] > 0)
 
     # Inside, the values are the mesh stage's lift of the matching row through its own box
-    np.testing.assert_allclose(seen, upsample_depths(depth[order], images, boxes[order, :4]))
+    np.testing.assert_allclose(
+        seen, upsample_depths(depth[order], images, boxes[order, :4])
+    )

@@ -51,7 +51,9 @@ def graph_extrinsics(pg: PoseGraph, total_frames: int) -> np.ndarray:
     return out
 
 
-def masked_world_points(submap, graph: PoseGraph, skip: int = 0) -> tuple[np.ndarray, np.ndarray]:
+def masked_world_points(
+    submap, graph: PoseGraph, skip: int = 0
+) -> tuple[np.ndarray, np.ndarray]:
     """
     A dense submap's conf-masked world points and colors past `skip` leading frames.
 
@@ -73,8 +75,15 @@ def record_driven_submaps() -> Iterator[dict]:
         dict filled on exit: "submaps" (add_submap) and "lc_submaps" (add_loop_edge).
     """
     with (
-        patch.object(PoseGraph, "add_submap", autospec=True, side_effect=PoseGraph.add_submap) as add,
-        patch.object(PoseGraph, "add_loop_edge", autospec=True, side_effect=PoseGraph.add_loop_edge) as loop,
+        patch.object(
+            PoseGraph, "add_submap", autospec=True, side_effect=PoseGraph.add_submap
+        ) as add,
+        patch.object(
+            PoseGraph,
+            "add_loop_edge",
+            autospec=True,
+            side_effect=PoseGraph.add_loop_edge,
+        ) as loop,
     ):
         driven: dict = {}
         yield driven

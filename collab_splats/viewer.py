@@ -53,22 +53,32 @@ class Viewer:
         logger.info("viser scene viewer on port %d", port)
 
         # Per-name node state, so GUI toggles can restyle nodes already in the scene
-        self.points: dict[str, tuple[viser.PointCloudHandle, np.ndarray, np.ndarray, float]] = {}
+        self.points: dict[
+            str, tuple[viser.PointCloudHandle, np.ndarray, np.ndarray, float]
+        ] = {}
         self.frustums: dict[str, viser.CameraFrustumHandle] = {}
 
         # Meshes: name -> (vertices, faces, raycasting scene); click callbacks and label lists
-        self.meshes: dict[str, tuple[np.ndarray, np.ndarray, o3d.t.geometry.RaycastingScene]] = {}
+        self.meshes: dict[
+            str, tuple[np.ndarray, np.ndarray, o3d.t.geometry.RaycastingScene]
+        ] = {}
         self.mesh_clicks: dict[str, Callable[[int], None]] = {}
-        self.label_lists: dict[str, tuple[viser.GuiFolderHandle, list[viser.GuiButtonHandle]]] = {}
+        self.label_lists: dict[
+            str, tuple[viser.GuiFolderHandle, list[viser.GuiButtonHandle]]
+        ] = {}
         self.heats: dict[str, viser.GlbHandle] = {}
         self.heat_shifts: dict[str, np.ndarray] = {}
         self._click_registered = False
         self._stop = threading.Event()
 
         # Camera visibility and flat per-node colors (shows node boundaries)
-        self.show_cameras = self.server.gui.add_checkbox("Show cameras", initial_value=True)
+        self.show_cameras = self.server.gui.add_checkbox(
+            "Show cameras", initial_value=True
+        )
         self.show_cameras.on_update(lambda _: self._apply_camera_visibility())
-        self.color_by_node = self.server.gui.add_checkbox("Color by node", initial_value=False)
+        self.color_by_node = self.server.gui.add_checkbox(
+            "Color by node", initial_value=False
+        )
         self.color_by_node.on_update(lambda _: self._resend_points())
 
         # Point size for every cloud; re-sends them on change
@@ -81,7 +91,9 @@ class Viewer:
         self.up_direction = self.server.gui.add_dropdown(
             "Up direction", ("-y", "+y", "+z", "-z", "+x", "-x"), initial_value="-y"
         )
-        self.up_direction.on_update(lambda _: self.server.scene.set_up_direction(self.up_direction.value))
+        self.up_direction.on_update(
+            lambda _: self.server.scene.set_up_direction(self.up_direction.value)
+        )
         self.server.scene.set_up_direction("-y")
         self.server.gui.add_button("Reset view").on_click(lambda _: self._reset_view())
 
@@ -89,7 +101,13 @@ class Viewer:
     # Scene nodes (upsert by name)
     ########################################################################
 
-    def add_points(self, name: str, points: np.ndarray, colors: np.ndarray, point_size: float = 0.003) -> None:
+    def add_points(
+        self,
+        name: str,
+        points: np.ndarray,
+        colors: np.ndarray,
+        point_size: float = 0.003,
+    ) -> None:
         """
         Upsert a named point cloud.
 
@@ -99,8 +117,12 @@ class Viewer:
             colors: (N, 3) uint8 colors; replaced by the node color while "Color by node" is on.
             point_size: dot size, world units.
         """
-        shown = self._flat_color(name, len(points)) if self.color_by_node.value else colors
-        handle = self.server.scene.add_point_cloud(name, points=points, colors=shown, point_size=point_size)
+        shown = (
+            self._flat_color(name, len(points)) if self.color_by_node.value else colors
+        )
+        handle = self.server.scene.add_point_cloud(
+            name, points=points, colors=shown, point_size=point_size
+        )
         self.points[name] = (handle, points, colors, point_size)
 
     def add_frustum(
@@ -156,7 +178,11 @@ class Viewer:
         self.frustums[name] = handle
 
     def add_lines(
-        self, name: str, segments: np.ndarray, color: tuple[int, int, int] = (0, 255, 0), line_width: float = 2.0
+        self,
+        name: str,
+        segments: np.ndarray,
+        color: tuple[int, int, int] = (0, 255, 0),
+        line_width: float = 2.0,
     ) -> None:
         """
         Upsert named line segments in one color.
@@ -170,7 +196,9 @@ class Viewer:
         segments = np.asarray(segments)
         rgb = np.asarray(color, dtype=np.uint8)
         colors = np.tile(rgb, (len(segments), 2, 1))
-        self.server.scene.add_line_segments(name, points=segments, colors=colors, line_width=line_width)
+        self.server.scene.add_line_segments(
+            name, points=segments, colors=colors, line_width=line_width
+        )
 
     def add_mesh(
         self,
@@ -202,7 +230,9 @@ class Viewer:
         shown = textured
 
         if shown is None:
-            shown = trimesh.Trimesh(vertices, faces, vertex_colors=colors, process=False)
+            shown = trimesh.Trimesh(
+                vertices, faces, vertex_colors=colors, process=False
+            )
 
         self.server.scene.add_mesh_trimesh(name, shown)
 
@@ -243,7 +273,9 @@ class Viewer:
 
             for i in order:
                 word = str(words[i])
-                button = self.server.gui.add_button(f"{word} (~{_compact_count(float(weights[i]))})")
+                button = self.server.gui.add_button(
+                    f"{word} (~{_compact_count(float(weights[i]))})"
+                )
                 button.on_click(lambda _, word=word: on_select(word))
                 buttons.append(button)
 
@@ -293,13 +325,19 @@ class Viewer:
         # Viridis over the drawn scores
         values = scores[used].astype(np.float64)
         span = values.max() - values.min()
-        normalized = (values - values.min()) / span if span > 0 else np.zeros_like(values)
-        rgb = (matplotlib.colormaps["viridis"](normalized)[:, :3] * 255).astype(np.uint8)
+        normalized = (
+            (values - values.min()) / span if span > 0 else np.zeros_like(values)
+        )
+        rgb = (matplotlib.colormaps["viridis"](normalized)[:, :3] * 255).astype(
+            np.uint8
+        )
 
         # Whole-mesh lift direction, computed on the first overlay of this mesh
         if name not in self.heat_shifts:
             surface = trimesh.Trimesh(vertices, faces, process=False)
-            self.heat_shifts[name] = np.median(surface.edges_unique_length) * surface.vertex_normals
+            self.heat_shifts[name] = (
+                np.median(surface.edges_unique_length) * surface.vertex_normals
+            )
 
         # Lift off the base surface along vertex normals
         lifted = vertices[used] + offset * self.heat_shifts[name][used]
@@ -363,7 +401,9 @@ class Viewer:
             name, vertex = best
             self.mesh_clicks[name](vertex)
 
-    def _pick_vertex(self, name: str, origin: tuple, direction: tuple) -> Optional[tuple[float, int]]:
+    def _pick_vertex(
+        self, name: str, origin: tuple, direction: tuple
+    ) -> Optional[tuple[float, int]]:
         """
         Ray distance and vertex of the first-hit triangle nearest the hit point.
 
@@ -481,12 +521,16 @@ def _chart(title: str, words: list[str], probs: np.ndarray) -> str:
     width, height, left, bottom, top = 420, 230, 34, 80, 24
     plot_h = height - bottom - top
     step = (width - left - 8) / max(len(words), 1)
-    parts = [f'<text x="{left}" y="15" fill="#ddd" font-size="12" font-weight="bold">{title}</text>']
+    parts = [
+        f'<text x="{left}" y="15" fill="#ddd" font-size="12" font-weight="bold">{title}</text>'
+    ]
 
     # Gridlines and y ticks every 0.25
     for tick in (0.0, 0.25, 0.5, 0.75, 1.0):
         y = top + plot_h * (1 - tick)
-        parts.append(f'<line x1="{left}" x2="{width - 8}" y1="{y:.1f}" y2="{y:.1f}" stroke="#555" stroke-width="0.5"/>')
+        parts.append(
+            f'<line x1="{left}" x2="{width - 8}" y1="{y:.1f}" y2="{y:.1f}" stroke="#555" stroke-width="0.5"/>'
+        )
         parts.append(
             f'<text x="{left - 4}" y="{y + 3:.1f}" fill="#aaa" font-size="9" text-anchor="end">{tick:.2f}</text>'
         )
@@ -536,7 +580,10 @@ def _find_stores(backend_dir: Path) -> dict[str, Path]:
 
         # Stale against the mesh: skip, a semantics re-run rewrites it
         if store.attrs.get("mesh_sha256") != mesh_sha256:
-            logger.warning("%s was lifted onto another mesh.ply; re-run semantics with that extractor", path)
+            logger.warning(
+                "%s was lifted onto another mesh.ply; re-run semantics with that extractor",
+                path,
+            )
             continue
 
         stores[store.attrs["extractor"]] = path
@@ -573,7 +620,9 @@ def _word_mode(viewer: Viewer, store_path: Path) -> list:
     # Probe chart, query box, floor, Search and the unknown-word note
     panel = viewer.server.gui.add_html("")
     query = viewer.server.gui.add_text("Query", initial_value="")
-    floor = viewer.server.gui.add_slider("Query min p", min=0.0, max=1.0, step=0.01, initial_value=0.3)
+    floor = viewer.server.gui.add_slider(
+        "Query min p", min=0.0, max=1.0, step=0.01, initial_value=0.3
+    )
     search_button = viewer.server.gui.add_button("Search")
     note = viewer.server.gui.add_markdown("")
     vertices = viewer.meshes["mesh"][0]
@@ -610,7 +659,10 @@ def _word_mode(viewer: Viewer, store_path: Path) -> list:
         Mark the clicked vertex and chart its top-10 scene terms in the top left.
         """
         viewer.server.scene.add_icosphere(
-            "/probe", radius=marker_radius, color=(255, 0, 255), position=vertices[vertex]
+            "/probe",
+            radius=marker_radius,
+            color=(255, 0, 255),
+            position=vertices[vertex],
         )
 
         if not observed[vertex]:
@@ -623,10 +675,14 @@ def _word_mode(viewer: Viewer, store_path: Path) -> list:
         keep = is_term[ids] & (probs > 0)
         ids = ids[keep]
         probs = probs[keep] / probs[keep].sum()
-        panel.content = _chart(f"vertex {vertex}", [words[j] for j in ids[:10]], probs[:10])
+        panel.content = _chart(
+            f"vertex {vertex}", [words[j] for j in ids[:10]], probs[:10]
+        )
 
     # Words ranked by probability mass (expected vertex count); a click on the mesh probes
-    mass = np.bincount(word_ids.ravel(), weights=word_probs.ravel(), minlength=len(words))
+    mass = np.bincount(
+        word_ids.ravel(), weights=word_probs.ravel(), minlength=len(words)
+    )
     viewer.add_label_list("mesh", words, mass, select)
     search_button.on_click(search)
     viewer.on_click("mesh", show)
@@ -652,7 +708,9 @@ def _text_mode(viewer: Viewer, store_path: Path) -> list:
     # Query, negatives (Talk2DINO's "object" convention), floor, Search
     query = viewer.server.gui.add_text("Query", initial_value="")
     negatives = viewer.server.gui.add_text("Negatives", initial_value="object")
-    floor = viewer.server.gui.add_slider("Query min score", min=0.0, max=1.0, step=0.01, initial_value=0.5)
+    floor = viewer.server.gui.add_slider(
+        "Query min score", min=0.0, max=1.0, step=0.01, initial_value=0.5
+    )
     search_button = viewer.server.gui.add_button("Search")
 
     def search(_=None) -> None:
@@ -672,7 +730,9 @@ def _text_mode(viewer: Viewer, store_path: Path) -> list:
             features = features.to(extractor.device)
 
         with torch.no_grad():
-            scores = extractor.score_queries(features, positives, _split(negatives.value))
+            scores = extractor.score_queries(
+                features, positives, _split(negatives.value)
+            )
 
         scores = scores.float().cpu().numpy()
         scores[~observed] = np.nan
@@ -682,7 +742,9 @@ def _text_mode(viewer: Viewer, store_path: Path) -> list:
     return [query, negatives, floor, search_button]
 
 
-def _build(viewer: Viewer, backend_dir: Path, textured: bool, texture_size: int) -> Optional[viser.GuiDropdownHandle]:
+def _build(
+    viewer: Viewer, backend_dir: Path, textured: bool, texture_size: int
+) -> Optional[viser.GuiDropdownHandle]:
     """
     Add the mesh and, when vertex stores exist, the Semantics dropdown that switches modes.
 
@@ -714,7 +776,9 @@ def _build(viewer: Viewer, backend_dir: Path, textured: bool, texture_size: int)
     if textured:
         shown = trimesh.load(backend_dir / "texture" / "mesh.obj", process=False)
         material = shown.visual.material
-        material.image = material.image.resize((texture_size, texture_size), Image.LANCZOS)
+        material.image = material.image.resize(
+            (texture_size, texture_size), Image.LANCZOS
+        )
 
     viewer.add_mesh("mesh", vertices, faces, colors, textured=shown)
     stores = _find_stores(backend_dir)
@@ -723,7 +787,9 @@ def _build(viewer: Viewer, backend_dir: Path, textured: bool, texture_size: int)
         return None
 
     initial = "ocr_lens" if "ocr_lens" in stores else next(iter(stores))
-    dropdown = viewer.server.gui.add_dropdown("Semantics", options=("none", *stores), initial_value=initial)
+    dropdown = viewer.server.gui.add_dropdown(
+        "Semantics", options=("none", *stores), initial_value=initial
+    )
     handles = []
 
     def switch(_=None) -> None:
@@ -749,7 +815,11 @@ def _build(viewer: Viewer, backend_dir: Path, textured: bool, texture_size: int)
 
         # Word arrays select word mode, codes text mode
         path = stores[dropdown.value]
-        mode = _word_mode if "vertex_word_ids" in zarr.open(str(path), mode="r") else _text_mode
+        mode = (
+            _word_mode
+            if "vertex_word_ids" in zarr.open(str(path), mode="r")
+            else _text_mode
+        )
         handles.extend(mode(viewer, path))
 
     dropdown.on_update(switch)
@@ -761,11 +831,19 @@ def main() -> None:
     """
     Serve a backend's mesh with its queryable semantics; blocks until interrupted.
     """
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("backend_dir", type=Path)
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--textured", action="store_true", help="show texture/mesh.obj over the same surface")
-    parser.add_argument("--texture_size", type=int, default=4096, help="displayed texture edge, pixels")
+    parser.add_argument(
+        "--textured",
+        action="store_true",
+        help="show texture/mesh.obj over the same surface",
+    )
+    parser.add_argument(
+        "--texture_size", type=int, default=4096, help="displayed texture edge, pixels"
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
 

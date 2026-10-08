@@ -56,7 +56,9 @@ def test_outlier_mask_degenerate_cloud_keeps_all():
     assert keep.all()
 
 
-@pytest.mark.parametrize("remove_outliers, max_points, n_kept", [(True, 50, 50), (False, 1000, 200)])
+@pytest.mark.parametrize(
+    "remove_outliers, max_points, n_kept", [(True, 50, 50), (False, 1000, 200)]
+)
 def test_clean_pointcloud_row_aligned(remove_outliers, max_points, n_kept):
     """
     SOR on: far point dropped, cap binds. Off: all kept, outlier too. Colors follow the points.
@@ -68,7 +70,9 @@ def test_clean_pointcloud_row_aligned(remove_outliers, max_points, n_kept):
         colors=np.arange(600).reshape(200, 3).astype(np.uint8),
         extrinsics=np.eye(4, dtype=np.float32)[None],
         intrinsics=None,
-        model_intrinsics=np.array([[[10.0, 0, 5], [0, 10.0, 4], [0, 0, 1]]], np.float32),
+        model_intrinsics=np.array(
+            [[[10.0, 0, 5], [0, 10.0, 4], [0, 0, 1]]], np.float32
+        ),
         image_paths=[Path("frame_000000.png")],
         original_coords=np.array([[0, 0, 10, 8, 10, 8]], np.float32),
         model_width=10,
@@ -76,7 +80,9 @@ def test_clean_pointcloud_row_aligned(remove_outliers, max_points, n_kept):
         pixel_indices=np.arange(600).reshape(200, 3).astype(np.int32),
     )
 
-    out = clean_pointcloud(result, remove_outliers=remove_outliers, max_points=max_points)
+    out = clean_pointcloud(
+        result, remove_outliers=remove_outliers, max_points=max_points
+    )
 
     rows = out.pixel_indices[:, 0] // 3
     assert len(out.points) == n_kept

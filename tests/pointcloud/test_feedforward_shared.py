@@ -2,12 +2,12 @@ import dataclasses
 from pathlib import Path
 
 import numpy as np
-import pycolmap
 import pytest
 import torch
 
 from collab_splats.geometry import LoopClosure
 from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
 
 
 def _make_result(n=3, p=50, colors=None):
@@ -15,10 +15,14 @@ def _make_result(n=3, p=50, colors=None):
     n PINHOLE frames on a 512x512 full frame, p random points.
     """
     rng = np.random.default_rng(0)
-    intrinsics = np.tile(np.array([[500, 0, 256], [0, 500, 256], [0, 0, 1]], dtype=np.float32), (n, 1, 1))
+    intrinsics = np.tile(
+        np.array([[500, 0, 256], [0, 500, 256], [0, 0, 1]], dtype=np.float32), (n, 1, 1)
+    )
     return PointcloudResult(
         points=rng.standard_normal((p, 3)).astype(np.float32),
-        colors=rng.integers(0, 255, (p, 3), dtype=np.uint8) if colors is None else colors,
+        colors=rng.integers(0, 255, (p, 3), dtype=np.uint8)
+        if colors is None
+        else colors,
         extrinsics=np.tile(np.eye(4), (n, 1, 1)).astype(np.float32),
         intrinsics=None,
         model_intrinsics=intrinsics,
@@ -41,6 +45,7 @@ def test_loop_closure_stripped_from_base():
     import dataclasses
 
     from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
+
     field_names = {f.name for f in dataclasses.fields(BaseFeedforwardCreator)}
     assert "enable_loop_closure" not in field_names
     assert "loop_closure_config" not in field_names
@@ -56,8 +61,6 @@ def test_to_colmap_rejects_float_colors():
 # _verify_loop_candidate on BaseFeedforwardCreator
 # ---------------------------------------------------------------------------
 
-from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
-
 
 class _StubCreator(BaseFeedforwardCreator):
     """Minimal concrete subclass of BaseFeedforwardCreator for base-method tests.
@@ -67,10 +70,17 @@ class _StubCreator(BaseFeedforwardCreator):
     Set creator._stubbed_features before calling _verify_loop_candidate.
     """
 
-    def _load_model(self, device): return None
-    def _preprocess(self, image_paths, **kwargs): pass
-    def _forward(self, model, views): pass
-    def _postprocess(self, raw_outputs): pass
+    def _load_model(self, device):
+        return None
+
+    def _preprocess(self, image_paths, **kwargs):
+        pass
+
+    def _forward(self, model, views):
+        pass
+
+    def _postprocess(self, raw_outputs):
+        pass
 
     # LC calibration an LC-capable backend sets
     _lc_layer_index = 20
@@ -84,6 +94,7 @@ class _StubCreator(BaseFeedforwardCreator):
 def _make_stub() -> _StubCreator:
     """Bypass the dataclass __init__; no real model or paths needed."""
     from unittest.mock import MagicMock
+
     creator = object.__new__(_StubCreator)
     # _verify_loop_candidate calls next(self.model.parameters()).device
     mock_model = MagicMock()
@@ -143,14 +154,19 @@ def test_verify_loop_candidate_accepted_with_geometry():
     """'world_points'/'conf' feature keys are folded into lc_data on accept."""
     creator = _make_stub()
     k, q = _high_ratio_features()
-    fake_poses = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)   # (2, 4, 4)
-    wp = np.zeros((2, 8, 8, 3), dtype=np.float32)                      # (2, H, W, 3)
-    conf = np.ones((2, 8, 8), dtype=np.float32)                        # (2, H, W)
+    fake_poses = np.eye(4, dtype=np.float32)[None].repeat(2, axis=0)  # (2, 4, 4)
+    wp = np.zeros((2, 8, 8, 3), dtype=np.float32)  # (2, H, W, 3)
+    conf = np.ones((2, 8, 8), dtype=np.float32)  # (2, H, W)
     creator._stubbed_features = {
-        "q": q, "k": k, "poses": fake_poses, "world_points": wp, "conf": conf
+        "q": q,
+        "k": k,
+        "poses": fake_poses,
+        "world_points": wp,
+        "conf": conf,
     }
     accepted, lc_data = creator._verify_loop_candidate(
-        torch.zeros(3, 16, 16), torch.zeros(3, 16, 16),
+        torch.zeros(3, 16, 16),
+        torch.zeros(3, 16, 16),
         verify_match_ratio=0.5,
     )
     assert accepted is True
@@ -189,7 +205,9 @@ def test_loop_closure_raises_without_calibrated_ratio():
 def test_extract_intermediate_features_base_raises():
     creator = _make_stub()
     with pytest.raises(NotImplementedError):
-        BaseFeedforwardCreator.extract_intermediate_features(creator, torch.zeros(2, 3, 4, 4), 0)
+        BaseFeedforwardCreator.extract_intermediate_features(
+            creator, torch.zeros(2, 3, 4, 4), 0
+        )
 
 
 def test_base_creator_no_extractor_name():
@@ -203,12 +221,17 @@ def test_base_creator_no_extractor_name():
 ########################################################
 
 
-def _postprocess(depth_conf: np.ndarray, images: torch.Tensor, conf_threshold: float) -> PointcloudResult:
+def _postprocess(
+    depth_conf: np.ndarray, images: torch.Tensor, conf_threshold: float
+) -> PointcloudResult:
     """
     Base _postprocess over flat depth-2 frames with these confidences and images.
     """
     n, _, h, w = images.shape
-    intrinsics = np.array([[w, 0.0, (w - 1) / 2], [0.0, w, (h - 1) / 2], [0.0, 0.0, 1.0]], dtype=np.float32)
+    intrinsics = np.array(
+        [[w, 0.0, (w - 1) / 2], [0.0, w, (h - 1) / 2], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
     raw = {
         "images": images,
         "extrinsic": np.tile(np.eye(4, dtype=np.float32)[:3], (n, 1, 1)),
@@ -220,7 +243,9 @@ def _postprocess(depth_conf: np.ndarray, images: torch.Tensor, conf_threshold: f
     creator.conf_threshold = conf_threshold
     creator.min_views = 0
     creator.image_paths = [Path(f"frame_{i:06d}") for i in range(n)]
-    creator.original_coords = np.tile(np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1))
+    creator.original_coords = np.tile(
+        np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1)
+    )
     return BaseFeedforwardCreator._postprocess(creator, raw)
 
 

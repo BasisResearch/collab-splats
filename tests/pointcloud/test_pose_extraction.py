@@ -23,7 +23,9 @@ def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     return M
 
 
-def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0) -> Submap:
+def _make_submap(
+    poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
+) -> Submap:
     k = poses.shape[0]
     return Submap(
         submap_id=submap_id,
@@ -62,12 +64,12 @@ def test_pose_extraction_formula_local_proj_inv_h_opt():
     _, R_old, t_old, _ = decompose_camera(H_opt)
 
     # They must differ (formula change is meaningful)
-    assert not np.allclose(
-        R_old, R_new, atol=0.01
-    ), "Old and new extraction must give different rotations for non-trivial inputs"
-    assert not np.allclose(
-        t_old, t_new, atol=0.01
-    ), "Old and new extraction must give different translations for non-trivial inputs"
+    assert not np.allclose(R_old, R_new, atol=0.01), (
+        "Old and new extraction must give different rotations for non-trivial inputs"
+    )
+    assert not np.allclose(t_old, t_new, atol=0.01), (
+        "Old and new extraction must give different translations for non-trivial inputs"
+    )
 
 
 def test_pose_extraction_single_submap_first_frame_near_identity():
@@ -80,7 +82,9 @@ def test_pose_extraction_single_submap_first_frame_near_identity():
     """
     rng = np.random.default_rng(42)
     k = 4
-    poses = np.stack([_make_w2c(np.eye(3), np.array([i * 0.1, 0.0, 0.0])) for i in range(k)]).astype(np.float32)
+    poses = np.stack(
+        [_make_w2c(np.eye(3), np.array([i * 0.1, 0.0, 0.0])) for i in range(k)]
+    ).astype(np.float32)
     wp = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
 
     submap = _make_submap(poses, wp, submap_id=0)
@@ -88,7 +92,9 @@ def test_pose_extraction_single_submap_first_frame_near_identity():
 
     assert result.shape == (k, 4, 4)
     # First frame: reference frame → near identity
-    assert np.allclose(result[0], np.eye(4), atol=0.1), f"First frame should be near identity, got\n{result[0]}"
+    assert np.allclose(result[0], np.eye(4), atol=0.1), (
+        f"First frame should be near identity, got\n{result[0]}"
+    )
 
 
 def test_pose_extraction_non_first_frame_uses_local_proj():
@@ -125,9 +131,9 @@ def test_pose_extraction_non_first_frame_uses_local_proj():
 
     # No-op PGO recovers the input world-to-cam pose: result[1] ≈ poses[1] = R_y(+15°).
     angle_recovered = _angle_deg(R_out, R15)
-    assert (
-        angle_recovered < 5.0
-    ), f"Single-submap PGO should recover input pose R_y(+15°) at frame 1, got {angle_recovered:.1f}° away"
+    assert angle_recovered < 5.0, (
+        f"Single-submap PGO should recover input pose R_y(+15°) at frame 1, got {angle_recovered:.1f}° away"
+    )
 
 
 def test_decompose_camera_handles_sl4_projective_scale():
@@ -162,4 +168,6 @@ def test_decompose_camera_handles_sl4_projective_scale():
     assert np.allclose(R_out @ R_out.T, np.eye(3), atol=1e-6), "R should be orthogonal"
     assert np.allclose(K_out, np.triu(K_out), atol=1e-9), "K should be upper triangular"
     # Verify K diagonal is positive (enforced by decompose_camera)
-    assert K_out[0, 0] > 0 and K_out[1, 1] > 0 and K_out[2, 2] > 0, "K diagonal should be positive"
+    assert K_out[0, 0] > 0 and K_out[1, 1] > 0 and K_out[2, 2] > 0, (
+        "K diagonal should be positive"
+    )

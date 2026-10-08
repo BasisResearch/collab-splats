@@ -43,7 +43,9 @@ def test_mapanything_is_feedforward_creator():
 def test_mapanything_missing_image_dir_raises(tmp_path):
     c = MapAnythingCreator()
     with pytest.raises(FileNotFoundError):
-        c.create_pointcloud(tmp_path / "nonexistent", tmp_path / "out", tmp_path / "model")
+        c.create_pointcloud(
+            tmp_path / "nonexistent", tmp_path / "out", tmp_path / "model"
+        )
 
 
 def test_mapanything_forward_calls_model_forward():
@@ -60,7 +62,9 @@ def test_mapanything_forward_calls_model_forward():
     creator._processed_views = [{"img": torch.zeros(1, 3, 64, 64)} for _ in range(n)]
     creator.views = [object()] * n
 
-    with patch.object(MapAnythingCreator, "_stack_predictions", return_value="stacked") as mock_stack:
+    with patch.object(
+        MapAnythingCreator, "_stack_predictions", return_value="stacked"
+    ) as mock_stack:
         result = creator._forward(mock_model, creator.views)
 
     mock_model.forward.assert_called_once_with(
@@ -75,14 +79,22 @@ def test_mapanything_forward_calls_model_forward():
 def test_mapanything_preprocess_sets_processed_views(tmp_path):
     import torch
 
-    paths = _frame_files([np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path)
+    paths = _frame_files(
+        [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path
+    )
 
-    fake_views = [{"img": torch.zeros(1, 3, 224, 224), "data_norm_type": "imagenet"} for _ in range(2)]
+    fake_views = [
+        {"img": torch.zeros(1, 3, 224, 224), "data_norm_type": "imagenet"}
+        for _ in range(2)
+    ]
     fake_validated = fake_views
     fake_processed = [{"img": torch.zeros(1, 3, 224, 224)} for _ in range(2)]
 
     with (
-        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.load_images",
+            return_value=fake_views,
+        ),
         patch(
             "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
             return_value=fake_validated,
@@ -137,7 +149,8 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
     views = [{"img": torch.zeros(1, 3, h, w)} for _ in range(n)]
 
     with patch(
-        "collab_splats.pointcloud.feedforward.mapanything" ".postprocess_model_outputs_for_inference",
+        "collab_splats.pointcloud.feedforward.mapanything"
+        ".postprocess_model_outputs_for_inference",
         return_value=fake_processed,
     ) as mock_post:
         creator._stack_predictions(raw_outputs, views, masked=True)
@@ -146,12 +159,12 @@ def test_mapanything_postprocess_casts_bf16_to_float32():
     # mock captures the reference so we inspect dtype at call time
     called_raw = mock_post.call_args[0][0]
     for pred in called_raw:
-        assert (
-            pred["pts3d_cam"].dtype == torch.float32
-        ), f"pts3d_cam not cast to float32 before postprocess: {pred['pts3d_cam'].dtype}"
-        assert (
-            pred["pts3d"].dtype == torch.float32
-        ), f"pts3d not cast to float32 before postprocess: {pred['pts3d'].dtype}"
+        assert pred["pts3d_cam"].dtype == torch.float32, (
+            f"pts3d_cam not cast to float32 before postprocess: {pred['pts3d_cam'].dtype}"
+        )
+        assert pred["pts3d"].dtype == torch.float32, (
+            f"pts3d not cast to float32 before postprocess: {pred['pts3d'].dtype}"
+        )
 
 
 def test_mapanything_full_pipeline_cpu_mock(tmp_path):
@@ -166,10 +179,14 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
     image_dir = tmp_path / "imgs"
     image_dir.mkdir()
     for i in range(2):
-        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(image_dir / f"frame_{i:04d}.jpg")
+        PILImage.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(
+            image_dir / f"frame_{i:04d}.jpg"
+        )
 
     n, h, w = 2, 8, 8
-    fake_views = [{"img": torch.zeros(1, 3, h, w), "data_norm_type": "imagenet"} for _ in range(n)]
+    fake_views = [
+        {"img": torch.zeros(1, 3, h, w), "data_norm_type": "imagenet"} for _ in range(n)
+    ]
     fake_processed = [{"img": torch.zeros(1, 3, h, w)} for _ in range(n)]
 
     # Raw outputs from model.forward() — bf16 as produced under autocast
@@ -209,7 +226,10 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
     mock_model.forward.return_value = fake_raw
 
     with (
-        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.load_images",
+            return_value=fake_views,
+        ),
         patch(
             "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
             return_value=fake_views,
@@ -223,12 +243,13 @@ def test_mapanything_full_pipeline_cpu_mock(tmp_path):
             return_value=fake_post,
         ),
     ):
-
         creator = MapAnythingCreator()
         creator.model = mock_model
 
         creator.setup_inference(sorted(image_dir.glob("*.jpg")))
-        assert hasattr(creator, "_processed_views"), "_preprocess must set _processed_views"
+        assert hasattr(creator, "_processed_views"), (
+            "_preprocess must set _processed_views"
+        )
         assert creator._processed_views is fake_processed
 
         creator.run_inference()
@@ -279,7 +300,8 @@ def test_mapanything_forward_transfers_tensors_to_device():
     # Tensor must have been transferred to meta device before model.forward() was called
     assert len(captured_views) == 1
     assert captured_views[0]["img"].device.type == "meta", (
-        f"Expected meta device, got {captured_views[0]['img'].device.type} — " "tensor was not transferred in _forward"
+        f"Expected meta device, got {captured_views[0]['img'].device.type} — "
+        "tensor was not transferred in _forward"
     )
     # Non-tensor values must be unchanged
     assert creator._processed_views[0]["scalar"] == 1.0
@@ -290,7 +312,9 @@ def test_mapanything_load_model_standard():
     fake_model = MagicMock()
     fake_model.to.return_value = fake_model
 
-    with patch("collab_splats.pointcloud.feedforward.mapanything.MapAnything") as mock_cls:
+    with patch(
+        "collab_splats.pointcloud.feedforward.mapanything.MapAnything"
+    ) as mock_cls:
         mock_cls.from_pretrained.return_value = fake_model
         creator = MapAnythingCreator(model_name="test/model")
         result = creator._load_model(device="cpu")
@@ -337,8 +361,12 @@ def test_mapanything_run_inference_smoke(tmp_path):
     creator = MapAnythingCreator()
     result = creator.create_pointcloud(bicycle, tmp_path / "out")
 
-    assert result.confidence is not None, "MapAnything postprocess should populate confidence"
-    assert not result.confidence.isnan().any(), "confidence contains NaN — dtype cast regression in _stack_predictions"
+    assert result.confidence is not None, (
+        "MapAnything postprocess should populate confidence"
+    )
+    assert not result.confidence.isnan().any(), (
+        "confidence contains NaN — dtype cast regression in _stack_predictions"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +385,9 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
     total_dim = num_heads * head_dim
 
     # Real nn.Linear so register_forward_hook actually triggers
-    qkv_linears = [nn.Linear(total_dim, total_dim * 3, bias=False) for _ in range(n_blocks)]
+    qkv_linears = [
+        nn.Linear(total_dim, total_dim * 3, bias=False) for _ in range(n_blocks)
+    ]
     blocks = []
     for qkv in qkv_linears:
         block = MagicMock()
@@ -374,7 +404,10 @@ def _make_mapanything_with_mock_model(num_heads=2, head_dim=4, n_blocks=2, n_tok
             qkv(x)
         # Two per-view preds with float-castable pointmaps — the post-forward
         # pose recipe float-casts pts3d_cam/pts3d before postprocessing.
-        return [{"pts3d_cam": torch.zeros(1, 4, 4, 3), "pts3d": torch.zeros(1, 4, 4, 3)} for _ in range(2)]
+        return [
+            {"pts3d_cam": torch.zeros(1, 4, 4, 3), "pts3d": torch.zeros(1, 4, 4, 3)}
+            for _ in range(2)
+        ]
 
     mock_model = MagicMock()
     mock_model.info_sharing.self_attention_blocks = blocks
@@ -392,7 +425,11 @@ def _patch_mapanything_postprocess():
     return patch(
         "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
         return_value=[
-            {"camera_poses": torch.eye(4).unsqueeze(0), "pts3d": torch.zeros(1, 4, 4, 3), "conf": torch.ones(1, 4, 4)}
+            {
+                "camera_poses": torch.eye(4).unsqueeze(0),
+                "pts3d": torch.zeros(1, 4, 4, 3),
+                "conf": torch.ones(1, 4, 4),
+            }
             for _ in range(2)
         ],
     )
@@ -448,7 +485,9 @@ def test_mapanything_extract_intermediate_features_layer_index():
     """Non-default layer_index taps the correct block."""
     import torch
 
-    creator, blocks, n_tokens, num_heads, head_dim = _make_mapanything_with_mock_model(n_blocks=3)
+    creator, blocks, n_tokens, num_heads, head_dim = _make_mapanything_with_mock_model(
+        n_blocks=3
+    )
     frames = torch.zeros(2, 3, 16, 16)
 
     hooked_blocks = []
@@ -473,9 +512,9 @@ def test_mapanything_extract_intermediate_features_layer_index():
 
 def test_mapanything_verify_loop_candidate_not_on_class():
     """MapAnythingCreator must not define its own _verify_loop_candidate."""
-    assert (
-        "_verify_loop_candidate" not in MapAnythingCreator.__dict__
-    ), "_verify_loop_candidate still defined on MapAnythingCreator — base class only"
+    assert "_verify_loop_candidate" not in MapAnythingCreator.__dict__, (
+        "_verify_loop_candidate still defined on MapAnythingCreator — base class only"
+    )
 
 
 @pytest.mark.gpu
@@ -514,16 +553,26 @@ def test_mapanything_invalid_resize_mode_raises():
         MapAnythingCreator(resize_mode="bogus")
 
 
-def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(tmp_path):
+def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(
+    tmp_path,
+):
     """resize_mode='fixed' passes resize_mode='fixed_mapping' + resolution_set to load_images."""
-    paths = _frame_files([np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path)
+    paths = _frame_files(
+        [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path
+    )
 
-    fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
+    fake_view = {
+        "img": __import__("torch").zeros(1, 3, 64, 64),
+        "data_norm_type": "imagenet",
+    }
     fake_views = [fake_view, fake_view]
 
     c = MapAnythingCreator(resize_mode="fixed", resolution=518)
     with (
-        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views) as mock_li,
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.load_images",
+            return_value=fake_views,
+        ) as mock_li,
         patch(
             "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
             return_value=fake_views,
@@ -543,14 +592,22 @@ def test_mapanything_preprocess_fixed_mode_calls_load_images_with_fixed_mapping(
 
 def test_mapanything_preprocess_longest_side_calls_load_images_with_size(tmp_path):
     """resize_mode='longest_side' passes resize_mode='longest_side' + size= to load_images."""
-    paths = _frame_files([np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path)
+    paths = _frame_files(
+        [np.zeros((64, 64, 3), dtype=np.uint8) for _ in range(2)], tmp_path
+    )
 
-    fake_view = {"img": __import__("torch").zeros(1, 3, 64, 64), "data_norm_type": "imagenet"}
+    fake_view = {
+        "img": __import__("torch").zeros(1, 3, 64, 64),
+        "data_norm_type": "imagenet",
+    }
     fake_views = [fake_view, fake_view]
 
     c = MapAnythingCreator(resize_mode="longest_side", resolution=512)
     with (
-        patch("collab_splats.pointcloud.feedforward.mapanything.load_images", return_value=fake_views) as mock_li,
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.load_images",
+            return_value=fake_views,
+        ) as mock_li,
         patch(
             "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
             return_value=fake_views,
@@ -614,17 +671,25 @@ def test_mapanything_postprocess_calls_shared_mv_conf(monkeypatch):
     ):
         creator = MapAnythingCreator(min_views=1)
         H, W = 4, 4
-        creator._processed_views = [{"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(2)]
+        creator._processed_views = [
+            {"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(2)
+        ]
         creator.image_paths = []
-        creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1))  # full-frame box
+        creator.original_coords = np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1)
+        )  # full-frame box
 
-        raw_outputs = [{"pts3d_cam": torch.zeros(1), "pts3d": torch.zeros(1)} for _ in range(2)]
-        raw = creator._stack_predictions(raw_outputs, creator._processed_views, masked=True)
+        raw_outputs = [
+            {"pts3d_cam": torch.zeros(1), "pts3d": torch.zeros(1)} for _ in range(2)
+        ]
+        raw = creator._stack_predictions(
+            raw_outputs, creator._processed_views, masked=True
+        )
         creator._postprocess(raw)
 
-    assert all(
-        not v for v in upstream_calls
-    ), f"postprocess_model_outputs_for_inference called with use_multiview_confidence=True: {upstream_calls}"
+    assert all(not v for v in upstream_calls), (
+        f"postprocess_model_outputs_for_inference called with use_multiview_confidence=True: {upstream_calls}"
+    )
     mock_mv.assert_called_once()
 
 
@@ -653,12 +718,18 @@ def test_mapanything_postprocess_skips_the_multiview_pass_when_disabled():
             "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
             side_effect=fake_postprocess,
         ),
-        patch("collab_splats.pointcloud.feedforward.base.multiview_depth_confidence") as mock_mv,
+        patch(
+            "collab_splats.pointcloud.feedforward.base.multiview_depth_confidence"
+        ) as mock_mv,
     ):
         views = [{"img": np.zeros((1, 3, H, W), dtype=np.float32)} for _ in range(n)]
         creator.image_paths = []
-        creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1))  # full-frame box
-        preds = [{"pts3d_cam": torch.zeros(1), "pts3d": torch.zeros(1)} for _ in range(n)]
+        creator.original_coords = np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+        )  # full-frame box
+        preds = [
+            {"pts3d_cam": torch.zeros(1), "pts3d": torch.zeros(1)} for _ in range(n)
+        ]
         creator._postprocess(creator._stack_predictions(preds, views, masked=True))
 
     mock_mv.assert_not_called()
@@ -679,7 +750,10 @@ def _make_creator():
 def _fake_frames(n_frames: int, h: int, w: int):
     """Build (raw_list, processed) pairs mimicking MapAnything forward/postprocess."""
     # Raw preds only need the keys the float-cast touches; postprocess is patched.
-    raw_list = [{"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)} for _ in range(n_frames)]
+    raw_list = [
+        {"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)}
+        for _ in range(n_frames)
+    ]
 
     # Upstream mask keeps the left half of every frame
     mask = torch.zeros(1, h, w, 1, dtype=torch.bool)
@@ -688,7 +762,9 @@ def _fake_frames(n_frames: int, h: int, w: int):
     processed = []
     for i in range(n_frames):
         c2w = torch.eye(4)
-        c2w[:3, 3] = torch.tensor([1.0, 2.0, 3.0]) * i  # frame 0 identity, frame 1 shifted
+        c2w[:3, 3] = (
+            torch.tensor([1.0, 2.0, 3.0]) * i
+        )  # frame 0 identity, frame 1 shifted
         processed.append(
             {
                 "camera_poses": c2w.unsqueeze(0),
@@ -710,7 +786,9 @@ def _stack(masked: bool, n: int = 2, h: int = 16, w: int = 24) -> dict:
         "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
         return_value=processed,
     ):
-        return _make_creator()._stack_predictions(raw_list, [object()] * n, masked=masked)
+        return _make_creator()._stack_predictions(
+            raw_list, [object()] * n, masked=masked
+        )
 
 
 def test_stack_predictions_unmasked_carries_the_base_raw_keys():
@@ -750,9 +828,13 @@ def test_postprocess_mask_key_replaces_the_confidence_cutoff():
     """A raw "mask" key decides the kept pixels; conf_threshold is not applied."""
     h, w, n = 16, 24, 2
     raw = _stack(masked=True, n=n, h=h, w=w)
-    creator = MapAnythingCreator(min_views=0, conf_threshold=0.9)  # above every conf: would keep nothing
+    creator = MapAnythingCreator(
+        min_views=0, conf_threshold=0.9
+    )  # above every conf: would keep nothing
     creator.image_paths = []
-    creator.original_coords = np.tile(np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1))  # full-frame box
+    creator.original_coords = np.tile(
+        np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1)
+    )  # full-frame box
 
     result = creator._postprocess(raw)
 
@@ -787,8 +869,14 @@ def test_stack_predictions_raises_when_depth_z_missing():
 def test_extract_raises_when_pts3d_missing():
     """Postprocess output without pts3d raises instead of dropping LC anchor geometry."""
     h = w = 8
-    preds = [{"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)} for _ in range(2)]
-    processed = [{"camera_poses": torch.eye(4).unsqueeze(0), "conf": torch.rand(1, h, w)} for _ in range(2)]
+    preds = [
+        {"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)}
+        for _ in range(2)
+    ]
+    processed = [
+        {"camera_poses": torch.eye(4).unsqueeze(0), "conf": torch.rand(1, h, w)}
+        for _ in range(2)
+    ]
     creator = _make_creator()
     creator.model = _FakeMapAnythingModel(preds)
     with (
@@ -846,12 +934,19 @@ def test_mapanything_crop_box_matches_upstream_crop(hw):
     # for landscape/square frames.
     model_w, model_h = (294, 518) if h > w else (518, 294)
     yy, xx = np.mgrid[0:h, 0:w]
-    rgb = np.stack([(xx * 255 // w), (yy * 255 // h), ((xx + yy) % 256)], axis=-1).astype(np.uint8)
+    rgb = np.stack(
+        [(xx * 255 // w), (yy * 255 // h), ((xx + yy) % 256)], axis=-1
+    ).astype(np.uint8)
 
-    upstream = np.asarray(cropping.crop_resize_if_necessary(rgb, resolution=(model_w, model_h))[0], dtype=np.float32)
+    upstream = np.asarray(
+        cropping.crop_resize_if_necessary(rgb, resolution=(model_w, model_h))[0],
+        dtype=np.float32,
+    )
     (box,) = _mapanything_boxes([(w, h)], model_w, model_h)
     ours = np.asarray(
-        Image.fromarray(rgb).crop(tuple(float(v) for v in box[:4])).resize((model_w, model_h), Image.LANCZOS),
+        Image.fromarray(rgb)
+        .crop(tuple(float(v) for v in box[:4]))
+        .resize((model_w, model_h), Image.LANCZOS),
         dtype=np.float32,
     )
 
@@ -868,7 +963,13 @@ def test_mapanything_crop_box_matches_upstream_crop(hw):
 
 @pytest.mark.parametrize(
     "mode, resolution",
-    [("fixed", 518), ("fixed", 512), ("longest_side", 518), ("longest_side", 252), ("square", 250)],
+    [
+        ("fixed", 518),
+        ("fixed", 512),
+        ("longest_side", 518),
+        ("longest_side", 252),
+        ("square", 250),
+    ],
 )
 @pytest.mark.parametrize(
     "sizes",
@@ -899,5 +1000,7 @@ def test_preprocess_frames_match_files(tmp_path, mode, resolution, sizes):
     np.testing.assert_array_equal(coords_a, coords_f)
 
     # The model-ready copy the forward pass reads matches too
-    for a, f in zip(from_arrays._processed_views, from_files._processed_views, strict=True):
+    for a, f in zip(
+        from_arrays._processed_views, from_files._processed_views, strict=True
+    ):
         assert torch.equal(a["img"], f["img"])

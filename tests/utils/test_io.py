@@ -30,12 +30,23 @@ from collab_splats.utils.io import (
 
 def test_to_json_safe_nulls_every_non_finite_float():
     """json.dumps writes a bare NaN/Infinity, which no strict parser accepts."""
-    out = to_json_safe({"rho": float("nan"), "nested": [float("inf"), -np.inf, 1.0], "f32": np.float32("nan")})
+    out = to_json_safe(
+        {
+            "rho": float("nan"),
+            "nested": [float("inf"), -np.inf, 1.0],
+            "f32": np.float32("nan"),
+        }
+    )
     assert out == {"rho": None, "nested": [None, None, 1.0], "f32": None}
 
 
 def test_to_json_safe_writes_a_pybind11_enum_as_its_name():
-    camera = pycolmap.Camera(model="OPENCV", width=64, height=48, params=[50.0, 50.0, 32.0, 24.0, 0.0, 0.0, 0.0, 0.0])
+    camera = pycolmap.Camera(
+        model="OPENCV",
+        width=64,
+        height=48,
+        params=[50.0, 50.0, 32.0, 24.0, 0.0, 0.0, 0.0, 0.0],
+    )
 
     safe = to_json_safe(camera.todict())
 
@@ -44,7 +55,14 @@ def test_to_json_safe_writes_a_pybind11_enum_as_its_name():
 
 
 def test_to_json_safe_turns_numpy_into_python():
-    out = to_json_safe({"i": np.int64(3), "b": np.bool_(True), "f": np.float32(0.125), "a": np.array([[1, 2]])})
+    out = to_json_safe(
+        {
+            "i": np.int64(3),
+            "b": np.bool_(True),
+            "f": np.float32(0.125),
+            "a": np.array([[1, 2]]),
+        }
+    )
     assert out == {"i": 3, "b": True, "f": 0.125, "a": [[1, 2]]}
     assert type(out["i"]) is int and type(out["b"]) is bool and type(out["f"]) is float
 
@@ -89,7 +107,11 @@ def test_read_image_ignores_exif_orientation_like_pil(tmp_path):
     exif[0x0112] = 6
     im.save(jpg, exif=exif, quality=95)
 
-    assert read_image(jpg).shape == np.asarray(Image.open(jpg).convert("RGB")).shape == (20, 40, 3)
+    assert (
+        read_image(jpg).shape
+        == np.asarray(Image.open(jpg).convert("RGB")).shape
+        == (20, 40, 3)
+    )
 
 
 def test_read_image_names_a_missing_file(tmp_path):
@@ -105,7 +127,11 @@ def test_to_uint8_hwc_rounds_instead_of_truncating():
 
     out = to_uint8_hwc(x, channels_first=True)
 
-    assert out.shape == (1, 1, 2, 3) and out.dtype == np.uint8 and out.flags["C_CONTIGUOUS"]
+    assert (
+        out.shape == (1, 1, 2, 3)
+        and out.dtype == np.uint8
+        and out.flags["C_CONTIGUOUS"]
+    )
     np.testing.assert_array_equal(out[0, 0, 0], [1, 1, 1])
     np.testing.assert_array_equal(out[0, 0, 1], [255, 255, 255])
 
@@ -121,7 +147,9 @@ def test_to_uint8_hwc_channels_last_and_clip():
 def test_to_uint8_hwc_rejects_a_0_255_array():
     """A [0, 255] input is a stale-zarr contract break, not a scale to guess."""
     with pytest.raises(ValueError, match=r"\[0, 1\]"):
-        to_uint8_hwc(np.full((1, 3, 2, 2), 200.0, dtype=np.float32), channels_first=True)
+        to_uint8_hwc(
+            np.full((1, 3, 2, 2), 200.0, dtype=np.float32), channels_first=True
+        )
 
 
 @pytest.mark.parametrize("bad", [np.nan, np.inf])
@@ -211,7 +239,9 @@ def test_io_imports_without_torch():
     root = Path(__file__).resolve().parents[2]
     code = "import sys; sys.modules['torch'] = None; import collab_splats.utils.io"
     env = {**os.environ, "PYTHONPATH": str(root)}
-    proc = subprocess.run([sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True)
+    proc = subprocess.run(
+        [sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True
+    )
     assert proc.returncode == 0, proc.stderr
 
 
@@ -225,11 +255,17 @@ def test_write_textured_obj_shares_positions_with_white_kd_and_normals(tmp_path)
 
     out = write_textured_obj(tmp_path / "tex", vertices, faces, normals, uvs, albedo)
 
-    assert sorted(p.name for p in out.parent.iterdir()) == ["albedo.png", "mesh.mtl", "mesh.obj"]
+    assert sorted(p.name for p in out.parent.iterdir()) == [
+        "albedo.png",
+        "mesh.mtl",
+        "mesh.obj",
+    ]
     assert "Kd 1.0 1.0 1.0" in (out.parent / "mesh.mtl").read_text()
     lines = out.read_text().splitlines()
     assert sum(line.startswith("v ") for line in lines) == 4
     assert sum(line.startswith("vn ") for line in lines) == 4
     loaded = trimesh.load(out, process=False)
     np.testing.assert_allclose(loaded.visual.uv[loaded.faces], uvs, atol=1e-6)
-    np.testing.assert_allclose(loaded.vertices[loaded.faces], vertices[faces], atol=1e-6)
+    np.testing.assert_allclose(
+        loaded.vertices[loaded.faces], vertices[faces], atol=1e-6
+    )

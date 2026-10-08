@@ -38,7 +38,10 @@ class _OpLogHandler(logging.Handler):
         """
         try:
             self._op_log.append_line(record.getMessage())
-        except (TypeError, ValueError):  # bad format args; never let logging crash the run
+        except (
+            TypeError,
+            ValueError,
+        ):  # bad format args; never let logging crash the run
             self.handleError(record)
 
 

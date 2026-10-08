@@ -1,5 +1,3 @@
-import numpy as np
-
 from tests.geometry.loop_closure._helpers import drive_pose_graph
 
 

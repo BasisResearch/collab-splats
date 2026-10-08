@@ -84,8 +84,12 @@ def test_video_module_uses_no_subprocess(tiny_video, monkeypatch):
     """
     Probe and both decode paths run in-process; no ffmpeg pipe, nothing on PATH.
     """
-    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("spawned an ffmpeg pipe"))
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("spawned an ffmpeg pipe"))
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("spawned an ffmpeg pipe")
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: pytest.fail("spawned an ffmpeg pipe")
+    )
 
     assert get_video_info(ROTATED)["width"] == 180
     assert len(list(iter_frames(tiny_video, indices=[0, 2]))) == 2
@@ -153,7 +157,9 @@ def test_get_video_info_zero_frames_or_rate_raises(tmp_path, monkeypatch):
     """
     A container that opens but reports no frames and no rate is an error, not zeros.
     """
-    stream = SimpleNamespace(frames=0, average_rate=None, codec_context=SimpleNamespace(width=4, height=4))
+    stream = SimpleNamespace(
+        frames=0, average_rate=None, codec_context=SimpleNamespace(width=4, height=4)
+    )
     container = MagicMock(duration=None)
     container.__enter__.return_value = container
     container.streams.video = [stream]
@@ -169,7 +175,9 @@ def test_get_video_info_zero_frames_or_rate_raises(tmp_path, monkeypatch):
 def test_extract_frame_accepts_a_preprobed_info(tiny_video):
     info = get_video_info(tiny_video)
 
-    assert np.array_equal(extract_frame(tiny_video, 2, info=info), extract_frame(tiny_video, 2))
+    assert np.array_equal(
+        extract_frame(tiny_video, 2, info=info), extract_frame(tiny_video, 2)
+    )
 
 
 def test_extract_frame_matches_the_scan(tiny_video):
@@ -198,7 +206,9 @@ def test_extract_frame_rejects_an_out_of_range_index(tiny_video):
 
 # These build their fixtures with the ffmpeg binary (testsrc, and a rotate=90
 # remux of it), so they are skipped rather than failed when it is absent.
-requires_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg required")
+requires_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="ffmpeg required"
+)
 
 
 @pytest.fixture(scope="module")
@@ -320,7 +330,10 @@ def test_get_video_info_falls_back_to_duration_x_rate(synth_video, tmp_path):
     """
     # Stream-copy the 60-frame fixture into a container that drops the count
     ts_path = tmp_path / "synth.ts"
-    subprocess.run(["ffmpeg", "-v", "error", "-i", str(synth_video), "-c", "copy", str(ts_path)], check=True)
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(synth_video), "-c", "copy", str(ts_path)],
+        check=True,
+    )
     with av.open(str(ts_path)) as container:
         assert container.streams.video[0].frames == 0
 

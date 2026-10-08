@@ -44,7 +44,9 @@ class StubMatcher:
         self.n_extract += 1
         kp = torch.as_tensor(self._keypoints(image), dtype=torch.float32)
         ids = torch.arange(len(kp), dtype=torch.float32)[:, None]
-        return LocalFeatures(keypoints=kp, descriptors=ids, image_size=(image.shape[1], image.shape[0]))
+        return LocalFeatures(
+            keypoints=kp, descriptors=ids, image_size=(image.shape[1], image.shape[0])
+        )
 
     def extract(self, images):
         if isinstance(images, list):
@@ -55,7 +57,11 @@ class StubMatcher:
         return features
 
     def match(self, q: LocalFeatures, db: LocalFeatures) -> MatchResult:
-        _, iq, idb = np.intersect1d(q.descriptors[:, 0].numpy(), db.descriptors[:, 0].numpy(), return_indices=True)
+        _, iq, idb = np.intersect1d(
+            q.descriptors[:, 0].numpy(),
+            db.descriptors[:, 0].numpy(),
+            return_indices=True,
+        )
         return MatchResult(
             query_px=q.keypoints.numpy()[iq],
             ref_px=db.keypoints.numpy()[idb],
@@ -84,7 +90,9 @@ def fake_salad(monkeypatch):
     Every localizer in these tests embeds with FakeSalad, never the real checkpoint.
     """
     registry = SimpleNamespace(get=lambda name: FakeSalad)
-    monkeypatch.setattr("collab_splats.localization.localizer.BaseRetrievalExtractor", registry)
+    monkeypatch.setattr(
+        "collab_splats.localization.localizer.BaseRetrievalExtractor", registry
+    )
     return FakeSalad
 
 

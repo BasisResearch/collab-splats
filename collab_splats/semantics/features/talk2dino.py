@@ -44,12 +44,20 @@ class Talk2DinoExtractor(BaseQueryableExtractor):
     ):
         if device is None:
             device = get_device()
-        super().__init__(resize_mode=resize_mode, image_resolution=image_resolution, svd_components=svd_components)
+        super().__init__(
+            resize_mode=resize_mode,
+            image_resolution=image_resolution,
+            svd_components=svd_components,
+        )
 
         # low_cpu_mem_usage=False: Talk2DINO's load_state_dict would no-op on meta tensors
         with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=".*copying from a non-meta parameter.*")
-            _loaded = AutoModel.from_pretrained(model_name, trust_remote_code=True, low_cpu_mem_usage=False)
+            warnings.filterwarnings(
+                "ignore", message=".*copying from a non-meta parameter.*"
+            )
+            _loaded = AutoModel.from_pretrained(
+                model_name, trust_remote_code=True, low_cpu_mem_usage=False
+            )
 
         # Normalize transform from the model's own image_transforms — correct stats per backbone
         self._normalize: T.Normalize = _loaded.image_transforms.transforms[-1]

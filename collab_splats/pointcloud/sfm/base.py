@@ -83,7 +83,9 @@ class BaseSfmCreator(BasePointcloudCreator):
         # Floor must be a real number in (0, 1]
         frac = self.min_registered_frac
 
-        if isinstance(frac, bool) or not (isinstance(frac, (int, float)) and 0 < frac <= 1):
+        if isinstance(frac, bool) or not (
+            isinstance(frac, (int, float)) and 0 < frac <= 1
+        ):
             raise ValueError(f"min_registered_frac must be in (0, 1], got {frac!r}")
 
         _require_positive_int("num_threads", self.num_threads)
@@ -97,10 +99,15 @@ class BaseSfmCreator(BasePointcloudCreator):
         """
         # Take the model off the creator so its memory is freed with the export
         recon, self._recon = self._recon, None
+        assert recon is not None
 
         # Delete the points3D the clean or cap removed, matched on the float32 xyz the result holds
         kept = {tuple(xyz) for xyz in result.points.tolist()}
-        dropped = [pid for pid, p in recon.points3D.items() if tuple(p.xyz.astype(np.float32).tolist()) not in kept]
+        dropped = [
+            pid
+            for pid, p in recon.points3D.items()
+            if tuple(p.xyz.astype(np.float32).tolist()) not in kept
+        ]
 
         for pid in dropped:
             recon.delete_point3D(pid)
@@ -131,7 +138,9 @@ class BaseSfmCreator(BasePointcloudCreator):
 
         # Fail if too few frames were registered, and warn if only some were
         if len(rows) < self.min_registered_frac * len(names):
-            missing = [Path(name).stem for name in names if Path(name).stem not in registered]
+            missing = [
+                Path(name).stem for name in names if Path(name).stem not in registered
+            ]
             raise RuntimeError(
                 f"{backend} registered {len(rows)}/{len(names)} frames, below min_registered_frac "
                 f"{self.min_registered_frac} (unregistered: {missing[:10]})"
@@ -139,7 +148,10 @@ class BaseSfmCreator(BasePointcloudCreator):
 
         if len(rows) < len(names):
             logger.warning(
-                "%s registered %d/%d frames — continuing on the registered subset", backend, len(rows), len(names)
+                "%s registered %d/%d frames — continuing on the registered subset",
+                backend,
+                len(rows),
+                len(names),
             )
 
         # Remove unregistered images from the model
@@ -147,7 +159,11 @@ class BaseSfmCreator(BasePointcloudCreator):
         logger.info("%s: %d/%d registered", backend, len(rows), len(names))
 
         # Delete 3D points that no image sees anymore
-        for pid in [pid for pid, point in recon.points3D.items() if len(point.track.elements) == 0]:
+        for pid in [
+            pid
+            for pid, point in recon.points3D.items()
+            if len(point.track.elements) == 0
+        ]:
             recon.delete_point3D(pid)
 
         # Rename images to their file name without extension
@@ -160,15 +176,24 @@ class BaseSfmCreator(BasePointcloudCreator):
         # Build the dense point cloud by aligning the depth maps to the COLMAP model
         keyframes = np.stack([read_image(paths[row]) for row in rows])
         registered_names = [names[row] for row in rows]
-        result, align_attrs = align_depth(recon, depths[rows], keyframes, registered_names)
+        result, align_attrs = align_depth(
+            recon, depths[rows], keyframes, registered_names
+        )
 
         # Record the method, frame counts and depth alignment stats
-        self.attrs = {"method": "sfm", "registered_frames": len(rows), "total_frames": len(names), **align_attrs}
+        self.attrs = {
+            "method": "sfm",
+            "registered_frames": len(rows),
+            "total_frames": len(names),
+            **align_attrs,
+        }
 
         return result
 
     @abstractmethod
-    def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
+    def _map(
+        self, images_dir: Path, out_dir: Path, names: list[str]
+    ) -> pycolmap.Reconstruction:
         """
         Backend mapper: one in-memory COLMAP model over `names`.
 

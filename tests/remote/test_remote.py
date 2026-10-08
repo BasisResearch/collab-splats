@@ -26,11 +26,17 @@ _VIDEO_EXT_STEMS = ("mp4", "mov", "avi")
 def _ext_case_variants(stem: str) -> list[str]:
     """lowercase, UPPERCASE, MixedCase, and every single-letter case flip of an extension."""
     variants = {stem.lower(), stem.upper(), stem.capitalize()}
-    variants.update(stem[:i] + ch.upper() + stem[i + 1 :] for i, ch in enumerate(stem) if ch.isalpha())
+    variants.update(
+        stem[:i] + ch.upper() + stem[i + 1 :]
+        for i, ch in enumerate(stem)
+        if ch.isalpha()
+    )
     return sorted(variants)
 
 
-_VIDEO_NAME_CASES = [f"C0043.{v}" for stem in _VIDEO_EXT_STEMS for v in _ext_case_variants(stem)]
+_VIDEO_NAME_CASES = [
+    f"C0043.{v}" for stem in _VIDEO_EXT_STEMS for v in _ext_case_variants(stem)
+]
 
 
 class FakeClient:
@@ -131,7 +137,9 @@ def test_default_buckets_are_the_environments_pair():
 def test_list_scenes_returns_dirs_at_bucket_root():
     # ".cache" fails SCENE_ID_RE (leading dot); the scene-named .mp4 matches it but is not a dir
     listings = {
-        "fake:environments-curated": _dirs("2026_07_21-rats-C0100", ".cache", "2026_07_20-birds-C0043")
+        "fake:environments-curated": _dirs(
+            "2026_07_21-rats-C0100", ".cache", "2026_07_20-birds-C0043"
+        )
         + _files("notes.txt", "2026_05_07-birds-clip_03.mp4")
     }
     source = SceneSource(FakeClient(listings=listings))
@@ -159,7 +167,9 @@ def test_scene_video_picks_the_single_video():
     assert SceneSource(FakeClient(listings=listings)).scene_video("s") == "C0043.MP4"
 
 
-@pytest.mark.parametrize("name", ("C0043.MP4", "clip.mp4", "clip.MOV", "clip.mov", "clip.AVI", "clip.avi"))
+@pytest.mark.parametrize(
+    "name", ("C0043.MP4", "clip.mp4", "clip.MOV", "clip.mov", "clip.AVI", "clip.avi")
+)
 def test_scene_video_accepts_every_video_extension(name):
     listings = {"fake:environments-curated/s": _files(name, "readme.md")}
     assert SceneSource(FakeClient(listings=listings)).scene_video("s") == name
@@ -192,7 +202,9 @@ def test_scene_video_raises_when_no_video(caplog):
     with caplog.at_level(logging.INFO, logger="collab_splats.remote"):
         with pytest.raises(FileNotFoundError, match="no video"):
             SceneSource(FakeClient(listings=listings)).scene_video("s")
-    assert caplog.records, "a video-less scene dir must be reported, not skipped in silence"
+    assert caplog.records, (
+        "a video-less scene dir must be reported, not skipped in silence"
+    )
 
 
 @pytest.mark.parametrize("call", sorted(_CURATED_CALLS))
@@ -227,18 +239,27 @@ def test_list_scenes_warns_about_skipped_non_scene_dirs(caplog):
     """A dir that fails SCENE_ID_RE must be named in the log, never dropped silently."""
     listings = {"fake:environments-curated": _dirs("2026_07_20-birds-C0043", ".cache")}
     with caplog.at_level(logging.WARNING, logger="collab_splats.remote"):
-        assert SceneSource(FakeClient(listings=listings)).list_scenes() == ["2026_07_20-birds-C0043"]
-    assert any(".cache" in r.getMessage() for r in caplog.records), "skipped dir must be logged"
+        assert SceneSource(FakeClient(listings=listings)).list_scenes() == [
+            "2026_07_20-birds-C0043"
+        ]
+    assert any(".cache" in r.getMessage() for r in caplog.records), (
+        "skipped dir must be logged"
+    )
 
 
 def test_list_processed_scenes_reads_processed_bucket():
     # A non-scene dir and a scene-named file must both be dropped
     listings = {
-        "fake:environments-processed": _dirs("2026_07_21-rats-C0100", ".cache", "2026_07_20-birds-C0043")
+        "fake:environments-processed": _dirs(
+            "2026_07_21-rats-C0100", ".cache", "2026_07_20-birds-C0043"
+        )
         + _files("2026_05_07-birds-clip_03.mp4")
     }
     source = SceneSource(FakeClient(listings=listings))
-    assert source.list_processed_scenes() == ["2026_07_20-birds-C0043", "2026_07_21-rats-C0100"]
+    assert source.list_processed_scenes() == [
+        "2026_07_20-birds-C0043",
+        "2026_07_21-rats-C0100",
+    ]
 
 
 def test_has_processed_true_when_listing_nonempty():
@@ -275,7 +296,9 @@ def test_probe_raises_on_a_missing_bucket(probe):
 @pytest.mark.parametrize("probe", sorted(_PROBES))
 def test_probe_raises_when_the_rclone_binary_is_missing(probe):
     call, _ = _PROBES[probe]
-    client = FakeClient(fail=FileNotFoundError(2, "No such file or directory: 'rclone'"))
+    client = FakeClient(
+        fail=FileNotFoundError(2, "No such file or directory: 'rclone'")
+    )
     with pytest.raises(OSError):
         call(SceneSource(client))
 
@@ -299,7 +322,9 @@ def test_probe_does_not_memoize_a_transport_failure(probe):
     for _ in range(2):
         with pytest.raises(RuntimeError):
             call(source)
-    assert len(_runs(client)) == 2, "a failed probe must re-attempt, not serve a cached failure"
+    assert len(_runs(client)) == 2, (
+        "a failed probe must re-attempt, not serve a cached failure"
+    )
     assert not source._listing_cache
 
 
@@ -324,7 +349,9 @@ def test_listing_ttl_kwarg_expires_the_memo():
 
 def test_scene_video_reports_a_missing_video_once_per_ttl(caplog):
     """The report lives inside the producer, so a cached call does not re-fire it."""
-    source = SceneSource(FakeClient(listings={"fake:environments-curated/s": _files("readme.md")}))
+    source = SceneSource(
+        FakeClient(listings={"fake:environments-curated/s": _files("readme.md")})
+    )
     with caplog.at_level(logging.INFO, logger="collab_splats.remote"):
         for _ in range(3):
             with pytest.raises(FileNotFoundError):
@@ -338,7 +365,9 @@ def test_scene_video_reports_a_missing_video_once_per_ttl(caplog):
 
 
 def test_check_available_true_when_the_curated_bucket_lists():
-    client = FakeClient(listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")})
+    client = FakeClient(
+        listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")}
+    )
     assert SceneSource(client).check_available() is True
 
 
@@ -349,12 +378,17 @@ def test_check_available_true_on_an_empty_bucket():
 
 @pytest.mark.parametrize("code", _TRANSPORT_EXIT_CODES)
 def test_check_available_false_on_any_rclone_failure(code):
-    assert SceneSource(FakeClient(fail=_exit_error(code, "403"))).check_available() is False
+    assert (
+        SceneSource(FakeClient(fail=_exit_error(code, "403"))).check_available()
+        is False
+    )
 
 
 def test_check_available_false_when_the_rclone_binary_is_missing():
     """The probe answers a question; it must never raise the very fault it was asked about."""
-    client = FakeClient(fail=FileNotFoundError(2, "No such file or directory: 'rclone'"))
+    client = FakeClient(
+        fail=FileNotFoundError(2, "No such file or directory: 'rclone'")
+    )
     assert SceneSource(client).check_available() is False
 
 
@@ -380,7 +414,9 @@ def test_check_available_reattempts_client_construction(monkeypatch):
 
 def test_check_available_bypasses_the_listing_memo():
     """A success memoized before the credentials expired must not answer about now."""
-    client = FakeClient(listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")})
+    client = FakeClient(
+        listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")}
+    )
     source = SceneSource(client)
     source.list_scenes()
     assert source.check_available() is True
@@ -390,11 +426,15 @@ def test_check_available_bypasses_the_listing_memo():
     client.fail = _exit_error(5, "temporary")
     assert ("list_scenes",) in source._listing_cache
     assert source.check_available() is False
-    assert len(_runs(client)) == baseline + 1, "the probe must re-run rclone, not read the memo"
+    assert len(_runs(client)) == baseline + 1, (
+        "the probe must re-run rclone, not read the memo"
+    )
 
 
 def test_check_available_does_not_populate_the_memo():
-    client = FakeClient(listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")})
+    client = FakeClient(
+        listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")}
+    )
     source = SceneSource(client)
     source.check_available()
     assert source._listing_cache == {}
@@ -433,7 +473,10 @@ def test_push_excludes_only_the_temporary_full_width_features():
     """
     patterns = [p.lstrip("/") for p in PUSH_EXCLUDES]
     assert "/semantics/*_features.zarr/**" in PUSH_EXCLUDES
-    assert any(fnmatch.fnmatchcase("semantics/dinov2_features.zarr/features/c/0/0/0/0", p) for p in patterns)
+    assert any(
+        fnmatch.fnmatchcase("semantics/dinov2_features.zarr/features/c/0/0/0/0", p)
+        for p in patterns
+    )
 
     # Codes store, its AE and the backend's lifted store all travel
     kept = (
@@ -446,10 +489,14 @@ def test_push_excludes_only_the_temporary_full_width_features():
         assert not any(fnmatch.fnmatchcase(name, p) for p in patterns), name
 
 
-@pytest.mark.parametrize("name", ("images", "images/frame_000000.png", "images/frame_000123.png"))
+@pytest.mark.parametrize(
+    "name", ("images", "images/frame_000000.png", "images/frame_000123.png")
+)
 def test_push_keeps_the_keyframe_images(name):
     """The scene-root images/ store is the sole persistent frame source, so a pull must carry it."""
-    assert not any(fnmatch.fnmatchcase(name, p.lstrip("/")) for p in PUSH_EXCLUDES), name
+    assert not any(fnmatch.fnmatchcase(name, p.lstrip("/")) for p in PUSH_EXCLUDES), (
+        name
+    )
     assert "/images/**" not in PUSH_EXCLUDES
 
     # Unanchored it would also swallow pointcloud.zarr/images and every <backend>/images
@@ -471,7 +518,10 @@ def test_push_excludes_cover_the_colmap_and_hloc_build_artifacts(name):
 
 def test_push_excludes_keep_the_colmap_model():
     """The model the dense result was built on must reach processed."""
-    assert not any(fnmatch.fnmatchcase("hloc/colmap/sparse/0/images.bin", p.lstrip("/")) for p in PUSH_EXCLUDES)
+    assert not any(
+        fnmatch.fnmatchcase("hloc/colmap/sparse/0/images.bin", p.lstrip("/"))
+        for p in PUSH_EXCLUDES
+    )
 
 
 @pytest.mark.parametrize("name", _VIDEO_NAME_CASES)
@@ -534,7 +584,9 @@ def test_verify_push_logs_a_check_that_could_not_run(tmp_path, caplog):
 
 
 def test_verify_push_false_when_the_rclone_binary_is_missing(tmp_path):
-    client = FakeClient(fail=FileNotFoundError(2, "No such file or directory: 'rclone'"))
+    client = FakeClient(
+        fail=FileNotFoundError(2, "No such file or directory: 'rclone'")
+    )
     assert SceneSource(client).verify_push(tmp_path, "s") is False
 
 
@@ -573,7 +625,9 @@ def test_verify_push_keeps_the_content_comparison(tmp_path):
 def test_push_excludes_anchor_the_2d_features_at_the_scene_root():
     """Unanchored, the features pattern could also exclude `<backend>/semantics/**` — the deliverable."""
     assert "/semantics/*_features.zarr/**" in PUSH_EXCLUDES
-    assert "semantics/*_features.zarr/**" not in PUSH_EXCLUDES, "unanchored: rclone matches it at any depth"
+    assert "semantics/*_features.zarr/**" not in PUSH_EXCLUDES, (
+        "unanchored: rclone matches it at any depth"
+    )
 
     # Nothing may exclude the lifted pair under the backend dir, at any depth
     assert not any("semantics" in p and not p.startswith("/") for p in PUSH_EXCLUDES)
@@ -585,7 +639,9 @@ def test_push_excludes_anchor_the_2d_features_at_the_scene_root():
 
 
 def test_listing_cache_hits_once():
-    client = FakeClient(listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")})
+    client = FakeClient(
+        listings={"fake:environments-curated": _dirs("2026_07_20-birds-C0043")}
+    )
     source = SceneSource(client)
     source.list_scenes()
     source.list_scenes()
@@ -648,7 +704,9 @@ def local_source(monkeypatch, tmp_path):
     processed = tmp_path / "processed"
     curated.mkdir()
     processed.mkdir()
-    return SceneSource(RcloneClient(remote_name="lt"), curated=str(curated), processed=str(processed))
+    return SceneSource(
+        RcloneClient(remote_name="lt"), curated=str(curated), processed=str(processed)
+    )
 
 
 def test_local_remote_lists_and_fetches_a_scene_video(local_source, tmp_path):
@@ -683,7 +741,11 @@ def test_local_remote_push_verify_pull_round_trip(local_source, tmp_path):
 
 
 def test_local_remote_missing_bucket_raises(local_source, tmp_path):
-    source = SceneSource(RcloneClient(remote_name="lt"), curated=str(tmp_path / "nope"), processed=str(tmp_path))
+    source = SceneSource(
+        RcloneClient(remote_name="lt"),
+        curated=str(tmp_path / "nope"),
+        processed=str(tmp_path),
+    )
 
     with pytest.raises(RuntimeError, match="exit 3"):
         source.list_scenes()

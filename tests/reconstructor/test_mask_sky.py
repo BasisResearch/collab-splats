@@ -21,7 +21,11 @@ def _mesh_reconstructor(tmp_path, **mesh_overrides):
     Reconstructor whose mesh block is base.yaml plus the given overrides.
     """
     mesh_cfg = {"enabled": True, "texture": False, **mesh_overrides}
-    config = {"input_path": str(tmp_path / "video.mp4"), "output_path": str(tmp_path / "out"), "mesh": mesh_cfg}
+    config = {
+        "input_path": str(tmp_path / "video.mp4"),
+        "output_path": str(tmp_path / "out"),
+        "mesh": mesh_cfg,
+    }
 
     return Reconstructor(config)
 
@@ -37,12 +41,17 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **mesh_overrides):
         fused["depths"] = depths
 
     with (
-        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
+        patch.object(
+            PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)
+        ),
         patch(
             "collab_splats.reconstructor.frames.read_frames",
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
-        patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch(
+            "collab_splats.pointcloud.utils.upsample_depths",
+            side_effect=lambda d, r, b: d,
+        ),
         patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
         stub_mesh_cleanup(),
@@ -114,11 +123,15 @@ def test_mask_sky_asks_for_splats_frames_in_checkpoint_order(tmp_path):
     ckpt.touch()
 
     with (
-        patch("collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered),
+        patch(
+            "collab_splats.splats.checkpoint.render_tsdf_inputs", return_value=rendered
+        ),
         patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
         stub_mesh_cleanup(),
-        patch("collab_splats.reconstructor.sky_masks", side_effect=fake_sky_masks) as sky,
+        patch(
+            "collab_splats.reconstructor.sky_masks", side_effect=fake_sky_masks
+        ) as sky,
     ):
         rec.mesh()
 

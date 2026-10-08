@@ -28,7 +28,11 @@ def _raw(k: int, channel: bool = True) -> dict:
     rows = np.arange(4, dtype=np.float32)[:, None]
     cols = np.arange(4, dtype=np.float32)[None, :]
     K = np.array([[100.0, 0, 2], [0, 100.0, 2], [0, 0, 1]], dtype=np.float32)
-    depth = np.ones((k, 4, 4, 1), dtype=np.float32) if channel else np.ones((k, 4, 4), dtype=np.float32)
+    depth = (
+        np.ones((k, 4, 4, 1), dtype=np.float32)
+        if channel
+        else np.ones((k, 4, 4), dtype=np.float32)
+    )
     return {
         "extrinsic": np.tile(np.eye(3, 4, dtype=np.float32), (k, 1, 1)),
         "intrinsics": np.tile(K, (k, 1, 1)),
@@ -38,7 +42,9 @@ def _raw(k: int, channel: bool = True) -> dict:
     }
 
 
-def _wrapper(n_frames: int, submap_size: int, ba: BundleAdjustmentConfig | None) -> LoopClosure:
+def _wrapper(
+    n_frames: int, submap_size: int, ba: BundleAdjustmentConfig | None
+) -> LoopClosure:
     """
     LoopClosure over a MagicMock creator with n_frames tensor views and a stub forward.
     """
@@ -46,7 +52,9 @@ def _wrapper(n_frames: int, submap_size: int, ba: BundleAdjustmentConfig | None)
     base.max_points = 500_000
     base.views = torch.zeros(n_frames, 3, 4, 4)
     base.image_paths = [f"img_{i:03d}.png" for i in range(n_frames)]
-    base.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1))
+    base.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1)
+    )
     base._forward = lambda model, views: _raw(views.shape[0])
     base.default_verify_match_ratio = 1.0
     cfg = LoopClosureConfig(
@@ -75,7 +83,11 @@ class _FakeBA:
 
     def refine(self, *args, **kwargs):
         # Bind to the real signature, so a call the real refine would refuse fails here too
-        call = inspect.signature(BundleAdjustment.refine).bind(self, *args, **kwargs).arguments
+        call = (
+            inspect.signature(BundleAdjustment.refine)
+            .bind(self, *args, **kwargs)
+            .arguments
+        )
         extrinsics, intrinsics = call["extrinsics"], call["intrinsics"]
         type(self).calls.append(
             {
@@ -114,7 +126,9 @@ def _run_loop(wrapper: LoopClosure, matches: Callable[..., list] | None = None) 
         patch(f"{WRAPPER}.BaseRetrievalExtractor") as retrieval,
         patch(f"{WRAPPER}.find_loop_closures", side_effect=matches, return_value=[]),
     ):
-        retrieval.get.return_value = lambda device: (lambda frames: torch.zeros(frames.shape[0], 128))
+        retrieval.get.return_value = lambda device: (
+            lambda frames: torch.zeros(frames.shape[0], 128)
+        )
         wrapper.run_inference()
 
 
@@ -159,7 +173,9 @@ def test_ba_gets_squeezed_depth_and_window_frames(fake_ba):
 
     call = fake_ba[0]
     assert call["depth"].shape == (4, 4, 4)
-    np.testing.assert_array_equal(call["images"], np.full((4, 3, 4, 4), 0.25, np.float32))
+    np.testing.assert_array_equal(
+        call["images"], np.full((4, 3, 4, 4), 0.25, np.float32)
+    )
     assert call["world_points"].shape == (4, 4, 4, 3)
 
 
@@ -234,7 +250,10 @@ def test_refined_poses_are_anchored_to_frame_zero(fake_ba):
 
     for i in range(3):
         angle = np.deg2rad(10.0 * (i + 1))
-        poses[i, :2, :2] = [[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]]
+        poses[i, :2, :2] = [
+            [np.cos(angle), -np.sin(angle)],
+            [np.sin(angle), np.cos(angle)],
+        ]
         poses[i, 0, 3] = float(i + 1)
 
     K = np.tile(np.eye(3), (3, 1, 1))

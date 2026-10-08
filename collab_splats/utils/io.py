@@ -137,13 +137,17 @@ def to_uint8_hwc(images: np.ndarray, *, channels_first: bool) -> np.ndarray:
 
     # Slack above 1.0 for resize overshoot; anything past it is a [0, 255] array
     if arr.size and float(arr.max()) > 1.5:
-        raise ValueError(f"images must be in [0, 1], got max {float(arr.max()):.1f} (a [0, 255] array?)")
+        raise ValueError(
+            f"images must be in [0, 1], got max {float(arr.max()):.1f} (a [0, 255] array?)"
+        )
 
     # Channel axis last; a misdeclared layout shows up as a non-3 last axis
     if channels_first:
         arr = np.moveaxis(arr, -3, -1)
     if arr.shape[-1] != 3:
-        raise ValueError(f"images must have 3 channels, got shape {arr.shape} (channels_first={channels_first})")
+        raise ValueError(
+            f"images must have 3 channels, got shape {arr.shape} (channels_first={channels_first})"
+        )
 
     # Round, clip, cast
     return np.ascontiguousarray(np.clip(np.rint(arr * 255.0), 0, 255).astype(np.uint8))
@@ -157,10 +161,17 @@ def to_uint8_hwc(images: np.ndarray, *, channels_first: bool) -> np.ndarray:
 LZ4 = BloscCodec(cname="lz4")
 
 # Errors a missing, corrupt or half-written zarr store raises; anything else is a bug
-UNREADABLE_STORE: tuple[type[Exception], ...] = (OSError, ValueError, KeyError, TypeError)
+UNREADABLE_STORE: tuple[type[Exception], ...] = (
+    OSError,
+    ValueError,
+    KeyError,
+    TypeError,
+)
 
 
-def open_valid(path: str | Path, expected: dict[str, Any]) -> zarr.Group | zarr.Array | None:
+def open_valid(
+    path: str | Path, expected: dict[str, Any]
+) -> zarr.Group | zarr.Array | None:
     """
     Open a zarr store read-only when its validity attrs match, else None.
 
@@ -184,11 +195,15 @@ def open_valid(path: str | Path, expected: dict[str, Any]) -> zarr.Group | zarr.
         store = zarr.open(str(path), mode="r")
         attrs = dict(store.attrs)
     except UNREADABLE_STORE:
-        logger.warning("Store at %s is corrupt or unreadable, treating it as absent", path)
+        logger.warning(
+            "Store at %s is corrupt or unreadable, treating it as absent", path
+        )
         return None
 
     # Every expected attr must match exactly; attrs round-trip JSON, so compare JSON-safe values
-    stale = {k: attrs.get(k) for k, v in to_json_safe(expected).items() if attrs.get(k) != v}
+    stale = {
+        k: attrs.get(k) for k, v in to_json_safe(expected).items() if attrs.get(k) != v
+    }
     if stale:
         logger.info("Store at %s is stale (%s), treating it as absent", path, stale)
         return None
@@ -239,7 +254,9 @@ def write_textured_obj(
     # Face corners as 1-based v/vt/vn triples; vn shares the vertex index
     faces = np.asarray(faces)
     vert_index = faces.reshape(-1) + 1
-    corners = np.stack([vert_index, uv_index.reshape(-1) + 1, vert_index], 1).reshape(-1, 9)
+    corners = np.stack([vert_index, uv_index.reshape(-1) + 1, vert_index], 1).reshape(
+        -1, 9
+    )
 
     # Text body: positions, UVs, normals, faces
     text = [
@@ -251,7 +268,9 @@ def write_textured_obj(
     ]
 
     # Material, texture and mesh side by side
-    (out_dir / "mesh.mtl").write_text("newmtl albedo\nKd 1.0 1.0 1.0\nmap_Kd albedo.png\n")
+    (out_dir / "mesh.mtl").write_text(
+        "newmtl albedo\nKd 1.0 1.0 1.0\nmap_Kd albedo.png\n"
+    )
     Image.fromarray(albedo).save(out_dir / "albedo.png")
     out = out_dir / "mesh.obj"
     out.write_text("".join(text))

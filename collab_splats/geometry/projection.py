@@ -8,6 +8,8 @@ Pinhole projection: unprojection, projection, world-point lookup, cross-view dep
 - K is on the depth map's own pixel grid
 """
 
+from typing import cast
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -64,7 +66,11 @@ def unproject(depth: Tensor, world_to_cam: Tensor, intrinsics: Tensor) -> Tensor
 
 
 def unproject_frames(
-    depth: np.ndarray, extrinsics: np.ndarray, intrinsics: np.ndarray, *, batch_size: int = 100
+    depth: np.ndarray,
+    extrinsics: np.ndarray,
+    intrinsics: np.ndarray,
+    *,
+    batch_size: int = 100,
 ) -> np.ndarray:
     """
     World point of every depth pixel, unprojected batch by batch on get_device().
@@ -90,8 +96,12 @@ def unproject_frames(
         for batch_depth, world_to_cam, K, out in batch_iterator(
             batch_size, depth, extrinsics, intrinsics, world_points
         ):
-            batch_depth = torch.as_tensor(batch_depth, dtype=torch.float32, device=device)
-            world_to_cam = torch.as_tensor(world_to_cam, dtype=torch.float32, device=device)
+            batch_depth = torch.as_tensor(
+                batch_depth, dtype=torch.float32, device=device
+            )
+            world_to_cam = torch.as_tensor(
+                world_to_cam, dtype=torch.float32, device=device
+            )
             K = torch.as_tensor(K, dtype=torch.float32, device=device)
             points = unproject(batch_depth, world_to_cam, K)
             out[:] = to_numpy(points)
@@ -105,7 +115,11 @@ def unproject_frames(
 
 
 def project(
-    points_world: Tensor, world_to_cam: Tensor, intrinsics: Tensor, *, min_depth: float = 1e-6
+    points_world: Tensor,
+    world_to_cam: Tensor,
+    intrinsics: Tensor,
+    *,
+    min_depth: float = 1e-6,
 ) -> tuple[Tensor, Tensor]:
     """
     Pixel coordinates of world points in one camera, or in each camera of a batch.
@@ -124,6 +138,7 @@ def project(
     """
     # World -> camera
     points_cam = transform_points(points_world, world_to_cam)
+    points_cam = cast(Tensor, points_cam)
 
     # One K: 0-dim scalars; a batch broadcasts (B, 1) over the points
     if intrinsics.ndim == 2:
@@ -140,7 +155,9 @@ def project(
     return torch.stack([u, v], dim=-1), points_cam
 
 
-def reprojection_error(points: Tensor, world_to_cam: Tensor, intrinsics: Tensor, px: Tensor) -> Tensor:
+def reprojection_error(
+    points: Tensor, world_to_cam: Tensor, intrinsics: Tensor, px: Tensor
+) -> Tensor:
     """
     Pixel distance from projected world points to observed pixels; inf where undefined.
 
@@ -171,7 +188,9 @@ def reprojection_error(points: Tensor, world_to_cam: Tensor, intrinsics: Tensor,
     return err.masked_fill(bad, torch.inf)
 
 
-def sample_world_points(world_points: np.ndarray, px: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def sample_world_points(
+    world_points: np.ndarray, px: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Bilinear world points at pixel coordinates (hloc interpolate_scan analog).
 
@@ -189,13 +208,19 @@ def sample_world_points(world_points: np.ndarray, px: np.ndarray) -> tuple[np.nd
     H, W, _ = world_points.shape
 
     # Normalize to [-1, 1] for grid_sample
-    norm = (px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1).astype(np.float32)
+    norm = (px / np.array([[W - 1, H - 1]], dtype=np.float32) * 2 - 1).astype(
+        np.float32
+    )
     grid = torch.from_numpy(norm)
     wp = torch.from_numpy(world_points).float().permute(2, 0, 1)
-    interp = F.grid_sample(wp[None], grid[None, None], align_corners=True, mode="bilinear")[0, :, 0]
+    interp = F.grid_sample(
+        wp[None], grid[None, None], align_corners=True, mode="bilinear"
+    )[0, :, 0]
 
     # NaN marks unmapped pixels; grid_sample pads out-of-bounds samples, so bounds are checked too
-    in_bounds = (px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1)
+    in_bounds = (
+        (px[:, 0] >= 0) & (px[:, 0] <= W - 1) & (px[:, 1] >= 0) & (px[:, 1] <= H - 1)
+    )
     valid = ~interp.isnan().any(dim=0).numpy() & in_bounds
     return interp.T.numpy(), valid
 
@@ -239,12 +264,19 @@ def depth_residual(
     grid_u = pixels[..., 0] / (width - 1) * 2 - 1
     grid_v = pixels[..., 1] / (height - 1) * 2 - 1
     grid = torch.stack([grid_u, grid_v], dim=-1)
-    in_bounds = (grid[..., 0] >= -1) & (grid[..., 0] <= 1) & (grid[..., 1] >= -1) & (grid[..., 1] <= 1)
+    in_bounds = (
+        (grid[..., 0] >= -1)
+        & (grid[..., 0] <= 1)
+        & (grid[..., 1] >= -1)
+        & (grid[..., 1] <= 1)
+    )
 
     # Nearest read of each view's depth map at its projected pixels
     depth_map = depth.reshape(-1, 1, height, width)
     grid = grid.reshape(depth_map.shape[0], 1, -1, 2)
-    sampled = F.grid_sample(depth_map, grid, mode="nearest", padding_mode="zeros", align_corners=True)
+    sampled = F.grid_sample(
+        depth_map, grid, mode="nearest", padding_mode="zeros", align_corners=True
+    )
     sampled = sampled.reshape(expected.shape)
 
     # Signed residual: positive when the point lies behind the observed surface
@@ -253,7 +285,11 @@ def depth_residual(
 
 
 def depth_agreement(
-    points_world: Tensor, world_to_cam: Tensor, intrinsics: Tensor, depth: Tensor, rel_thresh: float
+    points_world: Tensor,
+    world_to_cam: Tensor,
+    intrinsics: Tensor,
+    depth: Tensor,
+    rel_thresh: float,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """
     Whether world points agree with another view's depth map, within a relative tolerance.
@@ -276,7 +312,9 @@ def depth_agreement(
         - expected: the point's z in the camera
     """
     # Residual, depths and validity against the view
-    residual, expected, sampled, valid, _ = depth_residual(points_world, world_to_cam, intrinsics, depth)
+    residual, expected, sampled, valid, _ = depth_residual(
+        points_world, world_to_cam, intrinsics, depth
+    )
 
     # Nearer sampled surface = occluded; farther = free-space violation, still seen
     tol = rel_thresh * expected.abs()
@@ -351,7 +389,9 @@ def multiview_depth_confidence(
             if i == j:
                 continue
 
-            agree_ij, seen_ij, _, _ = depth_agreement(points, extrinsics_t[j], intrinsics_t[j], depth_t[j], rel_thresh)
+            agree_ij, seen_ij, _, _ = depth_agreement(
+                points, extrinsics_t[j], intrinsics_t[j], depth_t[j], rel_thresh
+            )
             seen_ij &= has_source
             seen[i] += seen_ij
             agree[i] += agree_ij & seen_ij

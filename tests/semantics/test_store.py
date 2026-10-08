@@ -30,7 +30,13 @@ def _maps(n: int, dim: int = 3) -> list[torch.Tensor]:
     return [torch.full((dim, 2, 2), float(i)) for i in range(n)]
 
 
-ATTRS = {"extractor": "fake", "patch_size": 2, "n_frames": 2, "extractor_kwargs": {"layer": 17}, "latent_dim": 3}
+ATTRS = {
+    "extractor": "fake",
+    "patch_size": 2,
+    "n_frames": 2,
+    "extractor_kwargs": {"layer": 17},
+    "latent_dim": 3,
+}
 
 
 def test_write_feature_cache_writes_fp16_one_chunk_per_frame(tmp_path):
@@ -44,7 +50,9 @@ def test_write_feature_cache_writes_fp16_one_chunk_per_frame(tmp_path):
     assert dict(zarr.open(str(path), mode="r").attrs) == ATTRS
 
 
-def test_write_feature_cache_saves_the_autoencoder_before_the_attrs(tmp_path, monkeypatch):
+def test_write_feature_cache_saves_the_autoencoder_before_the_attrs(
+    tmp_path, monkeypatch
+):
     """A store whose AE never landed must read invalid."""
     path = tmp_path / "fake_codes.zarr"
 
@@ -54,7 +62,9 @@ def test_write_feature_cache_saves_the_autoencoder_before_the_attrs(tmp_path, mo
     monkeypatch.setattr(FeatureAutoencoder, "save", boom)
 
     with pytest.raises(OSError):
-        store.write_feature_cache(path, iter(_maps(2)), 2, ATTRS, ae=FeatureAutoencoder(8, 3))
+        store.write_feature_cache(
+            path, iter(_maps(2)), 2, ATTRS, ae=FeatureAutoencoder(8, 3)
+        )
 
     assert "extractor" not in zarr.open(str(path), mode="r").attrs
 
@@ -75,12 +85,16 @@ def test_write_feature_cache_crash_mid_frames_reads_invalid(tmp_path):
 
 def test_write_feature_cache_rejects_a_short_frame_stream(tmp_path):
     with pytest.raises(ValueError, match="1 of 2"):
-        store.write_feature_cache(tmp_path / "fake_codes.zarr", iter(_maps(1)), 2, ATTRS)
+        store.write_feature_cache(
+            tmp_path / "fake_codes.zarr", iter(_maps(1)), 2, ATTRS
+        )
 
 
 def test_write_feature_cache_rejects_a_long_frame_stream(tmp_path):
     with pytest.raises(ValueError, match="more than 1"):
-        store.write_feature_cache(tmp_path / "fake_codes.zarr", iter(_maps(2)), 1, ATTRS)
+        store.write_feature_cache(
+            tmp_path / "fake_codes.zarr", iter(_maps(2)), 1, ATTRS
+        )
 
 
 def test_write_feature_cache_rejects_zero_frames(tmp_path):
@@ -119,7 +133,9 @@ def test_valid_feature_cache_propagates_unexpected_errors(tmp_path, monkeypatch)
     monkeypatch.setattr(store.zarr, "open", boom)
 
     with pytest.raises(RuntimeError, match="not a store error"):
-        store.valid_feature_cache(tmp_path / "fake_codes.zarr", "fake", images, {}, None)
+        store.valid_feature_cache(
+            tmp_path / "fake_codes.zarr", "fake", images, {}, None
+        )
 
 
 ########################################################################
@@ -135,7 +151,9 @@ def _write_lifted(store_path, n_points=32, latent=8, input_dim=32):
     """
     torch.manual_seed(0)
     codes = np.random.default_rng(0).random((n_points, latent), dtype=np.float32)
-    write_point_features(store_path, codes, FeatureAutoencoder(input_dim=input_dim, latent_dim=latent))
+    write_point_features(
+        store_path, codes, FeatureAutoencoder(input_dim=input_dim, latent_dim=latent)
+    )
 
 
 def test_write_point_features_puts_the_autoencoder_inside_the_store(tmp_path):
@@ -143,7 +161,10 @@ def test_write_point_features_puts_the_autoencoder_inside_the_store(tmp_path):
     _write_lifted(store_path)
 
     assert (store_path / "autoencoder.pt").is_file()
-    assert dict(zarr.open(str(store_path), mode="r").attrs) == {"input_dim": 32, "latent_dim": 8}
+    assert dict(zarr.open(str(store_path), mode="r").attrs) == {
+        "input_dim": 32,
+        "latent_dim": 8,
+    }
 
 
 def test_read_point_features_full_dim_store_needs_no_weights(tmp_path):
@@ -153,7 +174,9 @@ def test_read_point_features_full_dim_store_needs_no_weights(tmp_path):
 
     assert not (store_path / "autoencoder.pt").exists()
     out = read_point_features(store_path)
-    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-3)
+    np.testing.assert_allclose(
+        out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-3
+    )
 
 
 def test_write_point_features_replaces_the_store_whole(tmp_path):
@@ -165,10 +188,14 @@ def test_write_point_features_replaces_the_store_whole(tmp_path):
 
     assert not (store_path / "autoencoder.pt").exists()
     out = read_point_features(store_path)
-    np.testing.assert_allclose(out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-3)
+    np.testing.assert_allclose(
+        out, feats / np.linalg.norm(feats, axis=1, keepdims=True), rtol=1e-3
+    )
 
 
-def test_write_point_features_killed_before_rename_leaves_no_store(tmp_path, monkeypatch):
+def test_write_point_features_killed_before_rename_leaves_no_store(
+    tmp_path, monkeypatch
+):
     """A write that dies before the rename leaves only the tmp dir, so the stage is not done."""
     store_path = tmp_path / "talk2dino_lifted.zarr"
 
@@ -209,17 +236,23 @@ def test_read_point_features_rejects_latent_codes_without_weights(tmp_path):
         read_point_features(store_path)
 
 
-def test_read_point_features_decodes_in_batches_matching_the_unbatched_result(tmp_path, monkeypatch):
+def test_read_point_features_decodes_in_batches_matching_the_unbatched_result(
+    tmp_path, monkeypatch
+):
     """Batched decode must be numerically identical to a one-shot decode."""
     store_path = tmp_path / "talk2dino_lifted.zarr"
     _write_lifted(store_path, n_points=37, latent=8, input_dim=32)
 
     # Reference: decode every code in one call through the same weights
-    codes = torch.from_numpy(np.asarray(zarr.open(str(store_path), mode="r")["features"], dtype=np.float32))
+    codes = torch.from_numpy(
+        np.asarray(zarr.open(str(store_path), mode="r")["features"], dtype=np.float32)
+    )
     ae = FeatureAutoencoder.load(store_path / "autoencoder.pt")
 
     with torch.no_grad():
-        expected = torch.nn.functional.normalize(ae.per_point_decode(codes), dim=1).numpy()
+        expected = torch.nn.functional.normalize(
+            ae.per_point_decode(codes), dim=1
+        ).numpy()
 
     # Shrink the batch so 37 points span several calls, and count them
     sizes = []
@@ -233,7 +266,9 @@ def test_read_point_features_decodes_in_batches_matching_the_unbatched_result(tm
     out = read_point_features(store_path, batch_size=5)
 
     np.testing.assert_allclose(out, expected, rtol=1e-6, atol=1e-6)
-    assert len(sizes) == 8 and max(sizes) <= 5  # 37 = 7*5 + 2; never the whole array at once
+    assert (
+        len(sizes) == 8 and max(sizes) <= 5
+    )  # 37 = 7*5 + 2; never the whole array at once
 
 
 def test_write_point_features_stores_fp16_and_reads_float32_unit_rows(tmp_path):
@@ -253,7 +288,13 @@ def test_write_point_features_adds_vertex_arrays_and_attrs_in_one_write(tmp_path
     probs = np.full((4, 2), 0.5, np.float16)
     attrs = {"extractor": "ocr_lens", "words": ["a", "b"], "mesh_sha256": "abc"}
     vertex_arrays = {"vertex_word_ids": ids, "vertex_word_probs": probs}
-    write_point_features(store_path, np.ones((3, 2), np.float32), None, vertex_arrays=vertex_arrays, attrs=attrs)
+    write_point_features(
+        store_path,
+        np.ones((3, 2), np.float32),
+        None,
+        vertex_arrays=vertex_arrays,
+        attrs=attrs,
+    )
 
     store = zarr.open(str(store_path), mode="r")
     assert store["vertex_word_ids"].dtype == np.int16
@@ -267,8 +308,12 @@ def test_read_point_features_decodes_a_named_array(tmp_path):
     store_path = tmp_path / "talk2dino_lifted.zarr"
     vertex = np.random.default_rng(0).random((5, 3), dtype=np.float32)
     vertex_arrays = {"vertex_features": vertex.astype(np.float16)}
-    write_point_features(store_path, np.ones((2, 3), np.float32), None, vertex_arrays=vertex_arrays)
+    write_point_features(
+        store_path, np.ones((2, 3), np.float32), None, vertex_arrays=vertex_arrays
+    )
 
     out = read_point_features(store_path, name="vertex_features")
     assert out.shape == (5, 3) and out.dtype == np.float32
-    np.testing.assert_allclose(out, vertex / np.linalg.norm(vertex, axis=1, keepdims=True), rtol=1e-3)
+    np.testing.assert_allclose(
+        out, vertex / np.linalg.norm(vertex, axis=1, keepdims=True), rtol=1e-3
+    )

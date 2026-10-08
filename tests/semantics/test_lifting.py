@@ -33,10 +33,16 @@ def _make_lift_result(
 
     Uses identity world-to-cam extrinsics and a pinhole intrinsics centered at (w/2, h/2).
     """
-    extrinsics_3x4 = np.tile(np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]], dtype=np.float32), (n, 1, 1))
+    extrinsics_3x4 = np.tile(
+        np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]], dtype=np.float32),
+        (n, 1, 1),
+    )
     bottom = np.tile(np.array([[0, 0, 0, 1]], dtype=np.float32), (n, 1, 1))
     extrinsics_4x4 = np.concatenate([extrinsics_3x4, bottom], axis=1)
-    intrinsics = np.tile(np.array([[100, 0, w / 2], [0, 100, h / 2], [0, 0, 1]], dtype=np.float32), (n, 1, 1))
+    intrinsics = np.tile(
+        np.array([[100, 0, w / 2], [0, 100, h / 2], [0, 0, 1]], dtype=np.float32),
+        (n, 1, 1),
+    )
     return PointcloudResult(
         points=pts3d,
         colors=np.zeros((pts3d.shape[0], 3), dtype=np.uint8),
@@ -44,7 +50,9 @@ def _make_lift_result(
         intrinsics=None,
         model_intrinsics=intrinsics,
         image_paths=[Path(f"frame_{i}.png") for i in range(n)],
-        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+        ),  # full-frame box
         model_width=w,
         model_height=h,
         pixel_indices=pixel_indices,
@@ -200,7 +208,9 @@ def test_lift_features_rejects_3x4_extrinsics():
     depth = np.ones((n, h, w), dtype=np.float32)
     conf = np.ones((n, h, w), dtype=np.float32)
     result = _make_lift_result(pts3d, pixel_indices, depth, conf, n=n, h=h, w=w)
-    result = dataclasses.replace(result, extrinsics=result.extrinsics[:, :3, :])  # (N, 3, 4)
+    result = dataclasses.replace(
+        result, extrinsics=result.extrinsics[:, :3, :]
+    )  # (N, 3, 4)
     feature_maps = [torch.zeros(D, h, w)]
 
     with pytest.raises(ValueError, match="4, 4"):
@@ -284,7 +294,11 @@ def _transfer_features_numpy_reference(targets, points, features, k=5, max_dist=
     if not np.any(valid_mask):
         return np.zeros((M, D), dtype=features.dtype)
 
-    distances, indices, feats = distances[valid_mask], indices[valid_mask], features[valid_mask]
+    distances, indices, feats = (
+        distances[valid_mask],
+        indices[valid_mask],
+        features[valid_mask],
+    )
     sigma = np.mean(distances)
     weights = np.exp(-(distances**2) / (2 * sigma**2))
     weights /= weights.sum(axis=1, keepdims=True)
@@ -357,7 +371,9 @@ def _lift_reference(maps, result, depth_tol=0.05):
     weights = torch.zeros(len(pts))
 
     for i, fmap in enumerate(maps):
-        residual, expected, _, valid, pixels = depth_residual(pts, ext[i], intr[i], depth[i])
+        residual, expected, _, valid, pixels = depth_residual(
+            pts, ext[i], intr[i], depth[i]
+        )
         ok = valid & (residual.abs() / (expected.abs() + 1e-8) < depth_tol)
         u = torch.nan_to_num(pixels[:, 0], nan=0.0, posinf=0.0, neginf=0.0)
         v = torch.nan_to_num(pixels[:, 1], nan=0.0, posinf=0.0, neginf=0.0)
@@ -377,16 +393,24 @@ def _partial_scene(rng, pixel_indices=False, n=3, h=16, w=20, p=200):
     - frame 2's depth map is far behind every point, so no point is visible there
     - pixel_indices=True gives every point a random source pixel, so the fallback runs
     """
-    pts = np.stack([rng.uniform(-0.1, 0.1, p), rng.uniform(-0.08, 0.08, p), rng.uniform(1.0, 2.0, p)], axis=1).astype(
-        np.float32
-    )
+    pts = np.stack(
+        [
+            rng.uniform(-0.1, 0.1, p),
+            rng.uniform(-0.08, 0.08, p),
+            rng.uniform(1.0, 2.0, p),
+        ],
+        axis=1,
+    ).astype(np.float32)
     depth = rng.uniform(1.0, 2.0, (n, h, w)).astype(np.float32)
     depth[2] = 100.0
     conf = rng.uniform(0.1, 1.0, (n, h, w)).astype(np.float32)
     pixels = None
 
     if pixel_indices:
-        pixels = np.stack([rng.integers(0, n, p), rng.integers(0, h, p), rng.integers(0, w, p)], axis=1)
+        pixels = np.stack(
+            [rng.integers(0, n, p), rng.integers(0, h, p), rng.integers(0, w, p)],
+            axis=1,
+        )
         pixels = pixels.astype(np.int32)
 
     return _make_lift_result(pts, pixels, depth, conf, n=n, h=h, w=w)
@@ -396,10 +420,15 @@ def test_lift_features_matches_the_all_points_reference(monkeypatch):
     """
     Sampling only visible points changes nothing: invisible points carried weight 0.
     """
-    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(
+        "collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu")
+    )
     rng = np.random.default_rng(0)
     result = _partial_scene(rng)
-    maps = [torch.from_numpy(rng.standard_normal((5, 4, 5)).astype(np.float32)) for _ in range(3)]
+    maps = [
+        torch.from_numpy(rng.standard_normal((5, 4, 5)).astype(np.float32))
+        for _ in range(3)
+    ]
 
     expected = _lift_reference(maps, result)
     out = lift_features(maps.__getitem__, result)
@@ -416,7 +445,9 @@ def test_indexed_lift_equals_the_dense_lift_of_the_scattered_maps(monkeypatch):
 
     - points visible nowhere stay zero, as in the dense lift without pixel_indices
     """
-    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(
+        "collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu")
+    )
     rng = np.random.default_rng(1)
     result = _partial_scene(rng)
     num_classes, k = 12, 4
@@ -444,13 +475,22 @@ def test_indexed_lift_equals_the_dense_lift_of_the_scattered_maps(monkeypatch):
 @pytest.mark.parametrize(
     "indexed, num_classes, first_id",
     [(True, None, 0), (True, 1, 0), (True, 4, -1), (False, 5, 0)],
-    ids=["indexed-without-num-classes", "id-past-num-classes", "negative-id", "dense-with-num-classes"],
+    ids=[
+        "indexed-without-num-classes",
+        "id-past-num-classes",
+        "negative-id",
+        "dense-with-num-classes",
+    ],
 )
-def test_num_classes_misuse_raises_instead_of_truncating(monkeypatch, indexed, num_classes, first_id):
+def test_num_classes_misuse_raises_instead_of_truncating(
+    monkeypatch, indexed, num_classes, first_id
+):
     """
     num_classes is the id space of indexed maps; any other use raises.
     """
-    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(
+        "collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu")
+    )
     result = _partial_scene(np.random.default_rng(2))
 
     # Indexed maps hold ids first_id and first_id + 1 at every patch; dense maps have 5 channels
@@ -465,7 +505,9 @@ def test_indexed_maps_refuse_the_pixel_indices_fallback(monkeypatch):
     """
     The fallback samples dense maps only, so indexed maps with pixel_indices raise.
     """
-    monkeypatch.setattr("collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(
+        "collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu")
+    )
     result = _partial_scene(np.random.default_rng(3), pixel_indices=True)
     fmap = (torch.zeros(2, 4, 5, dtype=torch.long), torch.ones(2, 4, 5))
 

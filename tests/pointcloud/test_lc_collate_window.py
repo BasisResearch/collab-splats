@@ -19,13 +19,17 @@ def test_lc_window_forward_uses_window_views_unmasked():
     creator = MapAnythingCreator.__new__(MapAnythingCreator)
     creator.minibatch_size = 1
     creator.views = [object() for _ in range(10)]
-    creator._processed_views = [_make_mock_processed_view(f"full_{i}") for i in range(10)]
+    creator._processed_views = [
+        _make_mock_processed_view(f"full_{i}") for i in range(10)
+    ]
     window_views = [_make_mock_processed_view(f"win_{i}") for i in range(3)]
 
     # Model on CPU returning one raw pred per window view
     model = MagicMock()
     model.parameters.side_effect = lambda: iter([torch.zeros(1)])
-    model.forward.return_value = [{"pts3d_cam": torch.zeros(1, 3), "pts3d": torch.zeros(1, 3)} for _ in range(3)]
+    model.forward.return_value = [
+        {"pts3d_cam": torch.zeros(1, 3), "pts3d": torch.zeros(1, 3)} for _ in range(3)
+    ]
 
     captured = {}
 
@@ -44,8 +48,14 @@ def test_lc_window_forward_uses_window_views_unmasked():
         ]
 
     with (
-        patch("collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference", lambda v: v),
-        patch("collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference", lambda v: v),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.validate_input_views_for_inference",
+            lambda v: v,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.mapanything.preprocess_input_views_for_inference",
+            lambda v: v,
+        ),
         patch(
             "collab_splats.pointcloud.feedforward.mapanything.postprocess_model_outputs_for_inference",
             side_effect=fake_postprocess,

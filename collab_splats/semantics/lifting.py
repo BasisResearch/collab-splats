@@ -9,7 +9,7 @@ Lift dense per-frame feature maps onto a reconstruction's points.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 import numpy as np
 import torch
@@ -87,12 +87,16 @@ def lift_features(
     # Extrinsics and depth are (N, 4, 4) / (N, H, W) by contract (see PointcloudResult) — fail loud otherwise
     if result.extrinsics.shape[-2:] != (4, 4):
         raise ValueError(f"extrinsics must be (N, 4, 4), got {result.extrinsics.shape}")
+    assert result.depth is not None
+
     if result.depth.ndim != 3:
         raise ValueError(f"depth must be (N, H, W), got {result.depth.shape}")
     extrinsics_c = np.ascontiguousarray(result.extrinsics)
     intrinsics_c = np.ascontiguousarray(result.model_intrinsics)
     ext = torch.as_tensor(extrinsics_c, dtype=torch.float32, device=device)  # (N, 4, 4)
-    intr = torch.as_tensor(intrinsics_c, dtype=torch.float32, device=device)  # (N, 3, 3)
+    intr = torch.as_tensor(
+        intrinsics_c, dtype=torch.float32, device=device
+    )  # (N, 3, 3)
 
     # Conf → (N, H, W) float32 on device; absent confidence (SfM results) = uniform weights
     conf = (
@@ -115,21 +119,29 @@ def lift_features(
             indexed = not isinstance(fmap, torch.Tensor)
 
             if indexed and num_classes is None:
-                raise ValueError("indexed (ids, values) maps need num_classes, the number of distinct ids")
+                raise ValueError(
+                    "indexed (ids, values) maps need num_classes, the number of distinct ids"
+                )
 
             if indexed and result.pixel_indices is not None:
-                raise ValueError("indexed maps take no pixel_indices fallback; pass a result without pixel_indices")
+                raise ValueError(
+                    "indexed maps take no pixel_indices fallback; pass a result without pixel_indices"
+                )
 
             if not indexed and num_classes is not None:
-                raise ValueError("num_classes applies to indexed maps only; dense maps keep their channels")
+                raise ValueError(
+                    "num_classes applies to indexed maps only; dense maps keep their channels"
+                )
 
-            width = num_classes if indexed else fmap.shape[0]
+            width = num_classes if indexed else cast(torch.Tensor, fmap).shape[0]
             features_sum = torch.zeros((P, width), dtype=torch.float32, device=device)
 
         # Visibility: in front, in bounds, depth-consistent against frame i's depth map
         # - depth_residual projects all P points and reads the depth map nearest-neighbor
         # - the relative tolerance stays lifting's own, applied to the returned depths
-        residual, expected, _, valid, pixels = depth_residual(pts, ext[i], intr[i], depth[i])
+        residual, expected, _, valid, pixels = depth_residual(
+            pts, ext[i], intr[i], depth[i]
+        )
         depth_ok = residual.abs() / (expected.abs() + 1e-8) < depth_tol
         u = pixels[:, 0]
         v = pixels[:, 1]
@@ -153,10 +165,22 @@ def lift_features(
 
         if indexed:
             ids, values = fmap
-            _add_indexed_bilinear(features_sum, ids, values, idx, v_safe[idx], u_safe[idx], w[idx], image_size)
+            _add_indexed_bilinear(
+                features_sum,
+                ids,
+                values,
+                idx,
+                v_safe[idx],
+                u_safe[idx],
+                w[idx],
+                image_size,
+            )
         else:
+            fmap = cast(torch.Tensor, fmap)
             fmap = fmap.to(device=device, dtype=torch.float32)  # (D, H_p, W_p)
-            sampled = _grid_sample_at_pixels(fmap, v_safe[idx], u_safe[idx], image_size)  # (P_vis, D)
+            sampled = _grid_sample_at_pixels(
+                fmap, v_safe[idx], u_safe[idx], image_size
+            )  # (P_vis, D)
             sampled *= w[idx].unsqueeze(-1)
             features_sum.index_add_(0, idx, sampled)
 
@@ -175,10 +199,13 @@ def lift_features(
         for i in frame_ids.tolist():
             mask_i = zero_w & (pixel_indices[:, 0] == i)
             fmap = frame_features(i)
+            fmap = cast(torch.Tensor, fmap)
             fmap = fmap.to(device=device, dtype=torch.float32)
             rows = pixel_indices[mask_i, 1].clamp(0, H - 1)
             cols = pixel_indices[mask_i, 2].clamp(0, W - 1)
-            features[mask_i] = _grid_sample_at_pixels(fmap, rows.float(), cols.float(), image_size)
+            features[mask_i] = _grid_sample_at_pixels(
+                fmap, rows.float(), cols.float(), image_size
+            )
 
     features = features.detach()
     return features.cpu()
@@ -241,7 +268,9 @@ def _add_indexed_bilinear(
     lo, hi = int(ids.min()), int(ids.max())
 
     if lo < 0 or hi >= acc.shape[1]:
-        raise ValueError(f"ids span [{lo}, {hi}], outside [0, num_classes={acc.shape[1]})")
+        raise ValueError(
+            f"ids span [{lo}, {hi}], outside [0, num_classes={acc.shape[1]})"
+        )
 
     # Lists as patch rows: (H_p * W_p, K) ids and values
     k, height, width = ids.shape
@@ -262,7 +291,9 @@ def _add_indexed_bilinear(
     wy = y - y0
 
     # Four nearest patches per point, each weighted by its bilinear share times the point weight
-    corners = torch.cat([y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1])
+    corners = torch.cat(
+        [y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1]
+    )
     corner_w = torch.cat([(1 - wy) * (1 - wx), (1 - wy) * wx, wy * (1 - wx), wy * wx])
     corner_w *= weights.repeat(4)
 

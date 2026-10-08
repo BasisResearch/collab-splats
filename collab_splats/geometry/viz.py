@@ -13,7 +13,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_photometric_ncc(pairs: dict | None, path: str | Path, *, title: str = "", dpi: int = 120) -> Path | None:
+def plot_photometric_ncc(
+    pairs: dict | None, path: str | Path, *, title: str = "", dpi: int = 120
+) -> Path | None:
     """
     Cross-view NCC by frame gap: spread per gap, and each gap along the sequence.
 
@@ -39,7 +41,9 @@ def plot_photometric_ncc(pairs: dict | None, path: str | Path, *, title: str = "
     ncc = np.asarray(pairs["photometric_ncc"], dtype=np.float64)
     gaps = np.unique(gap)
 
-    fig, (ax_gap, ax_seq) = plt.subplots(1, 2, figsize=(14, 4.5), gridspec_kw={"width_ratios": [1, 2.5]})
+    fig, (ax_gap, ax_seq) = plt.subplots(
+        1, 2, figsize=(14, 4.5), gridspec_kw={"width_ratios": [1, 2.5]}
+    )
 
     # Median and p10 per gap
     median = [np.median(ncc[gap == g]) for g in gaps]
@@ -59,7 +63,13 @@ def plot_photometric_ncc(pairs: dict | None, path: str | Path, *, title: str = "
     for g, color in zip(gaps, colors):
         keep = gap == g
         order = np.argsort(idx1[keep])
-        ax_seq.plot(idx1[keep][order], ncc[keep][order], color=color, linewidth=0.8, label=f"gap {g}")
+        ax_seq.plot(
+            idx1[keep][order],
+            ncc[keep][order],
+            color=color,
+            linewidth=0.8,
+            label=f"gap {g}",
+        )
 
     ax_seq.set_xlabel("source frame (array index)")
     ax_seq.set_ylabel("photometric NCC")

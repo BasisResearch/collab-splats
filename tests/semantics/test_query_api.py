@@ -15,6 +15,7 @@ def _talk2dino_available() -> bool:
     """
     try:
         from timm.data import ImageNetInfo  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -68,7 +69,9 @@ def test_score_queries_shape_with_negative():
     """score_queries returns (H, W)."""
     extractor = _ConcreteExtractor()
     features = torch.randn(8, 4, 4)
-    result = extractor.score_queries(features, positive=["cat"], negative=["background"])
+    result = extractor.score_queries(
+        features, positive=["cat"], negative=["background"]
+    )
     assert result.shape == (4, 4)
 
 
@@ -90,14 +93,18 @@ def test_score_queries_no_negative_returns_bounded_scores():
     features = torch.randn(8, 4, 4)
     result = extractor.score_queries(features, positive=["cat"])
     assert result.min() >= 0.0, "score below 0 — contrastive softmax path not taken"
-    assert result.max() <= 1.0 + 1e-6, "score above 1 — contrastive softmax path not taken"
+    assert result.max() <= 1.0 + 1e-6, (
+        "score above 1 — contrastive softmax path not taken"
+    )
 
 
 def test_score_queries_bounds():
     """score_queries output is in [0, 1]."""
     extractor = _ConcreteExtractor()
     features = torch.randn(8, 4, 4)
-    result = extractor.score_queries(features, positive=["cat"], negative=["background"])
+    result = extractor.score_queries(
+        features, positive=["cat"], negative=["background"]
+    )
     assert result.min() >= 0.0
     assert result.max() <= 1.0 + 1e-6
 
@@ -106,6 +113,7 @@ def test_maskclip_default_resolution():
     """MaskCLIPExtractor stores image_resolution at init."""
     pytest.importorskip("maskclip_onnx")
     from collab_splats.semantics.features import MaskCLIPExtractor
+
     extractor = MaskCLIPExtractor(image_resolution=512)
     assert extractor._image_resolution == 512
 
@@ -114,6 +122,7 @@ def test_maskclip_is_queryable():
     """MaskCLIPExtractor is a BaseQueryableExtractor."""
     pytest.importorskip("maskclip_onnx")
     from collab_splats.semantics.features import MaskCLIPExtractor
+
     extractor = MaskCLIPExtractor()
     assert isinstance(extractor, BaseQueryableExtractor)
 
@@ -122,6 +131,7 @@ def test_maskclip_encode_text_has_no_grad():
     """Text embeddings carry no autograd history, so scores convert to numpy directly."""
     pytest.importorskip("maskclip_onnx")
     from collab_splats.semantics.features import MaskCLIPExtractor
+
     extractor = MaskCLIPExtractor()
     assert not extractor.encode_text(["a bird"]).requires_grad
 
@@ -132,6 +142,7 @@ def test_talk2dino_accepts_model_name():
     import inspect
 
     from collab_splats.semantics.features import Talk2DinoExtractor
+
     sig = inspect.signature(Talk2DinoExtractor.__init__)
     assert "model_name" in sig.parameters
     assert "hf_model_id" not in sig.parameters
@@ -145,6 +156,7 @@ def test_talk2dino_forward_returns_spatial():
     from PIL import Image
 
     from collab_splats.semantics.features import Talk2DinoExtractor
+
     extractor = Talk2DinoExtractor()
     img = Image.fromarray(np.zeros((224, 224, 3), dtype=np.uint8))
     features = extractor.forward([img])
@@ -161,6 +173,7 @@ def test_talk2dino_is_queryable():
     """Talk2DinoExtractor is a BaseQueryableExtractor."""
     pytest.importorskip("transformers")
     from collab_splats.semantics.features import Talk2DinoExtractor
+
     extractor = Talk2DinoExtractor()
     assert isinstance(extractor, BaseQueryableExtractor)
 

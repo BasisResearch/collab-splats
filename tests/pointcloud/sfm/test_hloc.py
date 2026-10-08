@@ -19,7 +19,13 @@ NAMES = ["frame_000000.png", "frame_000009.png", "frame_000030.png", "frame_0000
 
 
 def test_sequential_pairs_link_each_frame_to_the_next_n():
-    assert sequential_pairs(["a", "b", "c", "d"], 2) == [("a", "b"), ("a", "c"), ("b", "c"), ("b", "d"), ("c", "d")]
+    assert sequential_pairs(["a", "b", "c", "d"], 2) == [
+        ("a", "b"),
+        ("a", "c"),
+        ("b", "c"),
+        ("b", "d"),
+        ("c", "d"),
+    ]
 
 
 @pytest.fixture
@@ -31,9 +37,20 @@ def fake_hloc(monkeypatch):
     - match/reconstruction keep the pin's Path handling, so a str where a Path belongs fails
     """
     calls = {"extract": [], "retrieval": [], "exhaustive": [], "match": [], "recon": []}
-    confs = {k: {"output": f"out-{k}"} for k in ("netvlad", "superpoint_max", "superpoint+lightglue", "sift")}
+    confs = {
+        k: {"output": f"out-{k}"}
+        for k in ("netvlad", "superpoint_max", "superpoint+lightglue", "sift")
+    }
 
-    def extract(conf, image_dir, export_dir=None, as_half=True, image_list=None, feature_path=None, overwrite=False):
+    def extract(
+        conf,
+        image_dir,
+        export_dir=None,
+        as_half=True,
+        image_list=None,
+        feature_path=None,
+        overwrite=False,
+    ):
         calls["extract"].append((conf["output"], image_list))
         path = Path(export_dir, conf["output"] + ".h5")
         path.touch()
@@ -53,14 +70,26 @@ def fake_hloc(monkeypatch):
         calls["retrieval"].append((num_matched, query_list, db_list))
         Path(output).write_text("frame_000000.png frame_000057.png")
 
-    def exhaustive(output, image_list=None, features=None, ref_list=None, ref_features=None):
+    def exhaustive(
+        output, image_list=None, features=None, ref_list=None, ref_features=None
+    ):
         calls["exhaustive"].append(image_list)
         Path(output).write_text("")
 
-    def match(conf, pairs, features, export_dir=None, matches=None, features_ref=None, overwrite=False):
+    def match(
+        conf,
+        pairs,
+        features,
+        export_dir=None,
+        matches=None,
+        features_ref=None,
+        overwrite=False,
+    ):
         calls["match"].append((conf["output"], Path(pairs).read_text()))
-        assert not isinstance(features, Path), "a Path feature file needs an explicit matches path"
-        path = Path(export_dir, f'{features}_{conf["output"]}_{pairs.stem}.h5')
+        assert not isinstance(features, Path), (
+            "a Path feature file needs an explicit matches path"
+        )
+        path = Path(export_dir, f"{features}_{conf['output']}_{pairs.stem}.h5")
         path.touch()
         return path
 
@@ -116,7 +145,9 @@ def test_map_returns_hlocs_model(tmp_path, fake_hloc):
     assert recon.num_reg_images() == len(NAMES)
 
 
-def test_reconstruct_uses_one_simple_radial_camera_and_the_thread_cap(tmp_path, fake_hloc):
+def test_reconstruct_uses_one_simple_radial_camera_and_the_thread_cap(
+    tmp_path, fake_hloc
+):
     data_dir, images_dir = make_scene(tmp_path, NAMES)
     HlocCreator(num_threads=3)._map(images_dir, data_dir, NAMES)
     kw = fake_hloc["recon"][0]
@@ -161,7 +192,9 @@ def test_exhaustive_pairing_uses_hloc_generator(tmp_path, fake_hloc):
 
 
 def test_no_model_raises(tmp_path, fake_hloc, monkeypatch):
-    monkeypatch.setattr(sys.modules["hloc.reconstruction"], "main", lambda *a, **k: None)
+    monkeypatch.setattr(
+        sys.modules["hloc.reconstruction"], "main", lambda *a, **k: None
+    )
     data_dir, images_dir = make_scene(tmp_path, NAMES)
     with pytest.raises(RuntimeError, match="no model"):
         HlocCreator()._map(images_dir, data_dir, NAMES)

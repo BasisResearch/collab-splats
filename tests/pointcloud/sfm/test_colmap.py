@@ -29,7 +29,9 @@ def mocked(monkeypatch):
         Path(db_path).touch()
 
     def mapping(db, image_dir, out, options):
-        calls["map"].append({"db": db, "image_dir": image_dir, "out": out, "options": options})
+        calls["map"].append(
+            {"db": db, "image_dir": image_dir, "out": out, "options": options}
+        )
         # Largest model at key 0, so picking the last key fails the size check
         return {0: make_recon(NAMES), 1: make_recon(NAMES[:1])}
 
@@ -50,9 +52,17 @@ def test_map_returns_the_largest_model_and_drops_the_mapper_scratch(tmp_path, mo
 
 def test_reconstruct_passes_pairing_params_and_thread_cap(tmp_path, mocked):
     data_dir, images_dir = make_scene(tmp_path, NAMES)
-    ColmapCreator(pairing="retrieval", overlap=3, num_retrieved=4, num_threads=2)._map(images_dir, data_dir, NAMES)
+    ColmapCreator(pairing="retrieval", overlap=3, num_retrieved=4, num_threads=2)._map(
+        images_dir, data_dir, NAMES
+    )
     assert mocked["build"] == [
-        {"pairing": "retrieval", "overlap": 3, "num_retrieved": 4, "vocab_tree": Path("/vt.bin"), "num_threads": 2}
+        {
+            "pairing": "retrieval",
+            "overlap": 3,
+            "num_retrieved": 4,
+            "vocab_tree": Path("/vt.bin"),
+            "num_threads": 2,
+        }
     ]
     assert mocked["map"][0]["options"] == {"num_threads": 2}
     assert mocked["map"][0]["db"] == str(data_dir / "colmap" / "colmap.db")

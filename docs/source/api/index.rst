@@ -8,5 +8,7 @@ API Reference
    preproc
    semantics
    pointcloud
+   localization
    geometry
    mesh
+   splats

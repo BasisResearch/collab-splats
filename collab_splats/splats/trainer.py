@@ -135,25 +135,34 @@ class SplatsConfig:
         unknown_keys = set(block) - allowed_keys
 
         if unknown_keys:
-            raise ValueError(f"splats: unknown keys {sorted(unknown_keys)}; allowed {sorted(allowed_keys)}")
+            raise ValueError(
+                f"splats: unknown keys {sorted(unknown_keys)}; allowed {sorted(allowed_keys)}"
+            )
 
         fields = {key: value for key, value in block.items() if key != "enabled"}
         cfg = cls(**fields)
 
         # Known primitive
         if cfg.primitive not in PRIMITIVES:
-            raise ValueError(f"splats.primitive must be one of {PRIMITIVES}, got '{cfg.primitive}'")
+            raise ValueError(
+                f"splats.primitive must be one of {PRIMITIVES}, got '{cfg.primitive}'"
+            )
 
         # Known representation; a scaffold block needs representation: scaffold
         if cfg.representation not in REPRESENTATIONS:
-            raise ValueError(f"splats.representation must be one of {REPRESENTATIONS}, got '{cfg.representation}'")
+            raise ValueError(
+                f"splats.representation must be one of {REPRESENTATIONS}, got '{cfg.representation}'"
+            )
 
         if cfg.scaffold is not None and cfg.representation != "scaffold":
             raise ValueError("splats.scaffold requires representation: scaffold")
 
         # Scaffold has no SH; only a non-default SH value is an error
         sh_keys = ("sh_degree", "sh_degree_interval")
-        sh_overridden = any(key in block and block[key] != cls.__dataclass_fields__[key].default for key in sh_keys)
+        sh_overridden = any(
+            key in block and block[key] != cls.__dataclass_fields__[key].default
+            for key in sh_keys
+        )
 
         if cfg.representation == "scaffold" and sh_overridden:
             raise ValueError(
@@ -161,6 +170,7 @@ class SplatsConfig:
             )
 
         # Loss schedule
+        assert cfg.losses is not None
         validate_schedule(cfg.losses, cfg.primitive)
 
         return cfg
@@ -233,17 +243,24 @@ def train(
     cam_to_world_np = invert_poses(world_to_cam)
     world_extent = compute_scene_scale(torch.from_numpy(cam_to_world_np))
     loss_schedule = cfg.losses
+    assert loss_schedule is not None
     center = normalize_factor = None
 
     if cfg.normalize_scene:
         center, normalize_factor = scene_normalization(cam_to_world_np)
-        cam_to_world_np[:, :3, 3] = (cam_to_world_np[:, :3, 3] - center) * normalize_factor
+        cam_to_world_np[:, :3, 3] = (
+            cam_to_world_np[:, :3, 3] - center
+        ) * normalize_factor
         points = (points - center) * normalize_factor
 
         if depth_targets is not None:
             depth_targets = depth_targets * normalize_factor
 
-        logger.info("splats: normalized scene, center %s scale %.4g", np.round(center, 3), normalize_factor)
+        logger.info(
+            "splats: normalized scene, center %s scale %.4g",
+            np.round(center, 3),
+            normalize_factor,
+        )
 
         # Depth-unit loss settings follow the normalization
         loss_schedule = rescale_depth_units(loss_schedule, normalize_factor)
@@ -267,8 +284,17 @@ def train(
     scene_scale = 1.0 if cfg.normalize_scene else compute_scene_scale(cam_to_world)
 
     # Model and camera refiner, each with its own optimizers
-    model = MODEL_CLASSES[cfg.representation](cfg, points, colors, scene_scale, n_views, device, lr_decay=lr_decay)
-    refine = CameraOpt.from_config(cfg, n_views, world_extent, scene_scale, lr_decay ** (1.0 / cfg.max_steps), device)
+    model = MODEL_CLASSES[cfg.representation](
+        cfg, points, colors, scene_scale, n_views, device, lr_decay=lr_decay
+    )
+    refine = CameraOpt.from_config(
+        cfg,
+        n_views,
+        world_extent,
+        scene_scale,
+        lr_decay ** (1.0 / cfg.max_steps),
+        device,
+    )
     logger.info(
         "splats: training %s/%s, %d views, %d primitives at start",
         cfg.primitive,
@@ -294,7 +320,9 @@ def train(
 
         # Coarse-to-fine: the view's target at this factor and its refined camera
         factor = downscale_factor(step, cfg.num_downscales, cfg.resolution_schedule)
-        target = cached_target(target_cache, images, depth_targets, view, factor, device)
+        target = cached_target(
+            target_cache, images, depth_targets, view, factor, device
+        )
         view_intrinsics = intrinsics_by_factor[factor][view : view + 1]
         step_height, step_width = target["rgb"].shape[1:3]
 
@@ -326,7 +354,9 @@ def train(
 
         # Loss + backward
         model.pre_backward(step, info)
-        loss, loss_values = compute_losses(step, render, target, model.params, loss_schedule, scene_scale)
+        loss, loss_values = compute_losses(
+            step, render, target, model.params, loss_schedule, scene_scale
+        )
         loss.backward()
 
         # Optimizer and lr scheduler steps
@@ -341,7 +371,9 @@ def train(
         model.post_backward(step, info)
 
         if step % cfg.log_every == 0:
-            rounded = {name: round(value.item(), 4) for name, value in loss_values.items()}
+            rounded = {
+                name: round(value.item(), 4) for name, value in loss_values.items()
+            }
             logger.info(
                 "splats step %d loss %.4f %s %d %s",
                 step,
@@ -357,6 +389,7 @@ def train(
 
     # Map model, cameras and pose deltas back to world units
     if cfg.normalize_scene:
+        assert center is not None and normalize_factor is not None
         model.denormalize(center, normalize_factor)
         denormalize_cameras(cam_to_world, center, normalize_factor)
         refine.denormalize(normalize_factor)
@@ -364,7 +397,12 @@ def train(
     # Bake the pose deltas into the saved poses
     with torch.no_grad():
         corrected = torch.cat(
-            [refine.camera(cam_to_world[view : view + 1], camera_ids[view : view + 1]) for view in range(n_views)]
+            [
+                refine.camera(
+                    cam_to_world[view : view + 1], camera_ids[view : view + 1]
+                )
+                for view in range(n_views)
+            ]
         )
 
     # Write outputs: corrected poses for ckpt and renders, training poses for the ply

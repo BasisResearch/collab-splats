@@ -32,11 +32,16 @@ def test_preprocess_calls_crop_mode(tmp_path):
     paths = _make_frames(tmp_path, n=2)
     c = VGGTXCreator()
     fake_images = torch.zeros(2, 3, 518, 518)
-    with patch("collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images", return_value=fake_images) as m:
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images",
+        return_value=fake_images,
+    ) as m:
         images, coords = c._preprocess(paths)
         assert m.called
         _, kwargs = m.call_args
-        assert kwargs.get("mode") == "crop", f"expected mode='crop', got {kwargs.get('mode')!r}"
+        assert kwargs.get("mode") == "crop", (
+            f"expected mode='crop', got {kwargs.get('mode')!r}"
+        )
 
 
 def test_preprocess_original_coords_shape(tmp_path):
@@ -44,7 +49,10 @@ def test_preprocess_original_coords_shape(tmp_path):
     paths = _make_frames(tmp_path, n=3)
     c = VGGTXCreator()
     fake_images = torch.zeros(3, 3, 518, 518)
-    with patch("collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images", return_value=fake_images):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images",
+        return_value=fake_images,
+    ):
         _, coords = c._preprocess(paths)
     assert coords.shape == (3, 6), f"expected (3, 6), got {coords.shape}"
     assert coords.dtype == np.float32

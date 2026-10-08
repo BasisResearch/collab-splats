@@ -73,7 +73,9 @@ class Submap:
         if self.conf is not None and self.conf_threshold is None:
             self.set_dense_points(self.points, self.colors, self.conf)
 
-    def set_dense_points(self, points: np.ndarray, colors: np.ndarray, conf: np.ndarray) -> None:
+    def set_dense_points(
+        self, points: np.ndarray | None, colors: np.ndarray | None, conf: np.ndarray
+    ) -> None:
         """
         Store dense per-pixel fields and derive conf_threshold from conf.
 
@@ -91,7 +93,9 @@ class Submap:
 
         # Percentile cutoff over every frame's conf; an empty conf keeps the old threshold
         if conf.size > 0:
-            self.conf_threshold = float(np.percentile(conf, self.conf_percentile)) + 1e-6
+            self.conf_threshold = (
+                float(np.percentile(conf, self.conf_percentile)) + 1e-6
+            )
 
     ####################################################################
     # Graph-corrected world reads

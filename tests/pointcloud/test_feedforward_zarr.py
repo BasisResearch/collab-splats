@@ -5,12 +5,12 @@ Covers:
 - world_points never written; load_zarr unprojects them from depth
 - Missing optional fields load as None
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
-import pytest
 import torch
 import zarr
 
@@ -37,11 +37,17 @@ def _make_result(
         intrinsics=None,
         model_intrinsics=np.eye(3, dtype=np.float32)[None].repeat(n_frames, axis=0),
         image_paths=[Path(f"/tmp/frame_{i:04d}.png") for i in range(n_frames)],
-        original_coords=np.tile(np.array([0, 60, 640, 420, 640, 480], dtype=np.float32), (n_frames, 1)),
+        original_coords=np.tile(
+            np.array([0, 60, 640, 420, 640, 480], dtype=np.float32), (n_frames, 1)
+        ),
         model_width=w,
         model_height=h,
-        world_points=rng.random((n_frames, h, w, 3), dtype=np.float32) if with_world_points else None,
-        pixel_indices=rng.integers(0, n_frames, (n_pts, 3), dtype=np.int32) if with_pixel_indices else None,
+        world_points=rng.random((n_frames, h, w, 3), dtype=np.float32)
+        if with_world_points
+        else None,
+        pixel_indices=rng.integers(0, n_frames, (n_pts, 3), dtype=np.int32)
+        if with_pixel_indices
+        else None,
     )
 
 
@@ -64,7 +70,9 @@ def test_zarr_roundtrip_core_fields(tmp_path):
     assert loaded.image_paths == result.image_paths
 
 
-def _posed_result_with_depth(n_frames: int = 3, h: int = 12, w: int = 16) -> PointcloudResult:
+def _posed_result_with_depth(
+    n_frames: int = 3, h: int = 12, w: int = 16
+) -> PointcloudResult:
     """Result with random depth, distinct w2c poses and a pinhole model-grid K."""
     rng = np.random.default_rng(0)
     result = _make_result(n_frames=n_frames, h=h, w=w, with_world_points=True)
@@ -99,7 +107,9 @@ def test_zarr_world_points_unprojected_from_depth(tmp_path):
 
     loaded = PointcloudResult.load_zarr(store_path)
     expected = unproject(
-        torch.from_numpy(result.depth), torch.from_numpy(result.extrinsics), torch.from_numpy(result.model_intrinsics)
+        torch.from_numpy(result.depth),
+        torch.from_numpy(result.extrinsics),
+        torch.from_numpy(result.model_intrinsics),
     )
 
     np.testing.assert_allclose(loaded.world_points, expected.numpy(), atol=1e-4)

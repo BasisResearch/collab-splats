@@ -82,9 +82,17 @@ def get_video_info(video_path: str | Path) -> dict:
         raise ValueError(f"get_video_info: cannot probe {video_path}: {exc}") from exc
 
     if total == 0 or fps == 0:
-        raise ValueError(f"get_video_info: {video_path} reports {total} frames at {fps} fps")
+        raise ValueError(
+            f"get_video_info: {video_path} reports {total} frames at {fps} fps"
+        )
 
-    return {"total_frames": total, "fps": fps, "duration_s": total / fps, "width": width, "height": height}
+    return {
+        "total_frames": total,
+        "fps": fps,
+        "duration_s": total / fps,
+        "width": width,
+        "height": height,
+    }
 
 
 ########################################################################
@@ -92,7 +100,9 @@ def get_video_info(video_path: str | Path) -> dict:
 ########################################################################
 
 
-def _frame_index(frame: av.VideoFrame, stream: av.video.stream.VideoStream, fps: float) -> int:
+def _frame_index(
+    frame: av.VideoFrame, stream: av.video.stream.VideoStream, fps: float
+) -> int:
     """
     Source frame index of a decoded frame, from its presentation timestamp.
 
@@ -100,7 +110,9 @@ def _frame_index(frame: av.VideoFrame, stream: av.video.stream.VideoStream, fps:
     - assumes a constant frame rate
     """
     if frame.pts is None:
-        raise ValueError("iter_frames: cannot seek a stream whose frames carry no presentation timestamps")
+        raise ValueError(
+            "iter_frames: cannot seek a stream whose frames carry no presentation timestamps"
+        )
 
     # PyAV reports None when the container has no start time; ffmpeg treats that as 0
     start_time = 0 if stream.start_time is None else stream.start_time
@@ -199,7 +211,9 @@ def iter_frames(
                 raise ValueError(f"iter_frames: cannot seek {video_path} without fps")
 
             start_time = 0 if stream.start_time is None else stream.start_time
-            container.seek(int(start / fps / stream.time_base) + start_time, stream=stream)
+            container.seek(
+                int(start / fps / stream.time_base) + start_time, stream=stream
+            )
             resync = True
 
         pending = iter(wanted) if wanted is not None else None
@@ -219,6 +233,7 @@ def iter_frames(
             if wanted is not None:
                 take = cursor == target
                 if take:
+                    assert pending is not None
                     target = next(pending, None)
             else:
                 take = cursor >= start
@@ -229,7 +244,9 @@ def iter_frames(
             cursor += 1
 
 
-def extract_frame(video_path: str | Path, frame_idx: int, *, info: dict | None = None) -> np.ndarray:
+def extract_frame(
+    video_path: str | Path, frame_idx: int, *, info: dict | None = None
+) -> np.ndarray:
     """
     Decode one frame by seeking to it.
 
@@ -249,11 +266,15 @@ def extract_frame(video_path: str | Path, frame_idx: int, *, info: dict | None =
     total = info["total_frames"]
 
     if frame_idx < 0 or frame_idx >= total:
-        raise ValueError(f"extract_frame: frame {frame_idx} out of range for {video_path} ({total} frames)")
+        raise ValueError(
+            f"extract_frame: frame {frame_idx} out of range for {video_path} ({total} frames)"
+        )
 
     # A one-frame window: iter_frames seeks to the keyframe at or before frame_idx and
     # decodes forward from there, which is why one frame does not cost a full scan
     for _index, bgr in iter_frames(video_path, start=frame_idx, count=1):
         return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-    raise ValueError(f"extract_frame: decode of {video_path} ended before frame {frame_idx}")
+    raise ValueError(
+        f"extract_frame: decode of {video_path} ended before frame {frame_idx}"
+    )

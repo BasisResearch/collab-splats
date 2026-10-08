@@ -174,7 +174,9 @@ class SceneSource:
         try:
             self._lsjson(self.curated, "")
         except Exception as exc:
-            logger.error("rclone liveness probe failed against %s: %s", self.curated, exc)
+            logger.error(
+                "rclone liveness probe failed against %s: %s", self.curated, exc
+            )
             return False
 
         return True
@@ -198,7 +200,9 @@ class SceneSource:
             entries = self._lsjson(self.curated, "")
 
             if not entries:
-                logger.info("%s listed empty — no curated scenes to process", self.curated)
+                logger.info(
+                    "%s listed empty — no curated scenes to process", self.curated
+                )
                 return []
 
             # Name skipped dirs, or a naming drift silently drops scenes from --all
@@ -211,7 +215,9 @@ class SceneSource:
 
             if skipped:
                 listed = ", ".join(skipped)
-                logger.warning("skipping non-scene dirs in %s: %s", self.curated, listed)
+                logger.warning(
+                    "skipping non-scene dirs in %s: %s", self.curated, listed
+                )
 
             return scenes
 
@@ -237,7 +243,9 @@ class SceneSource:
             # Video files in the scene dir, by name
             entries = self._lsjson(self.curated, scene)
             videos = sorted(
-                e["Name"] for e in entries if not e.get("IsDir") and e["Name"].lower().endswith(self.video_exts)
+                e["Name"]
+                for e in entries
+                if not e.get("IsDir") and e["Name"].lower().endswith(self.video_exts)
             )
 
             # Reported inside the producer so it fires once per TTL, not on every cached hit
@@ -253,11 +261,15 @@ class SceneSource:
             raise FileNotFoundError(f"no video in {self.curated}/{scene}")
 
         if len(videos) > 1:
-            logger.warning("%s holds %d videos; using %s", scene, len(videos), videos[0])
+            logger.warning(
+                "%s holds %d videos; using %s", scene, len(videos), videos[0]
+            )
 
         return videos[0]
 
-    def fetch_video(self, scene: str, dest_dir: Path, on_line: Callable[[str], None] | None = None) -> Path:
+    def fetch_video(
+        self, scene: str, dest_dir: Path, on_line: Callable[[str], None] | None = None
+    ) -> Path:
         """
         Copy the scene's video into dest_dir.
 
@@ -277,7 +289,9 @@ class SceneSource:
         # Copy the one remote file to its local path
         local = dest_dir / name
         remote = self._path(self.curated, f"{scene}/{name}")
-        self._require_client().run_streaming("copyto", remote, str(local), *STATS_ARGS, on_line=on_line)
+        self._require_client().run_streaming(
+            "copyto", remote, str(local), *STATS_ARGS, on_line=on_line
+        )
         return local
 
     ########################################
@@ -300,7 +314,11 @@ class SceneSource:
                 logger.info("%s listed empty — nothing processed yet", self.processed)
                 return []
 
-            return sorted(e["Name"] for e in entries if e.get("IsDir") and SCENE_ID_RE.match(e["Name"]))
+            return sorted(
+                e["Name"]
+                for e in entries
+                if e.get("IsDir") and SCENE_ID_RE.match(e["Name"])
+            )
 
         return self._cached(("list_processed_scenes",), _produce)
 
@@ -319,7 +337,11 @@ class SceneSource:
             entries = self._lsjson(self.processed, scene)
 
             if not entries:
-                logger.info("%s has no processed outputs yet — %s listed empty", scene, self.processed)
+                logger.info(
+                    "%s has no processed outputs yet — %s listed empty",
+                    scene,
+                    self.processed,
+                )
 
             return bool(entries)
 
@@ -352,7 +374,9 @@ class SceneSource:
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         remote = self._path(self.processed, scene)
-        self._require_client().copy_dir(remote, str(dest_dir), exclude=excludes, on_line=on_line)
+        self._require_client().copy_dir(
+            remote, str(dest_dir), exclude=excludes, on_line=on_line
+        )
 
         return dest_dir
 
@@ -380,10 +404,18 @@ class SceneSource:
             contimeout: rclone connect timeout, as an rclone duration.
         """
         # rclone tuning flags, then copy the scene dir minus excludes
-        flags = ["--gcs-bucket-policy-only", "--transfers", str(transfers), "--retries", str(retries)]
+        flags = [
+            "--gcs-bucket-policy-only",
+            "--transfers",
+            str(transfers),
+            "--retries",
+            str(retries),
+        ]
         flags += ["--timeout", timeout, "--contimeout", contimeout]
         remote = self._path(self.processed, scene)
-        self._require_client().copy_dir(str(local_dir), remote, exclude=PUSH_EXCLUDES, on_line=on_line, extra=flags)
+        self._require_client().copy_dir(
+            str(local_dir), remote, exclude=PUSH_EXCLUDES, on_line=on_line, extra=flags
+        )
 
         # Drop memoized listings the push made stale
         self.invalidate(("has_processed", scene))
@@ -410,12 +442,16 @@ class SceneSource:
         # Any fault answers False: cannot-verify must never read as verified
         try:
             remote = self._path(self.processed, scene)
-            matched = self._require_client().check(str(local_dir), remote, exclude=PUSH_EXCLUDES, extra=flags)
+            matched = self._require_client().check(
+                str(local_dir), remote, exclude=PUSH_EXCLUDES, extra=flags
+            )
         except (RuntimeError, OSError) as exc:
             logger.error("verify could not run for %s, local data kept: %s", scene, exc)
             return False
 
         if not matched:
-            logger.error("verify FAILED for %s: content mismatch, local data kept", scene)
+            logger.error(
+                "verify FAILED for %s: content mismatch, local data kept", scene
+            )
 
         return matched

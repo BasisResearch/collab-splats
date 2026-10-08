@@ -36,7 +36,9 @@ def test_validate_config_accepts_ba_with_lc_bool(tmp_path):
 
 def test_validate_config_accepts_ba_with_lc_dict(tmp_path):
     """Dict-form loop_closure with BA on is accepted too."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure={"submap_size": 16}))
+    r = Reconstructor(
+        _cfg(tmp_path, bundle_adjustment=True, loop_closure={"submap_size": 16})
+    )
     assert r.config["pointcloud"]["loop_closure"]["enabled"] is True
 
 
@@ -52,7 +54,15 @@ def test_validate_config_refuses_sfm_before_matcher_tracks_with_lc(tmp_path):
     """An sfm config with BA, LC and a matcher track_source sees the sfm refusal first."""
     ba = {"enabled": True, "track_source": "xfeat"}
     with pytest.raises(ValueError, match="not supported with method: sfm"):
-        Reconstructor(_cfg(tmp_path, method="sfm", backend="instantsfm", bundle_adjustment=ba, loop_closure=True))
+        Reconstructor(
+            _cfg(
+                tmp_path,
+                method="sfm",
+                backend="instantsfm",
+                bundle_adjustment=ba,
+                loop_closure=True,
+            )
+        )
 
 
 def test_run_config_driven_skips_refine_under_lc(tmp_path):
@@ -60,12 +70,24 @@ def test_run_config_driven_skips_refine_under_lc(tmp_path):
     r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=True))
     calls = []
     with (
-        patch.object(Reconstructor, "preproc", side_effect=lambda **kwargs: calls.append("preproc")),
-        patch.object(Reconstructor, "pointcloud", side_effect=lambda: calls.append("pointcloud")),
-        patch.object(Reconstructor, "refine", side_effect=lambda: calls.append("refine")),
-        patch.object(Reconstructor, "semantics", side_effect=lambda: calls.append("semantics")),
+        patch.object(
+            Reconstructor,
+            "preproc",
+            side_effect=lambda **kwargs: calls.append("preproc"),
+        ),
+        patch.object(
+            Reconstructor, "pointcloud", side_effect=lambda: calls.append("pointcloud")
+        ),
+        patch.object(
+            Reconstructor, "refine", side_effect=lambda: calls.append("refine")
+        ),
+        patch.object(
+            Reconstructor, "semantics", side_effect=lambda: calls.append("semantics")
+        ),
         patch.object(Reconstructor, "mesh", side_effect=lambda: calls.append("mesh")),
-        patch.object(Reconstructor, "localize", side_effect=lambda: calls.append("localize")),
+        patch.object(
+            Reconstructor, "localize", side_effect=lambda: calls.append("localize")
+        ),
         patch.object(
             Reconstructor,
             "reconstruction_quality_report",
@@ -80,7 +102,9 @@ def test_run_config_driven_skips_refine_under_lc(tmp_path):
 def test_refine_refuses_under_lc(tmp_path):
     """An explicit refine under LC would re-solve a store BA already ran in."""
     r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=True))
-    with pytest.raises(ValueError, match="refine is not supported with pointcloud.loop_closure"):
+    with pytest.raises(
+        ValueError, match="refine is not supported with pointcloud.loop_closure"
+    ):
         r.refine()
 
 
@@ -97,7 +121,10 @@ def test_validate_config_allows_ba_without_lc(tmp_path):
 
 def _write_ff_zarr(backend_dir, N=2, H=8, W=8, P=10):
     """Synthetic PointcloudResult persisted to backend_dir/pointcloud.zarr."""
-    K = np.tile(np.array([[10.0, 0, W / 2], [0, 10.0, H / 2], [0, 0, 1.0]], dtype=np.float32), (N, 1, 1))
+    K = np.tile(
+        np.array([[10.0, 0, W / 2], [0, 10.0, H / 2], [0, 0, 1.0]], dtype=np.float32),
+        (N, 1, 1),
+    )
     ff = PointcloudResult(
         points=np.random.rand(P, 3).astype(np.float32),
         colors=np.zeros((P, 3), dtype=np.uint8),
@@ -105,14 +132,18 @@ def _write_ff_zarr(backend_dir, N=2, H=8, W=8, P=10):
         intrinsics=None,
         model_intrinsics=K,
         image_paths=[Path(f"frame_{i:06d}") for i in range(N)],
-        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (N, 1)),
+        original_coords=np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (N, 1)
+        ),
         model_width=W,
         model_height=H,
         images=torch.zeros(N, 3, H, W),
         confidence=torch.ones(N, H, W),
         world_points=np.zeros((N, H, W, 3), dtype=np.float32),
         depth=np.ones((N, H, W), dtype=np.float32),
-        pixel_indices=np.stack([np.zeros(P, dtype=np.int64), np.arange(P) % H, np.arange(P) % W], axis=1),
+        pixel_indices=np.stack(
+            [np.zeros(P, dtype=np.int64), np.arange(P) % H, np.arange(P) % W], axis=1
+        ),
     )
     backend_dir.mkdir(parents=True, exist_ok=True)
     ff.save_zarr(backend_dir / "pointcloud.zarr")
@@ -120,10 +151,14 @@ def _write_ff_zarr(backend_dir, N=2, H=8, W=8, P=10):
 
 
 def _reconstructor(tmp_path):
-    return Reconstructor(_cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False))
+    return Reconstructor(
+        _cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False)
+    )
 
 
-def fake_refine(self, images, confidence, world_points, extrinsics, intrinsics, depth=None, **kwargs):
+def fake_refine(
+    self, images, confidence, world_points, extrinsics, intrinsics, depth=None, **kwargs
+):
     """BA output: translate every camera by +1 in x so refinement is observable."""
     new_ext = extrinsics.copy()
     new_ext[:, 0, 3] += 1.0
@@ -158,7 +193,9 @@ def test_refine_refines_and_persists(tmp_path):
     """refine: BA refine + reproject, COLMAP rewritten, zarr rewritten with its attrs, marker written."""
     r = _reconstructor(tmp_path)
     ff = _write_ff_zarr(r.backend_dir)
-    zarr.open_group(str(r.pointcloud_zarr), mode="r+").attrs.update({"method": "feedforward", "backend": "vggt_omega"})
+    zarr.open_group(str(r.pointcloud_zarr), mode="r+").attrs.update(
+        {"method": "feedforward", "backend": "vggt_omega"}
+    )
 
     with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
         r.refine()
@@ -168,7 +205,9 @@ def test_refine_refines_and_persists(tmp_path):
 
     # zarr extrinsics rewritten — never diverges from COLMAP — and the provenance attrs survive
     store = zarr.open(str(r.pointcloud_zarr), mode="r")
-    np.testing.assert_allclose(store["extrinsics"][:, 0, 3], ff.extrinsics[:, 0, 3] + 1.0)
+    np.testing.assert_allclose(
+        store["extrinsics"][:, 0, 3], ff.extrinsics[:, 0, 3] + 1.0
+    )
     assert store.attrs["backend"] == "vggt_omega"
 
     # The reloaded result and the PLY hold the cleaned set the zarr holds
@@ -199,7 +238,13 @@ def test_refine_vggsfm_source_passes_no_frame_paths(tmp_path):
 
 def test_refine_matcher_source_passes_store_frames_in_zarr_order(tmp_path):
     """A matcher track source gets the full-res images/ frame per zarr frame, joined on frame index."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment={"enabled": True, "track_source": "xfeat"}, loop_closure=False))
+    r = Reconstructor(
+        _cfg(
+            tmp_path,
+            bundle_adjustment={"enabled": True, "track_source": "xfeat"},
+            loop_closure=False,
+        )
+    )
     _write_ff_zarr(r.backend_dir)
     r.images_dir.mkdir(parents=True)
 
@@ -215,12 +260,21 @@ def test_refine_matcher_source_passes_store_frames_in_zarr_order(tmp_path):
     with patch("collab_splats.reconstructor.BundleAdjustment.refine", capture):
         r.refine()
 
-    assert seen["frame_paths"] == [r.images_dir / "frame_000000.png", r.images_dir / "frame_000001.png"]
+    assert seen["frame_paths"] == [
+        r.images_dir / "frame_000000.png",
+        r.images_dir / "frame_000001.png",
+    ]
 
 
 def test_refine_matcher_source_without_images_dir_raises(tmp_path):
     """A matcher track source with no images/ store fails with FileNotFoundError, not a KeyError."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment={"enabled": True, "track_source": "xfeat"}, loop_closure=False))
+    r = Reconstructor(
+        _cfg(
+            tmp_path,
+            bundle_adjustment={"enabled": True, "track_source": "xfeat"},
+            loop_closure=False,
+        )
+    )
     _write_ff_zarr(r.backend_dir)
 
     with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
@@ -230,7 +284,13 @@ def test_refine_matcher_source_without_images_dir_raises(tmp_path):
 
 def test_refine_matcher_source_checks_images_dir_before_loading_zarr(tmp_path):
     """The images/ guard fires before the zarr load, so a missing store is reported even with no zarr."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment={"enabled": True, "track_source": "xfeat"}, loop_closure=False))
+    r = Reconstructor(
+        _cfg(
+            tmp_path,
+            bundle_adjustment={"enabled": True, "track_source": "xfeat"},
+            loop_closure=False,
+        )
+    )
 
     with patch("collab_splats.reconstructor.PointcloudResult.load_zarr") as load_zarr:
         with pytest.raises(FileNotFoundError, match="images/"):
@@ -241,7 +301,9 @@ def test_refine_matcher_source_checks_images_dir_before_loading_zarr(tmp_path):
 
 def test_refine_reexports_pinhole(tmp_path):
     """A vggtx scene is re-exported as PINHOLE after BA."""
-    recon = Reconstructor(_cfg(tmp_path, backend="vggtx", bundle_adjustment=VGGSFM_BA, loop_closure=False))
+    recon = Reconstructor(
+        _cfg(tmp_path, backend="vggtx", bundle_adjustment=VGGSFM_BA, loop_closure=False)
+    )
     _write_ff_zarr(recon.backend_dir)
     with (
         patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine),
@@ -263,7 +325,10 @@ def test_pointcloud_rerun_clears_a_stale_refine_marker(tmp_path):
     marker.parent.mkdir(parents=True)
     marker.write_text("{}")
 
-    with patch("collab_splats.reconstructor.get_creator", return_value=stub_creator_cls(MagicMock())):
+    with patch(
+        "collab_splats.reconstructor.get_creator",
+        return_value=stub_creator_cls(MagicMock()),
+    ):
         r.pointcloud()
 
     assert not marker.exists()
@@ -281,7 +346,9 @@ def _write_outlier_zarr(r):
 
     # 200 distinct pixels of frame 0, so no two points coincide
     idx = np.arange(P)
-    store["pixel_indices"][:] = np.stack([np.zeros(P, dtype=np.int64), idx // W, idx % W], axis=1)
+    store["pixel_indices"][:] = np.stack(
+        [np.zeros(P, dtype=np.int64), idx // W, idx % W], axis=1
+    )
 
     # One far depth pixel: an outlier only once reproject rebuilds the points from depth
     depth = np.ones((2, H, W), dtype=np.float32)
@@ -314,7 +381,14 @@ def test_refine_recleans_after_reproject(tmp_path):
 
 def test_refine_keeps_every_point_when_clean_disabled(tmp_path):
     """pointcloud.clean.enabled: false leaves the reprojected set whole, outlier included."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False, clean={"enabled": False}))
+    r = Reconstructor(
+        _cfg(
+            tmp_path,
+            bundle_adjustment=VGGSFM_BA,
+            loop_closure=False,
+            clean={"enabled": False},
+        )
+    )
     P = _write_outlier_zarr(r)
     with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
         r.refine()
@@ -326,7 +400,9 @@ def test_refine_keeps_every_point_when_clean_disabled(tmp_path):
 
 def test_refine_recaps_to_max_points(tmp_path):
     """A max_points lowered since the pointcloud stage caps the refined set on every artifact."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False, max_points=50))
+    r = Reconstructor(
+        _cfg(tmp_path, bundle_adjustment=VGGSFM_BA, loop_closure=False, max_points=50)
+    )
     _write_outlier_zarr(r)
     with patch("collab_splats.reconstructor.BundleAdjustment.refine", fake_refine):
         r.refine()
@@ -353,12 +429,24 @@ def test_run_config_driven_appends_refine(tmp_path):
     r = _reconstructor(tmp_path)
     calls = []
     with (
-        patch.object(Reconstructor, "preproc", side_effect=lambda **kwargs: calls.append("preproc")),
-        patch.object(Reconstructor, "pointcloud", side_effect=lambda: calls.append("pointcloud")),
-        patch.object(Reconstructor, "refine", side_effect=lambda: calls.append("refine")),
-        patch.object(Reconstructor, "semantics", side_effect=lambda: calls.append("semantics")),
+        patch.object(
+            Reconstructor,
+            "preproc",
+            side_effect=lambda **kwargs: calls.append("preproc"),
+        ),
+        patch.object(
+            Reconstructor, "pointcloud", side_effect=lambda: calls.append("pointcloud")
+        ),
+        patch.object(
+            Reconstructor, "refine", side_effect=lambda: calls.append("refine")
+        ),
+        patch.object(
+            Reconstructor, "semantics", side_effect=lambda: calls.append("semantics")
+        ),
         patch.object(Reconstructor, "mesh", side_effect=lambda: calls.append("mesh")),
-        patch.object(Reconstructor, "localize", side_effect=lambda: calls.append("localize")),
+        patch.object(
+            Reconstructor, "localize", side_effect=lambda: calls.append("localize")
+        ),
         patch.object(
             Reconstructor,
             "reconstruction_quality_report",
@@ -391,7 +479,10 @@ def test_refine_refuses_sfm_method(tmp_path):
 @pytest.mark.parametrize(
     "block,match",
     [
-        ({"use_photometric": True, "increment_size": 16}, "pointcloud.bundle_adjustment: .*use_photometric needs"),
+        (
+            {"use_photometric": True, "increment_size": 16},
+            "pointcloud.bundle_adjustment: .*use_photometric needs",
+        ),
         ({"fit_depth_scale": True}, "unknown keys"),
         ({"dtype": "float16"}, "pointcloud.bundle_adjustment: .*dtype must be"),
     ],

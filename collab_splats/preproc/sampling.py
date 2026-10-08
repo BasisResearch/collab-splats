@@ -12,7 +12,7 @@ import logging
 import math
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable
+from typing import Callable, cast
 
 import cv2
 import numpy as np
@@ -69,7 +69,9 @@ def filter_frame_quality(
         sharp = log_lap >= center - sharpness_k * spread
 
     # Clipping is absolute: a pixel at 0 or 255 recorded nothing recoverable.
-    clipped = np.asarray(f["clipped_low_frac"], dtype=float) + np.asarray(f["clipped_high_frac"], dtype=float)
+    clipped = np.asarray(f["clipped_low_frac"], dtype=float) + np.asarray(
+        f["clipped_high_frac"], dtype=float
+    )
 
     return sharp & (clipped <= max_clipped_frac)
 
@@ -130,7 +132,11 @@ class _OpticalFlowSelector:
         """
         self.keyframe = gray.copy()
         self.keyframe_pts = cv2.goodFeaturesToTrack(
-            gray, maxCorners=self.max_corners, qualityLevel=0.01, minDistance=8, blockSize=7
+            gray,
+            maxCorners=self.max_corners,
+            qualityLevel=0.01,
+            minDistance=8,
+            blockSize=7,
         )
 
     def score(self, gray: np.ndarray) -> tuple[float, dict]:
@@ -144,11 +150,16 @@ class _OpticalFlowSelector:
         disparity, rotation = 0.0, 0.0
         prev_pts, curr_pts = self._flow(gray)
         if prev_pts is not None:
+            assert curr_pts is not None
             disparity = float(np.mean(np.linalg.norm(curr_pts - prev_pts, axis=1)))
             rotation = self._rotation(prev_pts, curr_pts)
 
         similarity = self._hist_similarity(gray)
-        components = {"disparity": disparity, "rotation": rotation, "histogram_similarity": similarity}
+        components = {
+            "disparity": disparity,
+            "rotation": rotation,
+            "histogram_similarity": similarity,
+        }
         return self._combine(disparity, rotation, similarity), components
 
     def _combine(self, disparity: float, rotation: float, similarity: float) -> float:
@@ -158,7 +169,9 @@ class _OpticalFlowSelector:
         translation_score = min(disparity / max(self.min_disparity, 1e-6), 1.0)
         rotation_score = min(rotation / self.rotation_threshold_deg, 1.0)
         motion = max(translation_score, rotation_score)
-        return self.motion_weight * motion + (1.0 - self.motion_weight) * (1.0 - similarity)
+        return self.motion_weight * motion + (1.0 - self.motion_weight) * (
+            1.0 - similarity
+        )
 
     def _flow(self, gray: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None]:
         """
@@ -198,7 +211,11 @@ class _OpticalFlowSelector:
         except cv2.error:
             return 0.0
 
-        return 0.0 if M is None else float(np.abs(np.degrees(np.arctan2(M[1, 0], M[0, 0]))))
+        return (
+            0.0
+            if M is None
+            else float(np.abs(np.degrees(np.arctan2(M[1, 0], M[0, 0]))))
+        )
 
     def _hist_similarity(self, gray: np.ndarray) -> float:
         """
@@ -303,7 +320,9 @@ def _decode_selection(
         Chosen frames of one group, from one seek and one window decode.
         """
         keep = set(group)
-        window = iter_frames(video_path, start=group[0], count=group[-1] - group[0] + 1, threads=1)
+        window = iter_frames(
+            video_path, start=group[0], count=group[-1] - group[0] + 1, threads=1
+        )
         return {idx: bgr for idx, bgr in window if idx in keep}
 
     decoded: dict[int, np.ndarray] = {}
@@ -366,11 +385,20 @@ def sample_uniform(
 
     # Spacing is even in pool index, not time: no budget spent in condemned footage
     if pool.size <= max_frames:
-        logger.warning("max_frames=%d but only %d eligible frames; keeping the whole pool", max_frames, pool.size)
+        logger.warning(
+            "max_frames=%d but only %d eligible frames; keeping the whole pool",
+            max_frames,
+            pool.size,
+        )
     chosen = _spread(pool, max_frames)
 
     return _decode_selection(
-        video_path, chosen, report=report, on_progress=on_progress, desc="Uniform sampling", workers=workers
+        video_path,
+        chosen,
+        report=report,
+        on_progress=on_progress,
+        desc="Uniform sampling",
+        workers=workers,
     )
 
 
@@ -419,7 +447,9 @@ def sample_fps(
 
     # Unknown empty-slot policy is a config error
     if on_empty_slot not in ("rescue", "drop"):
-        raise ValueError(f"on_empty_slot must be 'rescue' or 'drop', got {on_empty_slot!r}")
+        raise ValueError(
+            f"on_empty_slot must be 'rescue' or 'drop', got {on_empty_slot!r}"
+        )
 
     native_fps = get_video_info(str(video_path))["fps"]
     pool = _eligible(report, quality=quality)
@@ -461,8 +491,8 @@ def sample_fps(
     mid = (targets[:-1] + targets[1:] + 1) // 2
     starts = np.maximum(targets - half, np.concatenate(([0], mid)))
     stops = np.minimum(targets + half + 1, np.concatenate((mid, [total])))
-    lo = np.searchsorted(pool, starts, side="left")
-    hi = np.searchsorted(pool, stops, side="left")
+    lo = cast(np.ndarray, np.searchsorted(pool, starts, side="left"))
+    hi = cast(np.ndarray, np.searchsorted(pool, stops, side="left"))
 
     chosen = []
     for target, start, stop, slot_lo, slot_hi in zip(
@@ -475,7 +505,12 @@ def sample_fps(
             chosen.append(_sharpest(np.arange(start, stop), target, laplacian))
 
     return _decode_selection(
-        video_path, chosen, report=report, on_progress=on_progress, desc="fps sampling", workers=workers
+        video_path,
+        chosen,
+        report=report,
+        on_progress=on_progress,
+        desc="fps sampling",
+        workers=workers,
     )
 
 
@@ -519,7 +554,9 @@ def sample_optical_flow(
     pool = set(_eligible(report, quality=quality).tolist())
     laplacian = np.asarray(report["frames"]["laplacian"], dtype=float)
 
-    selector = _OpticalFlowSelector(min_disparity=min_disparity, rotation_threshold_deg=rotation_threshold_deg)
+    selector = _OpticalFlowSelector(
+        min_disparity=min_disparity, rotation_threshold_deg=rotation_threshold_deg
+    )
 
     frames: list[np.ndarray] = []
     records: list[dict] = []
@@ -543,7 +580,14 @@ def sample_optical_flow(
 
         selector.accept(gray)
         frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-        records.append({"frame_idx": int(idx), "blur_score": float(laplacian[idx]), "score": score, **components})
+        records.append(
+            {
+                "frame_idx": int(idx),
+                "blur_score": float(laplacian[idx]),
+                "score": score,
+                **components,
+            }
+        )
 
         if max_frames is not None and len(frames) >= max_frames:
             break

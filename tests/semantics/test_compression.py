@@ -48,7 +48,9 @@ def test_iter_decode_chunks_match_one_decode_and_cast_to_the_ae_dtype():
 
     assert [len(c) for c in chunks][:-1] == [7] * (len(chunks) - 1)
     assert all(c.dtype == torch.float32 for c in chunks)
-    torch.testing.assert_close(torch.cat(chunks), ae.per_point_decode(codes.half().float()).detach())
+    torch.testing.assert_close(
+        torch.cat(chunks), ae.per_point_decode(codes.half().float()).detach()
+    )
     torch.testing.assert_close(torch.cat(chunks), expected, atol=1e-2, rtol=1e-2)
 
 
@@ -76,14 +78,28 @@ def test_fit_reduces_loss():
     # Baseline: cosine sim before training
     ae = _make_ae()
     with torch.no_grad():
-        sim_before = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
+        sim_before = (
+            F.cosine_similarity(
+                ae.per_point_decode(ae.per_point_encode(features)), features
+            )
+            .mean()
+            .item()
+        )
 
     ae.fit(features, epochs=30, batch_size=N, lr=1e-2)
 
     with torch.no_grad():
-        sim_after = F.cosine_similarity(ae.per_point_decode(ae.per_point_encode(features)), features).mean().item()
+        sim_after = (
+            F.cosine_similarity(
+                ae.per_point_decode(ae.per_point_encode(features)), features
+            )
+            .mean()
+            .item()
+        )
 
-    assert sim_after > sim_before, f"cosine sim did not improve: {sim_before:.3f} → {sim_after:.3f}"
+    assert sim_after > sim_before, (
+        f"cosine sim did not improve: {sim_before:.3f} → {sim_after:.3f}"
+    )
 
 
 def test_reconstruction_cosine_sim():
@@ -130,7 +146,9 @@ def test_save_load_roundtrip():
     with torch.no_grad():
         actual = ae2.per_point_encode(x)
 
-    assert torch.allclose(expected, actual, atol=1e-6), "encode output changed after save/load"
+    assert torch.allclose(expected, actual, atol=1e-6), (
+        "encode output changed after save/load"
+    )
 
 
 def test_save_creates_the_parent_dir_not_a_dir_named_after_the_file():
@@ -150,7 +168,9 @@ def test_save_creates_the_parent_dir_not_a_dir_named_after_the_file():
 def test_save_restores_the_device_when_the_write_fails(monkeypatch):
     """A failed write must not strand the model on CPU — save() restores in a finally."""
     # Discriminating on a CUDA box; on CPU it still pins "the device is what it was"
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    device = (
+        torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    )
     ae = _make_ae().to(device)
 
     # Fail the write itself, after save() has already moved the model to CPU to serialize it
@@ -174,5 +194,11 @@ def test_save_restores_the_device_when_the_write_fails(monkeypatch):
 
 def test_hidden_width_is_derived_from_latent_dim():
     """Width is max(64, 2 * latent_dim) — the shape on-disk checkpoints were written with."""
-    assert FeatureAutoencoder(input_dim=INPUT_DIM, latent_dim=8).encoder[0].out_features == 64
-    assert FeatureAutoencoder(input_dim=INPUT_DIM, latent_dim=64).encoder[0].out_features == 128
+    assert (
+        FeatureAutoencoder(input_dim=INPUT_DIM, latent_dim=8).encoder[0].out_features
+        == 64
+    )
+    assert (
+        FeatureAutoencoder(input_dim=INPUT_DIM, latent_dim=64).encoder[0].out_features
+        == 128
+    )

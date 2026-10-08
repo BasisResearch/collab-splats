@@ -26,7 +26,9 @@ def _pointcloud_result(xyz):
         colors=colors,
         extrinsics=np.eye(4, dtype=np.float32)[None],
         intrinsics=None,
-        model_intrinsics=np.array([[[4.0, 0.0, 4.0], [0.0, 4.0, 3.0], [0.0, 0.0, 1.0]]], dtype=np.float32),
+        model_intrinsics=np.array(
+            [[[4.0, 0.0, 4.0], [0.0, 4.0, 3.0], [0.0, 0.0, 1.0]]], dtype=np.float32
+        ),
         image_paths=[Path("frame_000000")],
         original_coords=np.array([[0, 0, 8, 6, 8, 6]], dtype=np.float32),
         model_width=8,
@@ -42,12 +44,18 @@ def test_pointcloud_stage_writes_sparse_pc_ply(tmp_path):
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "pointcloud": {"method": "feedforward", "backend": "vggtx", "clean": {"enabled": False}},
+        "pointcloud": {
+            "method": "feedforward",
+            "backend": "vggtx",
+            "clean": {"enabled": False},
+        },
     }
     rec = Reconstructor(config)
     result = _pointcloud_result([[float(i), 0.0, 1.0] for i in range(3)])
 
-    with patch("collab_splats.reconstructor.get_creator", return_value=stub_creator_cls(result)):
+    with patch(
+        "collab_splats.reconstructor.get_creator", return_value=stub_creator_cls(result)
+    ):
         rec.pointcloud()
 
     # The path is the contract: downstream stages and the remote sync both look here by name
@@ -81,7 +89,10 @@ class _ClusterCreator(BaseFeedforwardCreator):
         cluster = np.random.default_rng(0).normal(scale=0.01, size=(60, 3))
         result = _pointcloud_result(np.vstack([cluster, [[50.0, 50.0, 50.0]]]))
         rows = np.arange(len(result.points), dtype=np.int32)
-        return replace(result, pixel_indices=np.stack([np.zeros_like(rows), rows % 6, rows % 8], axis=-1))
+        return replace(
+            result,
+            pixel_indices=np.stack([np.zeros_like(rows), rows % 6, rows % 8], axis=-1),
+        )
 
 
 def test_pointcloud_stage_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
@@ -91,7 +102,11 @@ def test_pointcloud_stage_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "pointcloud": {"method": "feedforward", "backend": "vggtx", "clean": {"enabled": True}},
+        "pointcloud": {
+            "method": "feedforward",
+            "backend": "vggtx",
+            "clean": {"enabled": True},
+        },
     }
     rec = Reconstructor(config)
     _frame_files(_frames([(8, 6)]), rec.images_dir)
@@ -100,7 +115,9 @@ def test_pointcloud_stage_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
         rec.pointcloud()
 
     # The outlier went before the zarr save; colors and pixel_indices travel with the points
-    stored = PointcloudResult.load_zarr(rec.pointcloud_zarr, load_depth=False, load_world_points=False)
+    stored = PointcloudResult.load_zarr(
+        rec.pointcloud_zarr, load_depth=False, load_world_points=False
+    )
     assert len(stored.points) == len(stored.colors) == len(stored.pixel_indices) == 60
     assert np.abs(stored.points).max() < 1.0
 
@@ -122,7 +139,11 @@ def test_pointcloud_stage_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "pointcloud": {"method": "feedforward", "backend": "vggtx", "clean": {"enabled": False}},
+        "pointcloud": {
+            "method": "feedforward",
+            "backend": "vggtx",
+            "clean": {"enabled": False},
+        },
     }
     rec = Reconstructor(config)
     _frame_files(_frames([(8, 6)]), rec.images_dir)
@@ -131,7 +152,9 @@ def test_pointcloud_stage_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp
         rec.pointcloud()
 
     # The zarr, the COLMAP export and the PLY all hold the uncleaned 61, outlier included
-    stored = PointcloudResult.load_zarr(rec.pointcloud_zarr, load_depth=False, load_world_points=False)
+    stored = PointcloudResult.load_zarr(
+        rec.pointcloud_zarr, load_depth=False, load_world_points=False
+    )
     assert len(stored.points) == 61
     assert np.abs(stored.points).max() == 50.0
     assert read_colmap_reconstruction(rec.colmap_model_dir).num_points3D() == 61

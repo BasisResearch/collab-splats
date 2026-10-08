@@ -87,7 +87,9 @@ def test_sfm_backend_validates_at_config_load(backend):
 
 def test_unknown_loop_closure_knob_is_refused(tmp_path):
     # An unknown loop_closure knob fails loud at config load, naming the key
-    with pytest.raises(ValueError, match="pointcloud.loop_closure has unknown keys \\['bogus'\\]"):
+    with pytest.raises(
+        ValueError, match="pointcloud.loop_closure has unknown keys \\['bogus'\\]"
+    ):
         Reconstructor(_cfg(tmp_path, loop_closure={"bogus": 1}))
 
 
@@ -99,7 +101,10 @@ def test_loop_closure_is_normalized_to_a_dict(tmp_path):
 
     assert on.config["pointcloud"]["loop_closure"] == {"enabled": True}
     assert off.config["pointcloud"]["loop_closure"] == {"enabled": False}
-    assert knobs.config["pointcloud"]["loop_closure"] == {"enabled": True, "submap_size": 32}
+    assert knobs.config["pointcloud"]["loop_closure"] == {
+        "enabled": True,
+        "submap_size": 32,
+    }
 
 
 ########################################
@@ -119,7 +124,9 @@ def test_sfm_refuses_bundle_adjustment_and_loop_closure(backend):
 
 def test_loop_closure_with_loger_is_refused(tmp_path):
     # Refused at construction, before any inference or images/ read
-    with pytest.raises(ValueError, match="loop_closure is not supported with backend 'loger'"):
+    with pytest.raises(
+        ValueError, match="loop_closure is not supported with backend 'loger'"
+    ):
         Reconstructor(_cfg(tmp_path, backend="loger", loop_closure=True))
 
 
@@ -131,7 +138,9 @@ def test_loop_closure_with_loger_is_refused_in_dict_form(tmp_path):
 
 def test_loop_closure_disabled_by_dict_is_not_refused_for_loger(tmp_path):
     # {"enabled": False} is a truthy object with falsy intent; the refusal reads the normalized flag
-    rec = Reconstructor(_cfg(tmp_path, backend="loger", loop_closure={"enabled": False}))
+    rec = Reconstructor(
+        _cfg(tmp_path, backend="loger", loop_closure={"enabled": False})
+    )
     assert rec.config["pointcloud"]["loop_closure"]["enabled"] is False
 
 
@@ -147,7 +156,9 @@ def test_base_config_path_is_read(tmp_path):
     base = tmp_path / "base.yaml"
     base.write_text(yaml.safe_dump(cfg))
 
-    rec = Reconstructor({"input_path": "v.mp4", "output_path": str(tmp_path / "out")}, base_config=base)
+    rec = Reconstructor(
+        {"input_path": "v.mp4", "output_path": str(tmp_path / "out")}, base_config=base
+    )
     assert rec.config["mesh"]["voxel_depth_px"] == 0.123
 
 

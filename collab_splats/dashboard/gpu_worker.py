@@ -42,10 +42,14 @@ class GpuWorker:
         self.busy = False
         self._inflight = 0
         self._flight_lock = threading.Lock()
-        self._thread = threading.Thread(target=self._loop, name="gpu-worker", daemon=True)
+        self._thread = threading.Thread(
+            target=self._loop, name="gpu-worker", daemon=True
+        )
         self._thread.start()
 
-    def submit(self, job_fn: Callable[[], Any], on_done: Callable[[Any], None], doc: Any) -> None:
+    def submit(
+        self, job_fn: Callable[[], Any], on_done: Callable[[Any], None], doc: Any
+    ) -> None:
         """
         Enqueue a job for the worker thread; its callback runs on the IOLoop.
 
@@ -93,10 +97,14 @@ class GpuWorker:
 
                 # Marshal the result back to the IOLoop; render and busy reset happen there
                 try:
-                    doc.add_next_tick_callback(lambda r=result, cb=on_done: self._finish(cb, r))
+                    doc.add_next_tick_callback(
+                        lambda r=result, cb=on_done: self._finish(cb, r)
+                    )
                 except (RuntimeError, AttributeError):
                     # Destroyed session: drop the result, keep the worker alive for reconnects
-                    logger.debug("dropping result for a destroyed session", exc_info=True)
+                    logger.debug(
+                        "dropping result for a destroyed session", exc_info=True
+                    )
                     self._job_done()
             finally:
                 self._queue.task_done()

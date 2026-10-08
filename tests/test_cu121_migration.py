@@ -25,8 +25,12 @@ def test_python_version():
 def test_torch_version():
     import torch
 
-    assert torch.__version__.startswith("2.5"), f"Expected torch 2.5.x, got {torch.__version__}"
-    assert "cu121" in torch.__version__, f"Expected cu121 build, got {torch.__version__}"
+    assert torch.__version__.startswith("2.5"), (
+        f"Expected torch 2.5.x, got {torch.__version__}"
+    )
+    assert "cu121" in torch.__version__, (
+        f"Expected cu121 build, got {torch.__version__}"
+    )
 
 
 def test_cuda_version():
@@ -39,7 +43,8 @@ def test_cuda_version():
 def test_numpy_not_downgraded():
     major, minor = [int(x) for x in np.__version__.split(".")[:2]]
     assert major >= 2, (
-        f"numpy was downgraded below 2.0 — got {np.__version__}. " "Check pyproject.toml numpy>=1.26 constraint."
+        f"numpy was downgraded below 2.0 — got {np.__version__}. "
+        "Check pyproject.toml numpy>=1.26 constraint."
     )
 
 
@@ -63,13 +68,15 @@ def test_bae_installed_version():
     import bae
 
     # Version pin: bae 0.2.5 is the source pinned in [tool.uv.sources] (pypose/bae@0.2.5)
-    assert importlib_metadata.version("bae") == "0.2.5", f"bae must be 0.2.5, got {importlib_metadata.version('bae')}"
+    assert importlib_metadata.version("bae") == "0.2.5", (
+        f"bae must be 0.2.5, got {importlib_metadata.version('bae')}"
+    )
     # Location: must live under the running interpreter's site-packages (venv-agnostic —
     # works for conda /opt/conda/... and uv /opt/venv/..., not a hardcoded path).
     site = sysconfig.get_path("purelib")
-    assert bae.__file__ and bae.__file__.startswith(
-        site
-    ), f"bae not installed under active venv site-packages ({site}): {bae.__file__}"
+    assert bae.__file__ and bae.__file__.startswith(site), (
+        f"bae not installed under active venv site-packages ({site}): {bae.__file__}"
+    )
 
 
 def test_viser_version():
@@ -77,7 +84,9 @@ def test_viser_version():
 
     parts = [int(x) for x in viser.__version__.split(".")[:3]]
     major, minor, patch = parts[0], parts[1], parts[2] if len(parts) > 2 else 0
-    assert (major, minor, patch) >= (0, 2, 23), f"Expected viser >= 0.2.23, got {viser.__version__}"
+    assert (major, minor, patch) >= (0, 2, 23), (
+        f"Expected viser >= 0.2.23, got {viser.__version__}"
+    )
 
 
 # ── Phase 2: Import sweep ─────────────────────────────────────────────────────
@@ -149,10 +158,14 @@ def test_the_module_list_covers_every_splats_module():
     """The splats entries in MODULES must be every module the package actually ships."""
     package = Path(__file__).resolve().parents[1] / "collab_splats" / "splats"
     on_disk = {
-        "collab_splats.splats" if path.stem == "__init__" else f"collab_splats.splats.{path.stem}"
+        "collab_splats.splats"
+        if path.stem == "__init__"
+        else f"collab_splats.splats.{path.stem}"
         for path in package.glob("*.py")
     }
-    listed = {name for name in MODULES if name.split(".")[:2] == ["collab_splats", "splats"]}
+    listed = {
+        name for name in MODULES if name.split(".")[:2] == ["collab_splats", "splats"]
+    }
 
     # A hand-kept list cannot guard its own width, and this is exactly where it failed:
     # `collab_splats.splats.utils` was absent for two plans while every entry present imported
@@ -178,8 +191,9 @@ def test_flagged_package_imports():
             exec(stmt)
         except Exception as e:
             failed.append(f"{name}: {e}")
-    assert not failed, "Flagged packages failed to import — investigate numpy 2.x / torch 2.4 compat:\n" + "\n".join(
-        failed
+    assert not failed, (
+        "Flagged packages failed to import — investigate numpy 2.x / torch 2.4 compat:\n"
+        + "\n".join(failed)
     )
 
 
@@ -278,7 +292,9 @@ def test_timm_version():
     import timm
 
     timm_parts = [int(x) for x in timm.__version__.split(".")[:2]]
-    assert tuple(timm_parts) >= (0, 6), f"Expected timm >= 0.6.7, got {timm.__version__}"
+    assert tuple(timm_parts) >= (0, 6), (
+        f"Expected timm >= 0.6.7, got {timm.__version__}"
+    )
 
 
 def test_bae_cudss_importable():

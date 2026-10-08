@@ -174,13 +174,17 @@ class Gaussians:
             "shN": cfg.shN_lr,
         }
         self.param_optimizers = {
-            name: torch.optim.Adam([{"params": self.params[name], "lr": lr, "name": name}], eps=adam_eps)
+            name: torch.optim.Adam(
+                [{"params": self.params[name], "lr": lr, "name": name}], eps=adam_eps
+            )
             for name, lr in learning_rates.items()
         }
         self.optimizers = list(self.param_optimizers.values())
 
         # Only the means lr decays
-        self.means_scheduler = ExponentialLR(self.param_optimizers["means"], gamma=lr_decay ** (1.0 / cfg.max_steps))
+        self.means_scheduler = ExponentialLR(
+            self.param_optimizers["means"], gamma=lr_decay ** (1.0 / cfg.max_steps)
+        )
         self.schedulers = [self.means_scheduler]
 
         # Densification strategy and its state
@@ -190,7 +194,9 @@ class Gaussians:
         if isinstance(self.strategy, MCMCStrategy):
             self.strategy_state = self.strategy.initialize_state()
         else:
-            self.strategy_state = self.strategy.initialize_state(scene_scale=scene_scale)
+            self.strategy_state = self.strategy.initialize_state(
+                scene_scale=scene_scale
+            )
 
     @property
     def n_primitives(self) -> int:
@@ -244,7 +250,11 @@ class Gaussians:
         Returns:
             (render dict, gsplat info dict), as in `rendering.render_gaussians`.
         """
-        sh_degree = self.sh_degree if step is None else min(step // self.sh_degree_interval, self.sh_degree)
+        sh_degree = (
+            self.sh_degree
+            if step is None
+            else min(step // self.sh_degree_interval, self.sh_degree)
+        )
 
         return render_gaussians(
             self.primitive,
@@ -279,7 +289,9 @@ class Gaussians:
         """
         # Only DefaultStrategy uses the pre-backward hook
         if isinstance(self.strategy, DefaultStrategy):
-            self.strategy.step_pre_backward(self.params, self.param_optimizers, self.strategy_state, step, info)
+            self.strategy.step_pre_backward(
+                self.params, self.param_optimizers, self.strategy_state, step, info
+            )
 
     def post_backward(self, step: int, info: dict) -> None:
         """
@@ -294,11 +306,21 @@ class Gaussians:
         if isinstance(self.strategy, MCMCStrategy):
             means_lr = self.means_scheduler.get_last_lr()[0]
             self.strategy.step_post_backward(
-                self.params, self.param_optimizers, self.strategy_state, step, info, lr=means_lr
+                self.params,
+                self.param_optimizers,
+                self.strategy_state,
+                step,
+                info,
+                lr=means_lr,
             )
         else:
             self.strategy.step_post_backward(
-                self.params, self.param_optimizers, self.strategy_state, step, info, packed=False
+                self.params,
+                self.param_optimizers,
+                self.strategy_state,
+                step,
+                info,
+                packed=False,
             )
 
     def denormalize(self, center: np.ndarray, scale: float) -> None:
@@ -309,13 +331,17 @@ class Gaussians:
             center: (3,) the center `utils.scene_normalization` returned.
             scale: the scale `utils.scene_normalization` returned.
         """
-        center_t = torch.as_tensor(center, dtype=torch.float32, device=self.params["means"].device)
+        center_t = torch.as_tensor(
+            center, dtype=torch.float32, device=self.params["means"].device
+        )
 
         with torch.no_grad():
             self.params["means"].data = self.params["means"].data / scale + center_t
             self.params["scales"].data = self.params["scales"].data - math.log(scale)
 
-    def export_gaussians(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> dict[str, Tensor]:
+    def export_gaussians(
+        self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int
+    ) -> dict[str, Tensor]:
         """
         Raw parameters for the ply writer.
 
@@ -362,7 +388,10 @@ class Gaussians:
         model.sh_degree_interval = config["sh_degree_interval"]
         model.device = device
         model.params = torch.nn.ParameterDict(
-            {name: torch.nn.Parameter(tensor) for name, tensor in dict(ckpt["splats"]).items()}
+            {
+                name: torch.nn.Parameter(tensor)
+                for name, tensor in dict(ckpt["splats"]).items()
+            }
         ).to(device)
         model.param_optimizers = {}
         model.optimizers = []

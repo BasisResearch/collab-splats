@@ -43,7 +43,9 @@ class HlocCreator(BaseSfmCreator):
     feature_conf: str = "superpoint_max"
     matcher_conf: str = "superpoint+lightglue"
 
-    def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
+    def _map(
+        self, images_dir: Path, out_dir: Path, names: list[str]
+    ) -> pycolmap.Reconstruction:
         """
         Extract, pair, match and map the keyframes with hloc; returns the largest model, in memory.
         """
@@ -68,7 +70,9 @@ class HlocCreator(BaseSfmCreator):
 
         # Extract local features for every keyframe
         feature_conf = extract_features.confs[self.feature_conf]
-        features = extract_features.main(feature_conf, images_dir, hloc_dir, image_list=names)
+        features = extract_features.main(
+            feature_conf, images_dir, hloc_dir, image_list=names
+        )
 
         # Build the list of image pairs to match
         pairs_path = hloc_dir / f"pairs-{self.pairing}.txt"
@@ -78,17 +82,23 @@ class HlocCreator(BaseSfmCreator):
         else:
             # Start with sequential pairs, then add retrieval pairs (hloc removes duplicates)
             lines = (
-                [f"{a} {b}\n" for a, b in sequential_pairs(names, self.overlap)] if "sequential" in self.pairing else []
+                [f"{a} {b}\n" for a, b in sequential_pairs(names, self.overlap)]
+                if "sequential" in self.pairing
+                else []
             )
 
             if "retrieval" in self.pairing:
                 retrieval_conf = extract_features.confs[self.retrieval_conf]
-                descriptors = extract_features.main(retrieval_conf, images_dir, hloc_dir, image_list=names)
+                descriptors = extract_features.main(
+                    retrieval_conf, images_dir, hloc_dir, image_list=names
+                )
                 retrieval_path = hloc_dir / "pairs-retrieval.txt"
                 pairs_from_retrieval.main(
                     descriptors,
                     retrieval_path,
-                    num_matched=min(self.num_retrieved, len(names) - 1),  # topk fails if k exceeds the image count
+                    num_matched=min(
+                        self.num_retrieved, len(names) - 1
+                    ),  # topk fails if k exceeds the image count
                     query_list=names,
                     db_list=names,
                 )
@@ -98,12 +108,17 @@ class HlocCreator(BaseSfmCreator):
 
         # Match features across each image pair
         matches = match_features.main(
-            match_features.confs[self.matcher_conf], pairs_path, feature_conf["output"], hloc_dir
+            match_features.confs[self.matcher_conf],
+            pairs_path,
+            feature_conf["output"],
+            hloc_dir,
         )
 
         # Run incremental mapping in a fresh folder
         sfm_dir = hloc_dir / "sfm"
-        shutil.rmtree(sfm_dir, ignore_errors=True)  # old model folders would skew the split count below
+        shutil.rmtree(
+            sfm_dir, ignore_errors=True
+        )  # old model folders would skew the split count below
         recon = reconstruction.main(
             sfm_dir,
             images_dir,
@@ -117,13 +132,17 @@ class HlocCreator(BaseSfmCreator):
         )
 
         if recon is None:
-            raise RuntimeError("hloc produced no model — too little overlap between frames")
+            raise RuntimeError(
+                "hloc produced no model — too little overlap between frames"
+            )
 
         # Warn if the scene split into several separate models
         models = [p for p in (sfm_dir / "models").iterdir() if p.is_dir()]
 
         if len(models) > 1:
-            logger.warning("hloc split the scene into %d models — keeping the largest", len(models))
+            logger.warning(
+                "hloc split the scene into %d models — keeping the largest", len(models)
+            )
 
         return recon
 

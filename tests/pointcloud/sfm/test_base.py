@@ -36,7 +36,9 @@ class _Fake(BaseSfmCreator):
 
     model: pycolmap.Reconstruction | None = None
 
-    def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
+    def _map(
+        self, images_dir: Path, out_dir: Path, names: list[str]
+    ) -> pycolmap.Reconstruction:
         """
         The in-test model, or a mapper failure when there is none.
         """
@@ -55,7 +57,12 @@ def _model(*, unregistered=(), outlier=False, trackless=False, radial=0.0):
     - radial: the shared SIMPLE_RADIAL camera's k; 0 is undistorted
     """
     model = pycolmap.Reconstruction()
-    camera = pycolmap.Camera(model="SIMPLE_RADIAL", width=WIDTH, height=HEIGHT, params=[50.0, 32.0, 24.0, radial])
+    camera = pycolmap.Camera(
+        model="SIMPLE_RADIAL",
+        width=WIDTH,
+        height=HEIGHT,
+        params=[50.0, 32.0, 24.0, radial],
+    )
     camera.camera_id = 1
     model.add_camera_with_trivial_rig(camera)
 
@@ -87,7 +94,9 @@ def _model(*, unregistered=(), outlier=False, trackless=False, radial=0.0):
         track.add_element(1, len(grid))
         model.add_point3D(np.array([50.0, 50.0, 50.0]), track, np.zeros(3, np.uint8))
     if trackless:
-        model.add_point3D(np.array([0.0, 0.0, 6.0]), pycolmap.Track(), np.zeros(3, np.uint8))
+        model.add_point3D(
+            np.array([0.0, 0.0, 6.0]), pycolmap.Track(), np.zeros(3, np.uint8)
+        )
 
     # Unregistered rows keep their image, as a mapper's in-memory model does
     for row in unregistered:
@@ -101,7 +110,11 @@ def scene(tmp_path, monkeypatch):
     Store of NAMES (pixel value = frame index), constant VDA depth, and the create_pointcloud() dirs.
     """
     images_dir = tmp_path / "images"
-    fr.write_frames(images_dir, [np.full((HEIGHT, WIDTH, 3), i, np.uint8) for i in FRAME_IDX], FRAME_IDX)
+    fr.write_frames(
+        images_dir,
+        [np.full((HEIGHT, WIDTH, 3), i, np.uint8) for i in FRAME_IDX],
+        FRAME_IDX,
+    )
     calls = []
 
     # Constant metric depth, no VDA model
@@ -130,7 +143,9 @@ def test_create_writes_model_and_returns_aligned_result(scene):
 
     # One model on disk, stem names; the result covers every registered frame
     written = read_colmap_reconstruction(model_dir)
-    assert sorted(im.name for im in written.images.values()) == [Path(n).stem for n in NAMES]
+    assert sorted(im.name for im in written.images.values()) == [
+        Path(n).stem for n in NAMES
+    ]
     assert len(result.image_paths) == written.num_reg_images() == 3
     assert creator.attrs["method"] == "sfm"
     assert (creator.attrs["registered_frames"], creator.attrs["total_frames"]) == (3, 3)
@@ -177,11 +192,15 @@ def test_outlier_removed_from_result_and_export_when_clean(scene, clean, n_far):
 def test_cap_trims_the_export_to_the_result_points(scene):
     images_dir, out_dir, model_dir, _ = scene
 
-    result = _Fake(clean=False, max_points=12, model=_model()).create_pointcloud(images_dir, out_dir, model_dir)
+    result = _Fake(clean=False, max_points=12, model=_model()).create_pointcloud(
+        images_dir, out_dir, model_dir
+    )
 
     # Exactly the capped points survive in the export, tracks intact
     written = read_colmap_reconstruction(model_dir)
-    exported = sorted(tuple(p.xyz.astype(np.float32).tolist()) for p in written.points3D.values())
+    exported = sorted(
+        tuple(p.xyz.astype(np.float32).tolist()) for p in written.points3D.values()
+    )
     assert exported == sorted(tuple(xyz) for xyz in result.points.tolist())
     assert len(exported) == 12
     assert all(len(p.track.elements) == len(NAMES) for p in written.points3D.values())
@@ -190,9 +209,13 @@ def test_cap_trims_the_export_to_the_result_points(scene):
 def test_trackless_points3d_dropped_before_write(scene):
     images_dir, out_dir, model_dir, _ = scene
 
-    result = _Fake(clean=False, model=_model(trackless=True)).create_pointcloud(images_dir, out_dir, model_dir)
+    result = _Fake(clean=False, model=_model(trackless=True)).create_pointcloud(
+        images_dir, out_dir, model_dir
+    )
 
-    assert read_colmap_reconstruction(model_dir).num_points3D() == len(result.points) == 30
+    assert (
+        read_colmap_reconstruction(model_dir).num_points3D() == len(result.points) == 30
+    )
 
 
 def test_create_removes_a_stale_model_before_mapping(scene):
@@ -207,7 +230,9 @@ def test_create_removes_a_stale_model_before_mapping(scene):
 
 def test_create_refuses_a_missing_image_directory(tmp_path):
     with pytest.raises(FileNotFoundError, match="no images"):
-        _Fake(model=_model()).create_pointcloud(tmp_path / "images", tmp_path / "backend", tmp_path / "model")
+        _Fake(model=_model()).create_pointcloud(
+            tmp_path / "images", tmp_path / "backend", tmp_path / "model"
+        )
 
 
 def test_export_keeps_the_mapper_tracks(scene):

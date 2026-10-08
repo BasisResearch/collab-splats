@@ -71,7 +71,9 @@ def _run_stage_with_sfm_mock(recon, create=None, attrs=None):
     outputs = MagicMock()
     outputs.points = np.zeros((3, 3), np.float32)
     creator_cls = MagicMock()
-    creator_cls.return_value.create_pointcloud.side_effect = create or (lambda *a: outputs)
+    creator_cls.return_value.create_pointcloud.side_effect = create or (
+        lambda *a: outputs
+    )
     creator_cls.return_value.attrs = attrs or {"method": "sfm"}
 
     # patch.dict restores SFM_CREATORS in place on exit; the mock class is kept by name
@@ -115,11 +117,17 @@ def test_sfm_stage_forwards_random_seed_from_the_config(tmp_path):
 
 @pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
 @pytest.mark.parametrize("clean", [True, False])
-def test_sfm_stage_builds_the_creator_from_the_block_and_the_clean_switch(tmp_path, backend, clean):
+def test_sfm_stage_builds_the_creator_from_the_block_and_the_clean_switch(
+    tmp_path, backend, clean
+):
     recon = _sfm_reconstructor(tmp_path, backend=backend, clean=clean)
     creator_cls = _run_stage_with_sfm_mock(recon)
     pc_cfg = recon.config["pointcloud"]
-    assert creator_cls.call_args.kwargs == {"clean": clean, "max_points": pc_cfg["max_points"], **pc_cfg[backend]}
+    assert creator_cls.call_args.kwargs == {
+        "clean": clean,
+        "max_points": pc_cfg["max_points"],
+        **pc_cfg[backend],
+    }
     assert creator_cls.call_args.kwargs["min_registered_frac"] == 0.5
 
 
@@ -140,7 +148,9 @@ def test_sfm_stage_stamps_the_backend_and_the_creator_attrs(tmp_path):
     def _result(*args):
         result = MagicMock()
         result.points = np.zeros((3, 3), np.float32)
-        result.save_zarr.side_effect = lambda path, extra_attrs: saved.update(extra_attrs)
+        result.save_zarr.side_effect = lambda path, extra_attrs: saved.update(
+            extra_attrs
+        )
         return result
 
     _run_stage_with_sfm_mock(recon, create=_result, attrs=attrs)
@@ -198,7 +208,9 @@ def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
         "latent_dim": None,
     }
     maps = (torch.full((4, 2, 2), float(i)) for i in FRAME_IDX)
-    write_feature_cache(recon.semantics_cache_dir / "dinov2_codes.zarr", maps, len(FRAME_IDX), attrs)
+    write_feature_cache(
+        recon.semantics_cache_dir / "dinov2_codes.zarr", maps, len(FRAME_IDX), attrs
+    )
 
     lifted = {}
 
@@ -211,7 +223,11 @@ def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
     recon.config["semantics"]["n_components"] = None
 
     with (
-        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
+        patch.object(
+            PointcloudResult,
+            "load_zarr",
+            staticmethod(lambda *a, **k: _subset_result()),
+        ),
         patch(f"{RECONSTRUCTOR}.BaseFeatureExtractor"),
         patch(f"{RECONSTRUCTOR}.lift_features", side_effect=spy_lift),
         patch(f"{RECONSTRUCTOR}.write_point_features"),
@@ -230,7 +246,11 @@ def test_localization_db_pairs_zarr_rows_with_their_own_frames(tmp_path):
         seen["pixels"] = [int(image[0, 0, 0]) for image in images]
 
     with (
-        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
+        patch.object(
+            PointcloudResult,
+            "load_zarr",
+            staticmethod(lambda *a, **k: _subset_result()),
+        ),
         patch(f"{RECONSTRUCTOR}.LocalMatcher"),
         patch.object(CameraLocalizer, "__init__", spy_init),
         patch.object(CameraLocalizer, "save_index"),
@@ -274,8 +294,15 @@ def test_mesh_fuses_the_frames_the_zarr_rows_came_from(tmp_path):
         fused["rgbs"] = rgbs
 
     with (
-        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: _subset_result())),
-        patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch.object(
+            PointcloudResult,
+            "load_zarr",
+            staticmethod(lambda *a, **k: _subset_result()),
+        ),
+        patch(
+            "collab_splats.pointcloud.utils.upsample_depths",
+            side_effect=lambda d, r, b: d,
+        ),
         patch(f"{RECONSTRUCTOR}.compute_tsdf_voxel_size", return_value=0.01),
         patch(f"{RECONSTRUCTOR}.create_tsdf_mesh", side_effect=spy_fuse),
         stub_mesh_cleanup(),

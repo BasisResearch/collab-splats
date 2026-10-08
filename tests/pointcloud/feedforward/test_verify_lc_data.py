@@ -31,7 +31,10 @@ def test_mapanything_extract_features_derives_w2c_poses():
     """extract_intermediate_features postprocesses the SAME forward into w2c poses."""
     h = w = 8
     # Raw preds only need the keys the float-cast touches; postprocess is patched.
-    preds = [{"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)} for _ in range(2)]
+    preds = [
+        {"pts3d_cam": torch.zeros(1, h, w, 3), "pts3d": torch.zeros(1, h, w, 3)}
+        for _ in range(2)
+    ]
     # Postprocessed output: frame 0 at identity, frame 1 translated (c2w).
     c2w_1 = torch.eye(4)
     c2w_1[:3, 3] = torch.tensor([1.0, 2.0, 3.0])
@@ -58,7 +61,9 @@ def test_mapanything_extract_features_derives_w2c_poses():
             return_value=processed,
         ) as mock_post,
     ):
-        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w), layer_index=-1)
+        features = creator.extract_intermediate_features(
+            torch.zeros(2, 3, h, w), layer_index=-1
+        )
 
     # apply_mask=False — LC needs unmasked dense geometry
     assert mock_post.call_args.kwargs.get("apply_mask") is False
@@ -114,7 +119,9 @@ def test_omega_extract_features_emits_world_points_and_conf():
         "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
         return_value=(ext.unsqueeze(0), intr.unsqueeze(0)),
     ):
-        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w), layer_index=-1)
+        features = creator.extract_intermediate_features(
+            torch.zeros(2, 3, h, w), layer_index=-1
+        )
 
     # Poses: (2, 4, 4) float32 w2c, frame 0 identity, frame 1 carries the translation
     assert features["poses"].shape == (2, 4, 4)
@@ -175,7 +182,9 @@ def test_vggtx_extract_features_emits_world_points_and_conf():
         "collab_splats.pointcloud.feedforward.vggtx.pose_encoding_to_extri_intri",
         return_value=(ext.unsqueeze(0), intr.unsqueeze(0)),
     ):
-        features = creator.extract_intermediate_features(torch.zeros(2, 3, h, w), layer_index=-1)
+        features = creator.extract_intermediate_features(
+            torch.zeros(2, 3, h, w), layer_index=-1
+        )
 
     # Poses: (2, 4, 4) float32 w2c, frame 0 identity, frame 1 carries the translation
     assert features["poses"].shape == (2, 4, 4)
@@ -247,7 +256,9 @@ def _run_lc_with_verify_return(verify_return):
     base._verify_return = verify_return
     # submap_size=10 → 4 submaps over 40 frames, so min_submap_gap=1 leaves a
     # non-empty past for later submaps and the fake loop candidate fires.
-    creator = LoopClosure(base, config=LoopClosureConfig(submap_size=10, submap_overlap=2))
+    creator = LoopClosure(
+        base, config=LoopClosureConfig(submap_size=10, submap_overlap=2)
+    )
     creator.load_model()
     base.views = torch.zeros(40, 3, 16, 16)
     base.image_paths = [None] * 40
@@ -271,9 +282,14 @@ def _run_lc_with_verify_return(verify_return):
 
     with (
         patch("collab_splats.localization.BaseRetrievalExtractor.get") as mock_get,
-        patch("collab_splats.geometry.loop_closure.wrapper.find_loop_closures", side_effect=_fake_find_loops),
+        patch(
+            "collab_splats.geometry.loop_closure.wrapper.find_loop_closures",
+            side_effect=_fake_find_loops,
+        ),
     ):
-        mock_get.return_value = MagicMock(return_value=lambda frames: torch.zeros(frames.shape[0], 128))
+        mock_get.return_value = MagicMock(
+            return_value=lambda frames: torch.zeros(frames.shape[0], 128)
+        )
         creator.run_inference()
     return base
 

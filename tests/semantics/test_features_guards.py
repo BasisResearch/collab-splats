@@ -10,7 +10,7 @@ from collab_splats.utils.torch_utils import pytorch_gc
 
 def test_maskclip_onnx_importable():
     """maskclip_onnx must be installed — it is a required dependency."""
-    import maskclip_onnx  # raises ImportError if missing
+    import maskclip_onnx  # noqa: F401  (raises ImportError if missing)
 
 
 def test_pytorch_gc_safe_on_cpu(monkeypatch):
@@ -54,17 +54,23 @@ def test_open_image_invalid_type():
 
 def test_compute_semantic_contrast_max_shape():
     raw = torch.rand(3, 6)
-    result = compute_semantic_contrast(raw, num_positive=2, temperature=0.05, reduction="max")
+    result = compute_semantic_contrast(
+        raw, num_positive=2, temperature=0.05, reduction="max"
+    )
     assert result.shape == (6,)
 
 
 def test_compute_semantic_contrast_pool_shape():
     raw = torch.rand(3, 6)
-    result = compute_semantic_contrast(raw, num_positive=1, temperature=0.05, reduction="pool")
+    result = compute_semantic_contrast(
+        raw, num_positive=1, temperature=0.05, reduction="pool"
+    )
     assert result.shape == (6,)
 
 
 def test_compute_semantic_contrast_unknown_raises():
     raw = torch.rand(2, 4)
     with pytest.raises(ValueError, match="Unknown reduction"):
-        compute_semantic_contrast(raw, num_positive=1, temperature=0.05, reduction="bad")
+        compute_semantic_contrast(
+            raw, num_positive=1, temperature=0.05, reduction="bad"
+        )

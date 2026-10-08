@@ -38,7 +38,9 @@ class ColmapCreator(BaseSfmCreator):
     - num_retrieved neighbors come from a vocab tree (9.5 MB, fetched once)
     """
 
-    def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
+    def _map(
+        self, images_dir: Path, out_dir: Path, names: list[str]
+    ) -> pycolmap.Reconstruction:
         """
         SIFT and incremental mapping over the keyframes; returns the largest model, in memory.
         """
@@ -55,7 +57,9 @@ class ColmapCreator(BaseSfmCreator):
             pairing=self.pairing,
             overlap=self.overlap,
             num_retrieved=self.num_retrieved,
-            vocab_tree=fetch_vocab_tree if "retrieval" in self.pairing else None,  # downloaded only on a rebuild
+            vocab_tree=fetch_vocab_tree
+            if "retrieval" in self.pairing
+            else None,  # downloaded only on a rebuild
             num_threads=self.num_threads,
         )
 
@@ -64,19 +68,26 @@ class ColmapCreator(BaseSfmCreator):
         shutil.rmtree(mapper_dir, ignore_errors=True)
         mapper_dir.mkdir()
         recons = pycolmap.incremental_mapping(
-            str(db_path), str(images_dir), str(mapper_dir), options={"num_threads": self.num_threads}
+            str(db_path),
+            str(images_dir),
+            str(mapper_dir),
+            options={"num_threads": self.num_threads},
         )
 
         # Keep the model with the most registered images
         if not recons:
-            raise RuntimeError("incremental mapping produced no model — too little overlap between frames")
+            raise RuntimeError(
+                "incremental mapping produced no model — too little overlap between frames"
+            )
 
         recon = max(recons.values(), key=lambda r: r.num_reg_images())
 
         if len(recons) > 1:
             sizes = sorted((r.num_reg_images() for r in recons.values()), reverse=True)
             logger.warning(
-                "incremental mapping split the scene into %d models %s — keeping the largest", len(recons), sizes
+                "incremental mapping split the scene into %d models %s — keeping the largest",
+                len(recons),
+                sizes,
             )
 
         # Delete the working folder, since the model is already in memory

@@ -53,7 +53,9 @@ def _patch_heavy_deps(stack: ExitStack, seen: dict):
             return_value=MagicMock(),
         )
     )
-    stack.enter_context(patch("collab_splats.reconstructor.LocalMatcher", return_value=MagicMock()))
+    stack.enter_context(
+        patch("collab_splats.reconstructor.LocalMatcher", return_value=MagicMock())
+    )
 
 
 def _images_dir(tmp_path: Path) -> Path:
@@ -91,7 +93,10 @@ def test_build_refuses_a_missing_images_store_and_keeps_the_db(tmp_path):
     pc_zarr = _make_stale_store(tmp_path)
     seen = {}
 
-    with ExitStack() as stack, pytest.raises(FileNotFoundError, match="no images/ store"):
+    with (
+        ExitStack() as stack,
+        pytest.raises(FileNotFoundError, match="no images/ store"),
+    ):
         _patch_heavy_deps(stack, seen)
         _build_localization_db(pc_zarr, "loma", tmp_path / "images")
 

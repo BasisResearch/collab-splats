@@ -31,7 +31,9 @@ def plot_frame_grid(frames: list, title: str, n_cols: int = 6) -> None:
     n = len(frames)
     n_cols = min(n_cols, n)
     n_rows = max(1, (n + n_cols - 1) // n_cols)
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols * 2, n_rows * 2), squeeze=False)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(n_cols * 2, n_rows * 2), squeeze=False
+    )
     axes = np.array(axes).flatten()
     # Fill the grid; blank any unused trailing cells
     for i, ax in enumerate(axes):
@@ -51,7 +53,9 @@ def plot_selection(total_frames: int, selections: dict[str, Sequence[int]]) -> N
         total_frames: source frame count, setting the x extent.
         selections: method name -> selected source frame indices; panels follow dict order.
     """
-    fig, axes = plt.subplots(len(selections), 1, figsize=(12, 2 * len(selections)), squeeze=False)
+    fig, axes = plt.subplots(
+        len(selections), 1, figsize=(12, 2 * len(selections)), squeeze=False
+    )
     for ax, (label, indices) in zip(axes[:, 0], selections.items()):
         ax.vlines(indices, 0, 1, linewidth=1.5, alpha=0.8)
         ax.set_xlim(0, total_frames)
@@ -78,14 +82,20 @@ def plot_frame_scores(frame_scores: list) -> None:
     panels = [
         ([d["disparity"] for d in frame_scores], "Disparity (px)", "steelblue"),
         ([d["rotation"] for d in frame_scores], "Rotation (deg)", "seagreen"),
-        ([d["histogram_similarity"] for d in frame_scores], "Histogram similarity", "tomato"),
+        (
+            [d["histogram_similarity"] for d in frame_scores],
+            "Histogram similarity",
+            "tomato",
+        ),
     ]
     fig, axes = plt.subplots(3, 1, figsize=(12, 6), sharex=True)
     for ax, (values, ylabel, color) in zip(axes, panels):
         ax.plot(idxs, values, color=color, linewidth=0.8, marker="o", markersize=3)
         ax.set_ylabel(ylabel, fontsize=9)
     axes[-1].set_xlabel("Frame index")
-    fig.suptitle("Optical-flow scores of the kept frames (vs the previous keyframe)", fontsize=11)
+    fig.suptitle(
+        "Optical-flow scores of the kept frames (vs the previous keyframe)", fontsize=11
+    )
     fig.tight_layout()
     plt.show()
 
@@ -95,7 +105,9 @@ def plot_frame_scores(frame_scores: list) -> None:
 ########################################################################
 
 
-def _mark_selected(axes: list[Axes], selected: Sequence[int] | None, fps: float) -> None:
+def _mark_selected(
+    axes: list[Axes], selected: Sequence[int] | None, fps: float
+) -> None:
     """
     Mark each selected frame with a 1 px green line on every axis.
 
@@ -110,10 +122,26 @@ def _mark_selected(axes: list[Axes], selected: Sequence[int] | None, fps: float)
         return
     t_sel = np.asarray(list(selected), dtype=float) / fps
     for ax in axes:
-        ax.vlines(t_sel, 0, 1, transform=ax.get_xaxis_transform(), color="green", alpha=0.15, linewidth=1)
+        ax.vlines(
+            t_sel,
+            0,
+            1,
+            transform=ax.get_xaxis_transform(),
+            color="green",
+            alpha=0.15,
+            linewidth=1,
+        )
 
 
-def _save(fig: Figure, out_dir: str | Path, name: str, *, title: str, dpi: int, tight_grid: bool = False) -> Path:
+def _save(
+    fig: Figure,
+    out_dir: str | Path,
+    name: str,
+    *,
+    title: str,
+    dpi: int,
+    tight_grid: bool = False,
+) -> Path:
     """
     Title the figure, save it as out_dir/name and close it.
 
@@ -150,7 +178,9 @@ def _marginal_hist(ax_hist: Axes, values: np.ndarray, *, bins: int = 40) -> None
         bins: histogram bin count.
     """
     finite = values[np.isfinite(values)]
-    sns.histplot(y=finite, bins=bins, ax=ax_hist, color="gray", edgecolor=None, alpha=0.6)
+    sns.histplot(
+        y=finite, bins=bins, ax=ax_hist, color="gray", edgecolor=None, alpha=0.6
+    )
     ax_hist.set_xlim(left=0)
     ax_hist.tick_params(axis="y", labelleft=False, left=False)
     ax_hist.set_xlabel("")
@@ -184,7 +214,11 @@ def _timeseries_grid(n_panels: int) -> tuple[Figure, list[Axes], list[Axes]]:
 
 
 def plot_photometric(
-    report: dict, out_dir: str | Path, *, selected: Sequence[int] | None = None, dpi: int = 90
+    report: dict,
+    out_dir: str | Path,
+    *,
+    selected: Sequence[int] | None = None,
+    dpi: int = 90,
 ) -> Path:
     """
     Per-frame photometry vs seconds: blur, laplacian variance, exposure, clipped fractions.
@@ -228,7 +262,9 @@ def plot_photometric(
     axes[2].set_ylim(0, 255)
     axes[2].set_ylabel("exposure (gray level)")
     axes[2].legend(loc="upper right", fontsize=8)
-    axes[3].stackplot(t, clip_lo, clip_hi, labels=["clipped low", "clipped high"], alpha=0.7)
+    axes[3].stackplot(
+        t, clip_lo, clip_hi, labels=["clipped low", "clipped high"], alpha=0.7
+    )
     axes[3].set_ylabel("clipped pixel fraction")
     axes[3].set_xlabel("time (s)")
     axes[3].legend(loc="upper right", fontsize=8)
@@ -289,7 +325,14 @@ def plot_motion(
     axes[1].plot(t, parallax, linewidth=0.8)
     failed = np.isnan(parallax)
     if failed.any():
-        axes[1].plot(t[failed], np.zeros(int(failed.sum())), "|", color="red", markersize=10, label="failed to match")
+        axes[1].plot(
+            t[failed],
+            np.zeros(int(failed.sum())),
+            "|",
+            color="red",
+            markersize=10,
+            label="failed to match",
+        )
         axes[1].legend(loc="upper right", fontsize=8)
     axes[1].set_ylim(0, 1)
     axes[1].set_ylabel("parallax")
@@ -314,7 +357,13 @@ def plot_motion(
 
 
 def plot_frame_extremes(
-    report: dict, video_path: str | Path, out_dir: str | Path, *, column: str = "blur", n: int = 6, dpi: int = 150
+    report: dict,
+    video_path: str | Path,
+    out_dir: str | Path,
+    *,
+    column: str = "blur",
+    n: int = 6,
+    dpi: int = 150,
 ) -> Path:
     """
     The n highest and n lowest frames of one per-frame report column, decoded from the video.
@@ -349,10 +398,20 @@ def plot_frame_extremes(
     for (label, sel), axrow in zip(rows, axes):
         for ax, i in zip(axrow, sel):
             ax.imshow(extract_frame(video_path, int(idx[i]), info=info))
-            ax.set_title(f"#{idx[i]}  t={idx[i] / fps:.1f}s\n{column}={values[i]:.3g}", fontsize=10)
+            ax.set_title(
+                f"#{idx[i]}  t={idx[i] / fps:.1f}s\n{column}={values[i]:.3g}",
+                fontsize=10,
+            )
             ax.axis("off")
         axrow[0].text(
-            -0.04, 0.5, label, transform=axrow[0].transAxes, rotation=90, va="center", ha="right", fontsize=12
+            -0.04,
+            0.5,
+            label,
+            transform=axrow[0].transAxes,
+            rotation=90,
+            va="center",
+            ha="right",
+            fontsize=12,
         )
 
     # Title, save and close
@@ -360,7 +419,9 @@ def plot_frame_extremes(
     return _save(fig, out_dir, f"extremes-{column}.png", title=title, dpi=dpi)
 
 
-def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path, *, dpi: int = 90) -> Path | None:
+def plot_correlation(
+    report: dict, x: str, y: str, out_dir: str | Path, *, dpi: int = 90
+) -> Path | None:
     """
     seaborn jointplot of two report columns, with r and rho in the corner.
 
@@ -390,7 +451,9 @@ def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path, *, dpi: 
         if not per_pair:
             return values
         lookup = dict(zip(frames["frame_idx"], values))
-        return np.asarray([lookup.get(i, np.nan) for i in pairs["frame_idx_a"]], dtype=float)
+        return np.asarray(
+            [lookup.get(i, np.nan) for i in pairs["frame_idx_a"]], dtype=float
+        )
 
     xs, ys = column(x), column(y)
     ok = ~np.isnan(xs) & ~np.isnan(ys)
@@ -407,14 +470,30 @@ def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path, *, dpi: 
     # - square regression joint with filled KDE marginals
     # - full seaborn theme (white, deep palette, notebook) scoped to this figure only,
     #   so the timeseries plotters keep matplotlib's look
-    with sns.axes_style("white"), sns.plotting_context("notebook"), sns.color_palette("deep"):
+    with (
+        sns.axes_style("white"),
+        sns.plotting_context("notebook"),
+        sns.color_palette("deep"),
+    ):
         grid = sns.JointGrid(x=xs, y=ys, height=6.5)
         grid.plot_joint(
             sns.regplot,
-            scatter_kws={"s": 12, "alpha": 0.5, "color": "lightblue", "edgecolor": "darkblue", "linewidths": 0.4},
+            scatter_kws={
+                "s": 12,
+                "alpha": 0.5,
+                "color": "lightblue",
+                "edgecolor": "darkblue",
+                "linewidths": 0.4,
+            },
             line_kws={"color": sns.color_palette("deep")[0], "linewidth": 1.5},
         )
-        grid.plot_marginals(sns.kdeplot, fill=True, color=sns.color_palette("deep")[0], alpha=0.5, linewidth=1)
+        grid.plot_marginals(
+            sns.kdeplot,
+            fill=True,
+            color=sns.color_palette("deep")[0],
+            alpha=0.5,
+            linewidth=1,
+        )
     fig, ax = grid.figure, grid.ax_joint
 
     # Axes clamped to the data range: the fit's confidence band must not extend past
@@ -432,7 +511,12 @@ def plot_correlation(report: dict, x: str, y: str, out_dir: str | Path, *, dpi: 
         ha="right",
         va="bottom",
         fontsize=10,
-        bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
+        bbox={
+            "boxstyle": "round",
+            "facecolor": "white",
+            "alpha": 0.8,
+            "edgecolor": "none",
+        },
     )
 
     # Title, save and close

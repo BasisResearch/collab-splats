@@ -11,7 +11,9 @@ def _trajectory(n=20, seed=0):
     """Random-walk camera-to-world poses."""
     rng = np.random.default_rng(seed)
     poses = np.tile(np.eye(4), (n, 1, 1))
-    poses[:, :3, :3] = Rotation.from_rotvec(rng.normal(scale=0.3, size=(n, 3))).as_matrix()
+    poses[:, :3, :3] = Rotation.from_rotvec(
+        rng.normal(scale=0.3, size=(n, 3))
+    ).as_matrix()
     poses[:, :3, 3] = np.cumsum(rng.normal(scale=0.2, size=(n, 3)), axis=0)
     return poses
 
@@ -55,7 +57,9 @@ def test_rpe_zero_under_sim3():
 def test_rpe_detects_rotation_step():
     gt = _trajectory()
     pred = gt.copy()
-    pred[10:, :3, :3] = pred[10:, :3, :3] @ Rotation.from_rotvec([0, 0, np.radians(5)]).as_matrix()
+    pred[10:, :3, :3] = (
+        pred[10:, :3, :3] @ Rotation.from_rotvec([0, 0, np.radians(5)]).as_matrix()
+    )
     assert rpe(pred, gt)["rot_rmse_deg"] > 0.5
 
 
@@ -76,7 +80,9 @@ def test_auc_counts_unregistered_pairs_as_failures():
 def test_auc_drops_with_rotation_error():
     gt = _trajectory()
     pred = gt.copy()
-    pred[:10, :3, :3] = pred[:10, :3, :3] @ Rotation.from_rotvec([0, 0, np.radians(20)]).as_matrix()
+    pred[:10, :3, :3] = (
+        pred[:10, :3, :3] @ Rotation.from_rotvec([0, 0, np.radians(20)]).as_matrix()
+    )
     assert auc_at_threshold(pred, gt, (30.0,))["auc_30"] < 80.0
 
 

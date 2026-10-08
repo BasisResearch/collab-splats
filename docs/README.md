@@ -12,14 +12,11 @@ Layout mirrors the code tree: a module at `<source-path>/<module>/` has its docs
 
 Flags, output layout, and the processed-scene contract: [../configs/README.md](../configs/README.md).
 
-## Module Notebooks
+## Module docs
 
-- [pointcloud.md](pointcloud.md) — pointcloud + bundle adjustment + ground-truth evals
-- [semantics/](semantics/) — feature extraction, MaskCLIP, Talk2DINO
+- [pointcloud.md](pointcloud.md) — depth alignment, bundle adjustment, backend config blocks
 - [mesh.md](mesh.md) — TSDF fusion, cleaning, texturing, vertex features
 - [splats.md](splats.md) — Gaussian-splat training on upstream gsplat
-- [parity.md](parity.md) — loop-closure parity vs VGGT-SLAM / VGGT-SPARK (references removed)
+- [parity.md](parity.md) — loop-closure provenance and parity vs VGGT-SLAM
 
-## Internal
-
-- [known-test-failures.md](known-test-failures.md) — known test failures and workarounds
+Tutorials and the API reference build with `make docs` from `docs/source/`.

@@ -6,12 +6,11 @@ import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Generator, Iterator, List
+from typing import Any, ClassVar, Generator, Iterator, List
 
 import numpy as np
 import torch
 from huggingface_hub import hf_hub_download
-from torch import Tensor
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +141,7 @@ def infer_batch_size(mem_per_image_gb: float, headroom: float = 0.3) -> int:
     if mem_per_image_gb <= 0:
         raise ValueError(f"mem_per_image_gb must be positive, got {mem_per_image_gb}")
     if torch.cuda.is_available():
-        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         return max(1, int(vram_gb * headroom / mem_per_image_gb))
     return 1
 
@@ -204,14 +203,16 @@ def load_torchhub_model(repo_id: str, model_name: str):
 class RegistryMixin:
     """Name-based class registry. Declare ``_registry: Dict[str, type] = {}`` in subclass."""
 
-    _registry: dict
+    _registry: ClassVar[dict]
 
     @classmethod
     def register(cls, name: str):
         """Class decorator: register a subclass under *name*."""
+
         def decorator(subclass):
             cls._registry[name] = subclass
             return subclass
+
         return decorator
 
     @classmethod

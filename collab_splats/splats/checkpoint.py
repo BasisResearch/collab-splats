@@ -35,7 +35,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Representation name -> model class; also the config's allow-list
-MODEL_CLASSES = {"vanilla": Gaussians, "scaffold": Scaffold}
+MODEL_CLASSES: dict[str, type[Gaussians] | type[Scaffold]] = {
+    "vanilla": Gaussians,
+    "scaffold": Scaffold,
+}
 REPRESENTATIONS = tuple(MODEL_CLASSES)
 
 
@@ -88,13 +91,17 @@ def write_outputs(
 
     # ckpt.pt: model, cameras, image size and config, enough to re-render
     checkpoint = model.checkpoint()
-    checkpoint["splats"] = {name: param.detach().cpu() for name, param in checkpoint["splats"].items()}
+    checkpoint["splats"] = {
+        name: param.detach().cpu() for name, param in checkpoint["splats"].items()
+    }
     checkpoint["config"] = config_dict
     checkpoint["cam_to_world"] = cam_to_world.detach().cpu()
     checkpoint["intrinsics"] = intrinsics.detach().cpu()
     checkpoint["image_ids"] = list(image_ids)
     checkpoint["image_size"] = (height, width)
-    checkpoint["appearance"] = None if refine.appearance is None else refine.appearance.state_dict()
+    checkpoint["appearance"] = (
+        None if refine.appearance is None else refine.appearance.state_dict()
+    )
     torch.save(checkpoint, out_dir / "ckpt.pt")
 
     # splats_quality_report.json: per-view psnr and ssim
@@ -102,10 +109,16 @@ def write_outputs(
     renders = render_views(model, refine, cam_to_world, intrinsics, height, width)
 
     # Index images by row; image_ids maps each row to its source frame
-    for row, render in enumerate(progress(renders, desc="splats render", total=n_views)):
-        target = torch.from_numpy(images[row]).to(render["rgb"].device).float()[None] / 255.0
+    for row, render in enumerate(
+        progress(renders, desc="splats render", total=n_views)
+    ):
+        target = (
+            torch.from_numpy(images[row]).to(render["rgb"].device).float()[None] / 255.0
+        )
         mse = F.mse_loss(render["rgb"], target).item()
-        ssim_distance = ssim_loss(render["rgb"].permute(0, 3, 1, 2), target.permute(0, 3, 1, 2)).item()
+        ssim_distance = ssim_loss(
+            render["rgb"].permute(0, 3, 1, 2), target.permute(0, 3, 1, 2)
+        ).item()
         per_frame.append(
             {
                 "image_id": image_ids[row],
@@ -175,7 +188,9 @@ def load_checkpoint(
     representation = config["representation"]
 
     if representation not in MODEL_CLASSES:
-        raise ValueError(f"{path}: splats.representation must be one of {REPRESENTATIONS}, got '{representation}'")
+        raise ValueError(
+            f"{path}: splats.representation must be one of {REPRESENTATIONS}, got '{representation}'"
+        )
 
     model = MODEL_CLASSES[representation].from_checkpoint(ckpt, device)
 
@@ -192,7 +207,14 @@ def load_checkpoint(
     cam_to_world = ckpt["cam_to_world"].to(device).float()
     intrinsics = ckpt["intrinsics"].to(device).float()
     height, width = ckpt["image_size"]
-    return model, camera_opt, cam_to_world, intrinsics, list(ckpt["image_ids"]), (int(height), int(width))
+    return (
+        model,
+        camera_opt,
+        cam_to_world,
+        intrinsics,
+        list(ckpt["image_ids"]),
+        (int(height), int(width)),
+    )
 
 
 def render_tsdf_inputs(
@@ -220,8 +242,12 @@ def render_tsdf_inputs(
         frame_idx per row.
     """
     if depth_source not in ("expected", "median"):
-        raise ValueError(f"depth_source must be 'expected' or 'median', got {depth_source!r}")
-    model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = load_checkpoint(Path(ckpt_path), device)
+        raise ValueError(
+            f"depth_source must be 'expected' or 'median', got {depth_source!r}"
+        )
+    model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = (
+        load_checkpoint(Path(ckpt_path), device)
+    )
 
     # One int list for both the RGB lookup and the return
     image_ids = [int(i) for i in image_ids]
@@ -231,12 +257,16 @@ def render_tsdf_inputs(
     if images_dir is not None:
         rgbs = read_frames(images_dir, image_ids)
         if rgbs.shape[1:3] != (height, width):
-            raise ValueError(f"{images_dir} frames are {rgbs.shape[1:3]} but the checkpoint renders {(height, width)}")
+            raise ValueError(
+                f"{images_dir} frames are {rgbs.shape[1:3]} but the checkpoint renders {(height, width)}"
+            )
 
     # Render every camera; only 2dgs offers a choice, so "median" falls back to "depth"
     key = "median_depth" if depth_source == "median" else "depth"
     depths, rendered = [], []
-    for view in render_views(model, camera_opt, cam_to_world, intrinsics, height, width):
+    for view in render_views(
+        model, camera_opt, cam_to_world, intrinsics, height, width
+    ):
         depth = view[key] if key in view else view["depth"]
         depth = depth.detach().cpu().numpy().reshape(height, width, -1)[..., 0]
         alpha = view["alpha"].detach().cpu().numpy().reshape(height, width, -1)[..., 0]
@@ -249,7 +279,13 @@ def render_tsdf_inputs(
     if rgbs is None:
         rgbs = np.stack(rendered)
 
-    logger.info("render_tsdf_inputs: %d views at %dx%d from %s", len(depths), height, width, ckpt_path)
+    logger.info(
+        "render_tsdf_inputs: %d views at %dx%d from %s",
+        len(depths),
+        height,
+        width,
+        ckpt_path,
+    )
     return (
         np.stack(depths),
         rgbs,

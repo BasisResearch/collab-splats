@@ -14,6 +14,7 @@ from contextlib import nullcontext
 
 import numpy as np
 import open3d as o3d
+from numpy.typing import ArrayLike
 from scipy.linalg import rq
 from torch import Tensor
 
@@ -66,7 +67,9 @@ def invert_poses(poses: np.ndarray) -> np.ndarray:
     return out
 
 
-def transform_points(points: np.ndarray | Tensor, T: np.ndarray | Tensor) -> np.ndarray | Tensor:
+def transform_points(
+    points: np.ndarray | Tensor, T: np.ndarray | Tensor
+) -> np.ndarray | Tensor:
     """
     Points moved by a rigid transform: R @ p + t.
 
@@ -124,7 +127,9 @@ def intrinsics_4x4(K: np.ndarray) -> np.ndarray:
     return out
 
 
-def rescale_intrinsics(K: np.ndarray, src_hw: np.ndarray, dst_hw: np.ndarray) -> np.ndarray:
+def rescale_intrinsics(
+    K: ArrayLike, src_hw: ArrayLike, dst_hw: ArrayLike
+) -> np.ndarray:
     """
     Map K from one pixel grid to another of a different size, as an image resize does.
 
@@ -155,7 +160,9 @@ def rescale_intrinsics(K: np.ndarray, src_hw: np.ndarray, dst_hw: np.ndarray) ->
     bad = ~(src > 0) | ~(dst > 0)
 
     if np.any(bad):
-        raise ValueError(f"grid sizes must be positive, got src_hw {src.tolist()} dst_hw {dst.tolist()}")
+        raise ValueError(
+            f"grid sizes must be positive, got src_hw {src.tolist()} dst_hw {dst.tolist()}"
+        )
 
     # Per-axis dst / src scale on the x and y rows
     scale = dst / src
@@ -164,7 +171,7 @@ def rescale_intrinsics(K: np.ndarray, src_hw: np.ndarray, dst_hw: np.ndarray) ->
     return out
 
 
-def shift_intrinsics(K: np.ndarray, offset_xy: np.ndarray) -> np.ndarray:
+def shift_intrinsics(K: ArrayLike, offset_xy: ArrayLike) -> np.ndarray:
     """
     Move K's principal point by a pixel offset, as a crop or its undo does.
 
@@ -260,7 +267,9 @@ def decompose_camera(P: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray,
 ########################################################################
 
 
-def _compute_weighted_median(values: np.ndarray, weights: np.ndarray, max_n: int = 50_000) -> float | None:
+def _compute_weighted_median(
+    values: np.ndarray, weights: np.ndarray, max_n: int = 50_000
+) -> float | None:
     """
     Confidence-weighted median, subsampled above `max_n` with a seeded RNG.
 
@@ -325,7 +334,9 @@ def estimate_intrinsics_from_points(
 
     # Invert the pinhole model per pixel: u_c = fx * X / Z  =>  fx = u_c * Z / X
     x, y, z = local_points[..., 0], local_points[..., 1], local_points[..., 2]
-    valid = (z > 1e-3) & (np.abs(x) > 1e-6) & (np.abs(y) > 1e-6) & (conf > conf_threshold)
+    valid = (
+        (z > 1e-3) & (np.abs(x) > 1e-6) & (np.abs(y) > 1e-6) & (conf > conf_threshold)
+    )
 
     with np.errstate(divide="ignore", invalid="ignore"):
         fx_per_pixel = uu * z / x
@@ -342,7 +353,14 @@ def estimate_intrinsics_from_points(
     fy = _compute_weighted_median(fy_vals[ok_fy], weights[ok_fy])
 
     # Fail loudly: a plausible-but-wrong fallback K fails silently downstream
-    if fx is None or fy is None or not np.isfinite(fx) or not np.isfinite(fy) or fx <= 0 or fy <= 0:
+    if (
+        fx is None
+        or fy is None
+        or not np.isfinite(fx)
+        or not np.isfinite(fy)
+        or fx <= 0
+        or fy <= 0
+    ):
         raise RuntimeError(
             f"Pinhole intrinsics fit failed over {n} frames: "
             f"{int(valid.sum())}/{valid.size} pixels passed the validity mask "
@@ -352,7 +370,10 @@ def estimate_intrinsics_from_points(
         )
 
     # Keep fx and fy distinct: per-axis resizing yields non-square pixels
-    return np.array([[fx, 0.0, (w - 1) / 2.0], [0.0, fy, (h - 1) / 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+    return np.array(
+        [[fx, 0.0, (w - 1) / 2.0], [0.0, fy, (h - 1) / 2.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
 
 
 def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -371,7 +392,9 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     # RANSAC plane normal · x + d_norm = 0, with a unit normal
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
-    plane_model, _ = pcd.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=1000)
+    plane_model, _ = pcd.segment_plane(
+        distance_threshold=0.02, ransac_n=3, num_iterations=1000
+    )
     a, b, c, d = plane_model
     n_mag = np.linalg.norm([a, b, c])
     normal = np.array([a, b, c]) / n_mag
@@ -391,7 +414,9 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     else:
         axis /= axis_norm
         angle = np.arccos(np.clip(normal[2], -1.0, 1.0))
-        cross = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        cross = np.array(
+            [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
+        )
         R = np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * (cross @ cross)
 
     # After R the floor sits at z = -d_norm; translate by d_norm to bring it to z = 0
@@ -405,7 +430,11 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _umeyama(
-    source: np.ndarray, target: np.ndarray, weights: np.ndarray | None, *, with_scale: bool
+    source: np.ndarray,
+    target: np.ndarray,
+    weights: np.ndarray | None,
+    *,
+    with_scale: bool,
 ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """
     Weighted Umeyama core shared by both solvers: scale, float64 rotation and the two weighted means.
@@ -420,7 +449,11 @@ def _umeyama(
     if M < 3:
         raise ValueError(f"Umeyama alignment needs at least 3 correspondences, got {M}")
 
-    w = np.ones(M, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
+    w = (
+        np.ones(M, dtype=np.float64)
+        if weights is None
+        else np.asarray(weights, dtype=np.float64)
+    )
     w_sum = w.sum()
 
     if w_sum < 1e-9:

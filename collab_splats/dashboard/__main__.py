@@ -25,11 +25,21 @@ def _smoke(port: int, base_dir: str, timeout_s: float) -> int:
     - 0 when the root page and the bokeh bundle both come back, 1 otherwise
     - exercises the real entry point (imports, Xvfb, session factory), not an in-process stand-in
     """
-    cmd = [sys.executable, "-m", "collab_splats.dashboard", "--port", str(port), "--base-dir", base_dir]
+    cmd = [
+        sys.executable,
+        "-m",
+        "collab_splats.dashboard",
+        "--port",
+        str(port),
+        "--base-dir",
+        base_dir,
+    ]
 
     # Child output goes to a temp file (an undrained pipe can stall it); own session so Xvfb dies with it
     log = tempfile.TemporaryFile(mode="w+")
-    proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    proc = subprocess.Popen(
+        cmd, stdout=log, stderr=subprocess.STDOUT, text=True, start_new_session=True
+    )
     t0 = time.monotonic()
     deadline = t0 + timeout_s
     page = b""
@@ -44,7 +54,9 @@ def _smoke(port: int, base_dir: str, timeout_s: float) -> int:
                 return 1
 
             try:
-                page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10).read()
+                page = urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/", timeout=10
+                ).read()
                 break
             except OSError:
                 time.sleep(3)
@@ -60,13 +72,17 @@ def _smoke(port: int, base_dir: str, timeout_s: float) -> int:
             print("SMOKE FAIL: page served but contains no bokeh script reference")
             return 1
 
-        js = urllib.request.urlopen(f"http://127.0.0.1:{port}/static/js/bokeh.min.js", timeout=60).read()
+        js = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/static/js/bokeh.min.js", timeout=60
+        ).read()
 
         if len(js) < 100_000:
             print(f"SMOKE FAIL: bokeh.min.js truncated ({len(js)} bytes)")
             return 1
 
-        print(f"SMOKE PASS: page ({len(page)} B) + bokeh.min.js ({len(js)} B) served; bind took {bind_s:.0f}s")
+        print(
+            f"SMOKE PASS: page ({len(page)} B) + bokeh.min.js ({len(js)} B) served; bind took {bind_s:.0f}s"
+        )
         return 0
     finally:
         # Stop the server's whole process group (server + Xvfb) and reap it
@@ -86,7 +102,9 @@ def main() -> None:
     """
     Parse args, then serve the dashboard or run the smoke check.
     """
-    parser = argparse.ArgumentParser(prog="collab-dashboard", description="Launch the collab-splats dashboard.")
+    parser = argparse.ArgumentParser(
+        prog="collab-dashboard", description="Launch the collab-splats dashboard."
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument("--base-dir", default="/workspace/outputs")
@@ -103,20 +121,29 @@ def main() -> None:
         action="store_true",
         help="Health check: start a server subprocess, verify the page serves, exit 0/1.",
     )
-    parser.add_argument("--smoke-timeout", type=float, default=300.0, help="Seconds to wait for --smoke bind.")
+    parser.add_argument(
+        "--smoke-timeout",
+        type=float,
+        default=300.0,
+        help="Seconds to wait for --smoke bind.",
+    )
     args = parser.parse_args()
 
     if args.smoke:
         sys.exit(_smoke(args.port, args.base_dir, args.smoke_timeout))
 
     # INFO logging so startup progress (Xvfb, warm imports, sessions) reaches the terminal
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     origin = args.websocket_origin
 
     if origin == ["*"]:
         origin = "*"
 
-    run_app(host=args.host, port=args.port, base_dir=args.base_dir, websocket_origin=origin)
+    run_app(
+        host=args.host, port=args.port, base_dir=args.base_dir, websocket_origin=origin
+    )
 
 
 if __name__ == "__main__":

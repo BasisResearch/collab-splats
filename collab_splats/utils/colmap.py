@@ -10,7 +10,9 @@ from pathlib import Path
 import pycolmap
 
 
-def write_colmap_reconstruction(recon: pycolmap.Reconstruction, model_dir: Path) -> None:
+def write_colmap_reconstruction(
+    recon: pycolmap.Reconstruction, model_dir: Path
+) -> None:
     """
     Write a binary model to exactly `model_dir`, image names reduced to stems, swapped in whole.
 

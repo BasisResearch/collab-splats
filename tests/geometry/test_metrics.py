@@ -43,7 +43,9 @@ def test_histogram_bins_follow_rices_rule_over_the_ordered_pair_pixel_count(n, n
     k = 2 * round((n * (n - 1) * h * w) ** (1/3)), floored at two bins, always even and spanning (-1, 1).
     """
     depth = np.full((n, 16, 16), 4.0, np.float32)
-    K = np.tile(np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32), (n, 1, 1))
+    K = np.tile(
+        np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32), (n, 1, 1)
+    )
     extr = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
     extr[:, 0, 3] = -0.2 * np.arange(n)
     edges = _collect(depth, K, extr)[1]["bin_edges"]
@@ -183,7 +185,9 @@ def _translated_pair(shift_px=4, hw=32, f=40.0, depth=4.0, seed=5):
     rng = np.random.default_rng(seed)
     big = rng.uniform(0, 255, size=(hw, hw + shift_px, 3)).astype(np.float32)
     images = np.stack([big[:, :hw], big[:, shift_px:]])
-    K = np.stack([np.array([[f, 0, hw / 2], [0, f, hw / 2], [0, 0, 1.0]], dtype=np.float32)] * 2)
+    K = np.stack(
+        [np.array([[f, 0, hw / 2], [0, f, hw / 2], [0, 0, 1.0]], dtype=np.float32)] * 2
+    )
     # Camera 1 sits at world x = shift_px * Z / f, so u' = u - shift_px for every plane pixel.
     e1 = np.eye(4, dtype=np.float32)
     e1[0, 3] = -shift_px * depth / f
@@ -261,7 +265,9 @@ def test_ncc_is_invariant_to_image_scale_convention():
     img, d, K, e = _plane()
     img[1] = img[1] + rng.normal(0, 120, img[1].shape)
     a = compute_photometric_ncc(img, d, K, e, separations=(1,))["photometric_ncc"][0]
-    b = compute_photometric_ncc(img / 255.0, d, K, e, separations=(1,))["photometric_ncc"][0]
+    b = compute_photometric_ncc(img / 255.0, d, K, e, separations=(1,))[
+        "photometric_ncc"
+    ][0]
     assert a == pytest.approx(b, abs=1e-4)
     assert 0.2 < a < 0.9  # anchor: not the trivial 1.0 case
 
@@ -286,8 +292,12 @@ def test_ncc_drops_with_genuine_disagreement():
     img, d, K, e = _plane()
     noisy = img.copy()
     noisy[1] = noisy[1] + rng.normal(0, 90, noisy[1].shape)
-    clean = compute_photometric_ncc(img, d, K, e, separations=(1,))["photometric_ncc"][0]
-    dirty = compute_photometric_ncc(noisy, d, K, e, separations=(1,))["photometric_ncc"][0]
+    clean = compute_photometric_ncc(img, d, K, e, separations=(1,))["photometric_ncc"][
+        0
+    ]
+    dirty = compute_photometric_ncc(noisy, d, K, e, separations=(1,))[
+        "photometric_ncc"
+    ][0]
     assert dirty < clean
 
 
@@ -327,8 +337,15 @@ def test_min_samples_counts_pixels_not_the_ravelled_rgb_values():
     admits it at 1024 and rejects it at 1025, which no value-count reading can produce.
     """
     img, d, K, e = _plane()
-    assert compute_photometric_ncc(img, d, K, e, separations=(1,), min_samples=1024)["n_pixels"] == [1024]
-    assert compute_photometric_ncc(img, d, K, e, separations=(1,), min_samples=1025)["n_pixels"] == []
+    assert compute_photometric_ncc(img, d, K, e, separations=(1,), min_samples=1024)[
+        "n_pixels"
+    ] == [1024]
+    assert (
+        compute_photometric_ncc(img, d, K, e, separations=(1,), min_samples=1025)[
+            "n_pixels"
+        ]
+        == []
+    )
 
 
 def test_photometric_scores_only_the_requested_gaps():
@@ -356,11 +373,15 @@ def test_photometric_upsamples_model_res_depth_onto_the_images_grid_K():
     img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
     # Model-res depth and K describing the crop only: 16x16 grid over a 32x32 crop.
     model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
-    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    model_K = np.stack(
+        [np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2
+    )
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
     K = rescale_intrinsics(model_K, (16, 16), (32, 32))
     K = shift_intrinsics(K, coords[:, :2])
-    m = compute_photometric_ncc(img, model_d, K, e, original_coords=coords, separations=(1,))
+    m = compute_photometric_ncc(
+        img, model_d, K, e, original_coords=coords, separations=(1,)
+    )
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
 
 
@@ -401,7 +422,9 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
     img0[8:24, 16:48] = img1[4:36:2, 0:64:2]
     # 16x16 model grid over a 32-wide, 16-tall crop at (16, 8) of a 64x64 canvas.
     model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
-    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 40.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    model_K = np.stack(
+        [np.array([[20.0, 0, 8.0], [0, 40.0, 8.0], [0, 0, 1.0]], np.float32)] * 2
+    )
     coords = np.tile(np.array([16, 8, 48, 24, 64, 64], dtype=np.float32), (2, 1))
     K = rescale_intrinsics(model_K, (16, 16), (16, 32))
     K = shift_intrinsics(K, coords[:, :2])
@@ -410,13 +433,17 @@ def test_the_K_lift_pins_the_Y_AXIS_TOO_on_a_NON_SQUARE_crop_with_Y_AND_Z_MOTION
     e1[1, 3], e1[2, 3] = 0.2, -2.0
     e = np.stack([np.eye(4, dtype=np.float32), e1])
 
-    m = compute_photometric_ncc(np.stack([img0, img1]), model_d, K, e, original_coords=coords, separations=(1,))
+    m = compute_photometric_ncc(
+        np.stack([img0, img1]), model_d, K, e, original_coords=coords, separations=(1,)
+    )
     assert m["photometric_ncc"][0] == pytest.approx(1.0, abs=0.02)
     # Anchor: the whole crop warped in bounds, so 1.0 is full overlap, not a few surviving pixels
     assert m["n_pixels"][0] == 16 * 32
 
 
-def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(monkeypatch):
+def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(
+    monkeypatch,
+):
     """
     upsample_depths documents a uint8 guide and divides it by 255 internally.
 
@@ -440,21 +467,35 @@ def test_the_upsample_guide_is_normalized_whatever_the_backbones_image_scale(mon
     monkeypatch.setattr(metrics, "upsample_depths", spy)
     img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
     model_d = np.stack(
-        [np.concatenate([np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)], axis=1)] * 2
+        [
+            np.concatenate(
+                [np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)],
+                axis=1,
+            )
+        ]
+        * 2
     )
-    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    model_K = np.stack(
+        [np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2
+    )
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
     K = rescale_intrinsics(model_K, (16, 16), (32, 32))
     K = shift_intrinsics(K, coords[:, :2])
 
-    compute_photometric_ncc(img, model_d, K, e, original_coords=coords, separations=(1,))
-    compute_photometric_ncc(img / 255.0, model_d, K, e, original_coords=coords, separations=(1,))
+    compute_photometric_ncc(
+        img, model_d, K, e, original_coords=coords, separations=(1,)
+    )
+    compute_photometric_ncc(
+        img / 255.0, model_d, K, e, original_coords=coords, separations=(1,)
+    )
     # One call per compute, lifting only frame 0: frame 1 has no partner at separation 1
     assert len(lifted) == 2
     assert lifted[0].shape == (1, 64, 64) and lifted[1].shape == (1, 64, 64)
     np.testing.assert_array_equal(lifted[0], lifted[1])
     # Anchor: the guide is load-bearing here, so the equality above is not a guide-blind filter
-    flat_guide = real(model_d[:1], np.zeros((1, 64, 64, 3), np.uint8), coords[:1, :4])[0]
+    flat_guide = real(model_d[:1], np.zeros((1, 64, 64, 3), np.uint8), coords[:1, :4])[
+        0
+    ]
     assert not np.array_equal(lifted[0][0], flat_guide)
 
 
@@ -475,9 +516,17 @@ def _scene_with_a_dark_frame(dark_factor=0.0035, near=2.0, far=8.0):
     big = rng.uniform(0, 255, size=(64, 64 + 8, 3)).astype(np.float32)
     images = np.stack([big[:, 0:64], big[:, 4:68] * dark_factor, big[:, 8:72]])
     model_d = np.stack(
-        [np.concatenate([np.full((16, 8), near, np.float32), np.full((16, 8), far, np.float32)], axis=1)] * 3
+        [
+            np.concatenate(
+                [np.full((16, 8), near, np.float32), np.full((16, 8), far, np.float32)],
+                axis=1,
+            )
+        ]
+        * 3
     )
-    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 3)
+    model_K = np.stack(
+        [np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 3
+    )
     ext = []
     for k in range(3):
         e = np.eye(4, dtype=np.float32)
@@ -508,7 +557,9 @@ def test_ncc_is_invariant_to_image_scale_convention_even_with_a_DARK_frame():
     # Fixture has teeth only if the dark frame trips a per-frame max() test while the array does not
     assert img[1].max() < 1.0 < img.max()
     a = compute_photometric_ncc(img, d, K, e, original_coords=coords, separations=(1,))
-    b = compute_photometric_ncc(img / 255.0, d, K, e, original_coords=coords, separations=(1,))
+    b = compute_photometric_ncc(
+        img / 255.0, d, K, e, original_coords=coords, separations=(1,)
+    )
     assert a["idx1"] == b["idx1"] == [0, 1]
     for na, nb in zip(a["photometric_ncc"], b["photometric_ncc"]):
         assert na == pytest.approx(nb, abs=1e-6)
@@ -535,11 +586,15 @@ def test_images_that_are_not_the_canvas_the_crops_were_cut_from_are_a_refusal():
     """
     img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
     model_d = np.stack([np.full((16, 16), 4.0, np.float32)] * 2)
-    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    model_K = np.stack(
+        [np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2
+    )
     # original_coords claim a 128x128 canvas; the images are 64x64.
     coords = np.tile(np.array([16, 8, 48, 40, 128, 128], dtype=np.float32), (2, 1))
     with pytest.raises(ValueError, match="original_coords"):
-        compute_photometric_ncc(img, model_d, model_K, e, original_coords=coords, separations=(1,))
+        compute_photometric_ncc(
+            img, model_d, model_K, e, original_coords=coords, separations=(1,)
+        )
 
 
 def test_photometric_output_is_four_columns_over_unordered_pairs():
@@ -554,7 +609,14 @@ def test_photometric_output_is_four_columns_over_unordered_pairs():
     assert set(m) == {"idx1", "idx2", "photometric_ncc", "n_pixels"}
     # C(4, 2) = 6 unordered pairs. An ordered loop over the same frames would ship 12.
     assert all(len(v) == 6 for v in m.values())
-    assert list(zip(m["idx1"], m["idx2"])) == [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+    assert list(zip(m["idx1"], m["idx2"])) == [
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (1, 2),
+        (1, 3),
+        (2, 3),
+    ]
 
 
 ########################################
@@ -570,7 +632,9 @@ def _two_view(scale_j=1.0):
     """
     H = W = 16
     K = np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], dtype=np.float32)
-    depth = np.stack([np.full((H, W), 4.0, np.float32), np.full((H, W), 4.0 * scale_j, np.float32)])
+    depth = np.stack(
+        [np.full((H, W), 4.0, np.float32), np.full((H, W), 4.0 * scale_j, np.float32)]
+    )
     extr = np.stack([np.eye(4, dtype=np.float32), np.eye(4, dtype=np.float32)])
     extr[1, 0, 3] = -0.2  # world-to-cam translation => camera 1 sits at x=+0.2
     return depth, np.stack([K, K]), extr
@@ -588,7 +652,9 @@ def _row_01(out):
     The ordered (0, 1) row — the pair whose residual population is hand-derivable below.
     """
     pairs = out[0]
-    k = next(k for k, ij in enumerate(zip(pairs["idx1"], pairs["idx2"])) if ij == (0, 1))
+    k = next(
+        k for k, ij in enumerate(zip(pairs["idx1"], pairs["idx2"])) if ij == (0, 1)
+    )
     return SimpleNamespace(**{col: v[k] for col, v in pairs.items()})
 
 
@@ -612,7 +678,9 @@ def test_signed_residual_recovers_an_injected_depth_scale():
     Frame 1 depth x1.1 => median relative residual ~ +0.1 on the 0->1 pair.
     """
     depth, K, extr = _two_view(scale_j=1.1)
-    assert _row_01(_collect(depth, K, extr, rel_thresh=0.5)).median_rel_depth_error == pytest.approx(0.1, abs=0.02)
+    assert _row_01(
+        _collect(depth, K, extr, rel_thresh=0.5)
+    ).median_rel_depth_error == pytest.approx(0.1, abs=0.02)
 
 
 def test_parallax_angle_and_median_depth_match_geometry():
@@ -622,7 +690,9 @@ def test_parallax_angle_and_median_depth_match_geometry():
     depth, K, extr = _two_view()
     row = _row_01(_collect(depth, K, extr))
     assert row.median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
-    assert row.median_parallax_deg == pytest.approx(np.degrees(np.arctan(0.2 / 4.0)), abs=0.5)
+    assert row.median_parallax_deg == pytest.approx(
+        np.degrees(np.arctan(0.2 / 4.0)), abs=0.5
+    )
     assert row.median_depth == pytest.approx(4.0, abs=0.2)
 
 
@@ -632,7 +702,9 @@ def test_occluded_pixels_are_excluded_from_the_residual():
     """
     depth, K, extr = _two_view()
     depth[1, :, :8] = 0.5  # a near occluder covering half of frame 1
-    assert _row_01(_collect(depth, K, extr)).median_rel_depth_error == pytest.approx(0.0, abs=1e-3)
+    assert _row_01(_collect(depth, K, extr)).median_rel_depth_error == pytest.approx(
+        0.0, abs=1e-3
+    )
 
 
 def test_residual_is_scale_invariant():
@@ -725,7 +797,9 @@ def test_multiview_agreement_is_null_when_no_other_view_sees_the_frame():
 def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
     assert "reconstruction_quality_report" in LEAF_STAGES
     assert STAGES["reconstruction_quality_report"] == ("pointcloud",)
-    assert list(STAGES).index("reconstruction_quality_report") > list(STAGES).index("pointcloud")
+    assert list(STAGES).index("reconstruction_quality_report") > list(STAGES).index(
+        "pointcloud"
+    )
 
 
 def test_report_does_not_demote_any_existing_leaf():
@@ -759,7 +833,9 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
     K = np.array([[50.0, 0, hw / 2], [0, 50.0, hw / 2], [0, 0, 1.0]], dtype=np.float32)
     extrinsics = np.stack([np.eye(4, dtype=np.float32) for _ in range(n)])
     for k in range(n):
-        extrinsics[k][0, 3] = -0.15 * k  # camera center slides along +x, so pairs have parallax
+        extrinsics[k][0, 3] = (
+            -0.15 * k
+        )  # camera center slides along +x, so pairs have parallax
     rng = np.random.default_rng(4)
     coords = np.tile(np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1))
     result = ff_base.PointcloudResult(
@@ -773,7 +849,9 @@ def _write_tiny_scene(tmp_path, image_names, with_confidence=True):
         model_width=hw,
         model_height=hw,
         depth=depth,
-        confidence=rng.uniform(0.5, 1.0, size=(n, hw, hw)).astype(np.float32) if with_confidence else None,
+        confidence=rng.uniform(0.5, 1.0, size=(n, hw, hw)).astype(np.float32)
+        if with_confidence
+        else None,
     )
     zarr_path = tmp_path / "pointcloud.zarr"
     result.save_zarr(zarr_path)
@@ -784,7 +862,9 @@ def _quality(tmp_path, image_names, with_confidence=True, images=None):
     """
     The stage's data path over _write_tiny_scene: load, compute. Returns (tables, collected).
     """
-    ff = ff_base.PointcloudResult.load_zarr(_write_tiny_scene(tmp_path, image_names, with_confidence))
+    ff = ff_base.PointcloudResult.load_zarr(
+        _write_tiny_scene(tmp_path, image_names, with_confidence)
+    )
     tables = metrics.compute_reconstruction_quality(
         ff.depth,
         ff.model_intrinsics,
@@ -795,7 +875,9 @@ def _quality(tmp_path, image_names, with_confidence=True, images=None):
         ff.confidence,
         images,
     )
-    collected = metrics._collect_pairs(ff.depth, ff.model_intrinsics, ff.extrinsics, rel_thresh=0.05)[0]
+    collected = metrics._collect_pairs(
+        ff.depth, ff.model_intrinsics, ff.extrinsics, rel_thresh=0.05
+    )[0]
     return tables, collected
 
 
@@ -826,7 +908,9 @@ def test_frame_idx_is_the_SOURCE_frame_index_not_the_row(tmp_path):
     tables, _ = _quality(tmp_path, names)
     assert tables["frames"]["frame_idx"] == [0, 7, 19]
     # It is derived through the same parser, not re-implemented alongside it.
-    assert tables["frames"]["frame_idx"] == [fr.frame_idx_from_path(Path(p)) for p in names]
+    assert tables["frames"]["frame_idx"] == [
+        fr.frame_idx_from_path(Path(p)) for p in names
+    ]
 
 
 def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_path):
@@ -843,7 +927,14 @@ def test_an_off_contract_filename_yields_null_rather_than_a_guessed_index(tmp_pa
     assert fr.frame_idx_from_path(Path("x_frame_000007.jpg")) == 7
 
     tables, _ = _quality(
-        tmp_path, ["IMG_1234.jpg", "00019.jpg", "x_frame_000007.jpg", "frame_000007.jpg", "frame_1000000.jpg"]
+        tmp_path,
+        [
+            "IMG_1234.jpg",
+            "00019.jpg",
+            "x_frame_000007.jpg",
+            "frame_000007.jpg",
+            "frame_1000000.jpg",
+        ],
     )
     assert tables["frames"]["frame_idx"] == [None, None, None, 7, 1000000]
 
@@ -852,13 +943,17 @@ def test_every_table_is_columnar_with_equal_column_lengths(tmp_path):
     """
     A table is {column: [values]}; a ragged column means rows no longer line up.
     """
-    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
+    tables, _ = _quality(
+        tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"]
+    )
     for key in ("frames", "depth_pairs"):
         assert len(_column_lengths(tables[key])) == 1, key
 
 
 def test_frames_table_has_one_row_per_reconstruction_frame(tmp_path):
-    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
+    tables, _ = _quality(
+        tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"]
+    )
     assert _column_lengths(tables["frames"]) == {3}
     assert all(v is not None for v in tables["frames"]["median_abs_rel_depth_error"])
 
@@ -867,7 +962,9 @@ def test_depth_pairs_follow_the_collected_pair_order(tmp_path):
     """
     Rows are the collected pairs, one per direction, in the order the depth pass emitted.
     """
-    tables, collected = _quality(tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"])
+    tables, collected = _quality(
+        tmp_path, ["frame_000000.jpg", "frame_000004.jpg", "frame_000008.jpg"]
+    )
     assert collected["idx1"]
     assert tables["depth_pairs"] == collected
 
@@ -926,7 +1023,9 @@ def _prune_block_lines() -> range:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA")
 @pytest.mark.parametrize("min_pair_overlap", [0.0, 0.01])
 @pytest.mark.parametrize("target_batch", [1, 2, None])
-def test_collect_pairs_syncs_the_gpu_twice_per_target_batch(monkeypatch, target_batch, min_pair_overlap):
+def test_collect_pairs_syncs_the_gpu_twice_per_target_batch(
+    monkeypatch, target_batch, min_pair_overlap
+):
     """
     Each target batch syncs only at its counts and its nonzero; pruning adds three per source frame.
     """
@@ -946,7 +1045,9 @@ def test_collect_pairs_syncs_the_gpu_twice_per_target_batch(monkeypatch, target_
 
     def record(message, *args, **kwargs):
         if "synchroniz" in str(message):
-            frames = [f for f in traceback.extract_stack() if f.name == "_collect_pairs"]
+            frames = [
+                f for f in traceback.extract_stack() if f.name == "_collect_pairs"
+            ]
             lines.append(frames[-1].lineno if frames else None)
 
     torch.cuda.set_sync_debug_mode("warn")
@@ -956,7 +1057,12 @@ def test_collect_pairs_syncs_the_gpu_twice_per_target_batch(monkeypatch, target_
             warnings.simplefilter("always")
             warnings.showwarning = record
             collected = metrics._collect_pairs(
-                depth, K, E, 0.05, target_batch=target_batch, min_pair_overlap=min_pair_overlap
+                depth,
+                K,
+                E,
+                0.05,
+                target_batch=target_batch,
+                min_pair_overlap=min_pair_overlap,
             )[0]
     finally:
         torch.cuda.set_sync_debug_mode(0)
@@ -969,12 +1075,20 @@ def test_collect_pairs_syncs_the_gpu_twice_per_target_batch(monkeypatch, target_
     assert sum(line in loop for line in lines) == 2 * n_batches
 
     # Pruning syncs three times per source frame: the has_source mask, the overlap list, the index upload
-    assert sum(line in _prune_block_lines() for line in lines) == (3 * n if min_pair_overlap else 0)
+    assert sum(line in _prune_block_lines() for line in lines) == (
+        3 * n if min_pair_overlap else 0
+    )
 
 
 @pytest.mark.parametrize(
     "device",
-    ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))],
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"),
+        ),
+    ],
 )
 def test_collect_pairs_is_identical_whatever_the_target_batch(monkeypatch, device):
     """
@@ -982,7 +1096,9 @@ def test_collect_pairs_is_identical_whatever_the_target_batch(monkeypatch, devic
     """
     monkeypatch.setattr(metrics, "get_device", lambda: device)
     depth, K, extr = _two_view(scale_j=1.03)
-    depth = np.concatenate([depth, depth[:1] * 1.01, depth[:1] * 0.99, depth[1:] * 1.02])
+    depth = np.concatenate(
+        [depth, depth[:1] * 1.01, depth[:1] * 0.99, depth[1:] * 1.02]
+    )
     K = np.concatenate([K, K[:1], K[:1], K[:1]])
     extr = np.concatenate([extr, extr[1:], extr[1:], extr[1:]])
     extr[2, 1, 3] = 0.1
@@ -996,7 +1112,10 @@ def test_collect_pairs_is_identical_whatever_the_target_batch(monkeypatch, devic
     torch.set_float32_matmul_precision("high")
 
     try:
-        runs = [metrics._collect_pairs(depth, K, extr, 0.05, target_batch=b) for b in (1, 2, 3)]
+        runs = [
+            metrics._collect_pairs(depth, K, extr, 0.05, target_batch=b)
+            for b in (1, 2, 3)
+        ]
         assert torch.get_float32_matmul_precision() == "high"
     finally:
         torch.set_float32_matmul_precision(precision)
@@ -1015,13 +1134,21 @@ def test_collect_pairs_is_identical_whatever_the_target_batch(monkeypatch, devic
         assert one == many
 
 
-def test_median_abs_rel_depth_error_is_the_median_magnitude_over_pairs_touching_the_frame(monkeypatch):
+def test_median_abs_rel_depth_error_is_the_median_magnitude_over_pairs_touching_the_frame(
+    monkeypatch,
+):
     """
     Both directions count for a frame, by magnitude: frame 1 sees |-0.02|, |0.04| and |0.10|.
     """
-    collected = {"idx1": [0, 1, 1], "idx2": [1, 0, 2], "median_rel_depth_error": [-0.02, 0.04, 0.10]}
+    collected = {
+        "idx1": [0, 1, 1],
+        "idx2": [1, 0, 2],
+        "median_rel_depth_error": [-0.02, 0.04, 0.10],
+    }
     n, hw = 3, 8
-    monkeypatch.setattr(metrics, "_collect_pairs", lambda *a, **k: (collected, {}, [None] * n))
+    monkeypatch.setattr(
+        metrics, "_collect_pairs", lambda *a, **k: (collected, {}, [None] * n)
+    )
     K = np.array([[50.0, 0, hw / 2], [0, 50.0, hw / 2], [0, 0, 1.0]])
     tables = metrics.compute_reconstruction_quality(
         np.ones((n, hw, hw)),
@@ -1033,20 +1160,26 @@ def test_median_abs_rel_depth_error_is_the_median_magnitude_over_pairs_touching_
         None,
         None,
     )
-    assert tables["frames"]["median_abs_rel_depth_error"] == pytest.approx([0.03, 0.04, 0.10])
+    assert tables["frames"]["median_abs_rel_depth_error"] == pytest.approx(
+        [0.03, 0.04, 0.10]
+    )
 
 
 def test_confidence_median_is_null_without_a_confidence_array(tmp_path):
     """
     No array means the column was never computed — distinct from a low confidence.
     """
-    tables, _ = _quality(tmp_path, ["frame_000000.jpg", "frame_000007.jpg"], with_confidence=False)
+    tables, _ = _quality(
+        tmp_path, ["frame_000000.jpg", "frame_000007.jpg"], with_confidence=False
+    )
     assert tables["frames"]["confidence_median"] == [None, None]
     tables, _ = _quality(tmp_path / "c", ["frame_000000.jpg", "frame_000007.jpg"])
     assert all(0.5 <= v <= 1.0 for v in tables["frames"]["confidence_median"])
 
 
-def test_crop_coverage_is_measured_against_the_ORIGINAL_canvas_not_the_model_grid(tmp_path):
+def test_crop_coverage_is_measured_against_the_ORIGINAL_canvas_not_the_model_grid(
+    tmp_path,
+):
     """
     The model grid IS the crop, so coverage is structurally invisible at model resolution.
 
@@ -1089,15 +1222,27 @@ def test_photometric_ncc_on_lifted_depth_matches_uint8_and_float_frames_exactly(
     img, _, _, e = _translated_pair(shift_px=4, hw=64, f=40.0)
     img = img.round()
     model_d = np.stack(
-        [np.concatenate([np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)], axis=1)] * 2
+        [
+            np.concatenate(
+                [np.full((16, 8), 3.0, np.float32), np.full((16, 8), 5.0, np.float32)],
+                axis=1,
+            )
+        ]
+        * 2
     )
-    model_K = np.stack([np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2)
+    model_K = np.stack(
+        [np.array([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]], np.float32)] * 2
+    )
     coords = np.tile(np.array([16, 8, 48, 40, 64, 64], dtype=np.float32), (2, 1))
     K = rescale_intrinsics(model_K, (16, 16), (32, 32))
     K = shift_intrinsics(K, coords[:, :2])
 
-    as_float = compute_photometric_ncc(img.astype(np.float32), model_d, K, e, original_coords=coords, separations=(1,))
-    as_uint8 = compute_photometric_ncc(img.astype(np.uint8), model_d, K, e, original_coords=coords, separations=(1,))
+    as_float = compute_photometric_ncc(
+        img.astype(np.float32), model_d, K, e, original_coords=coords, separations=(1,)
+    )
+    as_uint8 = compute_photometric_ncc(
+        img.astype(np.uint8), model_d, K, e, original_coords=coords, separations=(1,)
+    )
     assert as_uint8["n_pixels"] == as_float["n_pixels"] and as_uint8["n_pixels"][0] > 0
     assert as_uint8["photometric_ncc"] == as_float["photometric_ncc"]
 
@@ -1107,7 +1252,12 @@ def test_photometric_ncc_is_invariant_to_a_far_world_origin():
     Georeferenced poses sit ~10 km from the origin; float32 world points there lose the warp.
     """
     img, depth, K, e = _translated_pair(shift_px=4, hw=32)
-    img = np.stack([img[0], 0.7 * img[1] + 0.3 * np.random.default_rng(3).uniform(0, 255, img[1].shape)])
+    img = np.stack(
+        [
+            img[0],
+            0.7 * img[1] + 0.3 * np.random.default_rng(3).uniform(0, 255, img[1].shape),
+        ]
+    )
     near = compute_photometric_ncc(img, depth, K, e, separations=(1,))
 
     # Same rig with the world origin moved 10 km away: t' = t - R @ offset for every camera
@@ -1117,7 +1267,9 @@ def test_photometric_ncc_is_invariant_to_a_far_world_origin():
     far = compute_photometric_ncc(img, depth, K, far_e, separations=(1,))
 
     assert far["n_pixels"] == near["n_pixels"]
-    np.testing.assert_allclose(far["photometric_ncc"], near["photometric_ncc"], rtol=0, atol=1e-4)
+    np.testing.assert_allclose(
+        far["photometric_ncc"], near["photometric_ncc"], rtol=0, atol=1e-4
+    )
 
 
 def _rotated_pose(yaw, pitch, t):
@@ -1126,7 +1278,9 @@ def _rotated_pose(yaw, pitch, t):
     """
     cy, sy, cp, sp = np.cos(yaw), np.sin(yaw), np.cos(pitch), np.sin(pitch)
     e = np.eye(4)
-    e[:3, :3] = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]]) @ np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    e[:3, :3] = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]]) @ np.array(
+        [[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]]
+    )
     e[:3, 3] = t
     return e
 
@@ -1136,9 +1290,13 @@ def _reference_ncc(img, depth, K, e):
     Frame 0 warped into frame 1 in float64 numpy through world coordinates: (n_pixels, NCC).
     """
     h, w = depth.shape[1:]
-    v, u = np.meshgrid(np.arange(h, dtype=np.float64), np.arange(w, dtype=np.float64), indexing="ij")
+    v, u = np.meshgrid(
+        np.arange(h, dtype=np.float64), np.arange(w, dtype=np.float64), indexing="ij"
+    )
     d = depth[0].astype(np.float64)
-    pc0 = np.stack([(u - K[0, 0, 2]) / K[0, 0, 0] * d, (v - K[0, 1, 2]) / K[0, 1, 1] * d, d], -1).reshape(-1, 3)
+    pc0 = np.stack(
+        [(u - K[0, 0, 2]) / K[0, 0, 0] * d, (v - K[0, 1, 2]) / K[0, 1, 1] * d, d], -1
+    ).reshape(-1, 3)
     world = (pc0 - e[0, :3, 3]) @ e[0, :3, :3]
     pc1 = world @ e[1, :3, :3].T + e[1, :3, 3]
     z = np.maximum(pc1[:, 2], 1e-6)
@@ -1162,11 +1320,20 @@ def _rotated_rig(h, w, seed=11):
     sx, sy = w / 48, h / 48
     K = np.stack(
         [
-            np.array([[40.0 * sx, 0, 24.0 * sx], [0, 44.0 * sy, 22.0 * sy], [0, 0, 1.0]]),
-            np.array([[38.0 * sx, 0, 25.0 * sx], [0, 41.0 * sy, 24.0 * sy], [0, 0, 1.0]]),
+            np.array(
+                [[40.0 * sx, 0, 24.0 * sx], [0, 44.0 * sy, 22.0 * sy], [0, 0, 1.0]]
+            ),
+            np.array(
+                [[38.0 * sx, 0, 25.0 * sx], [0, 41.0 * sy, 24.0 * sy], [0, 0, 1.0]]
+            ),
         ]
     )
-    e = np.stack([_rotated_pose(0.1, 0.02, [0.1, 0.0, 0.05]), _rotated_pose(-0.05, -0.04, [-0.2, 0.05, 0.0])])
+    e = np.stack(
+        [
+            _rotated_pose(0.1, 0.02, [0.1, 0.0, 0.05]),
+            _rotated_pose(-0.05, -0.04, [-0.2, 0.05, 0.0]),
+        ]
+    )
 
     # Same rig with the world origin moved 100 km away: t' = t - R @ offset for every camera
     far_e = e.copy()
@@ -1207,7 +1374,11 @@ def _three_views_one_facing_away():
     """
     depth, K, extr = _two_view(scale_j=1.02)
     away = np.diag([-1.0, 1.0, -1.0, 1.0]).astype(np.float32)
-    return (np.concatenate([depth, depth[:1]]), np.concatenate([K, K[:1]]), np.concatenate([extr, away[None]]))
+    return (
+        np.concatenate([depth, depth[:1]]),
+        np.concatenate([K, K[:1]]),
+        np.concatenate([extr, away[None]]),
+    )
 
 
 def test_min_pair_overlap_with_no_depth_in_the_source_frame_prunes_every_target():
@@ -1216,7 +1387,9 @@ def test_min_pair_overlap_with_no_depth_in_the_source_frame_prunes_every_target(
     """
     depth, K, extr = _three_views_one_facing_away()
     depth[0] = 0.0
-    pairs, _, agree = metrics._collect_pairs(depth, K, extr, 0.05, min_pair_overlap=0.01)
+    pairs, _, agree = metrics._collect_pairs(
+        depth, K, extr, 0.05, min_pair_overlap=0.01
+    )
     assert 0 not in pairs["idx1"]
     assert agree[0] is None
 
@@ -1252,12 +1425,16 @@ def test_min_pair_overlap_zero_is_the_unpruned_pass(monkeypatch):
 
 
 @pytest.mark.parametrize("target_batch", [1, 2])
-def test_min_pair_overlap_drops_only_pairs_that_share_no_view(monkeypatch, target_batch):
+def test_min_pair_overlap_drops_only_pairs_that_share_no_view(
+    monkeypatch, target_batch
+):
     """
     Frame 2 sees nothing of 0 or 1, so pruning it changes no row, count or agreement.
     """
     depth, K, extr = _three_views_one_facing_away()
-    full, hist_full, agree_full = metrics._collect_pairs(depth, K, extr, 0.05, target_batch=target_batch)
+    full, hist_full, agree_full = metrics._collect_pairs(
+        depth, K, extr, 0.05, target_batch=target_batch
+    )
 
     # Pruning skips the four pairs touching frame 2; one overlap pre-pass per source frame
     counts = _spy_pair_pass(monkeypatch)
@@ -1279,7 +1456,12 @@ def test_min_pair_overlap_prunes_a_middle_frame_without_shifting_the_rest(target
     depth, K, extr = _three_views_one_facing_away()
     order = [0, 2, 1]
     pruned, _, agree = metrics._collect_pairs(
-        depth[order], K[order], extr[order], 0.05, min_pair_overlap=0.01, target_batch=target_batch
+        depth[order],
+        K[order],
+        extr[order],
+        0.05,
+        min_pair_overlap=0.01,
+        target_batch=target_batch,
     )
     assert set(zip(pruned["idx1"], pruned["idx2"])) == {(0, 2), (2, 0)}
     assert agree == [1.0, None, 1.0]
@@ -1287,7 +1469,9 @@ def test_min_pair_overlap_prunes_a_middle_frame_without_shifting_the_rest(target
 
 def test_min_pair_overlap_above_a_pairs_overlap_drops_that_pair():
     depth, K, extr = _three_views_one_facing_away()
-    pruned, histogram, agree = metrics._collect_pairs(depth, K, extr, 0.05, min_pair_overlap=1.01)
+    pruned, histogram, agree = metrics._collect_pairs(
+        depth, K, extr, 0.05, min_pair_overlap=1.01
+    )
     assert pruned["idx1"] == []
     assert agree == [None, None, None]
     assert sum(histogram["counts"]) == 0
@@ -1295,7 +1479,13 @@ def test_min_pair_overlap_above_a_pairs_overlap_drops_that_pair():
 
 @pytest.mark.parametrize(
     "device",
-    ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))],
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"),
+        ),
+    ],
 )
 def test_pair_rows_are_the_per_pair_quantiles_and_medians(monkeypatch, device):
     """
@@ -1308,7 +1498,9 @@ def test_pair_rows_are_the_per_pair_quantiles_and_medians(monkeypatch, device):
     # Depth rounded to 0.1 so residuals tie; holes in frame 1; frame 3 faces away, an empty pair mid-batch
     depth = np.round(3 + rng.uniform(-0.5, 0.5, (n, h, w)), 1).astype(np.float32)
     depth[1, :5] = 0
-    K = np.tile(np.array([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1]], np.float32), (n, 1, 1))
+    K = np.tile(
+        np.array([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1]], np.float32), (n, 1, 1)
+    )
     E = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
     E[:, 0, 3] = np.linspace(0, 0.3, n)
     E[3, :3, :3] = np.diag([-1.0, 1.0, -1.0])
@@ -1328,8 +1520,12 @@ def test_pair_rows_are_the_per_pair_quantiles_and_medians(monkeypatch, device):
     }
 
     # Reference: one pair at a time, each reduced by torch.quantile and torch.median
-    depth_t, K_t, E_t = (torch.as_tensor(a, dtype=torch.float32, device=device) for a in (depth, K, E))
-    centers = torch.as_tensor(invert_poses(E)[:, :3, 3], dtype=torch.float32, device=device)
+    depth_t, K_t, E_t = (
+        torch.as_tensor(a, dtype=torch.float32, device=device) for a in (depth, K, E)
+    )
+    centers = torch.as_tensor(
+        invert_poses(E)[:, :3, 3], dtype=torch.float32, device=device
+    )
     quantiles = torch.tensor([0.25, 0.5, 0.75], device=device)
     expected = {}
 
@@ -1340,14 +1536,18 @@ def test_pair_rows_are_the_per_pair_quantiles_and_medians(monkeypatch, device):
             if j == i:
                 continue
 
-            _, seen, rel, z = depth_agreement(points, E_t[j : j + 1], K_t[j : j + 1], depth_t[j : j + 1], 0.05)
+            _, seen, rel, z = depth_agreement(
+                points, E_t[j : j + 1], K_t[j : j + 1], depth_t[j : j + 1], 0.05
+            )
             sel = seen[0] & (depth_t[i].reshape(-1) > 0) & (rel[0] > -1) & (z[0] > 1e-6)
             if not sel.any():
                 continue
 
             ray_i = points[sel] - centers[i]
             ray_j = points[sel] - centers[j]
-            cos_a = (ray_i * ray_j).sum(-1) / (ray_i.norm(dim=-1) * ray_j.norm(dim=-1)).clamp(min=1e-12)
+            cos_a = (ray_i * ray_j).sum(-1) / (
+                ray_i.norm(dim=-1) * ray_j.norm(dim=-1)
+            ).clamp(min=1e-12)
             parallax = torch.rad2deg(torch.arccos(cos_a.clamp(-1.0, 1.0)))
             q = torch.quantile(rel[0][sel], quantiles)
             expected[(i, j)] = (

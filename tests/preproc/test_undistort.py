@@ -51,7 +51,12 @@ def _write_textured_sequence(out_dir, *, n, width, height):
 def _stub_pycolmap(monkeypatch, registered=None):
     # Record the subset and thread counts; the mapper returns `registered` images or no model
     captured = {}
-    camera = pycolmap.Camera(model="OPENCV", width=64, height=48, params=[60.0, 60.0, 32.0, 24.0, 0.0, 0.0, 0.0, 0.0])
+    camera = pycolmap.Camera(
+        model="OPENCV",
+        width=64,
+        height=48,
+        params=[60.0, 60.0, 32.0, 24.0, 0.0, 0.0, 0.0, 0.0],
+    )
 
     class _Recon:
         cameras = {1: camera}
@@ -68,7 +73,11 @@ def _stub_pycolmap(monkeypatch, registered=None):
 
     monkeypatch.setattr(pycolmap, "extract_features", fake_extract)
     monkeypatch.setattr(pycolmap, "match_exhaustive", fake_match)
-    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: {} if registered is None else {0: _Recon()})
+    monkeypatch.setattr(
+        pycolmap,
+        "incremental_mapping",
+        lambda *a, **k: {} if registered is None else {0: _Recon()},
+    )
     return captured
 
 
@@ -106,7 +115,9 @@ def test_calibrate_camera_stages_no_image_copies(tmp_path, monkeypatch):
     images.mkdir()
     _write_textured_sequence(images, n=12, width=320, height=240)
 
-    monkeypatch.setattr(cv2, "imwrite", lambda *a, **k: pytest.fail("staged a temporary image copy"))
+    monkeypatch.setattr(
+        cv2, "imwrite", lambda *a, **k: pytest.fail("staged a temporary image copy")
+    )
     calibrate_camera(images, max_frames=12)
 
 
@@ -115,7 +126,9 @@ def test_calibrate_camera_raises_when_registration_is_thin(tmp_path):
     images = tmp_path / "images"
     images.mkdir()
     for i in range(12):
-        cv2.imwrite(str(images / f"frame_{i:06d}.png"), np.full((240, 320, 3), 128, np.uint8))
+        cv2.imwrite(
+            str(images / f"frame_{i:06d}.png"), np.full((240, 320, 3), 128, np.uint8)
+        )
 
     with pytest.raises(RuntimeError, match="registered"):
         calibrate_camera(images, max_frames=12)
@@ -135,7 +148,10 @@ def test_calibrate_camera_tunable_defaults():
     # tunable defaults are pinned
     params = inspect.signature(calibrate_camera).parameters
     assert params["max_frames"].default == 60 and params["min_images"].default == 8
-    assert params["num_threads"].default == 8 and params["min_registered_frac"].default == 0.6
+    assert (
+        params["num_threads"].default == 8
+        and params["min_registered_frac"].default == 0.6
+    )
 
 
 def test_calibrate_camera_max_frames_sets_subset_size(tmp_path, monkeypatch):
@@ -159,7 +175,9 @@ def test_calibrate_camera_min_images_lowers_the_floor(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("registered, frac, raises", [(6, 0.4, False), (9, 0.9, True)])
-def test_calibrate_camera_min_registered_frac_gates(tmp_path, monkeypatch, registered, frac, raises):
+def test_calibrate_camera_min_registered_frac_gates(
+    tmp_path, monkeypatch, registered, frac, raises
+):
     # 6/12 passes a 0.4 floor and 9/12 fails a 0.9 floor; the 0.6 default flips both
     _stub_pycolmap(monkeypatch, registered=registered)
     images = _touch_images(tmp_path, 12)
@@ -168,7 +186,10 @@ def test_calibrate_camera_min_registered_frac_gates(tmp_path, monkeypatch, regis
         with pytest.raises(RuntimeError, match="registered"):
             calibrate_camera(images, max_frames=12, min_registered_frac=frac)
     else:
-        assert calibrate_camera(images, max_frames=12, min_registered_frac=frac).model.name == "OPENCV"
+        assert (
+            calibrate_camera(images, max_frames=12, min_registered_frac=frac).model.name
+            == "OPENCV"
+        )
 
 
 def test_calibrate_camera_num_threads_reaches_extract_and_match(tmp_path, monkeypatch):
@@ -235,7 +256,9 @@ def test_undistort_recovers_synthetic_distortion():
 
     # Interior compare (border interpolation is lossy either way). Measured 2.47 here
     # against 15.95 for the same comparison with the undistortion step skipped.
-    diff = np.abs(restored[0][30:-30, 30:-30].astype(int) - reference[30:-30, 30:-30].astype(int))
+    diff = np.abs(
+        restored[0][30:-30, 30:-30].astype(int) - reference[30:-30, 30:-30].astype(int)
+    )
     assert diff.mean() < 5.0
 
 
@@ -265,16 +288,22 @@ def test_undistort_frames_straightens_a_line():
 
     # Centroid of each blob in the output; a straight line has near-zero y spread
     gray = cv2.cvtColor(out[0], cv2.COLOR_RGB2GRAY)
-    count, _, _, centroids = cv2.connectedComponentsWithStats((gray > 128).astype(np.uint8))
+    count, _, _, centroids = cv2.connectedComponentsWithStats(
+        (gray > 128).astype(np.uint8)
+    )
     ys = sorted(c[1] for c in centroids[1:])
 
     assert count - 1 >= 7, "lost blobs — the warp is dropping content"
-    assert max(ys) - min(ys) < 2.0, f"line still bowed: y spread {max(ys) - min(ys):.2f} px"
+    assert max(ys) - min(ys) < 2.0, (
+        f"line still bowed: y spread {max(ys) - min(ys):.2f} px"
+    )
 
 
 def test_undistort_frames_returns_a_pinhole_camera_with_no_distortion():
     # No distortion params left on the returned camera to apply a second time
-    _, new_camera = undistort_frames(np.zeros((1, 1080, 1920, 3), np.uint8), _distorted_camera())
+    _, new_camera = undistort_frames(
+        np.zeros((1, 1080, 1920, 3), np.uint8), _distorted_camera()
+    )
 
     assert list(new_camera.params[4:]) == []
 
@@ -282,7 +311,9 @@ def test_undistort_frames_returns_a_pinhole_camera_with_no_distortion():
 def test_wrong_frame_dims_raise():
     # Frames that disagree with the camera would silently warp through the wrong map
     with pytest.raises(ValueError, match="camera is"):
-        undistort_frames(np.zeros((1, 100, 100, 3), np.uint8), _distorted_camera(640, 480))
+        undistort_frames(
+            np.zeros((1, 100, 100, 3), np.uint8), _distorted_camera(640, 480)
+        )
 
 
 def test_unstacked_frames_raise():

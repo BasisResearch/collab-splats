@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import open3d as o3d
@@ -73,7 +74,9 @@ def create_texture_mesh(
     """
     # nvdiffrast has no CPU rasterizer; refuse before touching the views
     if not torch.cuda.is_available():
-        raise RuntimeError("create_texture_mesh needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines")
+        raise RuntimeError(
+            "create_texture_mesh needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines"
+        )
 
     rgbs, c2w, K, _ = validate_views(rgbs, c2w, K)
 
@@ -81,12 +84,25 @@ def create_texture_mesh(
     uvs, boxes = unwrap_view_charts(mesh, c2w, K, rgbs.shape[1:3], tex_size)
     mesh = o3d.geometry.TriangleMesh(mesh)
     mesh.compute_vertex_normals()
-    verts, faces, normals = np.asarray(mesh.vertices), np.asarray(mesh.triangles), np.asarray(mesh.vertex_normals)
+    verts, faces, normals = (
+        np.asarray(mesh.vertices),
+        np.asarray(mesh.triangles),
+        np.asarray(mesh.vertex_normals),
+    )
     occluder_vf = (np.asarray(occluder.vertices), np.asarray(occluder.triangles))
 
     # Project, then grow each chart's edge into its own padding so bilinear lookups never mix charts
     albedo = project_images_to_texture(
-        verts, faces, normals, uvs, rgbs, c2w, K, tex_size, occlusion_eps=voxel_size, occluder=occluder_vf
+        verts,
+        faces,
+        normals,
+        uvs,
+        rgbs,
+        c2w,
+        K,
+        tex_size,
+        occlusion_eps=voxel_size,
+        occluder=occluder_vf,
     )
     albedo = _dilate_chart_gutters(albedo, uvs, boxes)
 
@@ -148,11 +164,15 @@ def unwrap_view_charts(
     n_faces, n_views = len(faces), len(w2c)
 
     # Label: best view the face owns its pixels in, smoothed among owned views only
-    scores = _face_view_scores(verts, faces, w2c, K, image_hw, frac=frac, small_px=small_px, rel_tol=rel_tol)
+    scores = _face_view_scores(
+        verts, faces, w2c, K, image_hw, frac=frac, small_px=small_px, rel_tol=rel_tol
+    )
     unseen = (scores.max(1).values == 0).cpu().numpy()
     labels = scores.float().argmax(1)
     pairs = adjacent_face_pairs(faces, len(verts))
-    labels = _smooth_labels(labels, scores, pairs, alpha=alpha, rounds=rounds).cpu().numpy()
+    labels = (
+        _smooth_labels(labels, scores, pairs, alpha=alpha, rounds=rounds).cpu().numpy()
+    )
     del scores
     torch.cuda.empty_cache()
 
@@ -168,7 +188,9 @@ def unwrap_view_charts(
     uv = pixels.numpy()
 
     # Unseen faces: each connected group of them gets one flat patch
-    patch = _same_key_components(np.where(unseen, 0, 1 + np.arange(n_faces)), pairs, n_faces)
+    patch = _same_key_components(
+        np.where(unseen, 0, 1 + np.arange(n_faces)), pairs, n_faces
+    )
     patch_normal = np.zeros((int(patch.max()) + 1, 3))
     np.add.at(patch_normal, patch[unseen], fn[unseen])
     uv[unseen] = _plane_uv(fv[unseen], patch_normal[patch[unseen]])
@@ -216,16 +238,24 @@ def _face_view_scores(
     scores = torch.zeros(n_faces, len(w2c), dtype=torch.float16, device="cuda")
 
     for k in range(len(w2c)):
-        rast, depth = _rasterize_view(ctx, verts_h, faces_t, w2c_t[k], K_t[k], height, width)
+        rast, depth = _rasterize_view(
+            ctx, verts_h, faces_t, w2c_t[k], K_t[k], height, width
+        )
         face_id = rast[..., 3].long().flatten()
         owned = torch.bincount(face_id[face_id > 0] - 1, minlength=n_faces).float()
 
         # Projected area of each face; in front and fully framed only
         pixels, cam = project(verts_h[:, :3], w2c_t[k], K_t[k])
         p = pixels[corners]
-        area = _signed_area(p).abs()
+        area = cast(torch.Tensor, _signed_area(p))
+        area = area.abs()
         in_front = (cam[corners][..., 2] > 1e-3).all(1)
-        framed = ((p[..., 0] >= 0) & (p[..., 0] < width) & (p[..., 1] >= 0) & (p[..., 1] < height)).all(1)
+        framed = (
+            (p[..., 0] >= 0)
+            & (p[..., 0] < width)
+            & (p[..., 1] >= 0)
+            & (p[..., 1] < height)
+        ).all(1)
 
         # Centroid depth test for faces too small to own pixels
         centroid_px, centroid_cam = project(centroids, w2c_t[k], K_t[k])
@@ -241,7 +271,12 @@ def _face_view_scores(
 
 
 def _smooth_labels(
-    labels: torch.Tensor, scores: torch.Tensor, pairs: np.ndarray, *, alpha: float, rounds: int
+    labels: torch.Tensor,
+    scores: torch.Tensor,
+    pairs: np.ndarray,
+    *,
+    alpha: float,
+    rounds: int,
 ) -> torch.Tensor:
     """
     Majority vote: a face takes the label two of its neighbors share if it scores >= alpha of its best there.
@@ -296,11 +331,15 @@ def _plane_uv(fv: np.ndarray, normal: np.ndarray) -> np.ndarray:
     n = normal / np.maximum(np.linalg.norm(normal, axis=-1, keepdims=True), 1e-12)
 
     # In-plane basis from any helper axis not parallel to the normal
-    helper = np.where(np.abs(n[:, :1]) < 0.9, np.array([[1.0, 0, 0]]), np.array([[0, 1.0, 0]]))
+    helper = np.where(
+        np.abs(n[:, :1]) < 0.9, np.array([[1.0, 0, 0]]), np.array([[0, 1.0, 0]])
+    )
     e1 = np.cross(n, helper)
     e1 /= np.maximum(np.linalg.norm(e1, axis=1, keepdims=True), 1e-12)
     e2 = np.cross(n, e1)
-    return np.stack([np.einsum("fcj,fj->fc", fv, e1), np.einsum("fcj,fj->fc", fv, e2)], -1)
+    return np.stack(
+        [np.einsum("fcj,fj->fc", fv, e1), np.einsum("fcj,fj->fc", fv, e2)], -1
+    )
 
 
 ########################################################################
@@ -309,7 +348,13 @@ def _plane_uv(fv: np.ndarray, normal: np.ndarray) -> np.ndarray:
 
 
 def _pack_charts(
-    uv: np.ndarray, key: np.ndarray, area: np.ndarray, pairs: np.ndarray, tile_m: float, pad: int, tex_size: int
+    uv: np.ndarray,
+    key: np.ndarray,
+    area: np.ndarray,
+    pairs: np.ndarray,
+    tile_m: float,
+    pad: int,
+    tex_size: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Charts from (key, adjacency), tiled, scaled to one texel density, rotated, shelf-packed.
@@ -323,7 +368,9 @@ def _pack_charts(
     # Cut charts into world-sized tiles so no box spans the atlas
     scale = _chart_world_scale(chart, uv_area, area)
     cell = np.floor(uv.mean(1) * scale[chart][:, None] / tile_m).astype(np.int64)
-    _, tile = np.unique(np.stack([chart, cell[:, 0], cell[:, 1]], 1), axis=0, return_inverse=True)
+    _, tile = np.unique(
+        np.stack([chart, cell[:, 0], cell[:, 1]], 1), axis=0, return_inverse=True
+    )
     chart = _same_key_components(tile.ravel(), pairs, n_faces)
     n_charts = int(chart.max()) + 1
 
@@ -331,7 +378,10 @@ def _pack_charts(
     scale = _chart_world_scale(chart, uv_area, area)
     flat = (uv * scale[chart][:, None, None]).reshape(-1, 2)
     cc = np.repeat(chart, 3)
-    mean = np.stack([np.bincount(cc, flat[:, i], n_charts) for i in range(2)], 1) / np.bincount(cc)[:, None]
+    mean = (
+        np.stack([np.bincount(cc, flat[:, i], n_charts) for i in range(2)], 1)
+        / np.bincount(cc)[:, None]
+    )
     d = flat - mean[cc]
 
     # Rotate each chart onto its principal axes
@@ -340,7 +390,9 @@ def _pack_charts(
     sxy = np.bincount(cc, d[:, 0] * d[:, 1], n_charts)
     angle = 0.5 * np.arctan2(2 * sxy, sxx - syy)
     ca, sa = np.cos(angle)[cc], np.sin(angle)[cc]
-    rot = np.stack([ca * d[:, 0] + sa * d[:, 1], -sa * d[:, 0] + ca * d[:, 1]], 1).reshape(-1, 3, 2)
+    rot = np.stack(
+        [ca * d[:, 0] + sa * d[:, 1], -sa * d[:, 0] + ca * d[:, 1]], 1
+    ).reshape(-1, 3, 2)
     cmin = np.full((n_charts, 2), np.inf)
     cmax = np.full((n_charts, 2), -np.inf)
     np.minimum.at(cmin, chart, rot.min(1))
@@ -367,15 +419,22 @@ def _pack_charts(
     return uvs, chart, np.concatenate([x[:, None], y[:, None], size], 1)
 
 
-def _chart_world_scale(chart: np.ndarray, uv_area: np.ndarray, world_area: np.ndarray) -> np.ndarray:
+def _chart_world_scale(
+    chart: np.ndarray, uv_area: np.ndarray, world_area: np.ndarray
+) -> np.ndarray:
     """
     Per-chart sqrt(world area / uv area): chart coordinates times this are world units.
     """
     n = int(chart.max()) + 1
-    return np.sqrt(np.bincount(chart, world_area, n) / np.maximum(np.bincount(chart, uv_area, n), 1e-12))
+    return np.sqrt(
+        np.bincount(chart, world_area, n)
+        / np.maximum(np.bincount(chart, uv_area, n), 1e-12)
+    )
 
 
-def _shelf_pack(w: np.ndarray, h: np.ndarray, width: int) -> tuple[np.ndarray, np.ndarray, int]:
+def _shelf_pack(
+    w: np.ndarray, h: np.ndarray, width: int
+) -> tuple[np.ndarray, np.ndarray, int]:
     """
     Shelf packing of integer boxes, tallest first; returns x, y offsets and total height.
     """
@@ -397,7 +456,11 @@ def _shelf_pack(w: np.ndarray, h: np.ndarray, width: int) -> tuple[np.ndarray, n
 
 
 def _find_broken_faces(
-    uvs: np.ndarray, chart: np.ndarray, unseen: np.ndarray, tex_size: int, min_owned: float
+    uvs: np.ndarray,
+    chart: np.ndarray,
+    unseen: np.ndarray,
+    tex_size: int,
+    min_owned: float,
 ) -> np.ndarray:
     """
     Faces one atlas raster shows flipped or overwritten, (F,) bool.
@@ -416,7 +479,11 @@ def _find_broken_faces(
     del rast, face_id
     expect = np.abs(signed) * tex_size**2
     lost = (expect >= 1.0) & (owned < min_owned * expect)
-    logger.info("view charts: %d flipped, %d lost faces become single charts", int(flipped.sum()), int(lost.sum()))
+    logger.info(
+        "view charts: %d flipped, %d lost faces become single charts",
+        int(flipped.sum()),
+        int(lost.sum()),
+    )
     return flipped | lost
 
 
@@ -469,7 +536,11 @@ def project_images_to_texture(
     # World position and normal of every covered texel, interpolated from per-corner attributes
     rast = _rasterize_uvs(uvs, tex_size)
     covered = rast[0, ..., 3] > 0
-    corners = np.concatenate([verts[faces], normals[faces]], -1).reshape(-1, 6).astype(np.float32)
+    corners = (
+        np.concatenate([verts[faces], normals[faces]], -1)
+        .reshape(-1, 6)
+        .astype(np.float32)
+    )
     tri = torch.arange(len(corners), dtype=torch.int32, device="cuda").reshape(-1, 3)
     attr, _ = dr.interpolate(torch.from_numpy(corners).cuda()[None], rast, tri)
     texels = attr[0][covered]
@@ -490,7 +561,9 @@ def project_images_to_texture(
 
     for k in range(len(rgbs)):
         _, depth = _rasterize_view(ctx, verts_h, faces_t, w2c[k], K_t[k], height, width)
-        px_size, _ = _visible_pixel_size(points, dirs, depth, w2c[k], K_t[k], occlusion_eps)
+        px_size, _ = _visible_pixel_size(
+            points, dirs, depth, w2c[k], K_t[k], occlusion_eps
+        )
         best = torch.minimum(best, px_size)
 
     # Pass two: detail from the views within view_ratio of each texel's best, base from every view
@@ -502,7 +575,9 @@ def project_images_to_texture(
 
     for k in range(len(rgbs)):
         _, depth = _rasterize_view(ctx, verts_h, faces_t, w2c[k], K_t[k], height, width)
-        px_size, pixels = _visible_pixel_size(points, dirs, depth, w2c[k], K_t[k], occlusion_eps)
+        px_size, pixels = _visible_pixel_size(
+            points, dirs, depth, w2c[k], K_t[k], occlusion_eps
+        )
         vis = torch.isfinite(px_size)
         keep = vis & (px_size <= best * view_ratio)
 
@@ -529,7 +604,10 @@ def project_images_to_texture(
     # Color = weighted mean detail + weighted mean base; texels no sharp view reached stay black
     hit = detail_w > 0
     albedo = torch.zeros(tex_size, tex_size, 3, device="cuda")
-    color = detail_acc / detail_w.clamp(min=1e-12)[:, None] + base_acc / base_w.clamp(min=1e-12)[:, None]
+    color = (
+        detail_acc / detail_w.clamp(min=1e-12)[:, None]
+        + base_acc / base_w.clamp(min=1e-12)[:, None]
+    )
     albedo[covered] = color.clamp(0, 1) * hit[:, None]
     seen = torch.zeros(tex_size, tex_size, dtype=torch.bool, device="cuda")
     seen[covered] = hit
@@ -573,7 +651,14 @@ def _visible_pixel_size(
 
     # In front of the camera and inside the frame
     u, v = pixels.unbind(1)
-    ok = (cos > 0) & (cam[:, 2] > 0) & (u >= 0) & (v >= 0) & (u <= width - 1) & (v <= height - 1)
+    ok = (
+        (cos > 0)
+        & (cam[:, 2] > 0)
+        & (u >= 0)
+        & (v >= 0)
+        & (u <= width - 1)
+        & (v <= height - 1)
+    )
 
     # Occluded when the depth render at the nearest pixel is nearer than the texel by more than eps
     front = _nearest_depth(depth, pixels)
@@ -581,7 +666,9 @@ def _visible_pixel_size(
     return torch.where(ok, dist / (K[0, 0] * cos), torch.inf), pixels
 
 
-def _dilate_chart_gutters(albedo: np.ndarray, uvs: np.ndarray, boxes: np.ndarray, steps: int = 2) -> np.ndarray:
+def _dilate_chart_gutters(
+    albedo: np.ndarray, uvs: np.ndarray, boxes: np.ndarray, steps: int = 2
+) -> np.ndarray:
     """
     Texels no face covers filled from covered 8-neighbors in the same chart box, uint8.
 
@@ -628,7 +715,9 @@ def _dilate_chart_gutters(albedo: np.ndarray, uvs: np.ndarray, boxes: np.ndarray
 ########################################################################
 
 
-def _gl_projection(K: np.ndarray, width: int, height: int, near: float = 0.01, far: float = 1000.0) -> np.ndarray:
+def _gl_projection(
+    K: np.ndarray, width: int, height: int, near: float = 0.01, far: float = 1000.0
+) -> np.ndarray:
     """
     OpenCV pinhole K as an OpenGL clip matrix, (4, 4) float32.
 
@@ -692,14 +781,20 @@ def _rasterize_uvs(uvs: np.ndarray, tex_size: int) -> torch.Tensor:
     """
     flat = uvs.reshape(-1, 2).astype(np.float32)
     zeros = np.zeros(len(flat), dtype=np.float32)
-    clip = np.stack([flat[:, 0] * 2 - 1, (1 - flat[:, 1]) * 2 - 1, zeros, zeros + 1], -1)
+    clip = np.stack(
+        [flat[:, 0] * 2 - 1, (1 - flat[:, 1]) * 2 - 1, zeros, zeros + 1], -1
+    )
     tri = torch.arange(len(flat), dtype=torch.int32, device="cuda").reshape(-1, 3)
     ctx = dr.RasterizeCudaContext()
-    rast, _ = dr.rasterize(ctx, torch.from_numpy(clip).cuda()[None], tri, resolution=[tex_size, tex_size])
+    rast, _ = dr.rasterize(
+        ctx, torch.from_numpy(clip).cuda()[None], tri, resolution=[tex_size, tex_size]
+    )
     return rast
 
 
-def _to_cuda_mesh(verts: np.ndarray, faces: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+def _to_cuda_mesh(
+    verts: np.ndarray, faces: np.ndarray
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Homogeneous float32 vertices and int32 faces on the GPU, as nvdiffrast takes them.
     """

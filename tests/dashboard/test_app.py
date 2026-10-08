@@ -166,9 +166,11 @@ def test_refresh_scenes_lists_off_loop(tmp_path):
     calling_thread = threading.current_thread().name
     ran_on = {}
     source = _source()
-    source.list_scenes.side_effect = lambda: ran_on.setdefault("curated", threading.current_thread().name) and []
-    source.list_processed_scenes.side_effect = (
-        lambda: ran_on.setdefault("processed", threading.current_thread().name) and []
+    source.list_scenes.side_effect = lambda: (
+        ran_on.setdefault("curated", threading.current_thread().name) and []
+    )
+    source.list_processed_scenes.side_effect = lambda: (
+        ran_on.setdefault("processed", threading.current_thread().name) and []
     )
     _app(tmp_path, source)
     assert ran_on["curated"] != calling_thread
@@ -216,7 +218,9 @@ def test_partial_listing_failure_still_populates(tmp_path):
 
 def test_restore_selection_rejects_a_scene_missing_from_both_buckets(tmp_path):
     """A stale persisted scene is not set: a value outside the options breaks the dropdown."""
-    (tmp_path / ".dashboard_state.yaml").write_text(yaml.safe_dump({"scene_select": "2020_01_01-gone-clip"}))
+    (tmp_path / ".dashboard_state.yaml").write_text(
+        yaml.safe_dump({"scene_select": "2020_01_01-gone-clip"})
+    )
     app, _ = _app(tmp_path)
     assert app._restore_selection([SCENE], set()) is False
     assert not app.scene_select.value
@@ -236,7 +240,9 @@ def test_restore_selection_accepts_a_processed_only_scene(tmp_path):
 
 def test_restore_selection_sets_scene_without_autoloading(tmp_path):
     """A browser reload restores the persisted scene but does not start a load nobody asked for."""
-    (tmp_path / ".dashboard_state.yaml").write_text(yaml.safe_dump({"scene_select": SCENE}))
+    (tmp_path / ".dashboard_state.yaml").write_text(
+        yaml.safe_dump({"scene_select": SCENE})
+    )
 
     with patch.object(SplatsApp, "_load_outputs") as load:
         app, _ = _app(tmp_path)
@@ -249,7 +255,9 @@ def test_autoload_current_noop_on_blank_selection(tmp_path, monkeypatch):
     """The blank entry probes nothing: no load job, no rclone call."""
     app, source = _app(tmp_path)
     probed = []
-    monkeypatch.setattr(app, "_load_outputs", lambda scene, backend: probed.append(scene))
+    monkeypatch.setattr(
+        app, "_load_outputs", lambda scene, backend: probed.append(scene)
+    )
     source.has_processed.reset_mock()
     app.scene_select.value = ""
     app._autoload_current()
@@ -261,7 +269,9 @@ def test_picking_a_scene_triggers_the_load_path(tmp_path, monkeypatch):
     """The load path fires only when the user picks a scene."""
     app, _ = _app(tmp_path)
     picked = []
-    monkeypatch.setattr(app, "_autoload_current", lambda: picked.append(app.scene_select.value))
+    monkeypatch.setattr(
+        app, "_autoload_current", lambda: picked.append(app.scene_select.value)
+    )
     app.scene_select.value = SCENE
     assert picked == [SCENE]
 
@@ -271,7 +281,9 @@ def test_switching_backend_reloads(tmp_path, monkeypatch):
     app, _ = _app(tmp_path)
     _select(app, SCENE)
     loads = []
-    monkeypatch.setattr(app, "_load_outputs", lambda scene, backend: loads.append((scene, backend)))
+    monkeypatch.setattr(
+        app, "_load_outputs", lambda scene, backend: loads.append((scene, backend))
+    )
     app.backend.value = "instantsfm"
     assert loads == [(SCENE, "instantsfm")]
 
@@ -327,7 +339,9 @@ def test_persisted_state_round_trips_into_a_fresh_app(tmp_path):
 
 
 def test_persisted_stages_drop_unknown_names(tmp_path):
-    (tmp_path / ".dashboard_state.yaml").write_text(yaml.safe_dump({"stages": ["preproc", "bogus"]}))
+    (tmp_path / ".dashboard_state.yaml").write_text(
+        yaml.safe_dump({"stages": ["preproc", "bogus"]})
+    )
     app, _ = _app(tmp_path)
     assert app.stages.value == ["preproc"]
 
@@ -342,15 +356,23 @@ def test_reconstructor_reads_the_recorded_run_config(tmp_path):
     app, _ = _app(tmp_path)
     _done_backend(tmp_path / SCENE, extractor="dinov2")
     rec = app._reconstructor(SCENE, BACKEND)
-    assert rec.outputs["semantics"] == tmp_path / SCENE / BACKEND / "semantics" / "dinov2_lifted.zarr"
+    assert (
+        rec.outputs["semantics"]
+        == tmp_path / SCENE / BACKEND / "semantics" / "dinov2_lifted.zarr"
+    )
     assert rec.config["output_path"] == str(tmp_path / SCENE)
     assert rec.done("pointcloud")
 
 
 def test_reconstructor_picks_the_method_from_the_registry(tmp_path):
     app, _ = _app(tmp_path)
-    assert app._reconstructor(SCENE, "instantsfm").config["pointcloud"]["method"] == "sfm"
-    assert app._reconstructor(SCENE, "vggt_omega").config["pointcloud"]["method"] == "feedforward"
+    assert (
+        app._reconstructor(SCENE, "instantsfm").config["pointcloud"]["method"] == "sfm"
+    )
+    assert (
+        app._reconstructor(SCENE, "vggt_omega").config["pointcloud"]["method"]
+        == "feedforward"
+    )
 
 
 def test_backend_dropdown_lists_every_registered_backend(tmp_path):
@@ -371,7 +393,9 @@ def test_ensure_local_video_reuses_a_local_copy(tmp_path):
 def test_ensure_local_video_fetches_into_the_scene_dir(tmp_path):
     """A missing video downloads into base_dir/<scene>/, where the next run finds it."""
     app, source = _app(tmp_path)
-    source.fetch_video.side_effect = lambda scene, dest_dir, on_line=None: dest_dir / "clip_03.mp4"
+    source.fetch_video.side_effect = lambda scene, dest_dir, on_line=None: (
+        dest_dir / "clip_03.mp4"
+    )
     assert app._ensure_local_video(SCENE) == tmp_path / SCENE / "clip_03.mp4"
     assert source.fetch_video.call_args.args == (SCENE, tmp_path / SCENE)
 
@@ -435,7 +459,11 @@ def test_run_job_writes_run_config_runs_the_stages_then_pushes(tmp_path, monkeyp
     app.stages.value = ["pointcloud"]
     app.overrides.value = "semantics:\n  enabled: false\n"
     calls = []
-    monkeypatch.setattr(Reconstructor, "run", lambda self, stages, overwrite: calls.append((stages, overwrite)))
+    monkeypatch.setattr(
+        Reconstructor,
+        "run",
+        lambda self, stages, overwrite: calls.append((stages, overwrite)),
+    )
     monkeypatch.setattr(app, "_push_async", lambda scene: calls.append(("push", scene)))
 
     app._on_run(event=None, force=True)
@@ -443,7 +471,9 @@ def test_run_job_writes_run_config_runs_the_stages_then_pushes(tmp_path, monkeyp
     job_fn()
 
     assert calls == [(["pointcloud"], True), ("push", SCENE)]
-    written = yaml.safe_load(Reconstructor.run_config_path(tmp_path / SCENE, "instantsfm").read_text())
+    written = yaml.safe_load(
+        Reconstructor.run_config_path(tmp_path / SCENE, "instantsfm").read_text()
+    )
     assert written["pointcloud"]["method"] == "sfm"
     assert written["output_path"] == str(tmp_path / SCENE)
     assert written["semantics"]["enabled"] is False
@@ -452,7 +482,9 @@ def test_run_job_writes_run_config_runs_the_stages_then_pushes(tmp_path, monkeyp
 
 def test_push_uploads_the_scene_dir_and_logs_done(tmp_path, monkeypatch):
     app, source = _app(tmp_path)
-    monkeypatch.setattr("collab_splats.dashboard.app.threading", SimpleNamespace(Thread=_InlineThread))
+    monkeypatch.setattr(
+        "collab_splats.dashboard.app.threading", SimpleNamespace(Thread=_InlineThread)
+    )
     app._push_async(SCENE)
     assert source.push_outputs.call_args.args == (tmp_path / SCENE, SCENE)
     assert any(line.startswith("push: done") for line in app._op_log.log_lines)
@@ -461,13 +493,19 @@ def test_push_uploads_the_scene_dir_and_logs_done(tmp_path, monkeypatch):
 def test_push_failure_is_logged_not_raised(tmp_path, monkeypatch):
     """Outputs are already on local disk, so a failed upload only logs."""
     app, source = _app(tmp_path)
-    monkeypatch.setattr("collab_splats.dashboard.app.threading", SimpleNamespace(Thread=_InlineThread))
+    monkeypatch.setattr(
+        "collab_splats.dashboard.app.threading", SimpleNamespace(Thread=_InlineThread)
+    )
     source.push_outputs.side_effect = RuntimeError("bucket down")
     app._push_async(SCENE)
     assert "push: FAILED (bucket down)" in app._op_log.log_lines
 
 
-@pytest.mark.parametrize("preproc_done, force", [(False, False), (True, True)], ids=["not_done", "force_rerun"])
+@pytest.mark.parametrize(
+    "preproc_done, force",
+    [(False, False), (True, True)],
+    ids=["not_done", "force_rerun"],
+)
 def test_run_of_preproc_fetches_the_video(tmp_path, monkeypatch, preproc_done, force):
     """Preproc reads the fetched video, whether it never ran or a force re-run rebuilds images/."""
     app, _ = _app(tmp_path)
@@ -482,14 +520,20 @@ def test_run_of_preproc_fetches_the_video(tmp_path, monkeypatch, preproc_done, f
     # Real run(); only the preproc stage body is replaced, recording the input it would read
     app.stages.value = ["preproc"]
     seen = []
-    monkeypatch.setattr(Reconstructor, "preproc", lambda self, **kwargs: seen.append(self.config["input_path"]))
+    monkeypatch.setattr(
+        Reconstructor,
+        "preproc",
+        lambda self, **kwargs: seen.append(self.config["input_path"]),
+    )
     monkeypatch.setattr(app, "_push_async", lambda scene: None)
 
     app._on_run(event=None, force=force)
     app._gpu.submitted[-1][0]()
 
     assert seen == [str(video)]
-    written = yaml.safe_load(Reconstructor.run_config_path(tmp_path / SCENE, app.backend.value).read_text())
+    written = yaml.safe_load(
+        Reconstructor.run_config_path(tmp_path / SCENE, app.backend.value).read_text()
+    )
     assert written["input_path"] == str(video)
 
 
@@ -514,9 +558,13 @@ def test_run_with_no_stages_runs_every_enabled_stage(tmp_path, monkeypatch):
     _select(app, SCENE)
     (tmp_path / SCENE / "images").mkdir(parents=True)
     app.stages.value = []
-    monkeypatch.setattr(app, "_ensure_local_video", lambda scene: tmp_path / "clip_03.mp4")
+    monkeypatch.setattr(
+        app, "_ensure_local_video", lambda scene: tmp_path / "clip_03.mp4"
+    )
     calls = []
-    monkeypatch.setattr(Reconstructor, "run", lambda self, stages, overwrite: calls.append(stages))
+    monkeypatch.setattr(
+        Reconstructor, "run", lambda self, stages, overwrite: calls.append(stages)
+    )
     monkeypatch.setattr(app, "_push_async", lambda scene: None)
 
     app._on_run(event=None, force=False)
@@ -525,15 +573,21 @@ def test_run_with_no_stages_runs_every_enabled_stage(tmp_path, monkeypatch):
     assert calls == [None]
 
 
-def test_run_pulls_server_outputs_without_dense_excludes_before_running(tmp_path, monkeypatch):
+def test_run_pulls_server_outputs_without_dense_excludes_before_running(
+    tmp_path, monkeypatch
+):
     """A backend not done locally comes down in full, dense zarr members included, before run()."""
     app, source = _app(tmp_path)
     _select(app, SCENE)
     source.has_processed.return_value = True
     (tmp_path / SCENE / "images").mkdir(parents=True)
     events = []
-    source.pull_processed.side_effect = lambda *a, **kw: events.append(("pull", kw["excludes"]))
-    monkeypatch.setattr(Reconstructor, "run", lambda self, stages, overwrite: events.append(("run",)))
+    source.pull_processed.side_effect = lambda *a, **kw: events.append(
+        ("pull", kw["excludes"])
+    )
+    monkeypatch.setattr(
+        Reconstructor, "run", lambda self, stages, overwrite: events.append(("run",))
+    )
     monkeypatch.setattr(app, "_push_async", lambda scene: None)
 
     app._on_run(event=None, force=False)
@@ -572,7 +626,9 @@ def test_run_dumps_the_config_pulled_from_the_server(tmp_path, monkeypatch):
     def pull(scene, dest, **kw):
         path = Reconstructor.run_config_path(dest, backend)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(yaml.safe_dump({"preproc": {"frame_selection": "optical_flow"}}))
+        path.write_text(
+            yaml.safe_dump({"preproc": {"frame_selection": "optical_flow"}})
+        )
 
     source.pull_processed.side_effect = pull
     monkeypatch.setattr(Reconstructor, "run", lambda self, stages, overwrite: None)
@@ -581,7 +637,9 @@ def test_run_dumps_the_config_pulled_from_the_server(tmp_path, monkeypatch):
     app._on_run(event=None, force=False)
     app._gpu.submitted[-1][0]()
 
-    written = yaml.safe_load(Reconstructor.run_config_path(tmp_path / SCENE, backend).read_text())
+    written = yaml.safe_load(
+        Reconstructor.run_config_path(tmp_path / SCENE, backend).read_text()
+    )
     assert written["preproc"]["frame_selection"] == "optical_flow"
 
 
@@ -590,7 +648,11 @@ def test_run_on_done_suggests_force_when_output_exists(tmp_path):
     _select(app, SCENE)
     app._on_run(event=None, force=False)
     _job, on_done, _doc = app._gpu.submitted[-1]
-    on_done(ValueError("stage 'pointcloud' output already exists; pass overwrite=True to replace it"))
+    on_done(
+        ValueError(
+            "stage 'pointcloud' output already exists; pass overwrite=True to replace it"
+        )
+    )
     assert any("use Force re-run" in line for line in app._op_log.log_lines)
 
 
@@ -598,7 +660,9 @@ def test_run_on_done_reloads_the_backend(tmp_path, monkeypatch):
     app, _ = _app(tmp_path)
     _select(app, SCENE)
     loads = []
-    monkeypatch.setattr(app, "_load_outputs", lambda scene, backend: loads.append((scene, backend)))
+    monkeypatch.setattr(
+        app, "_load_outputs", lambda scene, backend: loads.append((scene, backend))
+    )
     app._on_run(event=None, force=False)
     _job, on_done, _doc = app._gpu.submitted[-1]
     on_done(None)
@@ -682,7 +746,9 @@ def test_load_job_reports_a_backend_not_run(tmp_path, online):
     assert res is None
     source.pull_processed.assert_not_called()
     app._viewer.load.assert_not_called()
-    assert any(f"{BACKEND} not run for {SCENE}" in line for line in app._op_log.log_lines)
+    assert any(
+        f"{BACKEND} not run for {SCENE}" in line for line in app._op_log.log_lines
+    )
     assert not app._op_log.is_running
 
 
@@ -766,7 +832,9 @@ def test_load_outputs_logs_steps(tmp_path, monkeypatch):
     app, source = _app(tmp_path)
 
     # pointcloud.zarr absent -> job pulls; the fake pull materializes the zarr dir
-    source.pull_processed.side_effect = lambda scene, out, excludes=(), on_line=None: _done_backend(out)
+    source.pull_processed.side_effect = lambda scene, out, excludes=(), on_line=None: (
+        _done_backend(out)
+    )
     source.has_processed.return_value = True
     monkeypatch.setattr(PointcloudResult, "load_zarr", lambda p, **kwargs: object())
     app._load_outputs(SCENE, BACKEND)
@@ -893,7 +961,9 @@ def test_query_submits_score_job_with_parsed_terms(tmp_path):
 
     job_fn, _on_done, _doc = app._gpu.submitted[0]
     job_fn()
-    app._viewer.score_query.assert_called_once_with(positive=["chair", "stool"], negative=["floor"], extractor_name="")
+    app._viewer.score_query.assert_called_once_with(
+        positive=["chair", "stool"], negative=["floor"], extractor_name=""
+    )
 
 
 def test_query_on_done_renders_colors_and_finishes_the_op(tmp_path):
@@ -926,4 +996,7 @@ def test_query_on_done_exception_logs_the_error(tmp_path):
     on_done(RuntimeError("extractor failed"))
     app._viewer.render_query.assert_not_called()
     assert not app._op_log.is_running
-    assert any("extractor failed" in line and line.startswith("ERROR") for line in app._op_log.log_lines)
+    assert any(
+        "extractor failed" in line and line.startswith("ERROR")
+        for line in app._op_log.log_lines
+    )

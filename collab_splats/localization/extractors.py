@@ -84,7 +84,13 @@ class LocalMatcher:
     - models without vismatch supports_batches are refused: they cannot match cached features
     """
 
-    def __init__(self, model_name: str, device: str | None = None, *, max_num_keypoints: int = 2048) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        device: str | None = None,
+        *,
+        max_num_keypoints: int = 2048,
+    ) -> None:
         """
         Load the vismatch model; refuse one that cannot match cached features.
 
@@ -99,7 +105,9 @@ class LocalMatcher:
         self._model_name = model_name
         self._device = device or get_device()
         self._max_num_keypoints = max_num_keypoints
-        self._matcher = vismatch.get_matcher(model_name, device=self._device, max_num_keypoints=max_num_keypoints)
+        self._matcher = vismatch.get_matcher(
+            model_name, device=self._device, max_num_keypoints=max_num_keypoints
+        )
 
         # Cached-feature matching runs on vismatch's batch path only
         if not self._matcher.supports_batches:
@@ -144,7 +152,11 @@ class LocalMatcher:
         """
         Refuse keypoints outside the input image's pixel frame.
         """
-        if len(kpts) and (kpts.min() < -0.5 or kpts[:, 0].max() > hw[1] - 0.5 or kpts[:, 1].max() > hw[0] - 0.5):
+        if len(kpts) and (
+            kpts.min() < -0.5
+            or kpts[:, 0].max() > hw[1] - 0.5
+            or kpts[:, 1].max() > hw[0] - 0.5
+        ):
             raise ValueError(
                 f"vismatch '{what}' keypoints outside input pixel frame {hw}: "
                 f"x range [{kpts[:, 0].min():.1f}, {kpts[:, 0].max():.1f}], "
@@ -152,7 +164,9 @@ class LocalMatcher:
                 "model likely returns coords at its internal resolution"
             )
 
-    def extract(self, images: np.ndarray | list[np.ndarray]) -> LocalFeatures | list[LocalFeatures]:
+    def extract(
+        self, images: np.ndarray | list[np.ndarray]
+    ) -> LocalFeatures | list[LocalFeatures]:
         """
         Keypoints and descriptors for one image, or for every image of a list in one vismatch call.
 
@@ -166,7 +180,7 @@ class LocalMatcher:
             ValueError: the model returned keypoints outside an input image.
         """
         batch = isinstance(images, list)
-        images = images if batch else [images]
+        images = images if isinstance(images, list) else [images]
         tensors = [self._to_tensor(image) for image in images]
 
         with torch.inference_mode():
@@ -230,7 +244,9 @@ class LocalMatcher:
         """
         return self.match_batch([(query, db)])[0]
 
-    def match_batch(self, pairs: list[tuple[LocalFeatures, LocalFeatures]]) -> list[MatchResult]:
+    def match_batch(
+        self, pairs: list[tuple[LocalFeatures, LocalFeatures]]
+    ) -> list[MatchResult]:
         """
         Match many cached frame pairs in one vismatch match_batch call.
 
@@ -244,8 +260,15 @@ class LocalMatcher:
             One match() result per pair, in order; empty where either side has no keypoints.
         """
         results = [_empty_match() for _ in pairs]
-        live = [i for i, (q, d) in enumerate(pairs) if len(q.descriptors) and len(d.descriptors)]
-        inputs = [(self._vismatch_features(pairs[i][0]), self._vismatch_features(pairs[i][1])) for i in live]
+        live = [
+            i
+            for i, (q, d) in enumerate(pairs)
+            if len(q.descriptors) and len(d.descriptors)
+        ]
+        inputs = [
+            (self._vismatch_features(pairs[i][0]), self._vismatch_features(pairs[i][1]))
+            for i in live
+        ]
 
         with torch.inference_mode():
             outs = self._matcher.match_batch(inputs)
@@ -259,7 +282,9 @@ class LocalMatcher:
             ref_px = out["matched_kpts1"].astype(np.float32, copy=False)
             idx_q = out["matched_idxs0"].astype(np.int64, copy=False)
             idx_db = out["matched_idxs1"].astype(np.int64, copy=False)
-            results[i] = MatchResult(query_px=query_px, ref_px=ref_px, idx_q=idx_q, idx_db=idx_db)
+            results[i] = MatchResult(
+                query_px=query_px, ref_px=ref_px, idx_q=idx_q, idx_db=idx_db
+            )
 
         return results
 
@@ -268,7 +293,11 @@ class LocalMatcher:
         """
         LocalFeatures as a vismatch extract() dict; keypoints_normalized feeds loma.
         """
-        out = {"all_kpts0": feats.keypoints, "all_desc0": feats.descriptors, "image_size": feats.image_size}
+        out = {
+            "all_kpts0": feats.keypoints,
+            "all_desc0": feats.descriptors,
+            "image_size": feats.image_size,
+        }
 
         if feats.keypoints_normalized is not None:
             out["kpts_normalized"] = feats.keypoints_normalized

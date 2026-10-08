@@ -98,7 +98,11 @@ def _identity_decoder(n_tokens: int) -> nn.Module:
 
 
 def test_verbalize_sums_tokens_per_word_and_reports_mass():
-    vocab = WordVocab(words=["a", "b"], token_ids=torch.tensor([1, 2, 3]), word_index=torch.tensor([0, 0, 1]))
+    vocab = WordVocab(
+        words=["a", "b"],
+        token_ids=torch.tensor([1, 2, 3]),
+        word_index=torch.tensor([0, 0, 1]),
+    )
     probs = torch.tensor([[0.1, 0.2, 0.3, 0.3, 0.1]])
     words, top_p, mass = verbalize(probs.log(), _identity_decoder(5), vocab, k=2)
 
@@ -108,7 +112,11 @@ def test_verbalize_sums_tokens_per_word_and_reports_mass():
 
 
 def test_verbalize_flattens_maps_row_major():
-    vocab = WordVocab(words=["a", "b"], token_ids=torch.tensor([1, 2, 3]), word_index=torch.tensor([0, 0, 1]))
+    vocab = WordVocab(
+        words=["a", "b"],
+        token_ids=torch.tensor([1, 2, 3]),
+        word_index=torch.tensor([0, 0, 1]),
+    )
     states = torch.randn(6, 5)
     fmap = states.T.reshape(5, 2, 3)
 
@@ -121,11 +129,17 @@ def test_verbalize_flattens_maps_row_major():
 
 def _vocab() -> WordVocab:
     """Two words over tokens 1-3 of a five-token decoder."""
-    return WordVocab(words=["a", "b"], token_ids=torch.tensor([1, 2, 3]), word_index=torch.tensor([0, 0, 1]))
+    return WordVocab(
+        words=["a", "b"],
+        token_ids=torch.tensor([1, 2, 3]),
+        word_index=torch.tensor([0, 0, 1]),
+    )
 
 
 def test_verbalize_empty_input_returns_empty_outputs():
-    words, top_p, mass = verbalize(torch.zeros(0, 5), _identity_decoder(5), _vocab(), k=10)
+    words, top_p, mass = verbalize(
+        torch.zeros(0, 5), _identity_decoder(5), _vocab(), k=10
+    )
 
     assert words == []
     assert top_p.shape == (0, 2)
@@ -133,7 +147,11 @@ def test_verbalize_empty_input_returns_empty_outputs():
 
 
 def test_verbalize_empty_vocab_raises():
-    vocab = WordVocab(words=[], token_ids=torch.zeros(0, dtype=torch.long), word_index=torch.zeros(0, dtype=torch.long))
+    vocab = WordVocab(
+        words=[],
+        token_ids=torch.zeros(0, dtype=torch.long),
+        word_index=torch.zeros(0, dtype=torch.long),
+    )
 
     with pytest.raises(ValueError, match="no words"):
         verbalize(torch.zeros(1, 5), _identity_decoder(5), vocab)
@@ -152,7 +170,9 @@ def test_word_probabilities_blocks_hold_every_word_and_verbalize_is_their_top_k(
     blocks = list(word_probabilities(logits, _identity_decoder(5), _vocab(), chunk=3))
     probs = torch.cat([p for p, _ in blocks]).numpy()
     mass = torch.cat([m for _, m in blocks]).numpy()
-    words, top_p, top_mass = verbalize(logits, _identity_decoder(5), _vocab(), k=2, chunk=3)
+    words, top_p, top_mass = verbalize(
+        logits, _identity_decoder(5), _vocab(), k=2, chunk=3
+    )
 
     assert [len(p) for p, _ in blocks] == [3, 3, 1]
     np.testing.assert_allclose(probs.sum(1), 1.0, rtol=1e-5)
@@ -187,10 +207,14 @@ def tiny_llava(tmp_path_factory) -> Path:
     """A 4-layer, 32-wide LlavaNext saved beside the real LLaVA-1.6 processor; skips if uncached."""
     # add_prefix_space=None: the cached config forces a slow-tokenizer rebuild needing sentencepiece
     try:
-        processor = AutoProcessor.from_pretrained(MODEL_ID, local_files_only=True, add_prefix_space=None)
+        processor = AutoProcessor.from_pretrained(
+            MODEL_ID, local_files_only=True, add_prefix_space=None
+        )
         real = AutoConfig.from_pretrained(MODEL_ID, local_files_only=True)
     except OSError:
-        pytest.skip("LLaVA-1.6 processor not in the HF cache (set HF_HOME=/workspace/models)")
+        pytest.skip(
+            "LLaVA-1.6 processor not in the HF cache (set HF_HOME=/workspace/models)"
+        )
 
     torch.manual_seed(0)
     text = LlamaConfig(
@@ -202,7 +226,12 @@ def tiny_llava(tmp_path_factory) -> Path:
         num_key_value_heads=2,
     )
     vision = CLIPVisionConfig(
-        image_size=336, patch_size=14, hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4
+        image_size=336,
+        patch_size=14,
+        hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
     )
     config = LlavaNextConfig(
         text_config=text,
@@ -228,12 +257,22 @@ TINY_SCORES = torch.arange(16, dtype=torch.float32).reshape(4, 4)
 
 @pytest.fixture(scope="module")
 def tiny_ext(tiny_llava) -> OCRLensExtractor:
-    return OCRLensExtractor(model_id=str(tiny_llava), layer=1, n_heads=3, head_scores=TINY_SCORES, dtype="float32")
+    return OCRLensExtractor(
+        model_id=str(tiny_llava),
+        layer=1,
+        n_heads=3,
+        head_scores=TINY_SCORES,
+        dtype="float32",
+    )
 
 
 def _chat_inputs(processor, image: Image.Image, device: torch.device) -> dict:
-    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": ""}]}]
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    messages = [
+        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": ""}]}
+    ]
+    text = processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     inputs = processor(text=[text], images=[image], return_tensors="pt")
     return inputs.to(device)
 
@@ -243,7 +282,11 @@ def test_ocr_lens_is_registered():
 
 
 def test_packaged_head_scores_are_mean_per_head():
-    asset = Path(ocr_lens.__file__).parent / "assets" / "llava16_vicuna7b_ocr_head_scores.pt"
+    asset = (
+        Path(ocr_lens.__file__).parent
+        / "assets"
+        / "llava16_vicuna7b_ocr_head_scores.pt"
+    )
     scores = torch.load(asset, weights_only=True)
     assert scores.shape == (32, 32) and scores.dtype == torch.float32
     assert float(scores.min()) >= 0.0 and float(scores.max()) <= 1.0
@@ -275,12 +318,24 @@ def test_extractor_truncates_after_layer(tiny_ext):
 @pytest.mark.parametrize("layer", [-1, 4])
 def test_extractor_rejects_out_of_range_layer(tiny_llava, layer):
     with pytest.raises(ValueError, match="layer"):
-        OCRLensExtractor(model_id=str(tiny_llava), layer=layer, n_heads=3, head_scores=TINY_SCORES, dtype="float32")
+        OCRLensExtractor(
+            model_id=str(tiny_llava),
+            layer=layer,
+            n_heads=3,
+            head_scores=TINY_SCORES,
+            dtype="float32",
+        )
 
 
 def test_extractor_rejects_mis_shaped_head_scores(tiny_llava):
     with pytest.raises(ValueError, match="head_scores"):
-        OCRLensExtractor(model_id=str(tiny_llava), layer=1, n_heads=3, head_scores=torch.rand(32, 32), dtype="float32")
+        OCRLensExtractor(
+            model_id=str(tiny_llava),
+            layer=1,
+            n_heads=3,
+            head_scores=torch.rand(32, 32),
+            dtype="float32",
+        )
 
 
 def test_forward_keeps_unpadded_high_res_grid(tiny_llava, tiny_ext):
@@ -305,7 +360,9 @@ def test_forward_keeps_unpadded_high_res_grid(tiny_llava, tiny_ext):
     grid = states[24 * 24 :].reshape(rows, cols + 1, -1)[:, :-1]
     expected = grid @ tiny_ext.lens.T
     expected = expected / expected.pow(2).mean(-1, keepdim=True).sqrt()
-    torch.testing.assert_close(fmap, expected.permute(2, 0, 1).cpu(), atol=1e-4, rtol=1e-4)
+    torch.testing.assert_close(
+        fmap, expected.permute(2, 0, 1).cpu(), atol=1e-4, rtol=1e-4
+    )
 
 
 def test_load_decoder_matches_extractor_decoder(tiny_llava, tiny_ext):
@@ -343,7 +400,13 @@ def test_score_ocr_heads_shape_and_round_trip(tiny_llava, tmp_path, monkeypatch)
     torch.save(scores, tmp_path / "scores.pt")
 
     for head_scores in (scores, tmp_path / "scores.pt"):
-        ext = OCRLensExtractor(model_id=str(tiny_llava), layer=1, n_heads=3, head_scores=head_scores, dtype="float32")
+        ext = OCRLensExtractor(
+            model_id=str(tiny_llava),
+            layer=1,
+            n_heads=3,
+            head_scores=head_scores,
+            dtype="float32",
+        )
         assert ext.lens.shape == (32, 32)
 
 

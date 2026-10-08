@@ -73,7 +73,9 @@ def _collect_pairs(
     intrinsics_t = torch.as_tensor(intrinsics, dtype=torch.float32, device=device)
     extrinsics_t = torch.as_tensor(extrinsics, dtype=torch.float32, device=device)
     cam_to_world = invert_poses(extrinsics)
-    centers = torch.as_tensor(cam_to_world[:, :3, 3], dtype=torch.float32, device=device)
+    centers = torch.as_tensor(
+        cam_to_world[:, :3, 3], dtype=torch.float32, device=device
+    )
 
     # One histogram over every ordered pair's residuals, n*(n-1)*h*w at most, plus a NaN overflow bin
     k = 2 * max(1, int(round(max(n * (n - 1) * h * w, 1) ** (1.0 / 3.0))))
@@ -120,8 +122,12 @@ def _collect_pairs(
 
         # Optional pruning: drop targets whose frustum barely holds frame i's subsampled points
         if min_pair_overlap > 0:
-            sub = points.reshape(h, w, 3)[::overlap_stride, ::overlap_stride].reshape(-1, 3)
-            sub = sub[has_source.reshape(h, w)[::overlap_stride, ::overlap_stride].reshape(-1)]
+            sub = points.reshape(h, w, 3)[::overlap_stride, ::overlap_stride].reshape(
+                -1, 3
+            )
+            sub = sub[
+                has_source.reshape(h, w)[::overlap_stride, ::overlap_stride].reshape(-1)
+            ]
 
             # Share of points in front of and inside each camera's frustum; occlusion ignored, so it over-counts
             if len(sub) == 0:
@@ -129,7 +135,13 @@ def _collect_pairs(
             else:
                 pixels, points_cam = project(sub, extrinsics_t, intrinsics_t)
                 u, v = pixels[..., 0], pixels[..., 1]
-                inside = (points_cam[..., 2] > 0) & (u >= 0) & (u <= w - 1) & (v >= 0) & (v <= h - 1)
+                inside = (
+                    (points_cam[..., 2] > 0)
+                    & (u >= 0)
+                    & (u <= w - 1)
+                    & (v >= 0)
+                    & (v <= h - 1)
+                )
                 overlap = inside.float().mean(-1).tolist()
 
             targets = [j for j in targets if overlap[j] >= min_pair_overlap]
@@ -140,7 +152,11 @@ def _collect_pairs(
             js = targets[start : start + target_batch]
             js_t = targets_t[start : start + target_batch]
             agree, seen, rel, z = depth_agreement(
-                points, extrinsics_t[js_t], intrinsics_t[js_t], depth_t[js_t], rel_thresh
+                points,
+                extrinsics_t[js_t],
+                intrinsics_t[js_t],
+                depth_t[js_t],
+                rel_thresh,
             )
             seen &= has_source
             any_agree |= (agree & has_source).any(0)
@@ -165,7 +181,9 @@ def _collect_pairs(
             # Parallax from ray directions: scale-free, needs no focal length
             ray_i = points[idx] - centers[i]
             ray_j = points[idx] - centers_b[view]
-            cos_a = (ray_i * ray_j).sum(-1) / (ray_i.norm(dim=-1) * ray_j.norm(dim=-1)).clamp(min=1e-12)
+            cos_a = (ray_i * ray_j).sum(-1) / (
+                ray_i.norm(dim=-1) * ray_j.norm(dim=-1)
+            ).clamp(min=1e-12)
             parallax = torch.rad2deg(torch.arccos(cos_a.clamp(-1.0, 1.0)))
 
             # Residuals mapped into (-1, 1) by r / (1 + |r|), monotone and so quantile-preserving, then binned
@@ -197,7 +215,9 @@ def _collect_pairs(
             mid = (starts + span // 2).clamp(max=last)
 
             # One row per view, empty views included as clamped dummies the host drops
-            rows.append(torch.stack([q[:, 1], q[:, 2] - q[:, 0], par_s[mid], z_s[mid]], 1))
+            rows.append(
+                torch.stack([q[:, 1], q[:, 2] - q[:, 0], par_s[mid], z_s[mid]], 1)
+            )
             row_keys.extend(zip(js, n_sel))
 
         # One transfer per source frame for its pair rows and its agreement counts
@@ -217,7 +237,10 @@ def _collect_pairs(
 
     # Log the pair count; the pooled histogram crosses to the host once, overflow bin dropped
     logger.info("Depth error: %d pair directions", len(cols["idx1"]))
-    histogram = {"counts": counts[:-1].cpu().numpy().tolist(), "bin_edges": edges.tolist()}
+    histogram = {
+        "counts": counts[:-1].cpu().numpy().tolist(),
+        "bin_edges": edges.tolist(),
+    }
     return cols, histogram, agreement
 
 
@@ -267,7 +290,9 @@ def compute_photometric_ncc(
     t0 = time.perf_counter()
     N = len(depth)
     H, W = images.shape[1:3]
-    logger.info("Photometric NCC: %d frames at %dx%d, separations=%s", N, W, H, separations)
+    logger.info(
+        "Photometric NCC: %d frames at %dx%d, separations=%s", N, W, H, separations
+    )
 
     # Model-grid depth is lifted to the image grid frame by frame below
     lift = depth.shape[1:] != (H, W)
@@ -302,10 +327,17 @@ def compute_photometric_ncc(
     # Closed-form pair count, so the bar states the real unit of work, and the columnar output
     gaps = sorted(set(separations))
     n_pairs_expected = sum(max(N - g, 0) for g in gaps)
-    cols: dict[str, list] = {"idx1": [], "idx2": [], "photometric_ncc": [], "n_pixels": []}
+    cols: dict[str, list] = {
+        "idx1": [],
+        "idx2": [],
+        "photometric_ncc": [],
+        "n_pixels": [],
+    }
 
     # Each frame against the frames at its forward gaps
-    for i in tqdm(range(N), desc=f"Photometric NCC ({n_pairs_expected} pairs)", unit="frame"):
+    for i in tqdm(
+        range(N), desc=f"Photometric NCC ({n_pairs_expected} pairs)", unit="frame"
+    ):
         # Forward partners inside the sequence; the last frame has none
         partners = [i + g for g in gaps if i + g < N]
 
@@ -316,16 +348,21 @@ def compute_photometric_ncc(
         depth_i = depth[i]
 
         if lift:
+            assert original_coords is not None
             guide = np.asarray(images[i])
 
             # Float frames are scaled and clipped to uint8; uint8 frames are the guide as-is
             if guide.dtype != np.uint8:
                 guide = np.clip(guide * rgb_scale, 0, 255).astype(np.uint8)
 
-            depth_i = upsample_depths(depth[i : i + 1], guide[None], original_coords[i : i + 1, :4])[0]
+            depth_i = upsample_depths(
+                depth[i : i + 1], guide[None], original_coords[i : i + 1, :4]
+            )[0]
 
         # Camera-frame points; world points far from the origin would lose float32 precision
-        depth_t = torch.as_tensor(np.asarray(depth_i), dtype=torch.float32, device=device)
+        depth_t = torch.as_tensor(
+            np.asarray(depth_i), dtype=torch.float32, device=device
+        )
 
         # unproject's matmul would run in TF32 under a global allow_tf32
         with full_fp32_matmul():
@@ -377,7 +414,11 @@ def compute_photometric_ncc(
             for col, v in zip(cols, (i, j, ncc, n_ok)):
                 cols[col].append(v)
 
-    logger.info("Photometric NCC: %d pairs correlated in %.2fs", len(cols["photometric_ncc"]), time.perf_counter() - t0)
+    logger.info(
+        "Photometric NCC: %d pairs correlated in %.2fs",
+        len(cols["photometric_ncc"]),
+        time.perf_counter() - t0,
+    )
     return cols
 
 
@@ -428,7 +469,11 @@ def compute_reconstruction_quality(
 
     # One cross-view pass feeds the pair tables and the per-frame agreement
     depth_pairs, histogram, agreement = _collect_pairs(
-        depth, model_intrinsics, extrinsics, rel_thresh, min_pair_overlap=min_pair_overlap
+        depth,
+        model_intrinsics,
+        extrinsics,
+        rel_thresh,
+        min_pair_overlap=min_pair_overlap,
     )
 
     # Photometric over the frames that have images; read_frames order is reconstruction order
@@ -437,13 +482,19 @@ def compute_reconstruction_quality(
     if images is not None:
         m = len(images)
         photometric_pairs = compute_photometric_ncc(
-            images, depth[:m], intrinsics[:m], extrinsics[:m], original_coords=original_coords[:m]
+            images,
+            depth[:m],
+            intrinsics[:m],
+            extrinsics[:m],
+            original_coords=original_coords[:m],
         )
 
     # Per-frame median |residual| over the depth pairs touching each frame; None when none touch
     touching: list[list[float]] = [[] for _ in range(n)]
 
-    for i1, i2, err in zip(depth_pairs["idx1"], depth_pairs["idx2"], depth_pairs["median_rel_depth_error"]):
+    for i1, i2, err in zip(
+        depth_pairs["idx1"], depth_pairs["idx2"], depth_pairs["median_rel_depth_error"]
+    ):
         touching[i1].append(abs(err))
         touching[i2].append(abs(err))
 
@@ -451,11 +502,17 @@ def compute_reconstruction_quality(
 
     # Source frame index only where the stem is on the frame_{idx:06d} contract
     frame_idx = [
-        frames.frame_idx_from_path(name) if _FRAME_STEM_RE.fullmatch(Path(name).stem) else None for name in image_names
+        frames.frame_idx_from_path(name)
+        if _FRAME_STEM_RE.fullmatch(Path(name).stem)
+        else None
+        for name in image_names
     ]
 
     # Fraction of each original frame the model crop kept; no model-grid table sees a cropped band
-    covered = [float(max(c[2] - c[0], 0) * max(c[3] - c[1], 0) / max(c[4] * c[5], 1e-9)) for c in coords]
+    covered = [
+        float(max(c[2] - c[0], 0) * max(c[3] - c[1], 0) / max(c[4] * c[5], 1e-9))
+        for c in coords
+    ]
 
     # Per-frame table, then the full report
     frames_table = {
@@ -463,7 +520,9 @@ def compute_reconstruction_quality(
         "covered_fraction": covered,
         "median_abs_rel_depth_error": median_abs,
         "multiview_agreement": agreement,
-        "confidence_median": [None] * n if confidence is None else [float(np.median(c)) for c in confidence],
+        "confidence_median": [None] * n
+        if confidence is None
+        else [float(np.median(c)) for c in confidence],
     }
     return {
         "frames": frames_table,

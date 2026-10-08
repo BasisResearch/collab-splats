@@ -32,7 +32,9 @@ def test_submodules_have_logger():
         assert isinstance(mod.logger, logging.Logger)
 
 
-def _make_synthetic_scene(n_pts: int = 30, n_frames: int = 4, H: int = 480, W: int = 640):
+def _make_synthetic_scene(
+    n_pts: int = 30, n_frames: int = 4, H: int = 480, W: int = 640
+):
     """Planar synthetic scene: n_pts points at z=5 plus dense per-frame world maps.
 
     A fronto-parallel plane keeps the dense world map linear in pixel coords, so
@@ -51,8 +53,17 @@ def _make_synthetic_scene(n_pts: int = 30, n_frames: int = 4, H: int = 480, W: i
 
     # Dense per-frame world maps: backproject each pixel at plane depth z=5, undo pose (R=I)
     xs, ys = np.meshgrid(np.arange(W), np.arange(H))
-    cam = np.stack([(xs - K[0, 2]) / K[0, 0] * 5.0, (ys - K[1, 2]) / K[1, 1] * 5.0, np.full(xs.shape, 5.0)], -1)
-    world_points = np.stack([cam - extrinsics[i, :3, 3] for i in range(n_frames)]).astype(np.float32)
+    cam = np.stack(
+        [
+            (xs - K[0, 2]) / K[0, 0] * 5.0,
+            (ys - K[1, 2]) / K[1, 1] * 5.0,
+            np.full(xs.shape, 5.0),
+        ],
+        -1,
+    )
+    world_points = np.stack(
+        [cam - extrinsics[i, :3, 3] for i in range(n_frames)]
+    ).astype(np.float32)
 
     return pts3d, world_points, extrinsics, K
 
@@ -101,7 +112,9 @@ def test_from_pointcloud_ids_default_to_result_image_paths(tmp_path, stub_matche
     assert loc.image_paths == [str(p) for p in result.image_paths]
 
 
-def test_retrieval_name_selects_registry_model_and_keys_db(tmp_path, monkeypatch, stub_matcher, fake_salad):
+def test_retrieval_name_selects_registry_model_and_keys_db(
+    tmp_path, monkeypatch, stub_matcher, fake_salad
+):
     """retrieval="megaloc" builds the retrieval model by registry name and stamps it on the saved DB."""
     pts3d, world_points, extrinsics, K = _make_synthetic_scene()
     images = _frame_images(len(extrinsics))
@@ -114,17 +127,28 @@ def test_retrieval_name_selects_registry_model_and_keys_db(tmp_path, monkeypatch
 
     # Construction embeds the references, which builds the retrieval model
     extractor = _projecting_matcher(stub_matcher, pts3d, extrinsics, K)
-    loc = CameraLocalizer(world_points, extrinsics, images=images, ids=ids, extractor=extractor, retrieval="megaloc")
+    loc = CameraLocalizer(
+        world_points,
+        extrinsics,
+        images=images,
+        ids=ids,
+        extractor=extractor,
+        retrieval="megaloc",
+    )
     loc.save_index(tmp_path / "pc.zarr", "stub")
 
-    group = zarr.open_group(str(tmp_path / "pc.zarr"), mode="r")["local_features/stub/reconstruction"]
+    group = zarr.open_group(str(tmp_path / "pc.zarr"), mode="r")[
+        "local_features/stub/reconstruction"
+    ]
     assert requested == ["megaloc"]
     assert group.attrs["retrieval"] == "megaloc"
 
 
 def test_localization_db_exists_false_without_commit_marker(tmp_path):
     """A reconstruction group lacking the image_paths marker is a crashed build, not a DB."""
-    zarr.open_group(str(tmp_path / "pc.zarr"), mode="w").require_group("local_features/mock/reconstruction")
+    zarr.open_group(str(tmp_path / "pc.zarr"), mode="w").require_group(
+        "local_features/mock/reconstruction"
+    )
 
     assert not localizer_mod.localization_db_exists(tmp_path / "pc.zarr", "mock")
 
@@ -182,7 +206,9 @@ def test_camera_localizer_recovers_known_pose(stub_matcher):
     ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
 
     extractor = _projecting_matcher(stub_matcher, pts3d, extrinsics, K)
-    loc = CameraLocalizer(world_points, extrinsics, images=images, ids=ids, extractor=extractor)
+    loc = CameraLocalizer(
+        world_points, extrinsics, images=images, ids=ids, extractor=extractor
+    )
 
     # Query = camera 0 (identity extrinsic)
     query_image = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -206,7 +232,9 @@ def test_localization_result_fields_on_success(stub_matcher):
     ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
 
     extractor = _projecting_matcher(stub_matcher, pts3d, extrinsics, K)
-    loc = CameraLocalizer(world_points, extrinsics, images=images, ids=ids, extractor=extractor)
+    loc = CameraLocalizer(
+        world_points, extrinsics, images=images, ids=ids, extractor=extractor
+    )
     result = loc.localize(np.zeros((480, 640, 3), dtype=np.uint8), K)
 
     assert isinstance(result, LocalizationResult)
@@ -250,7 +278,11 @@ def test_localize_via_depth_lookup(stub_matcher):
     wp, K = _plane_scene()
     img = np.random.default_rng(0).integers(0, 255, (64, 64, 3), dtype=np.uint8)
     loc = CameraLocalizer(
-        wp, np.eye(4, dtype=np.float32)[None], [img], ["frame_0"], extractor=stub_matcher(_grid_keypoints)
+        wp,
+        np.eye(4, dtype=np.float32)[None],
+        [img],
+        ["frame_0"],
+        extractor=stub_matcher(_grid_keypoints),
     )
 
     res = loc.localize(img, query_intrinsics=K)
@@ -290,10 +322,14 @@ def test_save_load_roundtrips_keypoints_normalized(tmp_path, replay_matcher):
 
     for orig, got in zip(feats, loaded):
         assert got.keypoints_normalized is not None
-        np.testing.assert_array_equal(got.keypoints_normalized.numpy(), orig.keypoints_normalized.numpy())
+        np.testing.assert_array_equal(
+            got.keypoints_normalized.numpy(), orig.keypoints_normalized.numpy()
+        )
 
 
-def test_save_omits_keypoints_normalized_when_any_frame_lacks_it(tmp_path, replay_matcher):
+def test_save_omits_keypoints_normalized_when_any_frame_lacks_it(
+    tmp_path, replay_matcher
+):
     # A zero-filled normalized table is wrong data; write it only when every frame has it
     feats = [_norm_feats(), _norm_feats(with_norm=False), _norm_feats()]
     _localizer_replaying(feats, replay_matcher).save_index(tmp_path / "ff.zarr", "loma")
@@ -307,7 +343,9 @@ def _plane_scene(H: int = 64, W: int = 64, f: float = 50.0, z: float = 2.0):
     """
     K = np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], dtype=np.float32)
     xs, ys = np.meshgrid(np.arange(W), np.arange(H))
-    wp = np.stack([(xs - W / 2) / f * z, (ys - H / 2) / f * z, np.full(xs.shape, z)], -1).astype(np.float32)
+    wp = np.stack(
+        [(xs - W / 2) / f * z, (ys - H / 2) / f * z, np.full(xs.shape, z)], -1
+    ).astype(np.float32)
     return wp[None], K
 
 
@@ -316,7 +354,12 @@ def _grid_keypoints(image: np.ndarray) -> np.ndarray:
     4x3 non-collinear keypoint grid scaled to the image.
     """
     h, w = image.shape[:2]
-    return np.array([[w * (0.125 + 0.22 * (i % 4)), h * (0.125 + 0.28 * (i // 4))] for i in range(12)])
+    return np.array(
+        [
+            [w * (0.125 + 0.22 * (i % 4)), h * (0.125 + 0.28 * (i // 4))]
+            for i in range(12)
+        ]
+    )
 
 
 def test_localize_refs_uses_only_chosen_frames(stub_matcher):
@@ -341,7 +384,13 @@ def test_localize_refs_uses_only_chosen_frames(stub_matcher):
 def test_localize_refs_refuses_non_reconstruction_frame(stub_matcher):
     wp, K = _plane_scene()
     img = np.zeros((64, 64, 3), np.uint8)
-    loc = CameraLocalizer(wp, np.eye(4, dtype=np.float32)[None], [img], ["a"], extractor=stub_matcher(_grid_keypoints))
+    loc = CameraLocalizer(
+        wp,
+        np.eye(4, dtype=np.float32)[None],
+        [img],
+        ["a"],
+        extractor=stub_matcher(_grid_keypoints),
+    )
 
     with pytest.raises(ValueError, match="reconstruction"):
         loc.localize(img, query_intrinsics=K, refs=[1])
@@ -400,14 +449,18 @@ def _model_px() -> np.ndarray:
     """
     Six spread integer pixels on a 64x48 model grid.
     """
-    return np.array([[3, 5], [60, 7], [10, 40], [50, 44], [31, 22], [17, 33]], np.float64)
+    return np.array(
+        [[3, 5], [60, 7], [10, 40], [50, 44], [31, 22], [17, 33]], np.float64
+    )
 
 
 def test_localize_lookup_follows_crop_axes(stub_matcher):
     # Non-square grid, non-square crop, distinct x / y scales: an axis swap or scale slip moves the lookup
     H, W = 48, 64
     xs, ys = np.meshgrid(np.arange(W), np.arange(H))
-    wp = np.stack([xs * 0.1, ys * 0.3 + 1.0, 2.0 + xs * 0.01 + ys * 0.02], -1).astype(np.float32)[None]
+    wp = np.stack([xs * 0.1, ys * 0.3 + 1.0, 2.0 + xs * 0.01 + ys * 0.02], -1).astype(
+        np.float32
+    )[None]
     box = np.array([[20, 4, 180, 100, 200, 100]], np.float32)
     ref = np.zeros((100, 200, 3), np.uint8)
     loc = CameraLocalizer(
@@ -436,7 +489,9 @@ def _pnp_scene(f: float = 800.0, H: int = 480, W: int = 640, n: int = 200) -> tu
     rng = np.random.default_rng(3)
     K = np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], dtype=np.float64)
     pose = np.eye(4)
-    pose[:3, :3] = np.array([[0.9950042, 0, 0.0998334], [0, 1, 0], [-0.0998334, 0, 0.9950042]])
+    pose[:3, :3] = np.array(
+        [[0.9950042, 0, 0.0998334], [0, 1, 0], [-0.0998334, 0, 0.9950042]]
+    )
     pose[:3, 3] = [0.2, -0.1, 0.5]
 
     # Points in camera space inside the image, then back to world
@@ -455,7 +510,12 @@ def _pnp_localizer(stub_matcher, config: dict | None = None) -> CameraLocalizer:
     wp, _ = _plane_scene()
     img = np.zeros((64, 64, 3), np.uint8)
     return CameraLocalizer(
-        wp, np.eye(4, dtype=np.float32)[None], [img], ["a"], extractor=stub_matcher(_grid_keypoints), config=config
+        wp,
+        np.eye(4, dtype=np.float32)[None],
+        [img],
+        ["a"],
+        extractor=stub_matcher(_grid_keypoints),
+        config=config,
     )
 
 
@@ -494,9 +554,13 @@ def test_solve_pnp_ransac_failure_keeps_seed(stub_matcher):
     px, pts, _, _ = _pnp_scene(n=12)
     pts = pts[np.random.default_rng(1).permutation(len(pts))]
     seed = seed_intrinsics(480, 640)
-    loc = _pnp_localizer(stub_matcher, config={"estimation": {"ransac": {"max_error": 0.01}}})
+    loc = _pnp_localizer(
+        stub_matcher, config={"estimation": {"ransac": {"max_error": 0.01}}}
+    )
 
-    res = loc._solve_pnp([px], [pts], [px], [np.zeros(len(px), np.int32)], (480, 640), seed)
+    res = loc._solve_pnp(
+        [px], [pts], [px], [np.zeros(len(px), np.int32)], (480, 640), seed
+    )
 
     assert res.pose is None
     np.testing.assert_array_equal(res.query_intrinsics, seed)
@@ -514,8 +578,12 @@ def _recording_grid(shapes: list) -> Callable[[np.ndarray], np.ndarray]:
     return keypoints
 
 
-@pytest.mark.parametrize("query_hw, small_hw", [((128, 128), (64, 64)), ((100, 150), (43, 64))])
-def test_localize_shrinks_larger_query_to_reference_long_side(stub_matcher, query_hw, small_hw):
+@pytest.mark.parametrize(
+    "query_hw, small_hw", [((128, 128), (64, 64)), ((100, 150), (43, 64))]
+)
+def test_localize_shrinks_larger_query_to_reference_long_side(
+    stub_matcher, query_hw, small_hw
+):
     # 64x64 refs: extraction runs on the per-axis rounded shrink, K and px come back on the query grid
     wp, _ = _plane_scene()
     ref = np.zeros((64, 64, 3), np.uint8)
@@ -529,7 +597,10 @@ def test_localize_shrinks_larger_query_to_reference_long_side(stub_matcher, quer
         config={"refinement": {"refine_focal_length": False}},
     )
     query = np.zeros((*query_hw, 3), np.uint8)
-    K_small = np.array([[50, 0, small_hw[1] / 2], [0, 50, small_hw[0] / 2], [0, 0, 1]], dtype=np.float32)
+    K_small = np.array(
+        [[50, 0, small_hw[1] / 2], [0, 50, small_hw[0] / 2], [0, 0, 1]],
+        dtype=np.float32,
+    )
     K_full = rescale_intrinsics(K_small, small_hw, query_hw)
 
     res = loc.localize(query, query_intrinsics=K_full)
@@ -545,7 +616,11 @@ def test_localize_never_upscales_smaller_query(stub_matcher):
     ref = np.zeros((64, 64, 3), np.uint8)
     shapes = []
     loc = CameraLocalizer(
-        wp, np.eye(4, dtype=np.float32)[None], [ref], ["a"], extractor=stub_matcher(_recording_grid(shapes))
+        wp,
+        np.eye(4, dtype=np.float32)[None],
+        [ref],
+        ["a"],
+        extractor=stub_matcher(_recording_grid(shapes)),
     )
     query = np.zeros((32, 32, 3), np.uint8)
 

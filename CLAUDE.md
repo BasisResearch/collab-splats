@@ -18,15 +18,9 @@ Always follow:
 
 These tasks are started but not complete — do not assume their targets are done:
 
-- **gt-eval-harness** — ground-truth ATE evaluation harness ([spec](docs/superpowers/specs/2026-05-07-gt-eval-harness-design.md) · [plan](docs/superpowers/plans/2026-05-07-gt-eval-harness.md))
-- **feedforward-import-cleanup** — import hygiene pass ([spec](docs/superpowers/specs/2026-05-08-feedforward-import-cleanup-design.md) · [plan](docs/superpowers/plans/2026-05-08-feedforward-import-cleanup.md))
-- **feedforward-mesh** — feedforward → TSDF mesh pipeline ([spec](docs/superpowers/specs/2026-05-14-feedforward-mesh-design.md) · [plan](docs/superpowers/plans/2026-05-14-feedforward-mesh.md))
-- **docs-site** — Sphinx site setup ([spec](docs/superpowers/specs/2026-05-20-docs-site-design.md) · [plan](docs/superpowers/plans/2026-05-20-docs-site.md))
-- **bae-vggt-parity** — verify BA matches upstream `zitongzhan/vggt --implementation bae` ([spec](docs/superpowers/specs/2026-05-20-bae-vggt-parity-design.md))
-- **loma-matcher** — LoMa local matcher for localization ([spec](docs/superpowers/specs/2026-07-08-loma-matcher-integration-design.md) · [plan](docs/superpowers/plans/2026-07-08-loma-matcher-integration.md))
 - **clean-final** — integration branch for the five cleanup efforts; all five landed (preproc, semantics, pointcloud, splats, mesh), not yet merged to trunk ([spec](docs/superpowers/specs/2026-09-06-clean-final-integration-design.md) · [plan](docs/superpowers/plans/2026-09-06-clean-final-integration.md))
-- **sky-mask** — PyTorch (smp) sky segmentation as a `BaseSegmentation` backend, consumed by the mesh stage behind `mesh.mask_sky`; A/B against the meshing quality is the deliverable ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
-- **vismatch-fork** — fork `BasisResearch/vismatch` at `/workspace/vismatch`: batch + COLMAP-export upstream PRs, `basis` integration branch for split/cache, collab-splats pins a basis SHA ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md)). **Refactor unfinished (2026-10-02):** `feat/batch-forward` (1a) still loops per pair and deviates from spec (assert not ValueError, no `supports_batches`); uncommitted xfeat `_extract_batch` there (9× extract) is really step 4 work; no `basis` branch, no pin — collab-splats still runs site-packages vismatch; `LocalMatcher.match_batch` lives only in the `rgbd-ba` worktree
+- **sky-mask** — smp SegFormer sky masks shipped (`semantics/segmentation/sky.py`) and `mesh.mask_sky: true` is the default; open: the GH010229 mesh A/B with the torch masks ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
+- **vismatch-fork** — collab-splats pins the `BasisResearch/vismatch` `basis` branch (batched extract, `match_batch`); open: the upstream batch + COLMAP-export PRs ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
 
 ## Recently Completed
@@ -34,13 +28,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **final-cleanup** (2026-10-08)
 - **dashboard-release** (2026-10-08)
 - **tutorial-rework** (2026-10-08)
 - **scene-viewer** (2026-10-08)
 - **semantics-storage** (2026-10-07)
-- **mesh-query-heat** (2026-10-07)
-
-Known test failures: `docs/known-test-failures.md`
 
 ## Installation and Setup
 

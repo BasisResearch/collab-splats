@@ -19,10 +19,16 @@ CONFIG = isort.Config(settings_path=str(REPO))
 @pytest.mark.parametrize("path", FILES, ids=lambda p: str(p.relative_to(REPO)))
 def test_no_relative_imports(path):
     tree = ast.parse(path.read_text())
-    relative = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level]
-    assert not relative, f"relative imports at lines {relative}; use absolute collab_splats.* imports"
+    relative = [
+        n.lineno for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level
+    ]
+    assert not relative, (
+        f"relative imports at lines {relative}; use absolute collab_splats.* imports"
+    )
 
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: str(p.relative_to(REPO)))
 def test_imports_sorted_into_sections(path):
-    assert isort.check_file(str(path), config=CONFIG), "run isort; imports are out of section order"
+    assert isort.check_file(str(path), config=CONFIG), (
+        "run isort; imports are out of section order"
+    )

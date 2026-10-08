@@ -56,7 +56,9 @@ def test_transform_points_matches_homogeneous_matmul():
     T[:3, :3], T[:3, 3] = Q, [0.5, -2.0, 3.0]
     pts = rng.standard_normal((6, 5, 3))  # leading batch shape, like an (H, W, 3) grid
     hom = np.concatenate([pts, np.ones((6, 5, 1))], axis=-1)
-    np.testing.assert_allclose(transform_points(pts, T), (hom @ T.T)[..., :3], atol=1e-12)
+    np.testing.assert_allclose(
+        transform_points(pts, T), (hom @ T.T)[..., :3], atol=1e-12
+    )
 
 
 def test_transform_points_inverse_roundtrip():
@@ -65,7 +67,9 @@ def test_transform_points_inverse_roundtrip():
     T = np.eye(4)
     T[:3, :3], T[:3, 3] = Q, [1.0, 2.0, -0.5]
     pts = rng.standard_normal((10, 3))
-    np.testing.assert_allclose(transform_points(transform_points(pts, T), invert_poses(T)), pts, atol=1e-12)
+    np.testing.assert_allclose(
+        transform_points(transform_points(pts, T), invert_poses(T)), pts, atol=1e-12
+    )
 
 
 def test_extrinsics_to_homogeneous_batched():
@@ -115,7 +119,11 @@ def test_invert_poses_dtype_preserved():
 
 @pytest.mark.parametrize("batch", [(), (5,)])
 def test_intrinsics_4x4_embeds_k_top_left(batch):
-    K = np.random.default_rng(0).uniform(1.0, 500.0, size=batch + (3, 3)).astype(np.float32)
+    K = (
+        np.random.default_rng(0)
+        .uniform(1.0, 500.0, size=batch + (3, 3))
+        .astype(np.float32)
+    )
     out = intrinsics_4x4(K)
     assert out.shape == batch + (4, 4)
     assert out.dtype == np.float32
@@ -130,12 +138,16 @@ def test_intrinsics_4x4_embeds_k_top_left(batch):
 ########################################################################
 
 
-def _model_to_original(K: np.ndarray, crops: np.ndarray, model_hw: tuple[int, int]) -> np.ndarray:
+def _model_to_original(
+    K: np.ndarray, crops: np.ndarray, model_hw: tuple[int, int]
+) -> np.ndarray:
     """
     Undo crop-then-resize the way callers do: resize model -> crop size, then shift by +tl.
     """
     crops = np.asarray(crops, dtype=np.float64)
-    crop_hw = np.stack([crops[..., 3] - crops[..., 1], crops[..., 2] - crops[..., 0]], axis=-1)
+    crop_hw = np.stack(
+        [crops[..., 3] - crops[..., 1], crops[..., 2] - crops[..., 0]], axis=-1
+    )
     K = rescale_intrinsics(K, model_hw, crop_hw)
     return shift_intrinsics(K, crops[..., :2])
 
@@ -160,11 +172,18 @@ def test_model_to_original_round_trips_a_projection_through_the_crop_box():
     rng = np.random.default_rng(0)
     crops = np.array([[16.0, 8.0, 48.0, 40.0], [5.0, 30.0, 105.0, 90.0]])
     model_hw = (24, 40)
-    K_model = np.array([[[30.0, 0, 19.5], [0, 22.0, 11.5], [0, 0, 1]], [[35.0, 0, 20.0], [0, 18.0, 12.0], [0, 0, 1]]])
+    K_model = np.array(
+        [
+            [[30.0, 0, 19.5], [0, 22.0, 11.5], [0, 0, 1]],
+            [[35.0, 0, 20.0], [0, 18.0, 12.0], [0, 0, 1]],
+        ]
+    )
     K_orig = _model_to_original(K_model, crops, model_hw)
 
     for k in range(2):
-        np.testing.assert_array_equal(K_orig[k], _model_to_original(K_model[k], crops[k], model_hw))
+        np.testing.assert_array_equal(
+            K_orig[k], _model_to_original(K_model[k], crops[k], model_hw)
+        )
 
         # Project camera-frame points on both grids
         X = rng.uniform([-1, -1, 2], [1, 1, 6], size=(50, 3))
@@ -174,7 +193,9 @@ def test_model_to_original_round_trips_a_projection_through_the_crop_box():
         # Map model pixels through the crop box by hand
         tl_x, tl_y, cr_x, cr_y = crops[k]
         scale = np.array([(cr_x - tl_x) / model_hw[1], (cr_y - tl_y) / model_hw[0]])
-        np.testing.assert_allclose(uv_model * scale + [tl_x, tl_y], uv_orig, rtol=0, atol=1e-9)
+        np.testing.assert_allclose(
+            uv_model * scale + [tl_x, tl_y], uv_orig, rtol=0, atol=1e-9
+        )
 
 
 def test_crop_then_resize_and_its_undo_round_trip_k():
@@ -184,11 +205,18 @@ def test_crop_then_resize_and_its_undo_round_trip_k():
     crops = np.array([[16.0, 8.0, 48.0, 40.0], [5.0, 30.0, 105.0, 90.0]])
     crop_hw = np.stack([crops[:, 3] - crops[:, 1], crops[:, 2] - crops[:, 0]], axis=-1)
     model_hw = (24, 40)
-    K = np.array([[[300.0, 0, 60.0], [0, 280.0, 45.0], [0, 0, 1]], [[500.0, 0, 55.0], [0, 520.0, 70.0], [0, 0, 1]]])
+    K = np.array(
+        [
+            [[300.0, 0, 60.0], [0, 280.0, 45.0], [0, 0, 1]],
+            [[500.0, 0, 55.0], [0, 520.0, 70.0], [0, 0, 1]],
+        ]
+    )
 
     K_model = shift_intrinsics(K, -crops[:, :2])
     K_model = rescale_intrinsics(K_model, crop_hw, model_hw)
-    np.testing.assert_allclose(_model_to_original(K_model, crops, model_hw), K, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(
+        _model_to_original(K_model, crops, model_hw), K, rtol=0, atol=1e-12
+    )
 
 
 def test_rescale_intrinsics_scales_whole_rows_including_skew():
@@ -203,7 +231,9 @@ def test_rescale_intrinsics_scales_whole_rows_including_skew():
 def test_shift_intrinsics_moves_only_the_principal_point():
     K = np.array([[500.0, 7.0, 250.0], [0, 400.0, 200.0], [0, 0, 1]])
     out = shift_intrinsics(K, (-10.0, 30.0))
-    np.testing.assert_array_equal(out, [[500.0, 7.0, 240.0], [0, 400.0, 230.0], [0, 0, 1]])
+    np.testing.assert_array_equal(
+        out, [[500.0, 7.0, 240.0], [0, 400.0, 230.0], [0, 0, 1]]
+    )
 
 
 ########################################################################
@@ -285,7 +315,9 @@ def test_compute_weighted_median_subsamples_deterministically():
     assert first == pytest.approx(float(np.median(values)), abs=1.0)
 
 
-def _synthetic_local_points(h: int, w: int, fx: float, fy: float, depth: float = 2.0) -> np.ndarray:
+def _synthetic_local_points(
+    h: int, w: int, fx: float, fy: float, depth: float = 2.0
+) -> np.ndarray:
     """
     Exact camera-frame pointmap for a center-principal pinhole camera, shape (1,H,W,3).
 
@@ -353,7 +385,9 @@ def test_fit_survives_confident_outliers():
     [
         pytest.param(lambda p, c: (p, np.zeros_like(c)), id="empty_conf_mask"),
         pytest.param(lambda p, c: (np.full_like(p, np.nan), c), id="nan_points"),
-        pytest.param(lambda p, c: (p * np.array([1, 1, -1], np.float32), c), id="negative_depth"),
+        pytest.param(
+            lambda p, c: (p * np.array([1, 1, -1], np.float32), c), id="negative_depth"
+        ),
     ],
 )
 def test_degenerate_input_raises_instead_of_falling_back(mutate):
@@ -363,7 +397,9 @@ def test_degenerate_input_raises_instead_of_falling_back(mutate):
     - a silently-wrong K is the regression class of be24be2: a plausible mesh from a bad camera
     """
     h, w = 56, 70
-    pts, conf = mutate(_synthetic_local_points(h, w, 80.0, 80.0), np.ones((1, h, w), np.float32))
+    pts, conf = mutate(
+        _synthetic_local_points(h, w, 80.0, 80.0), np.ones((1, h, w), np.float32)
+    )
 
     with pytest.raises(RuntimeError, match="intrinsics fit failed"):
         estimate_intrinsics_from_points(pts, conf)
@@ -509,9 +545,20 @@ def test_bundle_adjustment_does_not_import_loop_closure():
     - shared math such as umeyama_sim3 lives in transforms.py, not loop_closure
     """
     tree = ast.parse(pathlib.Path(ba_mod.__file__).read_text(encoding="utf-8"))
-    imported = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
-    imported += [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
-    assert not any("loop_closure" in m for m in imported), f"BA imports loop closure: {imported}"
+    imported = [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    ]
+    imported += [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ]
+    assert not any("loop_closure" in m for m in imported), (
+        f"BA imports loop closure: {imported}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -530,7 +577,9 @@ def test_model_to_original_rejects_bad_boxes(box):
         _model_to_original(np.eye(3), np.array(box, dtype=float), (4, 4))
 
 
-@pytest.mark.parametrize("src_hw, dst_hw", [((0, 4), (4, 4)), ((4, 4), (4, -2)), ((4, float("nan")), (4, 4))])
+@pytest.mark.parametrize(
+    "src_hw, dst_hw", [((0, 4), (4, 4)), ((4, 4), (4, -2)), ((4, float("nan")), (4, 4))]
+)
 def test_rescale_intrinsics_rejects_bad_sizes(src_hw, dst_hw):
     with pytest.raises(ValueError):
         rescale_intrinsics(np.eye(3), src_hw, dst_hw)
@@ -612,7 +661,9 @@ def test_transform_points_maps_one_point_set_through_a_pose_batch():
     assert out.shape == (3, 50, 3)
 
     for b in range(3):
-        torch.testing.assert_close(out[b], transform_points(points, poses[b]), rtol=0, atol=1e-6)
+        torch.testing.assert_close(
+            out[b], transform_points(points, poses[b]), rtol=0, atol=1e-6
+        )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA")

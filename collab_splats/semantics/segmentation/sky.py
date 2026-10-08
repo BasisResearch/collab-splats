@@ -105,7 +105,9 @@ class SkyWaterSegmentation(BaseSegmentation):
         """
         return self.segment_batch([image])[0]
 
-    def segment_batch(self, images: Sequence[np.ndarray | Image.Image | Path | str]) -> list[tuple[torch.Tensor, dict]]:
+    def segment_batch(
+        self, images: Sequence[np.ndarray | Image.Image | Path | str]
+    ) -> list[tuple[torch.Tensor, dict]]:
         """
         Sky masks for several frames in one forward pass.
 
@@ -120,9 +122,13 @@ class SkyWaterSegmentation(BaseSegmentation):
         rgbs = [np.asarray(open_image(image).convert("RGB")) for image in images]
 
         # The model's own preprocessing: square resize, /255, ImageNet normalize, NCHW
-        squares = np.stack([cv2.resize(rgb, (self._input_size, self._input_size)) for rgb in rgbs])
+        squares = np.stack(
+            [cv2.resize(rgb, (self._input_size, self._input_size)) for rgb in rgbs]
+        )
         squares = squares.astype(np.float32) / 255.0
-        squares = (squares - np.asarray(IMAGENET_MEAN, np.float32)) / np.asarray(IMAGENET_STD, np.float32)
+        squares = (squares - np.asarray(IMAGENET_MEAN, np.float32)) / np.asarray(
+            IMAGENET_STD, np.float32
+        )
         squares = np.ascontiguousarray(squares.transpose(0, 3, 1, 2))
         batch = torch.from_numpy(squares).to(self._device)
 
@@ -138,7 +144,9 @@ class SkyWaterSegmentation(BaseSegmentation):
         results = []
 
         for rgb, prob in zip(rgbs, probs):
-            raw = cv2.resize(prob, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_LINEAR)
+            raw = cv2.resize(
+                prob, (rgb.shape[1], rgb.shape[0]), interpolation=cv2.INTER_LINEAR
+            )
             results.append((torch.from_numpy(raw > self._threshold), {"raw": raw}))
 
         return results
@@ -213,9 +221,19 @@ def sky_masks(
                 prob8 = np.rint(np.clip(meta["raw"], 0.0, 1.0) * 255).astype(np.uint8)
                 cv2.imwrite(str(cache_dir / f"frame_{idx:06d}.png"), prob8)
 
-        logger.info("sky_masks: segmented %d of %d frames into %s", len(todo), len(wanted), cache_dir)
+        logger.info(
+            "sky_masks: segmented %d of %d frames into %s",
+            len(todo),
+            len(wanted),
+            cache_dir,
+        )
 
     # Threshold on read, so hits and misses share one path and a new threshold reuses the cache
     return np.stack(
-        [cv2.imread(str(cache_dir / f"frame_{i:06d}.png"), cv2.IMREAD_GRAYSCALE) / 255.0 > threshold for i in wanted]
+        [
+            cv2.imread(str(cache_dir / f"frame_{i:06d}.png"), cv2.IMREAD_GRAYSCALE)  # type: ignore[operator]
+            / 255.0
+            > threshold
+            for i in wanted
+        ]
     )

@@ -50,9 +50,15 @@ def test_plot_frame_grid_smoke():
 
 
 def test_plot_selection_one_panel_per_method():
-    plot_selection(100, {"fps": [0, 10, 20], "uniform": [0, 50], "optical_flow": [0, 5, 30]})
+    plot_selection(
+        100, {"fps": [0, 10, 20], "uniform": [0, 50], "optical_flow": [0, 5, 30]}
+    )
     axes = plt.gcf().axes
-    assert [ax.get_title().split()[0] for ax in axes] == ["fps", "uniform", "optical_flow"]
+    assert [ax.get_title().split()[0] for ax in axes] == [
+        "fps",
+        "uniform",
+        "optical_flow",
+    ]
 
 
 def test_plot_frame_scores_smoke():
@@ -99,7 +105,13 @@ def _fake_video_quality_report(n_frames=20, fps=10.0, stride=2, n_pairs=10):
         "parallax": parallax,
     }
     return {
-        "video": {"path": "/data/clip.mp4", "fps": fps, "total_frames": n_frames, "width": 64, "height": 48},
+        "video": {
+            "path": "/data/clip.mp4",
+            "fps": fps,
+            "total_frames": n_frames,
+            "width": 64,
+            "height": 48,
+        },
         "params": {"motion_stride": stride},
         "frames": frames,
         "pairs": pairs,
@@ -112,14 +124,24 @@ def _assert_png(path, expected_name):
 
 
 def test_plot_photometric_writes_png(tmp_path):
-    _assert_png(plot_photometric(_fake_video_quality_report(), tmp_path), "photometric.png")
+    _assert_png(
+        plot_photometric(_fake_video_quality_report(), tmp_path), "photometric.png"
+    )
     # Overlay path, into a directory that does not exist yet
-    _assert_png(plot_photometric(_fake_video_quality_report(), tmp_path / "new", selected=[3, 7]), "photometric.png")
+    _assert_png(
+        plot_photometric(
+            _fake_video_quality_report(), tmp_path / "new", selected=[3, 7]
+        ),
+        "photometric.png",
+    )
 
 
 def test_plot_motion_writes_png(tmp_path):
     _assert_png(plot_motion(_fake_video_quality_report(), tmp_path), "motion.png")
-    _assert_png(plot_motion(_fake_video_quality_report(), tmp_path / "new", selected=[3, 7]), "motion.png")
+    _assert_png(
+        plot_motion(_fake_video_quality_report(), tmp_path / "new", selected=[3, 7]),
+        "motion.png",
+    )
 
 
 def test_plot_motion_skips_empty_pairs(tmp_path):
@@ -134,13 +156,28 @@ def test_plot_correlation_writes_png(tmp_path):
     report = _fake_video_quality_report()
     # Per-frame vs per-pair: blur read at each pair's first frame
     _assert_png(
-        plot_correlation(report, "translation_px", "blur", tmp_path / "new"), "correlation-translation_px-blur.png"
+        plot_correlation(report, "translation_px", "blur", tmp_path / "new"),
+        "correlation-translation_px-blur.png",
     )
     # Both per-pair, both per-frame
-    _assert_png(plot_correlation(report, "n_matches", "parallax", tmp_path), "correlation-n_matches-parallax.png")
-    _assert_png(plot_correlation(report, "blur", "exposure_mean", tmp_path), "correlation-blur-exposure_mean.png")
+    _assert_png(
+        plot_correlation(report, "n_matches", "parallax", tmp_path),
+        "correlation-n_matches-parallax.png",
+    )
+    _assert_png(
+        plot_correlation(report, "blur", "exposure_mean", tmp_path),
+        "correlation-blur-exposure_mean.png",
+    )
     # No usable pairs: nothing written
-    assert plot_correlation(_fake_video_quality_report(n_pairs=0), "translation_px", "blur", tmp_path / "none") is None
+    assert (
+        plot_correlation(
+            _fake_video_quality_report(n_pairs=0),
+            "translation_px",
+            "blur",
+            tmp_path / "none",
+        )
+        is None
+    )
     assert not (tmp_path / "none").exists()
 
 
@@ -149,13 +186,21 @@ def test_plot_frame_extremes_writes_png(tmp_path, monkeypatch):
     monkeypatch.setattr(viz_module, "get_video_info", lambda path: {"fps": 10.0})
     seen = []
     monkeypatch.setattr(
-        viz_module, "extract_frame", lambda path, i, info=None: seen.append(i) or np.zeros((8, 6, 3), np.uint8)
+        viz_module,
+        "extract_frame",
+        lambda path, i, info=None: seen.append(i) or np.zeros((8, 6, 3), np.uint8),
     )
     report = _fake_video_quality_report()
-    _assert_png(plot_frame_extremes(report, "fake.mp4", tmp_path, column="blur", n=3), "extremes-blur.png")
+    _assert_png(
+        plot_frame_extremes(report, "fake.mp4", tmp_path, column="blur", n=3),
+        "extremes-blur.png",
+    )
     blur = np.asarray(report["frames"]["blur"])
     assert set(seen) == set(np.argsort(blur)[-3:]) | set(np.argsort(blur)[:3])
-    _assert_png(plot_frame_extremes(report, "fake.mp4", tmp_path, column="exposure_mean"), "extremes-exposure_mean.png")
+    _assert_png(
+        plot_frame_extremes(report, "fake.mp4", tmp_path, column="exposure_mean"),
+        "extremes-exposure_mean.png",
+    )
 
 
 def _stub_decode(monkeypatch):
@@ -163,14 +208,24 @@ def _stub_decode(monkeypatch):
     Stub video decode: plot_frame_extremes only needs an (H, W, 3) uint8 per frame.
     """
     monkeypatch.setattr(viz_module, "get_video_info", lambda path: {"fps": 10.0})
-    monkeypatch.setattr(viz_module, "extract_frame", lambda path, i, info=None: np.zeros((8, 6, 3), np.uint8))
+    monkeypatch.setattr(
+        viz_module,
+        "extract_frame",
+        lambda path, i, info=None: np.zeros((8, 6, 3), np.uint8),
+    )
 
 
 _PLOTTERS = {
     "photometric": (lambda r, o, **kw: plot_photometric(r, o, **kw), 90),
     "motion": (lambda r, o, **kw: plot_motion(r, o, **kw), 90),
-    "extremes": (lambda r, o, **kw: plot_frame_extremes(r, "fake.mp4", o, n=2, **kw), 150),
-    "correlation": (lambda r, o, **kw: plot_correlation(r, "n_matches", "parallax", o, **kw), 90),
+    "extremes": (
+        lambda r, o, **kw: plot_frame_extremes(r, "fake.mp4", o, n=2, **kw),
+        150,
+    ),
+    "correlation": (
+        lambda r, o, **kw: plot_correlation(r, "n_matches", "parallax", o, **kw),
+        90,
+    ),
 }
 
 

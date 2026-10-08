@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 import torch
 from PIL import Image
 

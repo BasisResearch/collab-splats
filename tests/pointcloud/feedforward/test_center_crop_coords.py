@@ -87,7 +87,9 @@ def _old_omega(sizes: list[tuple[int, int]]) -> np.ndarray:
     return np.array(coords, dtype=np.float32)
 
 
-def _old_mapanything(frame_hw: list[tuple[int, int]], model_w: int, model_h: int) -> np.ndarray:
+def _old_mapanything(
+    frame_hw: list[tuple[int, int]], model_w: int, model_h: int
+) -> np.ndarray:
     """
     Crop box of MapAnything's loader per frame, in original pixels.
 
@@ -114,7 +116,16 @@ def _old_mapanything(frame_hw: list[tuple[int, int]], model_w: int, model_h: int
 
         # Centered crop on the resized grid, mapped back to original pixels
         left, top = (rw - model_w) // 2, (rh - model_h) // 2
-        rows.append([left / scale, top / scale, (left + model_w) / scale, (top + model_h) / scale, w, h])
+        rows.append(
+            [
+                left / scale,
+                top / scale,
+                (left + model_w) / scale,
+                (top + model_h) / scale,
+                w,
+                h,
+            ]
+        )
     return np.array(rows, dtype=np.float32)
 
 
@@ -129,7 +140,9 @@ _COMMON = {(1920, 1080), (1080, 1920), (3840, 2160), (640, 480), (518, 518)}
 SIZES = sorted(_GRID | _COMMON)
 
 # Every model grid MapAnything's fixed_mapping mode can pick (518 / 512 / 504 sets)
-MAPANYTHING_GRIDS = sorted({wh for table in RESOLUTION_MAPPINGS.values() for wh in table.values()})
+MAPANYTHING_GRIDS = sorted(
+    {wh for table in RESOLUTION_MAPPINGS.values() for wh in table.values()}
+)
 
 
 def test_vggtx_boxes_equal_old_function():

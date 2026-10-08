@@ -37,7 +37,9 @@ def _fake_vismatch_matcher(n_kpts=8, d=64):
     m.supports_batches = False  # a MagicMock attribute would be truthy
     feats = {"all_kpts0": all_kpts0, "all_desc0": result["all_desc0"]}
     # vismatch extract: a list in -> one dict per image; a single image in -> one dict
-    m.extract.side_effect = lambda imgs: [dict(feats) for _ in imgs] if isinstance(imgs, list) else dict(feats)
+    m.extract.side_effect = lambda imgs: (
+        [dict(feats) for _ in imgs] if isinstance(imgs, list) else dict(feats)
+    )
     return m
 
 
@@ -70,7 +72,13 @@ def test_max_num_keypoints_forwarded(mock_get):
 
 @pytest.mark.parametrize(
     "device",
-    ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))],
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"),
+        ),
+    ],
 )
 @patch("vismatch.get_matcher")
 def test_to_device_moves_every_tensor(mock_get, device):
@@ -111,7 +119,9 @@ def test_match_returns_native_indices(mock_get):
     ]
     mock_get.return_value = m
     lm = LocalMatcher("xfeat", device="cpu")
-    f = LocalFeatures(keypoints=torch.zeros(4, 2), descriptors=torch.zeros(4, 8), image_size=(10, 10))
+    f = LocalFeatures(
+        keypoints=torch.zeros(4, 2), descriptors=torch.zeros(4, 8), image_size=(10, 10)
+    )
 
     res = lm.match(f, f)
 
@@ -136,7 +146,10 @@ def test_extract_handles_tensor_outputs(mock_get):
     # Real matchers may return torch tensors (check_types allows tensor or ndarray).
     m = _batch_vismatch_matcher()
     prev = m.extract([None])[0]
-    tensor_feats = {"all_kpts0": torch.from_numpy(prev["all_kpts0"]), "all_desc0": torch.from_numpy(prev["all_desc0"])}
+    tensor_feats = {
+        "all_kpts0": torch.from_numpy(prev["all_kpts0"]),
+        "all_desc0": torch.from_numpy(prev["all_desc0"]),
+    }
     m.extract.side_effect = lambda imgs: [dict(tensor_feats)]
     mock_get.return_value = m
     lm = LocalMatcher("xfeat", device="cpu")
@@ -149,7 +162,10 @@ def test_extract_handles_tensor_outputs(mock_get):
 def test_extract_asserts_pixel_frame(mock_get):
     # Keypoints outside the input image bounds = coordinate-frame violation (92f2e4a class)
     m = _batch_vismatch_matcher()
-    bad = {"all_kpts0": np.array([[500.0, 500.0]], dtype=np.float32), "all_desc0": np.zeros((1, 64), dtype=np.float32)}
+    bad = {
+        "all_kpts0": np.array([[500.0, 500.0]], dtype=np.float32),
+        "all_desc0": np.zeros((1, 64), dtype=np.float32),
+    }
     m.extract.side_effect = lambda imgs: [dict(bad)]
     mock_get.return_value = m
     lm = LocalMatcher("xfeat", device="cpu")
@@ -174,14 +190,23 @@ def test_extract_list_returns_one_feature_set_per_image(mock_get):
     m = _batch_vismatch_matcher()
     mock_get.return_value = m
     lm = LocalMatcher("xfeat", device="cpu")
-    feats = lm.extract([np.zeros((100, 120, 3), np.uint8), np.zeros((100, 110, 3), np.uint8)])
+    feats = lm.extract(
+        [np.zeros((100, 120, 3), np.uint8), np.zeros((100, 110, 3), np.uint8)]
+    )
     assert m.extract.call_count == 1  # one batched vismatch call
     assert [f.image_size for f in feats] == [(120, 100), (110, 100)]
 
 
 @pytest.mark.parametrize("dtype", [np.uint8, np.float32])
 @pytest.mark.parametrize(
-    "device", ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))]
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"),
+        ),
+    ],
 )
 @patch("vismatch.get_matcher")
 def test_to_tensor_keeps_dtype_on_device(mock_get, device, dtype):
@@ -194,12 +219,19 @@ def test_to_tensor_keeps_dtype_on_device(mock_get, device, dtype):
     out = lm._to_tensor(image)
 
     assert out.device.type == device and out.shape == (3, 37, 53)
-    torch.testing.assert_close(out.cpu(), torch.from_numpy(image).permute(2, 0, 1), atol=0, rtol=0)
+    torch.testing.assert_close(
+        out.cpu(), torch.from_numpy(image).permute(2, 0, 1), atol=0, rtol=0
+    )
 
 
 def _one_hot_features(rows, d=8, keypoints_normalized=False):
     """LocalFeatures whose descriptors are one-hot rows — mutual-NN is exactly identity."""
-    kpts = np.stack([np.arange(len(rows)), np.arange(len(rows))], axis=1).astype(np.float32) * 10
+    kpts = (
+        np.stack([np.arange(len(rows)), np.arange(len(rows))], axis=1).astype(
+            np.float32
+        )
+        * 10
+    )
     desc = np.eye(d, dtype=np.float32)[rows]
     norm = torch.from_numpy(kpts / 100) if keypoints_normalized else None
     return LocalFeatures(
@@ -250,7 +282,9 @@ def test_init_skips_vismatch_ransac(mock_get):
 def test_match_empty_descriptors_returns_empty(mock_get):
     mock_get.return_value = _batch_vismatch_matcher()
     lm = LocalMatcher("xfeat", device="cpu")
-    empty = LocalFeatures(keypoints=torch.zeros((0, 2)), descriptors=torch.zeros((0, 8)))
+    empty = LocalFeatures(
+        keypoints=torch.zeros((0, 2)), descriptors=torch.zeros((0, 8))
+    )
     m = lm.match(empty, _one_hot_features([0, 1]))
     assert len(m) == 0 and m.idx_q is not None  # empty but indexable
 
@@ -259,7 +293,9 @@ def test_match_empty_descriptors_returns_empty(mock_get):
 # GPU parity gates (real models) — vismatch match() vs the pair forward
 ########################################
 
-requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="real-model parity needs CUDA")
+requires_cuda = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="real-model parity needs CUDA"
+)
 
 
 @pytest.fixture
@@ -291,12 +327,16 @@ def test_real_loma_extract_keeps_normalized_payload(strict_fp32):
     lm = LocalMatcher("loma")
     a, _ = _real_pair()
     feats = lm.extract(a)
-    assert feats.keypoints_normalized is not None and len(feats.keypoints_normalized) == len(feats.keypoints)
+    assert feats.keypoints_normalized is not None and len(
+        feats.keypoints_normalized
+    ) == len(feats.keypoints)
     assert feats.image_size == (320, 240)
 
 
 @requires_cuda
-def test_real_loma_match_parity_after_zarr_roundtrip(tmp_path, strict_fp32, replay_matcher):
+def test_real_loma_match_parity_after_zarr_roundtrip(
+    tmp_path, strict_fp32, replay_matcher
+):
     """match() on zarr-roundtripped features == the plain pair forward (float64 pair forward vs float32 cache)."""
     lm = LocalMatcher("loma")
     a, b = _real_pair(seed=4)
@@ -316,7 +356,10 @@ def test_real_loma_match_parity_after_zarr_roundtrip(tmp_path, strict_fp32, repl
     )
     loc.save_index(tmp_path / "ff.zarr", "loma")
     loaded, _, _ = read_localization_db(tmp_path / "ff.zarr", "loma")
-    assert all(f.keypoints_normalized is not None and f.image_size == (320, 240) for f in loaded)
+    assert all(
+        f.keypoints_normalized is not None and f.image_size == (320, 240)
+        for f in loaded
+    )
     m = lm.match(loaded[0], loaded[1])
     np.testing.assert_allclose(m.query_px, ref["matched_kpts0"], atol=1e-4)
     np.testing.assert_allclose(m.ref_px, ref["matched_kpts1"], atol=1e-4)

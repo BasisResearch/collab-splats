@@ -18,14 +18,18 @@ def make_scene(n_views=8, height=64, width=64, n_points=200):
     rng = np.random.default_rng(0)
     points = rng.uniform(-0.5, 0.5, (n_points, 3)).astype(np.float32)
     colors = rng.integers(0, 255, (n_points, 3)).astype(np.uint8)
-    intrinsics = np.array([[FOCAL, 0, width / 2], [0, FOCAL, height / 2], [0, 0, 1]], dtype=np.float32)
+    intrinsics = np.array(
+        [[FOCAL, 0, width / 2], [0, FOCAL, height / 2], [0, 0, 1]], dtype=np.float32
+    )
 
     images, depths, world_to_cam = [], [], []
 
     for view in range(n_views):
         # Camera on a ring of radius 3, looking at the origin (OpenCV: +z forward)
         angle = 2 * np.pi * view / n_views
-        position = np.array([3 * np.cos(angle), 0.3, 3 * np.sin(angle)], dtype=np.float32)
+        position = np.array(
+            [3 * np.cos(angle), 0.3, 3 * np.sin(angle)], dtype=np.float32
+        )
         forward = -position / np.linalg.norm(position)
         right = np.cross([0, 1, 0], forward)
         right /= np.linalg.norm(right)
@@ -59,4 +63,11 @@ def make_scene(n_views=8, height=64, width=64, n_points=200):
         depths.append(depth)
 
     intrinsics_per_view = np.stack([intrinsics] * n_views)
-    return np.stack(images), np.stack(world_to_cam), intrinsics_per_view, points, colors, np.stack(depths)
+    return (
+        np.stack(images),
+        np.stack(world_to_cam),
+        intrinsics_per_view,
+        points,
+        colors,
+        np.stack(depths),
+    )

@@ -38,8 +38,12 @@ def _render(height=16, width=16, with_distortion=True):
         Render dict keyed rgb / alpha / depth / normal / depth_normal (+ distortion).
     """
     gen = torch.Generator().manual_seed(0)
-    normal = torch.nn.functional.normalize(torch.randn(1, height, width, 3, generator=gen), dim=-1)
-    noisy_normal = torch.nn.functional.normalize(normal + 0.1 * torch.randn_like(normal), dim=-1)
+    normal = torch.nn.functional.normalize(
+        torch.randn(1, height, width, 3, generator=gen), dim=-1
+    )
+    noisy_normal = torch.nn.functional.normalize(
+        normal + 0.1 * torch.randn_like(normal), dim=-1
+    )
     render = {
         "rgb": torch.rand(1, height, width, 3, generator=gen),
         "alpha": torch.rand(1, height, width, 1, generator=gen),
@@ -191,10 +195,14 @@ def test_normal_consistency_inactive_tolerates_missing_normals():
     render_no_normals = _render(with_distortion=False)
     del render_no_normals["normal"], render_no_normals["depth_normal"]
     schedule = {"normal_consistency": {"weight": 0.0}}
-    _, values = compute_losses(0, render_no_normals, _target(), _gaussians(), schedule, 1.0)
+    _, values = compute_losses(
+        0, render_no_normals, _target(), _gaussians(), schedule, 1.0
+    )
     assert "normal_consistency" not in values
     schedule = {"normal_consistency": {"weight": 1.0, "start": 500}}
-    _, values = compute_losses(0, render_no_normals, _target(), _gaussians(), schedule, 1.0)
+    _, values = compute_losses(
+        0, render_no_normals, _target(), _gaussians(), schedule, 1.0
+    )
     assert "normal_consistency" not in values
 
 
@@ -220,7 +228,9 @@ def test_distortion_skipped_when_render_has_no_map():
     schedule = {"distortion": {"weight": 1.0}}
     render_without_map = _render(with_distortion=False)
     _, with_map = compute_losses(0, _render(), _target(), _gaussians(), schedule, 1.0)
-    _, without_map = compute_losses(0, render_without_map, _target(), _gaussians(), schedule, 1.0)
+    _, without_map = compute_losses(
+        0, render_without_map, _target(), _gaussians(), schedule, 1.0
+    )
     assert "distortion" in with_map and "distortion" not in without_map
 
 
@@ -235,7 +245,12 @@ def test_regularizers_read_raw_gaussian_params():
 def test_total_is_weighted_sum():
     schedule = {"depth": {"weight": 0.3}, "normal_consistency": {"weight": 0.7}}
     total, values = compute_losses(0, _render(), _target(), _gaussians(), schedule, 1.0)
-    expected = 0.8 * values["l1"] + 0.2 * values["ssim"] + 0.3 * values["depth"] + 0.7 * values["normal_consistency"]
+    expected = (
+        0.8 * values["l1"]
+        + 0.2 * values["ssim"]
+        + 0.3 * values["depth"]
+        + 0.7 * values["normal_consistency"]
+    )
     assert total.item() == pytest.approx(expected, rel=1e-5)
 
 
@@ -257,7 +272,9 @@ def test_loss_weight_decays_log_linearly_then_holds():
 
 def test_compute_losses_uses_decayed_weight():
     schedule = {"depth": {"weight": 0.4, "end": 100, "end_weight": 0.1}}
-    total, values = compute_losses(50, _render(), _target(), _gaussians(), schedule, 1.0)
+    total, values = compute_losses(
+        50, _render(), _target(), _gaussians(), schedule, 1.0
+    )
     expected = 0.8 * values["l1"] + 0.2 * values["ssim"] + 0.2 * values["depth"]
     assert total.item() == pytest.approx(expected, rel=1e-5)
 
@@ -309,7 +326,9 @@ def test_depth_ratio_without_a_median_normal_raises():
     target, gaussians = _target(), _gaussians()
 
     with pytest.raises(ValueError, match="depth_normal_median"):
-        OPTIONAL_LOSSES["normal_consistency"](render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 0.6})
+        OPTIONAL_LOSSES["normal_consistency"](
+            render, target, gaussians, 1.0, {"weight": 1.0, "depth_ratio": 0.6}
+        )
 
 
 def test_compute_losses_passes_the_spec_through():
@@ -318,7 +337,9 @@ def test_compute_losses_passes_the_spec_through():
         torch.randn(1, 16, 16, 3, generator=torch.Generator().manual_seed(2)), dim=-1
     )
     fn = OPTIONAL_LOSSES["normal_consistency"]
-    median_only = fn(render, _target(), _gaussians(), 1.0, {"weight": 1.0, "depth_ratio": 1.0}).item()
+    median_only = fn(
+        render, _target(), _gaussians(), 1.0, {"weight": 1.0, "depth_ratio": 1.0}
+    ).item()
 
     schedule = {"normal_consistency": {"weight": 1.0, "depth_ratio": 1.0}}
     _, values = compute_losses(0, render, _target(), _gaussians(), schedule, 1.0)
@@ -330,7 +351,9 @@ def test_scale_reg_prefers_decoded_log_scales():
     Under scaffold there is no scales parameter: the regularizer reads the decoded scales.
     """
     render = {"log_scales": torch.full((5, 3), -2.0)}
-    gaussians = torch.nn.ParameterDict({"scales": torch.nn.Parameter(torch.zeros(5, 3))})
+    gaussians = torch.nn.ParameterDict(
+        {"scales": torch.nn.Parameter(torch.zeros(5, 3))}
+    )
     decoded_value = scale_reg_loss(render, {}, gaussians, 1.0, {"weight": 1.0})
     parameter_value = scale_reg_loss({}, {}, gaussians, 1.0, {"weight": 1.0})
     assert decoded_value.item() == pytest.approx(0.1353352832366127**3, rel=1e-5)
@@ -341,11 +364,15 @@ def test_scale_reg_on_decoded_scales_is_the_volume_not_the_mean():
     """
     Scaffold penalizes the decoded volume, so the 2dgs zeroed third channel leaves the area.
     """
-    flat = {"log_scales": torch.cat([torch.full((4, 2), -2.0), torch.zeros(4, 1)], dim=-1)}
-    gaussians = torch.nn.ParameterDict({"scales": torch.nn.Parameter(torch.zeros(4, 3))})
-    assert scale_reg_loss(flat, {}, gaussians, 1.0, {"weight": 1.0}).item() == pytest.approx(
-        0.1353352832366127**2, rel=1e-5
+    flat = {
+        "log_scales": torch.cat([torch.full((4, 2), -2.0), torch.zeros(4, 1)], dim=-1)
+    }
+    gaussians = torch.nn.ParameterDict(
+        {"scales": torch.nn.Parameter(torch.zeros(4, 3))}
     )
+    assert scale_reg_loss(
+        flat, {}, gaussians, 1.0, {"weight": 1.0}
+    ).item() == pytest.approx(0.1353352832366127**2, rel=1e-5)
 
 
 def test_opacity_reg_prefers_decoded_opacities():
@@ -353,9 +380,15 @@ def test_opacity_reg_prefers_decoded_opacities():
     Scaffold's opacities are decoded and already activated, so they are averaged as-is.
     """
     render = {"opacities": torch.full((4,), 0.25)}
-    gaussians = torch.nn.ParameterDict({"opacities": torch.nn.Parameter(torch.zeros(4))})
-    assert opacity_reg_loss(render, {}, gaussians, 1.0, {"weight": 1.0}).item() == pytest.approx(0.25)
-    assert opacity_reg_loss({}, {}, gaussians, 1.0, {"weight": 1.0}).item() == pytest.approx(0.5)
+    gaussians = torch.nn.ParameterDict(
+        {"opacities": torch.nn.Parameter(torch.zeros(4))}
+    )
+    assert opacity_reg_loss(
+        render, {}, gaussians, 1.0, {"weight": 1.0}
+    ).item() == pytest.approx(0.25)
+    assert opacity_reg_loss(
+        {}, {}, gaussians, 1.0, {"weight": 1.0}
+    ).item() == pytest.approx(0.5)
 
 
 def test_appearance_reg_reads_render_params_or_skips():
@@ -365,7 +398,9 @@ def test_appearance_reg_reads_render_params_or_skips():
     assert OPTIONAL_LOSSES["appearance_reg"] is appearance_reg_loss
     assert appearance_reg_loss({}, {}, None, 1.0, {"weight": 1.0}) is None
     params = torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
-    assert appearance_reg_loss({"appearance": params}, {}, None, 1.0, {"weight": 1.0}).item() == pytest.approx(1.0 / 6)
+    assert appearance_reg_loss(
+        {"appearance": params}, {}, None, 1.0, {"weight": 1.0}
+    ).item() == pytest.approx(1.0 / 6)
 
 
 def test_default_losses_gives_3dgs_the_mcmc_regularizers():
@@ -414,7 +449,10 @@ def test_validate_schedule_names_the_keys_legal_for_that_loss():
 def test_validate_schedule_accepts_a_well_formed_decay():
     # Both other decay tests raise, and the defaults carry no `end`
     # - without this, a guard rejecting every decay entry leaves the rest of the file green
-    validate_schedule({"depth": {"weight": 0.01, "start": 1000, "end": 3000, "end_weight": 0.0001}}, "3dgs")
+    validate_schedule(
+        {"depth": {"weight": 0.01, "start": 1000, "end": 3000, "end_weight": 0.0001}},
+        "3dgs",
+    )
 
 
 def test_validate_schedule_rejects_a_decay_without_both_endpoints():
@@ -424,7 +462,10 @@ def test_validate_schedule_rejects_a_decay_without_both_endpoints():
 
 def test_validate_schedule_rejects_a_decay_that_ends_before_it_starts():
     with pytest.raises(ValueError, match="end > start"):
-        validate_schedule({"depth": {"weight": 1.0, "end_weight": 0.1, "start": 500, "end": 100}}, "3dgs")
+        validate_schedule(
+            {"depth": {"weight": 1.0, "end_weight": 0.1, "start": 500, "end": 100}},
+            "3dgs",
+        )
 
 
 def test_validate_schedule_rejects_distortion_on_3dgs():
@@ -438,17 +479,23 @@ def test_validate_schedule_allows_zero_weight_distortion_on_3dgs():
 
 def test_validate_schedule_rejects_a_boolean_depth_ratio():
     with pytest.raises(ValueError, match="depth_ratio must be a number"):
-        validate_schedule({"normal_consistency": {"weight": 1.0, "depth_ratio": True}}, "2dgs")
+        validate_schedule(
+            {"normal_consistency": {"weight": 1.0, "depth_ratio": True}}, "2dgs"
+        )
 
 
 def test_validate_schedule_rejects_an_out_of_range_depth_ratio():
     with pytest.raises(ValueError, match=r"depth_ratio must be in \[0, 1\]"):
-        validate_schedule({"normal_consistency": {"weight": 1.0, "depth_ratio": 1.5}}, "2dgs")
+        validate_schedule(
+            {"normal_consistency": {"weight": 1.0, "depth_ratio": 1.5}}, "2dgs"
+        )
 
 
 def test_validate_schedule_rejects_depth_ratio_on_3dgs():
     with pytest.raises(ValueError, match="depth_ratio > 0 is 2dgs-only"):
-        validate_schedule({"normal_consistency": {"weight": 1.0, "depth_ratio": 0.5}}, "3dgs")
+        validate_schedule(
+            {"normal_consistency": {"weight": 1.0, "depth_ratio": 0.5}}, "3dgs"
+        )
 
 
 def test_compute_losses_photometric_weights_are_keyword_arguments():
@@ -457,20 +504,28 @@ def test_compute_losses_photometric_weights_are_keyword_arguments():
     # - an implementation that ignored them could not reproduce that
     render, target, gaussians = _render(), _target(), _gaussians()
 
-    total, values = compute_losses(0, render, target, gaussians, {}, 1.0, l1_weight=0.3, ssim_weight=0.7)
+    total, values = compute_losses(
+        0, render, target, gaussians, {}, 1.0, l1_weight=0.3, ssim_weight=0.7
+    )
     default_total, _ = compute_losses(0, render, target, gaussians, {}, 1.0)
 
     # The passed weights compose the reported terms; the defaults are still 0.8 / 0.2
     # - nothing else pins those, and a later task deletes the duplicate literals elsewhere
-    assert float(total) == pytest.approx(0.3 * values["l1"] + 0.7 * values["ssim"], rel=1e-5)
-    assert float(default_total) == pytest.approx(0.8 * values["l1"] + 0.2 * values["ssim"], rel=1e-5)
+    assert float(total) == pytest.approx(
+        0.3 * values["l1"] + 0.7 * values["ssim"], rel=1e-5
+    )
+    assert float(default_total) == pytest.approx(
+        0.8 * values["l1"] + 0.2 * values["ssim"], rel=1e-5
+    )
     assert float(total) != pytest.approx(float(default_total))
 
 
 def test_compute_losses_photometric_weights_are_keyword_only():
     # `scene_scale` is the sixth and last positional; a seventh becomes `l1_weight`
     # - the full count string is pinned: any arity slip in this call also says "positional"
-    with pytest.raises(TypeError, match="takes 6 positional arguments but 7 were given"):
+    with pytest.raises(
+        TypeError, match="takes 6 positional arguments but 7 were given"
+    ):
         compute_losses(0, _render(), _target(), _gaussians(), {}, 1.0, 0.5)
 
 
@@ -484,7 +539,9 @@ def test_rescale_depth_units_divides_the_distortion_weight():
     # - a unit-cube frame penalizes `scale` times harder for the same yaml weight
     # - dividing restores the world-frame penalty
     # - multiplying, or leaving it alone: same schedule shape, different training run
-    rescaled = rescale_depth_units({"distortion": {"weight": 100.0}, "depth": {"weight": 0.5}}, 4.0)
+    rescaled = rescale_depth_units(
+        {"distortion": {"weight": 100.0}, "depth": {"weight": 0.5}}, 4.0
+    )
 
     assert rescaled["distortion"]["weight"] == pytest.approx(25.0)
     assert rescaled["depth"] == {"weight": 0.5}
@@ -493,7 +550,9 @@ def test_rescale_depth_units_divides_the_distortion_weight():
 def test_rescale_depth_units_rescales_a_scheduled_end_weight_too():
     # A decayed distortion loss carries its endpoint in the same units
     # - forgetting it ramps from a unit-cube weight towards a world-frame one
-    rescaled = rescale_depth_units({"distortion": {"weight": 100.0, "end": 5, "end_weight": 10.0}}, 4.0)
+    rescaled = rescale_depth_units(
+        {"distortion": {"weight": 100.0, "end": 5, "end_weight": 10.0}}, 4.0
+    )
 
     assert rescaled["distortion"]["weight"] == pytest.approx(25.0)
     assert rescaled["distortion"]["end_weight"] == pytest.approx(2.5)
@@ -510,10 +569,16 @@ def test_rescale_depth_units_leaves_the_callers_schedule_alone():
     # The caller's schedule is the yaml dict `asdict(cfg)` writes into ckpt.pt and summary.config
     # - aliasing instead of copying divides the reported weight in place
     # - a frozen report then carries the rescaled number
-    losses = {"distortion": {"weight": 100.0, "end_weight": 10.0}, "depth": {"weight": 0.5}}
+    losses = {
+        "distortion": {"weight": 100.0, "end_weight": 10.0},
+        "depth": {"weight": 0.5},
+    }
 
     rescaled = rescale_depth_units(losses, 4.0)
 
-    assert losses == {"distortion": {"weight": 100.0, "end_weight": 10.0}, "depth": {"weight": 0.5}}
+    assert losses == {
+        "distortion": {"weight": 100.0, "end_weight": 10.0},
+        "depth": {"weight": 0.5},
+    }
     assert rescaled is not losses
     assert rescaled["distortion"] is not losses["distortion"]

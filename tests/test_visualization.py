@@ -15,6 +15,7 @@ def make_image(H=224, W=224):
 
 def test_pca_to_rgb_output_shape():
     from collab_splats.utils.visualization import pca_to_rgb
+
     features = make_features()
     image = make_image()
     result = pca_to_rgb(features, image)
@@ -24,12 +25,14 @@ def test_pca_to_rgb_output_shape():
 
 def test_pca_to_rgb_values_in_range():
     from collab_splats.utils.visualization import pca_to_rgb
+
     result = pca_to_rgb(make_features(), make_image())
     assert result.min() >= 0 and result.max() <= 255
 
 
 def test_compute_masked_image_shape():
     from collab_splats.utils.visualization import compute_masked_image
+
     image = make_image()
     sim_map = np.random.rand(image.shape[0], image.shape[1]).astype(np.float32)
     result = compute_masked_image(image, sim_map)
@@ -39,6 +42,7 @@ def test_compute_masked_image_shape():
 
 def test_compute_masked_image_blacks_low_sim():
     from collab_splats.utils.visualization import compute_masked_image
+
     image = (np.ones((4, 4, 3)) * 200).astype(np.uint8)
     # all zeros sim_map → all pixels below threshold → all black
     sim_map = np.zeros((4, 4), dtype=np.float32)
@@ -48,6 +52,7 @@ def test_compute_masked_image_blacks_low_sim():
 
 def test_compute_masked_image_keeps_high_sim():
     from collab_splats.utils.visualization import compute_masked_image
+
     image = (np.ones((4, 4, 3)) * 200).astype(np.uint8)
     # all ones sim_map → all pixels above threshold → image unchanged
     sim_map = np.ones((4, 4), dtype=np.float32)
@@ -57,6 +62,7 @@ def test_compute_masked_image_keeps_high_sim():
 
 def test_overlay_masks_output_shape():
     from collab_splats.utils.visualization import overlay_masks
+
     image = make_image(H=64, W=64)
     masks = torch.zeros(3, 64, 64)
     masks[0, :32, :32] = 1.0
@@ -69,6 +75,7 @@ def test_overlay_masks_output_shape():
 
 def test_overlay_masks_values_in_range():
     from collab_splats.utils.visualization import overlay_masks
+
     image = make_image(H=32, W=32)
     masks = torch.ones(1, 32, 32)
     result = overlay_masks(image, masks)
@@ -77,6 +84,7 @@ def test_overlay_masks_values_in_range():
 
 def test_pointcloud_to_polydata_attaches_rgb():
     from collab_splats.utils.visualization import pointcloud_to_polydata
+
     pts3d = np.random.rand(100, 3).astype(np.float32)
     colors = (np.random.rand(100, 3) * 255).astype(np.uint8)
     cloud = pointcloud_to_polydata(pts3d, RGB=colors)
@@ -86,6 +94,7 @@ def test_pointcloud_to_polydata_attaches_rgb():
 
 def test_pointcloud_to_polydata_multiple_scalars():
     from collab_splats.utils.visualization import pointcloud_to_polydata
+
     pts3d = np.random.rand(50, 3).astype(np.float32)
     colors = (np.random.rand(50, 3) * 255).astype(np.uint8)
     scores = np.random.rand(50).astype(np.float32)
@@ -96,6 +105,7 @@ def test_pointcloud_to_polydata_multiple_scalars():
 
 def test_pointcloud_to_polydata_no_scalars():
     from collab_splats.utils.visualization import pointcloud_to_polydata
+
     pts3d = np.zeros((10, 3), dtype=np.float32)
     cloud = pointcloud_to_polydata(pts3d)
     assert cloud.n_points == 10
@@ -117,6 +127,7 @@ def make_bare_cloud(N=100):
 
 def test_resolve_mesh_kwargs_rgb_returns_pcd_kwargs():
     from collab_splats.utils.visualization import PCD_KWARGS, _resolve_mesh_kwargs
+
     cloud = make_rgb_cloud()
     result = _resolve_mesh_kwargs(cloud, {})
     assert result == PCD_KWARGS
@@ -124,6 +135,7 @@ def test_resolve_mesh_kwargs_rgb_returns_pcd_kwargs():
 
 def test_resolve_mesh_kwargs_explicit_passthrough():
     from collab_splats.utils.visualization import _resolve_mesh_kwargs
+
     cloud = make_rgb_cloud()
     explicit = {"scalars": "RGB", "rgb": True, "point_size": 3.0}
     result = _resolve_mesh_kwargs(cloud, explicit)
@@ -132,6 +144,7 @@ def test_resolve_mesh_kwargs_explicit_passthrough():
 
 def test_resolve_mesh_kwargs_bare_cloud_returns_empty():
     from collab_splats.utils.visualization import _resolve_mesh_kwargs
+
     cloud = make_bare_cloud()
     result = _resolve_mesh_kwargs(cloud, {})
     assert result == {}

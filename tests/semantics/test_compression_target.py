@@ -62,7 +62,12 @@ def test_on_epoch_fires_on_the_early_stop_epoch():
     """The callback must report the epoch it stopped on, not be skipped by the break."""
     calls = []
     ae = FeatureAutoencoder(input_dim=32, latent_dim=32)
-    ae.fit(_features(), epochs=50, target_cosine=-1.0, on_epoch=lambda e, total, loss: calls.append((e, total)))
+    ae.fit(
+        _features(),
+        epochs=50,
+        target_cosine=-1.0,
+        on_epoch=lambda e, total, loss: calls.append((e, total)),
+    )
     assert ae.epochs_run == 1
     assert calls == [(1, 50)]
 
@@ -145,11 +150,19 @@ def _patch_maps(n=6, d=16, h=2, w=3):
 def test_fit_streams_every_frame_of_a_zarr_in_blocks(tmp_path):
     """read_gb small enough for 1-frame blocks: every frame still reaches the loss."""
     maps = _patch_maps()
-    arr = zarr.open(str(tmp_path / "m.zarr"), mode="w", shape=maps.shape, chunks=(1, *maps.shape[1:]), dtype="float16")
+    arr = zarr.open(
+        str(tmp_path / "m.zarr"),
+        mode="w",
+        shape=maps.shape,
+        chunks=(1, *maps.shape[1:]),
+        dtype="float16",
+    )
     arr[:] = maps
     seen = []
     ae = FeatureAutoencoder(input_dim=16, latent_dim=4)
-    hook = ae.encoder.register_forward_pre_hook(lambda module, args: seen.append(args[0].detach().cpu()))
+    hook = ae.encoder.register_forward_pre_hook(
+        lambda module, args: seen.append(args[0].detach().cpu())
+    )
     ae.fit(arr, epochs=1, batch_size=4, read_gb=1e-9)
     hook.remove()
 
@@ -160,7 +173,9 @@ def test_fit_streams_every_frame_of_a_zarr_in_blocks(tmp_path):
 
 def test_fit_tensor_and_zarr_inputs_both_train(tmp_path):
     maps = _patch_maps()
-    arr = zarr.open(str(tmp_path / "m.zarr"), mode="w", shape=maps.shape, dtype="float32")
+    arr = zarr.open(
+        str(tmp_path / "m.zarr"), mode="w", shape=maps.shape, dtype="float32"
+    )
     arr[:] = maps
 
     for source in (torch.from_numpy(maps), arr):
@@ -171,7 +186,9 @@ def test_fit_tensor_and_zarr_inputs_both_train(tmp_path):
 
 
 def test_fit_rejects_empty_zarr(tmp_path):
-    arr = zarr.open(str(tmp_path / "m.zarr"), mode="w", shape=(0, 16, 2, 2), dtype="float16")
+    arr = zarr.open(
+        str(tmp_path / "m.zarr"), mode="w", shape=(0, 16, 2, 2), dtype="float16"
+    )
 
     with pytest.raises(ValueError, match="at least one sample"):
         FeatureAutoencoder(input_dim=16, latent_dim=4).fit(arr, epochs=1)

@@ -22,7 +22,9 @@ def test_inline_when_doc_none_runs_job_and_on_done():
     w = GpuWorker()
     got = {}
     with patch("collab_splats.dashboard.gpu_worker.pytorch_gc") as gc:
-        w.submit(job_fn=lambda: 21 * 2, on_done=lambda r: got.__setitem__("r", r), doc=None)
+        w.submit(
+            job_fn=lambda: 21 * 2, on_done=lambda r: got.__setitem__("r", r), doc=None
+        )
     assert got["r"] == 42
     gc.assert_called_once()
 
@@ -33,7 +35,9 @@ def test_doc_path_dispatches_result_to_on_done():
     doc = _FakeDoc()
     got = {}
     with patch("collab_splats.dashboard.gpu_worker.pytorch_gc"):
-        w.submit(job_fn=lambda: "payload", on_done=lambda r: got.__setitem__("r", r), doc=doc)
+        w.submit(
+            job_fn=lambda: "payload", on_done=lambda r: got.__setitem__("r", r), doc=doc
+        )
         w._queue.join()
     assert got["r"] == "payload"
     assert doc.scheduled
@@ -64,7 +68,9 @@ def test_worker_survives_dead_document():
 
     class _DeadDoc:
         def add_next_tick_callback(self, cb):
-            raise AttributeError("'DocumentCallbackManager' object has no attribute '_change_callbacks'")
+            raise AttributeError(
+                "'DocumentCallbackManager' object has no attribute '_change_callbacks'"
+            )
 
     done = threading.Event()
 

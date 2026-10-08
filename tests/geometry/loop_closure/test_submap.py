@@ -46,7 +46,10 @@ def test_conf_percentile_sets_conf_threshold():
         conf=conf,
     )
     assert Submap(**kw).conf_threshold == np.percentile(conf, 25.0) + 1e-6
-    assert Submap(**kw, conf_percentile=60.0).conf_threshold == np.percentile(conf, 60.0) + 1e-6
+    assert (
+        Submap(**kw, conf_percentile=60.0).conf_threshold
+        == np.percentile(conf, 60.0) + 1e-6
+    )
 
 
 def test_get_all_poses_world_matches_graph_extrinsics():
@@ -172,7 +175,9 @@ def _moving_submaps(S=4, H=6, W=8):
     """
     K = np.array([[50.0, 0, W / 2], [0, 50.0, H / 2], [0, 0, 1]])
     v, u = np.mgrid[0:H, 0:W].astype(np.float64)
-    rays = np.stack([(u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1], np.ones_like(u)], -1)
+    rays = np.stack(
+        [(u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1], np.ones_like(u)], -1
+    )
 
     # Global world-to-cam poses: translate along x, yaw a little
     G = []
@@ -244,7 +249,12 @@ def test_submap_node_ids_count_overlap_and_loop_carriers():
         conf=None,
     )
     pg.add_loop_edge(lc)
-    third = replace(second, submap_id=3, frame_start=6, image_paths=[f"f{6 + i}.jpg" for i in range(4)])
+    third = replace(
+        second,
+        submap_id=3,
+        frame_start=6,
+        image_paths=[f"f{6 + i}.jpg" for i in range(4)],
+    )
     pg.add_submap(third, overlap_frames=1)
 
     # Overlap frame and the two carrier nodes take ids, so node ids are not frame indices

@@ -73,7 +73,9 @@ def _rot_z(theta: float) -> np.ndarray:
     return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
 
 
-def _frames_scene(k: int, H: int, W: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _frames_scene(
+    k: int, H: int, W: int, seed: int = 0
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Varied float32 depth (k, H, W), non-identity (k, 3, 4) w2c and (k, 3, 3) K.
     """
@@ -107,7 +109,9 @@ def test_unproject_frames_matches_vggt_numpy():
     K = np.array([[50.0, 0, 8], [0, 50.0, 6], [0, 0, 1]], dtype=np.float32)
     K = np.tile(K, (k, 1, 1))
 
-    expected = unproject_depth_map_to_point_map(depth[..., None], ext, K).astype(np.float32)
+    expected = unproject_depth_map_to_point_map(depth[..., None], ext, K).astype(
+        np.float32
+    )
     got = unproject_frames(depth, ext, K)
 
     assert got.dtype == np.float32 and got.shape == (k, H, W, 3)
@@ -164,10 +168,18 @@ def test_project_divides_by_the_camera_depth_and_floors_it_at_min_depth():
 
     # Identity pose: the camera-frame point is the world point and the divide is by z = 4
     assert torch.equal(points_cam, points)
-    assert torch.allclose(pixels, torch.tensor([[300.0 / 4 + 31.0, 2 * 280.0 / 4 + 22.0]], dtype=torch.float64))
+    assert torch.allclose(
+        pixels,
+        torch.tensor([[300.0 / 4 + 31.0, 2 * 280.0 / 4 + 22.0]], dtype=torch.float64),
+    )
 
     # A floor above z takes over the divide, collapsing the point towards the principal point
-    assert torch.allclose(floored, torch.tensor([[300.0 / 1e3 + 31.0, 2 * 280.0 / 1e3 + 22.0]], dtype=torch.float64))
+    assert torch.allclose(
+        floored,
+        torch.tensor(
+            [[300.0 / 1e3 + 31.0, 2 * 280.0 / 1e3 + 22.0]], dtype=torch.float64
+        ),
+    )
 
 
 def test_project_one_camera_keeps_point_shape_and_points_dtype():
@@ -194,15 +206,25 @@ def test_depth_residual_reads_the_other_views_depth_at_the_projected_pixel():
     depth_j = (2.0 + 0.1 * u + 0.01 * v).double()
 
     # Camera-j points at known pixels and z, to world via view i: rows 0-2 interior, 3 off-grid, 4 behind j
-    pixels = torch.tensor([[1.0, 4.0], [5.0, 1.0], [3.0, 2.0], [9.0, 2.0], [3.0, 2.0]], dtype=torch.float64)
+    pixels = torch.tensor(
+        [[1.0, 4.0], [5.0, 1.0], [3.0, 2.0], [9.0, 2.0], [3.0, 2.0]],
+        dtype=torch.float64,
+    )
     z = torch.tensor([2.5, 1.0, 4.0, 3.0, -3.0], dtype=torch.float64)
     rays = torch.stack(
-        [(pixels[:, 0] - K[0, 2]) / K[0, 0], (pixels[:, 1] - K[1, 2]) / K[1, 1], torch.ones(5, dtype=torch.float64)], -1
+        [
+            (pixels[:, 0] - K[0, 2]) / K[0, 0],
+            (pixels[:, 1] - K[1, 2]) / K[1, 1],
+            torch.ones(5, dtype=torch.float64),
+        ],
+        -1,
     )
     points_cam_j = rays * z[:, None]
     points_world = (points_cam_j - w2c_j[:3, 3]) @ w2c_j[:3, :3]
 
-    residual, expected, sampled, valid, _ = depth_residual(points_world, w2c_j, K, depth_j)
+    residual, expected, sampled, valid, _ = depth_residual(
+        points_world, w2c_j, K, depth_j
+    )
 
     # Stored depth at (u, v) is 2 + 0.1 u + 0.01 v; the residual is expected minus sampled
     stored = torch.tensor([2.14, 2.51, 2.32], dtype=torch.float64)
@@ -227,9 +249,16 @@ def test_depth_residual_returns_project_pixels():
 def test_project_unproject_round_trip_non_identity():
     # Three non-identity poses, one per frame; a cropped K: non-square grid, off-center principal point
     poses = torch.stack([_pose(seed)[0] for seed in (4, 5, 6)])
-    K = torch.tensor([[210.0, 0, 13.25], [0, 190.0, 5.5], [0, 0, 1]], dtype=torch.float64)
+    K = torch.tensor(
+        [[210.0, 0, 13.25], [0, 190.0, 5.5], [0, 0, 1]], dtype=torch.float64
+    )
     intrinsics = K[None].expand(3, 3, 3)
-    depth = torch.rand((3, 9, 16), dtype=torch.float64, generator=torch.Generator().manual_seed(0)) + 0.5
+    depth = (
+        torch.rand(
+            (3, 9, 16), dtype=torch.float64, generator=torch.Generator().manual_seed(0)
+        )
+        + 0.5
+    )
     points = unproject(depth, poses, intrinsics)
 
     # Each frame's points land back on its own integer grid at its own depth
@@ -241,7 +270,9 @@ def test_project_unproject_round_trip_non_identity():
         assert torch.allclose(points_cam[..., 2], depth[i], atol=1e-12)
 
 
-def _two_view_scene(depth_b: float = 2.0) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _two_view_scene(
+    depth_b: float = 2.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Two identical cameras at the origin looking down +Z at a fronto-parallel plane.
 
@@ -249,7 +280,9 @@ def _two_view_scene(depth_b: float = 2.0) -> tuple[torch.Tensor, torch.Tensor, t
     """
     h, w = 8, 10
     depth = torch.stack([torch.full((h, w), 2.0), torch.full((h, w), depth_b)])
-    intrinsics = torch.tensor([[10.0, 0, (w - 1) / 2], [0, 10.0, (h - 1) / 2], [0, 0, 1]]).expand(2, 3, 3)
+    intrinsics = torch.tensor(
+        [[10.0, 0, (w - 1) / 2], [0, 10.0, (h - 1) / 2], [0, 0, 1]]
+    ).expand(2, 3, 3)
     extrinsics = torch.eye(4).expand(2, 4, 4)
     return depth, intrinsics, extrinsics
 
@@ -257,7 +290,9 @@ def _two_view_scene(depth_b: float = 2.0) -> tuple[torch.Tensor, torch.Tensor, t
 def test_multiview_depth_confidence_agree():
     depth, intrinsics, extrinsics = _two_view_scene(2.0)
 
-    agree, seen = multiview_depth_confidence(depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01)
+    agree, seen = multiview_depth_confidence(
+        depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01
+    )
 
     assert agree.shape == seen.shape == (2, 8, 10)
     assert (agree == 1).all() and (seen == 1).all()
@@ -267,7 +302,9 @@ def test_multiview_depth_confidence_occluded_is_unseen():
     # View 1 sees a surface in front of view 0's points: occluded, left out of seen
     depth, intrinsics, extrinsics = _two_view_scene(1.0)
 
-    agree, seen = multiview_depth_confidence(depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01)
+    agree, seen = multiview_depth_confidence(
+        depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01
+    )
 
     assert (seen[0] == 0).all() and (agree[0] == 0).all()
 
@@ -276,7 +313,9 @@ def test_multiview_depth_confidence_free_space_violation_is_seen_not_agree():
     # View 1 sees behind view 0's points: counted as seen, not as agreeing
     depth, intrinsics, extrinsics = _two_view_scene(3.0)
 
-    agree, seen = multiview_depth_confidence(depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01)
+    agree, seen = multiview_depth_confidence(
+        depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01
+    )
 
     assert (seen[0] == 1).all() and (agree[0] == 0).all()
 
@@ -287,7 +326,9 @@ def test_multiview_depth_confidence_out_of_bounds_is_unseen():
     extrinsics = extrinsics.clone()
     extrinsics[1, 0, 3] = 100.0
 
-    agree, seen = multiview_depth_confidence(depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01)
+    agree, seen = multiview_depth_confidence(
+        depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01
+    )
 
     assert (seen[0] == 0).all() and (agree[0] == 0).all()
 
@@ -296,7 +337,9 @@ def test_multiview_depth_confidence_zero_source_depth_counts_nothing():
     depth, intrinsics, extrinsics = _two_view_scene(2.0)
     depth[0, :2] = 0.0
 
-    agree, seen = multiview_depth_confidence(depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01)
+    agree, seen = multiview_depth_confidence(
+        depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01
+    )
 
     assert (seen[0, :2] == 0).all() and (agree[0, :2] == 0).all()
     assert (seen[0, 2:] == 1).all()
@@ -307,7 +350,9 @@ def test_multiview_depth_confidence_zero_target_depth_is_seen_not_agree():
     depth, intrinsics, extrinsics = _two_view_scene(2.0)
     depth[1] = 0.0
 
-    agree, seen = multiview_depth_confidence(depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01)
+    agree, seen = multiview_depth_confidence(
+        depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01
+    )
 
     assert (seen[0] == 1).all() and (agree[0] == 0).all()
 
@@ -318,21 +363,28 @@ def test_multiview_depth_confidence_rejects_original_res_intrinsics():
     intrinsics[:, 0, 2] = 50.0
 
     with pytest.raises(ValueError, match="principal point"):
-        multiview_depth_confidence(depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01)
+        multiview_depth_confidence(
+            depth.numpy(), intrinsics.numpy(), extrinsics.numpy(), rel_thresh=0.01
+        )
 
 
 def test_multiview_depth_confidence_rejects_length_mismatch():
     depth, intrinsics, extrinsics = _two_view_scene(2.0)
 
     with pytest.raises(ValueError, match="length mismatch"):
-        multiview_depth_confidence(depth.numpy(), intrinsics[:1].numpy(), extrinsics.numpy(), rel_thresh=0.01)
+        multiview_depth_confidence(
+            depth.numpy(), intrinsics[:1].numpy(), extrinsics.numpy(), rel_thresh=0.01
+        )
 
 
 def _pinhole(h: int, w: int) -> np.ndarray:
     """
     Pinhole K with focal = W and the principal point at the image center.
     """
-    return np.array([[float(w), 0.0, w / 2.0], [0.0, float(h), h / 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+    return np.array(
+        [[float(w), 0.0, w / 2.0], [0.0, float(h), h / 2.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
 
 
 def test_multiview_depth_confidence_nearest_sampling_fabricates_no_depth():
@@ -344,7 +396,9 @@ def test_multiview_depth_confidence_nearest_sampling_fabricates_no_depth():
     extrinsics = np.stack([np.eye(4, dtype=np.float32)] * n)
     extrinsics[1, 0, 3] = 0.05
 
-    agree, seen = multiview_depth_confidence(depth, np.stack([_pinhole(h, w)] * n), extrinsics, rel_thresh=0.05)
+    agree, seen = multiview_depth_confidence(
+        depth, np.stack([_pinhole(h, w)] * n), extrinsics, rel_thresh=0.05
+    )
 
     assert (seen[0] > 0).sum() > 0
     np.testing.assert_array_equal(agree[0], seen[0])
@@ -364,7 +418,9 @@ def test_multiview_depth_confidence_is_scale_invariant():
     s = 8.0
     extrinsics_s = extrinsics.copy()
     extrinsics_s[:, :3, 3] *= s
-    scaled = multiview_depth_confidence(depth * s, intrinsics, extrinsics_s, rel_thresh=0.05)
+    scaled = multiview_depth_confidence(
+        depth * s, intrinsics, extrinsics_s, rel_thresh=0.05
+    )
 
     np.testing.assert_array_equal(base[0], scaled[0])
     np.testing.assert_array_equal(base[1], scaled[1])
@@ -375,7 +431,9 @@ def test_depth_agreement_returns_the_camera_depth_project_computes():
     expected is project's camera z, so callers need no second transform.
     """
     rng = np.random.default_rng(3)
-    points = torch.as_tensor(rng.uniform(-1, 1, (500, 3)) + [0, 0, 4], dtype=torch.float32)
+    points = torch.as_tensor(
+        rng.uniform(-1, 1, (500, 3)) + [0, 0, 4], dtype=torch.float32
+    )
     w2c = torch.eye(4)
     w2c[0, 3] = 0.3
     K = torch.tensor([[20.0, 0, 8.0], [0, 20.0, 8.0], [0, 0, 1.0]])
@@ -397,12 +455,16 @@ def _views(hw=(12, 16), seed=0):
     w2c = torch.eye(4).repeat(b, 1, 1)
     w2c[1, :3, :3] = torch.tensor([[0.0, -1, 0], [1, 0, 0], [0, 0, 1]])
     c, sn = np.cos(0.1), np.sin(0.1)
-    w2c[2, :3, :3] = torch.tensor([[1.0, 0, 0], [0, c, -sn], [0, sn, c]], dtype=torch.float32)
+    w2c[2, :3, :3] = torch.tensor(
+        [[1.0, 0, 0], [0, c, -sn], [0, sn, c]], dtype=torch.float32
+    )
     w2c[:, :3, 3] = torch.as_tensor(rng.uniform(-0.3, 0.3, (b, 3)), dtype=torch.float32)
     depth = torch.as_tensor(rng.uniform(3, 5, (b, h, w)), dtype=torch.float32)
     depth[:, 0, :3] = 0.0
     depth[:, h // 2 - 2 : h // 2 + 2, w // 2 - 2 : w // 2 + 2] = 0.0
-    points = torch.as_tensor(rng.uniform(-1, 1, (400, 3)) + [0, 0, 4], dtype=torch.float32)
+    points = torch.as_tensor(
+        rng.uniform(-1, 1, (400, 3)) + [0, 0, 4], dtype=torch.float32
+    )
     points = torch.cat([points, torch.tensor([[0.0, 0, -2], [0.5, 0, -3]])])
     return points, w2c, K, depth
 
@@ -450,7 +512,9 @@ def test_sample_world_points_bilinear_and_invalid():
     """
     # 4x4 grid whose world point at (row r, col c) is (c, r, 1)
     H = W = 4
-    wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
+    wp = np.stack(
+        list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1
+    ).astype(np.float32)
     wp[0, 0] = np.nan  # unmapped pixel
 
     px = np.array([[2.0, 1.0], [1.5, 2.5], [0.0, 0.0]], dtype=np.float32)  # xy
@@ -466,7 +530,9 @@ def test_sample_world_points_out_of_bounds():
     Pixels outside the image bounds are marked invalid.
     """
     H = W = 4
-    wp = np.stack(list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1).astype(np.float32)
+    wp = np.stack(
+        list(np.meshgrid(np.arange(W), np.arange(H))) + [np.ones((H, W))], axis=-1
+    ).astype(np.float32)
 
     px = np.array([[10.0, 1.0]], dtype=np.float32)  # x beyond W-1
     _, valid = sample_world_points(wp, px)
@@ -499,7 +565,9 @@ def test_reprojection_error_per_point_cameras():
 def test_reprojection_error_inf_behind_camera_and_nan():
     K = torch.eye(3, dtype=torch.float64)
     w2c = torch.eye(4, dtype=torch.float64)
-    points = torch.tensor([[0.0, 0.0, -1.0], [float("nan"), 0.0, 1.0]], dtype=torch.float64)
+    points = torch.tensor(
+        [[0.0, 0.0, -1.0], [float("nan"), 0.0, 1.0]], dtype=torch.float64
+    )
     px = torch.zeros(2, 2, dtype=torch.float64)
 
     err = reprojection_error(points, w2c, K, px)

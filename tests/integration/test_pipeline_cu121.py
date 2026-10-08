@@ -70,14 +70,20 @@ def test_to_colmap_roundtrip():
         intrinsics=None,
         model_intrinsics=_synthetic_intrinsics(N_FRAMES),
         image_paths=[Path(f"frame_{i:04d}.jpg") for i in range(N_FRAMES)],
-        original_coords=np.tile(np.array([0, 0, W, H, W, H], dtype=np.float32), (N_FRAMES, 1)),
+        original_coords=np.tile(
+            np.array([0, 0, W, H, W, H], dtype=np.float32), (N_FRAMES, 1)
+        ),
         model_width=W,
         model_height=H,
     )
 
     recon = result.to_colmap()
-    assert len(recon.images) == N_FRAMES, f"Expected {N_FRAMES} images, got {len(recon.images)}"
-    assert len(recon.cameras) == N_FRAMES, f"Expected {N_FRAMES} cameras, got {len(recon.cameras)}"
+    assert len(recon.images) == N_FRAMES, (
+        f"Expected {N_FRAMES} images, got {len(recon.images)}"
+    )
+    assert len(recon.cameras) == N_FRAMES, (
+        f"Expected {N_FRAMES} cameras, got {len(recon.cameras)}"
+    )
     assert len(recon.points3D) == P, f"Expected {P} points, got {len(recon.points3D)}"
 
 
@@ -94,7 +100,9 @@ def test_pointcloud_result_save_load(tmp_path):
         intrinsics=None,
         model_intrinsics=_synthetic_intrinsics(N),
         image_paths=[Path(f"frame_{i}.jpg") for i in range(N)],
-        original_coords=np.tile(np.array([0, 0, W, H, W, H], dtype=np.float32), (N, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, W, H, W, H], dtype=np.float32), (N, 1)
+        ),  # full-frame box
         model_width=W,
         model_height=H,
     )
@@ -117,7 +125,9 @@ def test_vggtx_postprocess_pipeline(tmp_path):
     raw = _synthetic_vggtx_raw()
     creator = VGGTXCreator()
     creator.image_paths = [tmp_path / f"frame_{i:04d}.jpg" for i in range(N_FRAMES)]
-    creator.original_coords = np.tile(np.array([0, 0, W, H, W, H], dtype=np.float32), (N_FRAMES, 1))  # full-frame box
+    creator.original_coords = np.tile(
+        np.array([0, 0, W, H, W, H], dtype=np.float32), (N_FRAMES, 1)
+    )  # full-frame box
 
     result = creator._postprocess(raw)
 
@@ -157,7 +167,9 @@ def test_mapanything_postprocess_pipeline(tmp_path):
 
     creator = MapAnythingCreator(min_views=1)
     creator.image_paths = [tmp_path / f"frame_{i:04d}.jpg" for i in range(N)]
-    creator.original_coords = np.tile(np.array([0, 0, W, H, W, H], dtype=np.float32), (N, 1))  # full-frame box
+    creator.original_coords = np.tile(
+        np.array([0, 0, W, H, W, H], dtype=np.float32), (N, 1)
+    )  # full-frame box
 
     # Upstream postprocess returns per-frame pred dicts; the synthetic views carry every key
     mock_processed = synthetic_views
@@ -169,7 +181,10 @@ def test_mapanything_postprocess_pipeline(tmp_path):
         ),
         patch(
             "collab_splats.pointcloud.feedforward.base.multiview_depth_confidence",
-            side_effect=lambda depth, *a, **kw: (np.ones_like(depth, np.int32), np.ones_like(depth, np.int32)),
+            side_effect=lambda depth, *a, **kw: (
+                np.ones_like(depth, np.int32),
+                np.ones_like(depth, np.int32),
+            ),
         ),
     ):
         raw = creator._stack_predictions(synthetic_views, synthetic_views, masked=True)
@@ -198,5 +213,7 @@ def test_tsdf_mesh_synthetic():
     K = np.array([[50, 0, 32], [0, 50, 32], [0, 0, 1]], dtype=np.float32)
     intrinsics = np.tile(K, (n, 1, 1))
 
-    mesh = create_tsdf_mesh(depths, rgbs, c2w, intrinsics, voxel_size=0.05, depth_trunc=5.0)
+    mesh = create_tsdf_mesh(
+        depths, rgbs, c2w, intrinsics, voxel_size=0.05, depth_trunc=5.0
+    )
     assert len(mesh.triangles) > 0

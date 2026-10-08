@@ -48,7 +48,9 @@ def test_instantsfm_min_num_view_per_track_floor(value):
 
 
 @pytest.mark.parametrize("backend", sorted(SFM_CREATORS))
-@pytest.mark.parametrize("pairing", ["sequential", "retrieval", "sequential+retrieval", "exhaustive"])
+@pytest.mark.parametrize(
+    "pairing", ["sequential", "retrieval", "sequential+retrieval", "exhaustive"]
+)
 def test_every_pairing_constructs(backend, pairing):
     assert SFM_CREATORS[backend](pairing=pairing).pairing == pairing
 
@@ -78,4 +80,7 @@ def test_instantsfm_random_seed_accepts_null_and_its_domain(value):
 
 @pytest.mark.parametrize("value", [None, 2, 6])
 def test_instantsfm_min_num_view_per_track_accepts_null_and_two_or_more(value):
-    assert SFM_CREATORS["instantsfm"](min_num_view_per_track=value).min_num_view_per_track == value
+    assert (
+        SFM_CREATORS["instantsfm"](min_num_view_per_track=value).min_num_view_per_track
+        == value
+    )

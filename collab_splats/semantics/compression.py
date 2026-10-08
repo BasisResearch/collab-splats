@@ -58,7 +58,9 @@ class FeatureAutoencoder(nn.Module):
         )
 
         # decoder as two submodules, not one Sequential: keeps checkpoint state_dict keys
-        self.decoder_hidden = nn.Sequential(nn.Linear(latent_dim, hidden_dim), nn.ReLU())
+        self.decoder_hidden = nn.Sequential(
+            nn.Linear(latent_dim, hidden_dim), nn.ReLU()
+        )
         self.decoder_out = nn.Linear(hidden_dim, input_dim)
 
         # Fit quality from the last fit(), on the training set; trust only when epochs_run > 0
@@ -172,7 +174,9 @@ class FeatureAutoencoder(nn.Module):
 
         # Empty input raises a clear ValueError, not a ZeroDivisionError at the epoch mean
         if n_items * per_item == 0:
-            raise ValueError(f"fit() requires at least one sample; got features with shape {tuple(features.shape)}")
+            raise ValueError(
+                f"fit() requires at least one sample; got features with shape {tuple(features.shape)}"
+            )
 
         device = features.device if isinstance(features, Tensor) else get_device()
         self.to(device)
@@ -233,7 +237,13 @@ class FeatureAutoencoder(nn.Module):
             self.epochs_run = epoch + 1
 
             pbar.set_postfix(loss=f"{avg_loss:.6f}", cos=f"{self.recon_cosine:.4f}")
-            logger.debug("epoch %d/%d  loss=%.6f  cos=%.4f", epoch + 1, epochs, avg_loss, self.recon_cosine)
+            logger.debug(
+                "epoch %d/%d  loss=%.6f  cos=%.4f",
+                epoch + 1,
+                epochs,
+                avg_loss,
+                self.recon_cosine,
+            )
 
             if on_epoch is not None:
                 on_epoch(epoch + 1, epochs, avg_loss)

@@ -89,7 +89,10 @@ def _spy_creator_cls(backend, seen):
                 # Spy on the array preprocessor too, where the backend has one
                 if has_preprocess:
                     with patch.object(
-                        creator_cls, "_preprocess_arrays", autospec=True, side_effect=creator_cls._preprocess_arrays
+                        creator_cls,
+                        "_preprocess_arrays",
+                        autospec=True,
+                        side_effect=creator_cls._preprocess_arrays,
                     ) as preprocess:
                         views, _ = self._preprocess(paths)
 
@@ -102,7 +105,15 @@ def _spy_creator_cls(backend, seen):
             images_dir = paths[0].parent
             on_disk = len(fr.frame_paths(images_dir))
 
-            seen.append(_Handoff(self.frames, _images(views), path_frames.called, used_arrays, on_disk))
+            seen.append(
+                _Handoff(
+                    self.frames,
+                    _images(views),
+                    path_frames.called,
+                    used_arrays,
+                    on_disk,
+                )
+            )
             return _stub_result()
 
     return _HandoffSpy
@@ -149,7 +160,9 @@ def test_preproc_dir_undistorts(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("background_write", [False, True])
 @pytest.mark.parametrize("backend", ["vggt_omega", "vggtx", "mapanything", "loger"])
-def test_preproc_frames_handed_off_then_released(tmp_path, monkeypatch, backend, background_write):
+def test_preproc_frames_handed_off_then_released(
+    tmp_path, monkeypatch, backend, background_write
+):
     # Same-process preproc -> pointcloud hands a feedforward creator the written pixels, then drops them
     src = _write_textured_sequence(tmp_path / "imgs", n=3, width=64, height=48)
 
@@ -170,7 +183,10 @@ def test_preproc_frames_handed_off_then_released(tmp_path, monkeypatch, backend,
     # Real create_pointcloud path resolution; cleaning and COLMAP export stubbed out
     with (
         patch.object(R, "get_creator", return_value=_spy_creator_cls(backend, seen)),
-        patch("collab_splats.pointcloud.base.clean_pointcloud", side_effect=lambda result, **kw: result),
+        patch(
+            "collab_splats.pointcloud.base.clean_pointcloud",
+            side_effect=lambda result, **kw: result,
+        ),
         patch("collab_splats.pointcloud.base.write_colmap_reconstruction"),
         patch.object(BaseFeedforwardCreator, "_colmap_model"),
     ):
@@ -324,8 +340,12 @@ def test_run_preproc_undistort_writes_undistorted_frames_last(tmp_path, monkeypa
     np.testing.assert_array_equal(fr.read_frames(r.images_dir), np.asarray(undistorted))
 
 
-@pytest.mark.parametrize("backend, on_disk_at_create", [("vggt_omega", 0), ("loger", 3)])
-def test_pointcloud_joins_the_background_write(tmp_path, monkeypatch, backend, on_disk_at_create):
+@pytest.mark.parametrize(
+    "backend, on_disk_at_create", [("vggt_omega", 0), ("loger", 3)]
+)
+def test_pointcloud_joins_the_background_write(
+    tmp_path, monkeypatch, backend, on_disk_at_create
+):
     # A handoff creator runs during the held write; loger reads images/, so its creator waits for it
     src = _write_textured_sequence(tmp_path / "imgs", n=3, width=64, height=48)
 
@@ -358,7 +378,10 @@ def test_run_raises_a_failing_background_write(tmp_path, monkeypatch, stages):
     creator_cls = _stub_creator_cls(lambda d: None)
     r = _reconstructor(tmp_path, src, undistort=False, backend="vggt_omega")
 
-    with patch.object(R, "get_creator", return_value=creator_cls), pytest.raises(OSError, match="disk full"):
+    with (
+        patch.object(R, "get_creator", return_value=creator_cls),
+        pytest.raises(OSError, match="disk full"),
+    ):
         r.run(stages)
 
     # The creator ran during the write, but its result was never saved
@@ -368,7 +391,9 @@ def test_run_raises_a_failing_background_write(tmp_path, monkeypatch, stages):
     assert r._frames_write is None
 
 
-def test_run_stage_error_wins_over_a_failing_background_write(tmp_path, monkeypatch, caplog):
+def test_run_stage_error_wins_over_a_failing_background_write(
+    tmp_path, monkeypatch, caplog
+):
     # A pointcloud error propagates from run(); the concurrent write's error is only logged
     src = _write_textured_sequence(tmp_path / "imgs", n=2, width=64, height=48)
 

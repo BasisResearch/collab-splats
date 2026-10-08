@@ -10,6 +10,10 @@ from collab_splats.pointcloud.sfm.colmap import ColmapCreator
 from collab_splats.pointcloud.sfm.hloc import HlocCreator
 from collab_splats.pointcloud.sfm.instantsfm import InstantSfMCreator
 
-SFM_CREATORS = {"instantsfm": InstantSfMCreator, "colmap": ColmapCreator, "hloc": HlocCreator}
+SFM_CREATORS = {
+    "instantsfm": InstantSfMCreator,
+    "colmap": ColmapCreator,
+    "hloc": HlocCreator,
+}
 
 __all__ = ["SFM_CREATORS", "ColmapCreator", "HlocCreator", "InstantSfMCreator"]

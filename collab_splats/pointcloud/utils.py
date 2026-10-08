@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 ########################################################################
 
 
-def clean_pointcloud(result: PointcloudResult, *, remove_outliers: bool, max_points: int) -> PointcloudResult:
+def clean_pointcloud(
+    result: PointcloudResult, *, remove_outliers: bool, max_points: int
+) -> PointcloudResult:
     """
     Optional outlier removal, then a random cap on the point count.
 
@@ -42,7 +44,11 @@ def clean_pointcloud(result: PointcloudResult, *, remove_outliers: bool, max_poi
     Returns:
         A new PointcloudResult with the kept points.
     """
-    keep = outlier_mask(result.points) if remove_outliers else np.ones(len(result.points), dtype=bool)
+    keep = (
+        outlier_mask(result.points)
+        if remove_outliers
+        else np.ones(len(result.points), dtype=bool)
+    )
     keep = subsample_points(keep, max_points)
 
     return result.select_points(keep)
@@ -76,14 +82,19 @@ def outlier_mask(
     # Remove statistical outliers and mark the points that stay
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pts)
-    _, keep_idx = pcd.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
+    _, keep_idx = pcd.remove_statistical_outlier(
+        nb_neighbors=nb_neighbors, std_ratio=std_ratio
+    )
 
     keep = np.zeros(len(pts), dtype=bool)
     keep[np.asarray(keep_idx, dtype=int)] = True
 
     # If nothing survived, keep every point instead
     if not keep.any():
-        logger.warning("outlier_mask: outlier removal rejected all %d points; keeping all", len(pts))
+        logger.warning(
+            "outlier_mask: outlier removal rejected all %d points; keeping all",
+            len(pts),
+        )
 
         return np.ones(len(pts), dtype=bool)
 
@@ -111,12 +122,17 @@ def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
     if above.any():
         return above
 
-    logger.warning("confidence_mask: nothing above p%.1f — keeping the pixels at the cutoff", percentile)
+    logger.warning(
+        "confidence_mask: nothing above p%.1f — keeping the pixels at the cutoff",
+        percentile,
+    )
 
     return conf >= cutoff
 
 
-def frame_depths(result: PointcloudResult, rgbs: np.ndarray, *, conf_percentile: float | None) -> np.ndarray:
+def frame_depths(
+    result: PointcloudResult, rgbs: np.ndarray, *, conf_percentile: float | None
+) -> np.ndarray:
     """
     Model-grid depth, confidence-masked, lifted onto the frame grid.
 
@@ -142,7 +158,10 @@ def frame_depths(result: PointcloudResult, rgbs: np.ndarray, *, conf_percentile:
     depth = to_numpy(result.depth).astype(np.float32)
 
     if conf_percentile is not None and result.confidence is None:
-        logger.info("conf_percentile=%s but the result has no confidence; keeping every pixel", conf_percentile)
+        logger.info(
+            "conf_percentile=%s but the result has no confidence; keeping every pixel",
+            conf_percentile,
+        )
     elif conf_percentile is not None:
         confidence = to_numpy(result.confidence)
         keep = confidence_mask(confidence, conf_percentile)
@@ -218,7 +237,9 @@ def cross_frame_attention_ratio(
     k_first = k[:, :, token_offset:tokens_per_img, :]
 
     if k_first.shape[2] == 0:
-        raise ValueError(f"token_offset {token_offset} leaves no patch tokens (tokens_per_img {tokens_per_img})")
+        raise ValueError(
+            f"token_offset {token_offset} leaves no patch tokens (tokens_per_img {tokens_per_img})"
+        )
 
     # Compute attention from each first-frame key to all queries, averaged over heads
     attn = q @ k_first.transpose(-2, -1)  # (B, H, N_q, N_k_first)

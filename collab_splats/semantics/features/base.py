@@ -8,7 +8,7 @@ Base classes for patch-feature extractors.
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import ClassVar, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -42,7 +42,7 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
     - `preprocess` and `forward` are shared
     """
 
-    _registry: Dict[str, type["BaseFeatureExtractor"]] = {}
+    _registry: ClassVar[Dict[str, type["BaseFeatureExtractor"]]] = {}
 
     # Positional debiasing checked on this backend; unchecked backends warn in debias()
     debias_validated: bool = False
@@ -50,7 +50,9 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
     # Tokens ahead of the patch grid in `_patch_tokens` output (CLS, registers)
     n_prefix_tokens: int = 0
 
-    def __init__(self, resize_mode: str, image_resolution: int, svd_components: int = 500) -> None:
+    def __init__(
+        self, resize_mode: str, image_resolution: int, svd_components: int = 500
+    ) -> None:
         """
         Store the shared preprocessing and debiasing configuration.
 
@@ -110,7 +112,9 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         Raises:
             ValueError: when the backbone's token count is not n_prefix_tokens + H_p * W_p.
         """
-        logger.debug("[%s] Extracting features: %d images", type(self).__name__, len(images))
+        logger.debug(
+            "[%s] Extracting features: %d images", type(self).__name__, len(images)
+        )
 
         # Preprocess and batch; torch.stack needs every image at one grid
         preprocessed = [self.preprocess(img) for img in images]
@@ -131,9 +135,14 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
 
         # Drop the prefix and reshape each image to (D, H_p, W_p)
         patch_tokens = tokens_all[:, self.n_prefix_tokens :].cpu()
-        return [_tokens_to_feature_map(tokens, H, W, self.patch_size) for tokens in patch_tokens]
+        return [
+            _tokens_to_feature_map(tokens, H, W, self.patch_size)
+            for tokens in patch_tokens
+        ]
 
-    def preprocess(self, image: Union[str, Path, np.ndarray, Image.Image]) -> torch.Tensor:
+    def preprocess(
+        self, image: Union[str, Path, np.ndarray, Image.Image]
+    ) -> torch.Tensor:
         """
         Resize to the configured resolution, round to patch multiples, and normalize.
 
@@ -149,8 +158,12 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
             # Center-crop to square, then resize to target resolution
             w, h = img.size
             crop = min(w, h)
-            img = img.crop(((w - crop) // 2, (h - crop) // 2, (w + crop) // 2, (h + crop) // 2))
-            img = img.resize((self._image_resolution, self._image_resolution), Image.BILINEAR)
+            img = img.crop(
+                ((w - crop) // 2, (h - crop) // 2, (w + crop) // 2, (h + crop) // 2)
+            )
+            img = img.resize(
+                (self._image_resolution, self._image_resolution), Image.BILINEAR
+            )
         else:
             # Proportional longest-edge resize
             img = resize_image(img, longest_edge=self._image_resolution)
@@ -405,11 +418,14 @@ class BaseQueryableExtractor(BaseFeatureExtractor, ABC):
             negative = ["object"]
         logger.debug(
             "[%s] Scoring queries: %d positive%s (reduction=%s)",
-            type(self).__name__, len(positive),
+            type(self).__name__,
+            len(positive),
             f", {len(negative)} negative" if negative else "",
             reduction,
         )
         queries = positive + negative
         similarity = self.compute_similarity(features, queries)
-        result = compute_semantic_contrast(similarity, len(positive), temperature, reduction)
+        result = compute_semantic_contrast(
+            similarity, len(positive), temperature, reduction
+        )
         return result

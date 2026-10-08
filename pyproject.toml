@@ -199,6 +199,10 @@ flake8 = [
 ignore_missing_imports = true
 warn_unused_ignores = true
 exclude = "build"
+# One call per line rebinds a name to a new type; let mypy follow the rebinding
+allow_redefinition = true
+# Empty-container annotations are style, not behavior
+disable_error_code = ["var-annotated"]
 
 [tool.pytest.ini_options]
 # importlib mode: avoids prepending test parent dirs to sys.path.

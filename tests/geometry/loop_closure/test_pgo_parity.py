@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from scipy.spatial.transform import Rotation as ScipyR
 
 from collab_splats.geometry.loop_closure.graph import calculate_pairwise_frame_scale
@@ -32,7 +31,9 @@ def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     return M
 
 
-def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0) -> Submap:
+def _make_submap(
+    poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
+) -> Submap:
     k = poses.shape[0]
     return Submap(
         submap_id=submap_id,
@@ -47,7 +48,9 @@ def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
     )
 
 
-def _one_frame_submap(submap_id, pts, pose=None, conf=None, conf_threshold=None) -> Submap:
+def _one_frame_submap(
+    submap_id, pts, pose=None, conf=None, conf_threshold=None
+) -> Submap:
     """1-frame submap with K = I; P points laid out as a (1, 1, P, 3) grid."""
     n = len(pts)
     pose = np.eye(4) if pose is None else pose
@@ -57,12 +60,21 @@ def _one_frame_submap(submap_id, pts, pose=None, conf=None, conf_threshold=None)
         intrinsics=np.eye(3, dtype=np.float32)[None],
         image_paths=[f"frame_{submap_id}.png"],
         points=np.asarray(pts, dtype=np.float32).reshape(1, 1, n, 3),
-        conf=None if conf is None else np.asarray(conf, dtype=np.float32).reshape(1, 1, n),
+        conf=None
+        if conf is None
+        else np.asarray(conf, dtype=np.float32).reshape(1, 1, n),
         conf_threshold=conf_threshold,
     )
 
 
-def _frame_scale(curr_pts, prior_pts, curr_pose=None, curr_conf=None, prior_conf=None, conf_threshold=None) -> float:
+def _frame_scale(
+    curr_pts,
+    prior_pts,
+    curr_pose=None,
+    curr_conf=None,
+    prior_conf=None,
+    conf_threshold=None,
+) -> float:
     """calculate_pairwise_frame_scale between two 1-frame submaps, min_conf_points 10."""
     curr = _one_frame_submap(1, curr_pts, curr_pose, curr_conf, conf_threshold)
     prior = _one_frame_submap(0, prior_pts, None, prior_conf, conf_threshold)
@@ -134,9 +146,13 @@ def test_scale_estimation_survives_intersubmap_rotation():
 
     # With the camera move: scale = 1/true_scale (the H_scale correction for a 3× curr world)
     expected = 1.0 / true_scale
-    assert abs(scale_new - expected) / expected < 0.05, f"New scale {scale_new:.4f} far from expected {expected:.4f}"
+    assert abs(scale_new - expected) / expected < 0.05, (
+        f"New scale {scale_new:.4f} far from expected {expected:.4f}"
+    )
     # Without it: X_curr near origin (~0.3) vs X_prev far (~10), so scale_old >> expected
-    assert scale_old > 5.0, f"Unmoved points should give a large wrong scale, got {scale_old:.3f}"
+    assert scale_old > 5.0, (
+        f"Unmoved points should give a large wrong scale, got {scale_old:.3f}"
+    )
 
 
 ########################################################################
@@ -146,7 +162,9 @@ def test_scale_estimation_survives_intersubmap_rotation():
 
 def test_loop_closure_config_default_overlap_is_1():
     cfg = LoopClosureConfig()
-    assert cfg.submap_overlap == 1, f"Expected default submap_overlap=1 (VGGT-SLAM parity), got {cfg.submap_overlap}"
+    assert cfg.submap_overlap == 1, (
+        f"Expected default submap_overlap=1 (VGGT-SLAM parity), got {cfg.submap_overlap}"
+    )
 
 
 ########################################################################
@@ -166,16 +184,27 @@ def test_pgo_overlap_1_connects_submaps():
     submaps = []
     global_t = 0.0
     for si in range(n_submaps):
-        poses = np.stack([_make_w2c(np.eye(3), np.array([global_t + i * 0.1, 0.0, 0.0])) for i in range(k)])
+        poses = np.stack(
+            [
+                _make_w2c(np.eye(3), np.array([global_t + i * 0.1, 0.0, 0.0]))
+                for i in range(k)
+            ]
+        )
         wp = rng.standard_normal((k, 5, 5, 3)).astype(np.float64) * 0.1
         submaps.append(_make_submap(poses.astype(np.float32), wp, submap_id=si))
         global_t += (k - 1) * 0.1  # advance by k-1 (1-frame overlap)
 
     total_frames = k + (k - 1) * (n_submaps - 1)  # 4 + 3 + 3 = 10 for overlap=1
-    result = drive_pose_graph(submaps, lc_submaps=[], total_frames=total_frames, overlap_frames=1)
-    assert result.shape == (total_frames, 4, 4), f"Expected ({total_frames}, 4, 4), got {result.shape}"
+    result = drive_pose_graph(
+        submaps, lc_submaps=[], total_frames=total_frames, overlap_frames=1
+    )
+    assert result.shape == (total_frames, 4, 4), (
+        f"Expected ({total_frames}, 4, 4), got {result.shape}"
+    )
     # First frame should be near identity (pinned by prior)
-    assert np.allclose(result[0], np.eye(4), atol=0.1), "First frame should be near identity"
+    assert np.allclose(result[0], np.eye(4), atol=0.1), (
+        "First frame should be near identity"
+    )
 
 
 ########################################################################
@@ -207,7 +236,9 @@ def test_confidence_masking_reduces_scale_noise():
 
     # Noisy points: large curr norms, small prev norms → ratio ≈ 50 (far from 0.5)
     X_prev_noisy = rng.standard_normal((N_noisy, 3)) * 0.01 + np.array([0.1, 0.0, 0.0])
-    X_curr_in_prev_noisy = rng.standard_normal((N_noisy, 3)) * 5.0 + np.array([10.0, 0.0, 0.0])
+    X_curr_in_prev_noisy = rng.standard_normal((N_noisy, 3)) * 5.0 + np.array(
+        [10.0, 0.0, 0.0]
+    )
 
     X_prev = np.vstack([X_prev_good, X_prev_noisy])
     X_curr_in_prev = np.vstack([X_curr_in_prev_good, X_curr_in_prev_noisy])
@@ -222,15 +253,24 @@ def test_confidence_masking_reduces_scale_noise():
 
     # With conf on both sides: the joint tier (both > threshold) keeps only the 20 good points
     joint_mask = (conf_curr > conf_threshold) & (conf_prev > conf_threshold)
-    assert joint_mask.sum() == N_good, f"Should have exactly {N_good} good points in mask"
+    assert joint_mask.sum() == N_good, (
+        f"Should have exactly {N_good} good points in mask"
+    )
     scale_masked = _frame_scale(
-        X_curr_in_prev, X_prev, curr_conf=conf_curr, prior_conf=conf_prev, conf_threshold=conf_threshold
+        X_curr_in_prev,
+        X_prev,
+        curr_conf=conf_curr,
+        prior_conf=conf_prev,
+        conf_threshold=conf_threshold,
     )
 
     err_masked = abs(scale_masked - expected_scale) / expected_scale
     err_unmasked = abs(scale_unmasked - expected_scale) / expected_scale
 
-    assert err_masked < 0.05, f"Masked scale {scale_masked:.3f} far from expected {expected_scale:.3f}"
+    assert err_masked < 0.05, (
+        f"Masked scale {scale_masked:.3f} far from expected {expected_scale:.3f}"
+    )
     assert err_unmasked > err_masked, (
-        f"Masking should improve estimate: masked_err={err_masked:.3f}, " f"unmasked_err={err_unmasked:.3f}"
+        f"Masking should improve estimate: masked_err={err_masked:.3f}, "
+        f"unmasked_err={err_unmasked:.3f}"
     )

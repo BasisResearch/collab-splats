@@ -39,4 +39,9 @@ def test_all_creators_are_instantiable():
 
 
 def test_registry_holds_exactly_the_feedforward_backends():
-    assert set(BaseFeedforwardCreator._registry) == {"loger", "mapanything", "vggt_omega", "vggtx"}
+    assert set(BaseFeedforwardCreator._registry) == {
+        "loger",
+        "mapanything",
+        "vggt_omega",
+        "vggtx",
+    }

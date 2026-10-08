@@ -44,10 +44,16 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "smooth_iterations": 0,
         },
         "semantics": {"extractor": "dinov2"},
-        "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
+        "splats": {
+            "enabled": True,
+            "max_steps": 1,
+            "losses": {"depth": {"weight": 0.1}},
+        },
     }
 
-    frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
+    frames = np.stack(
+        [np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)]
+    )
     fr.write_frames(recon.images_dir, frames, list(range(n_views)))
     image_paths = [Path(f"frame_{view:06d}.jpg") for view in reversed(range(n_views))]
     recon._result = SimpleNamespace(
@@ -69,7 +75,9 @@ def minimal_feedforward_result(n=2, h=8, w=8):
         colors=np.zeros((5, 3), dtype=np.uint8),
         extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
         intrinsics=None,
-        model_intrinsics=np.tile(np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], dtype=np.float32), (n, 1, 1)),
+        model_intrinsics=np.tile(
+            np.array([[8, 0, 4], [0, 8, 4], [0, 0, 1]], dtype=np.float32), (n, 1, 1)
+        ),
         image_paths=[f"frame_{i:06d}.jpg" for i in range(n)],
         original_coords=np.array([[0, 0, w, h, w, h]] * n, dtype=np.float32),
         model_width=w,
@@ -98,7 +106,9 @@ def stub_mesh_cleanup():
     tet = o3d.geometry.TriangleMesh.create_tetrahedron()
 
     with (
-        patch("collab_splats.reconstructor.clean_repair_mesh", return_value=(tet, tet)) as clean,
+        patch(
+            "collab_splats.reconstructor.clean_repair_mesh", return_value=(tet, tet)
+        ) as clean,
         patch("collab_splats.reconstructor.prepare_mesh", return_value=tet),
     ):
         yield clean

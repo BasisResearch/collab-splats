@@ -61,7 +61,9 @@ def test_empty_track_points_are_ignored():
     # InstantSfM exports sub-min-track-length points with empty tracks — the result
     # tail must exclude them (pixel_indices reads track.elements[0])
     recon, depths, images, names = _scene_inputs(n=1)
-    recon.add_point3D(np.array([1.0, 1.0, 5.0]), pycolmap.Track(), np.array([1, 2, 3], np.uint8))
+    recon.add_point3D(
+        np.array([1.0, 1.0, 5.0]), pycolmap.Track(), np.array([1, 2, 3], np.uint8)
+    )
 
     out, _ = depth_mod.align_depth(recon, depths, images, names, min_obs=1)
 
@@ -129,7 +131,9 @@ def _scene_inputs(n=2):
     names = [f"frame_{i:06d}.jpg" for i in range(n)]
     recon = make_recon([Path(x).stem for x in names], cam_w=ORIG_W, cam_h=ORIG_H)
     depths = np.full((n, DEPTH_H, DEPTH_W), 2.0, dtype=np.float32)
-    images = np.stack([np.full((ORIG_H, ORIG_W, 3), 40 * (i + 1), dtype=np.uint8) for i in range(n)])
+    images = np.stack(
+        [np.full((ORIG_H, ORIG_W, 3), 40 * (i + 1), dtype=np.uint8) for i in range(n)]
+    )
     return recon, depths, images, names
 
 
@@ -141,19 +145,31 @@ def _recon_with_frames(frame_points):
     - each pair becomes its own point3D, observed once, in the image at its list position
     """
     recon = pycolmap.Reconstruction()
-    cam = pycolmap.Camera(model="PINHOLE", width=ORIG_W, height=ORIG_H, params=[50.0, 50.0, 32.0, 24.0], camera_id=1)
+    cam = pycolmap.Camera(
+        model="PINHOLE",
+        width=ORIG_W,
+        height=ORIG_H,
+        params=[50.0, 50.0, 32.0, 24.0],
+        camera_id=1,
+    )
     recon.add_camera_with_trivial_rig(cam)
     pose = pycolmap.Rigid3d(pycolmap.Rotation3d(np.eye(3)), np.zeros(3))
 
     for i, points in enumerate(frame_points):
         im = pycolmap.Image(name=f"frame_{i:06d}", camera_id=1, image_id=i + 1)
-        im.points2D = [pycolmap.Point2D(np.asarray(kp, dtype=np.float64)) for _, kp in points]
+        im.points2D = [
+            pycolmap.Point2D(np.asarray(kp, dtype=np.float64)) for _, kp in points
+        ]
         recon.add_image_with_trivial_frame(im, pose)
 
         for idx, (xyz, _) in enumerate(points):
             track = pycolmap.Track()
             track.add_element(i + 1, idx)
-            recon.add_point3D(np.asarray(xyz, dtype=np.float64), track, np.array([10, 20, 30], dtype=np.uint8))
+            recon.add_point3D(
+                np.asarray(xyz, dtype=np.float64),
+                track,
+                np.array([10, 20, 30], dtype=np.uint8),
+            )
 
     return recon
 
@@ -173,10 +189,15 @@ def test_align_depth_fallback_frame_gets_the_global_median_scale():
     - the thin frame is named in the fallback-frames attr
     """
     cells = [(4, 2), (4, 4), (4, 6)]
-    vda = [2.0, 3.0, 4.0]  # shared by every fitted frame; colmap depth = scale * vda gives that scale as ratio
+    vda = [
+        2.0,
+        3.0,
+        4.0,
+    ]  # shared by every fitted frame; colmap depth = scale * vda gives that scale as ratio
 
     fitted_frames = [
-        [((0.0, 0.0, scale * v), _cell_keypoint(r, c)) for v, (r, c) in zip(vda, cells)] for scale in (1.0, 2.0, 9.0)
+        [((0.0, 0.0, scale * v), _cell_keypoint(r, c)) for v, (r, c) in zip(vda, cells)]
+        for scale in (1.0, 2.0, 9.0)
     ]
     # Thin frame: one observation only — below min_obs=3, so its own 100x ratio never fits
     thin_frame = [((0.0, 0.0, 100.0), _cell_keypoint(4, 2))]
@@ -186,14 +207,18 @@ def test_align_depth_fallback_frame_gets_the_global_median_scale():
     depths = np.zeros((4, DEPTH_H, DEPTH_W), dtype=np.float32)
     for v, (r, c) in zip(vda, cells):
         depths[:3, r, c] = v
-    depths[3, 4, 2] = 1.0  # thin frame's own ratio would be 100 / 1 = 100, but it never fits
+    depths[3, 4, 2] = (
+        1.0  # thin frame's own ratio would be 100 / 1 = 100, but it never fits
+    )
     images = np.zeros((4, ORIG_H, ORIG_W, 3), dtype=np.uint8)
 
     out, attrs = depth_mod.align_depth(recon, depths, images, names, min_obs=3)
 
     np.testing.assert_allclose(attrs["depth_scales"], [1.0, 2.0, 9.0, 2.0], rtol=1e-6)
     assert attrs["depth_scale_fallback_frames"] == ["frame_000003"]
-    np.testing.assert_allclose(out.depth[3, 4, 2], 2.0, rtol=1e-6)  # median 2.0, not mean 4.0 or its own 100x
+    np.testing.assert_allclose(
+        out.depth[3, 4, 2], 2.0, rtol=1e-6
+    )  # median 2.0, not mean 4.0 or its own 100x
 
 
 def test_align_depth_refuses_when_no_frame_reaches_min_obs():
@@ -219,22 +244,39 @@ def test_align_depth_filters_invalid_observations_before_fitting():
     # First obs is always ratio 5 / 2.0 = 2.5; a None cell means the keypoint is off the grid
     cases = [
         ("zero-vda", [(5.0, (4, 2)), (5.0, (4, 4)), (5.0, (4, 6))], {(4, 2): 2.0}, 1),
-        ("behind-camera", [(5.0, (4, 2)), (-5.0, (4, 4)), (-3.0, (4, 6))], {(4, 2): 2.0, (4, 4): 1.0, (4, 6): 1.0}, 1),
-        ("off-grid", [(5.0, (4, 2)), (10.0, (4, 4)), (5.0, None)], {(4, 2): 2.0, (4, 4): 4.0}, 2),
+        (
+            "behind-camera",
+            [(5.0, (4, 2)), (-5.0, (4, 4)), (-3.0, (4, 6))],
+            {(4, 2): 2.0, (4, 4): 1.0, (4, 6): 1.0},
+            1,
+        ),
+        (
+            "off-grid",
+            [(5.0, (4, 2)), (10.0, (4, 4)), (5.0, None)],
+            {(4, 2): 2.0, (4, 4): 4.0},
+            2,
+        ),
     ]
 
     off_grid_xy = (1000.0, _cell_keypoint(4, 6)[1])
     for name, obs, depth_cells, min_obs in cases:
-        points = [((0.0, 0.0, z), _cell_keypoint(*cell) if cell else off_grid_xy) for z, cell in obs]
+        points = [
+            ((0.0, 0.0, z), _cell_keypoint(*cell) if cell else off_grid_xy)
+            for z, cell in obs
+        ]
         recon = _recon_with_frames([points])
         depths = np.zeros((1, DEPTH_H, DEPTH_W), dtype=np.float32)
         for (row, col), value in depth_cells.items():
             depths[0, row, col] = value
         images = np.zeros((1, ORIG_H, ORIG_W, 3), dtype=np.uint8)
 
-        _, attrs = depth_mod.align_depth(recon, depths, images, ["frame_000000.jpg"], min_obs=min_obs)
+        _, attrs = depth_mod.align_depth(
+            recon, depths, images, ["frame_000000.jpg"], min_obs=min_obs
+        )
 
-        np.testing.assert_allclose(attrs["depth_scales"], [2.5], rtol=1e-6, err_msg=name)
+        np.testing.assert_allclose(
+            attrs["depth_scales"], [2.5], rtol=1e-6, err_msg=name
+        )
 
 
 def test_align_depth_scale_is_the_median_not_the_mean():
@@ -278,16 +320,26 @@ def test_align_depth_shapes_and_k_rescaling():
     assert out.model_width == DEPTH_W and out.model_height == DEPTH_H
     assert out.image_paths == [Path("frame_000000"), Path("frame_000001")]
     assert out.confidence is None
-    np.testing.assert_allclose(out.original_coords[0], [0, 0, ORIG_W, ORIG_H, ORIG_W, ORIG_H])
+    np.testing.assert_allclose(
+        out.original_coords[0], [0, 0, ORIG_W, ORIG_H, ORIG_W, ORIG_H]
+    )
 
     # The WHOLE K is rescaled, principal point included: fx was 50 at width 64 and the depth
     # grid is 16 wide -> 50 * 16/64. An original-res cx/cy against a model-res depth grid is
     # the 2026-08-11 mesh-collapse class, and world_points cannot catch it (depth is unaffected)
-    np.testing.assert_allclose(out.model_intrinsics[0][0, 0], 50.0 * DEPTH_W / ORIG_W, rtol=1e-5)
-    np.testing.assert_allclose(out.model_intrinsics[0][1, 1], 50.0 * DEPTH_H / ORIG_H, rtol=1e-5)
+    np.testing.assert_allclose(
+        out.model_intrinsics[0][0, 0], 50.0 * DEPTH_W / ORIG_W, rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        out.model_intrinsics[0][1, 1], 50.0 * DEPTH_H / ORIG_H, rtol=1e-5
+    )
     # Principal point lands pixel-center: COLMAP's corner cx scaled, then 0.5 off
-    np.testing.assert_allclose(out.model_intrinsics[0][0, 2], 32.0 * DEPTH_W / ORIG_W - 0.5, rtol=1e-5)
-    np.testing.assert_allclose(out.model_intrinsics[0][1, 2], 24.0 * DEPTH_H / ORIG_H - 0.5, rtol=1e-5)
+    np.testing.assert_allclose(
+        out.model_intrinsics[0][0, 2], 32.0 * DEPTH_W / ORIG_W - 0.5, rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        out.model_intrinsics[0][1, 2], 24.0 * DEPTH_H / ORIG_H - 0.5, rtol=1e-5
+    )
 
     # Poses are homogeneous w2c, one per frame in row order. unproject reads [:, :3, :] only,
     # so a broken bottom row would reach save_zarr with nothing to stop it
@@ -305,7 +357,9 @@ def test_align_depth_shapes_and_k_rescaling():
     assert out.points.dtype == np.float32
     assert out.colors.tolist() == [[10, 20, 30]] and out.colors.dtype == np.uint8
     assert out.pixel_indices.dtype == np.int32
-    assert out.pixel_indices.tolist() == [[0, int(20 * DEPTH_H / ORIG_H), int(40 * DEPTH_W / ORIG_W)]]
+    assert out.pixel_indices.tolist() == [
+        [0, int(20 * DEPTH_H / ORIG_H), int(40 * DEPTH_W / ORIG_W)]
+    ]
 
 
 def test_align_depth_rescales_depth_to_the_colmap_world():
@@ -364,7 +418,9 @@ def test_align_depth_world_points_sit_on_colmap_pixel_centers():
 
     # Depth pixel (row, col) covers full-res [col, col + 1) * sx, so its center is (col + 0.5) * sx
     rows, cols = np.mgrid[:DEPTH_H, :DEPTH_W]
-    centers = np.stack([(cols + 0.5) * ORIG_W / DEPTH_W, (rows + 0.5) * ORIG_H / DEPTH_H], axis=-1)
+    centers = np.stack(
+        [(cols + 0.5) * ORIG_W / DEPTH_W, (rows + 0.5) * ORIG_H / DEPTH_H], axis=-1
+    )
     np.testing.assert_allclose(xy, centers.reshape(-1, 2), atol=1e-3)
 
 
@@ -401,7 +457,9 @@ def test_align_depth_refuses_name_mismatch():
     recon, depths, images, _ = _scene_inputs(n=2)
 
     with pytest.raises(ValueError, match="do not match"):
-        depth_mod.align_depth(recon, depths, images, ["frame_000000.jpg", "frame_000007.jpg"], min_obs=1)
+        depth_mod.align_depth(
+            recon, depths, images, ["frame_000000.jpg", "frame_000007.jpg"], min_obs=1
+        )
 
 
 def test_names_depths_mismatch_raises_before_alignment():
@@ -425,7 +483,9 @@ def test_align_depth_refuses_a_frames_to_depth_row_mismatch():
         depth_mod.align_depth(recon, depths, images[:1], names, min_obs=1)
 
     with pytest.raises(ValueError, match="3 frames for 2 depth maps"):
-        depth_mod.align_depth(recon, depths, np.concatenate([images, images[:1]]), names, min_obs=1)
+        depth_mod.align_depth(
+            recon, depths, np.concatenate([images, images[:1]]), names, min_obs=1
+        )
 
 
 def test_align_depth_simple_radial_keeps_linear_k_per_grid():
@@ -434,19 +494,25 @@ def test_align_depth_simple_radial_keeps_linear_k_per_grid():
     """
     # SIMPLE_RADIAL params (f, cx, cy, k1) on the 64x48 keyframe grid
     names = ["frame_000000.jpg"]
-    recon = make_recon(["frame_000000"], model="SIMPLE_RADIAL", params=(60.0, 28.0, 18.0, 0.1))
+    recon = make_recon(
+        ["frame_000000"], model="SIMPLE_RADIAL", params=(60.0, 28.0, 18.0, 0.1)
+    )
     depths = np.full((1, DEPTH_H, DEPTH_W), 2.0, dtype=np.float32)
     images = np.zeros((1, ORIG_H, ORIG_W, 3), dtype=np.uint8)
 
     out, _ = depth_mod.align_depth(recon, depths, images, names, min_obs=1)
 
     # Full-res K: calibration_matrix of the SIMPLE_RADIAL camera, one f for both axes, principal point -0.5
-    np.testing.assert_array_equal(out.intrinsics[0], [[60.0, 0.0, 27.5], [0.0, 60.0, 17.5], [0.0, 0.0, 1.0]])
+    np.testing.assert_array_equal(
+        out.intrinsics[0], [[60.0, 0.0, 27.5], [0.0, 60.0, 17.5], [0.0, 0.0, 1.0]]
+    )
 
     # Depth-grid K by hand: x by 16 / 64 = 1/4, y by 8 / 48 = 1/6, then -0.5
     # - fx 60 -> 15, cx 28 -> 6.5; fy 60 -> 10, cy 18 -> 2.5
     np.testing.assert_allclose(
-        out.model_intrinsics[0], [[15.0, 0.0, 6.5], [0.0, 10.0, 2.5], [0.0, 0.0, 1.0]], rtol=1e-6
+        out.model_intrinsics[0],
+        [[15.0, 0.0, 6.5], [0.0, 10.0, 2.5], [0.0, 0.0, 1.0]],
+        rtol=1e-6,
     )
 
 
@@ -466,7 +532,10 @@ def test_align_depth_k_maps_back_through_its_box():
     # The full-res K is the COLMAP K shifted to pixel-center, stored float32
     K_center = shift_intrinsics(recon.cameras[1].calibration_matrix(), (-0.5, -0.5))
     assert out.intrinsics.dtype == np.float32
-    np.testing.assert_array_equal(out.intrinsics, np.broadcast_to(K_center, out.intrinsics.shape).astype(np.float32))
+    np.testing.assert_array_equal(
+        out.intrinsics,
+        np.broadcast_to(K_center, out.intrinsics.shape).astype(np.float32),
+    )
 
 
 ########################################################################
@@ -504,7 +573,11 @@ def test_missing_clone_raises_actionable_import_error(tmp_path, monkeypatch):
     monkeypatch.setattr(depth_mod, "VDA_ROOT", tmp_path / "nope")
 
     # The ~1.5 GB fetch must not start when the clone that consumes it is absent
-    monkeypatch.setattr(depth_mod, "hf_hub_download", lambda **kw: pytest.fail("downloaded before the clone guard"))
+    monkeypatch.setattr(
+        depth_mod,
+        "hf_hub_download",
+        lambda **kw: pytest.fail("downloaded before the clone guard"),
+    )
     frames = np.zeros((2, 32, 32, 3), dtype=np.uint8)
 
     with pytest.raises(ImportError, match="setup.sh"):
@@ -515,13 +588,20 @@ def test_existing_depth_set_is_loaded_not_recomputed(tmp_path, monkeypatch):
     """
     An exact per-stem npy set short-circuits inference and comes back as the stacked array.
     """
-    monkeypatch.setattr(depth_mod, "VDA_ROOT", tmp_path / "nope")  # inference would raise
+    monkeypatch.setattr(
+        depth_mod, "VDA_ROOT", tmp_path / "nope"
+    )  # inference would raise
     npy_dir = tmp_path / "depth_vda" / "images" / "npy"
     npy_dir.mkdir(parents=True)
     for i, name in enumerate(_NAMES):
-        np.save(npy_dir / f"{name[:-4]}.npy", np.full((4, 6), float(i + 1), dtype=np.float32))
+        np.save(
+            npy_dir / f"{name[:-4]}.npy",
+            np.full((4, 6), float(i + 1), dtype=np.float32),
+        )
 
-    depths = depth_mod.estimate_depth(np.zeros((2, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES)
+    depths = depth_mod.estimate_depth(
+        np.zeros((2, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES
+    )
 
     assert depths.shape == (2, 4, 6)
     assert depths.dtype == np.float32
@@ -539,7 +619,9 @@ def test_partial_depth_set_does_not_short_circuit(tmp_path, monkeypatch):
     np.save(npy_dir / "frame_000000.npy", np.ones((4, 4), dtype=np.float32))
 
     with pytest.raises(ImportError, match="setup.sh"):
-        depth_mod.estimate_depth(np.zeros((2, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES)
+        depth_mod.estimate_depth(
+            np.zeros((2, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES
+        )
 
 
 def test_wrong_named_depth_set_does_not_short_circuit(tmp_path, monkeypatch):
@@ -553,7 +635,9 @@ def test_wrong_named_depth_set_does_not_short_circuit(tmp_path, monkeypatch):
         np.save(npy_dir / f"{stem}.npy", np.ones((4, 4), dtype=np.float32))
 
     with pytest.raises(ImportError, match="setup.sh"):
-        depth_mod.estimate_depth(np.zeros((2, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES)
+        depth_mod.estimate_depth(
+            np.zeros((2, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES
+        )
 
 
 def test_partial_depth_cache_is_wiped_and_regenerated(tmp_path, monkeypatch):
@@ -580,10 +664,15 @@ def test_partial_depth_cache_is_wiped_and_regenerated(tmp_path, monkeypatch):
     sibling.parent.mkdir()
     sibling.write_text("db")
 
-    depths = depth_mod.estimate_depth(np.zeros((2, 40, 80, 3), dtype=np.uint8), tmp_path, _NAMES, depth_width=20)
+    depths = depth_mod.estimate_depth(
+        np.zeros((2, 40, 80, 3), dtype=np.uint8), tmp_path, _NAMES, depth_width=20
+    )
 
     # Only the requested stems survive, all freshly inferred — the cached 9.0 map included
-    assert sorted(p.name for p in npy_dir.glob("*.npy")) == ["frame_000000.npy", "frame_000001.npy"]
+    assert sorted(p.name for p in npy_dir.glob("*.npy")) == [
+        "frame_000000.npy",
+        "frame_000001.npy",
+    ]
     assert not (tmp_path / "depth_vda" / "leftover.txt").exists()
     assert sibling.read_text() == "db"
     np.testing.assert_array_equal(depths, 3.0)
@@ -595,7 +684,9 @@ def test_names_and_frames_must_align(tmp_path):
     Names are consumed positionally against frames — a length mismatch is a hard error.
     """
     with pytest.raises(ValueError, match="one-to-one"):
-        depth_mod.estimate_depth(np.zeros((3, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES)
+        depth_mod.estimate_depth(
+            np.zeros((3, 32, 32, 3), dtype=np.uint8), tmp_path, _NAMES
+        )
 
 
 def test_inference_result_is_resized_and_written(tmp_path, monkeypatch):
@@ -629,12 +720,19 @@ def test_inference_result_is_resized_and_written(tmp_path, monkeypatch):
     # 80 -> 20 is a 4x nearest decimation: dst col d samples src col 4d, so frame 0's edge at
     # src 38 lands between dst 9 and 10 (bilinear would blend 50.5 into dst 9). Pins the
     # sampling positions AND which frame's map came back under which stem.
-    np.testing.assert_array_equal(depths[0], np.tile(np.where(np.arange(20) >= 10, 100.0, 1.0), (10, 1)))
-    np.testing.assert_array_equal(depths[1], np.tile(np.where(np.arange(20) >= 11, 1.0, 100.0), (10, 1)))
+    np.testing.assert_array_equal(
+        depths[0], np.tile(np.where(np.arange(20) >= 10, 100.0, 1.0), (10, 1))
+    )
+    np.testing.assert_array_equal(
+        depths[1], np.tile(np.where(np.arange(20) >= 11, 1.0, 100.0), (10, 1))
+    )
 
     # Each map lands under its own frame's stem — content, not just the filename set
     npy_dir = tmp_path / "depth_vda" / "images" / "npy"
-    assert sorted(p.name for p in npy_dir.glob("*.npy")) == ["frame_000000.npy", "frame_000001.npy"]
+    assert sorted(p.name for p in npy_dir.glob("*.npy")) == [
+        "frame_000000.npy",
+        "frame_000001.npy",
+    ]
     for i, name in enumerate(_NAMES):
         np.testing.assert_array_equal(np.load(npy_dir / f"{name[:-4]}.npy"), depths[i])
 

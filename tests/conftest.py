@@ -18,10 +18,10 @@ if str(_project_root) not in _sys.path:
 # library into the pkg_resources namespace so those imports resolve cleanly.
 # This is safe: pkg_resources previously just re-exported packaging, so the API
 # is identical.
-import importlib
-import sys
+import importlib  # noqa: E402
+import sys  # noqa: E402
 
-import pkg_resources
+import pkg_resources  # noqa: E402
 
 if not hasattr(pkg_resources, "packaging"):
     import packaging as _packaging
@@ -35,16 +35,18 @@ if not hasattr(pkg_resources, "packaging"):
             sys.modules[f"pkg_resources.packaging.{_submod}"] = sys.modules[_full]
         else:
             try:
-                sys.modules[f"pkg_resources.packaging.{_submod}"] = importlib.import_module(_full)
+                sys.modules[f"pkg_resources.packaging.{_submod}"] = (
+                    importlib.import_module(_full)
+                )
             except ImportError:
                 pass
 
 # ── shared video fixture ─────────────────────────────────────────────────────
 # Lives here rather than in tests/preproc: tests/pointcloud decodes it too.
-import cv2
-import numpy as np
-import pytest
-import torch
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+import pytest  # noqa: E402
+import torch  # noqa: E402
 
 
 @pytest.fixture(scope="session")

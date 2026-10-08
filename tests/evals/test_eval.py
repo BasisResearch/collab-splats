@@ -18,7 +18,9 @@ def _grid_yaml(tmp_path, **overrides):
         "name": "t",
         "output_dir": str(tmp_path / "out"),
         "base": {"semantics": {"enabled": False}},
-        "datasets": [{"name": "chess", "type": "7scenes", "seq_dir": "x", "max_frames": 5}],
+        "datasets": [
+            {"name": "chess", "type": "7scenes", "seq_dir": "x", "max_frames": 5}
+        ],
         "conditions": {
             "omega": {"pointcloud": {"backend": "vggt_omega"}},
             "lc": {"pointcloud": {"loop_closure": True}},
@@ -33,7 +35,10 @@ def _grid_yaml(tmp_path, **overrides):
 def test_build_grid_merges_base_and_override(tmp_path):
     cells = ev.build_grid(ev.load_eval_config(_grid_yaml(tmp_path)))
     assert [c.output_dir.name for c in cells] == ["chess__omega", "chess__lc"]
-    assert cells[1].config == {"semantics": {"enabled": False}, "pointcloud": {"loop_closure": True}}
+    assert cells[1].config == {
+        "semantics": {"enabled": False},
+        "pointcloud": {"loop_closure": True},
+    }
 
 
 def test_load_eval_config_rejects_empty_conditions(tmp_path):
@@ -82,7 +87,9 @@ def test_gt_match_rejects_duplicate_or_out_of_range(names):
 
 
 def test_pred_depth_at_gt_res_places_crop():
-    out = ev._pred_depth_at_gt_res(np.ones((2, 2), np.float32), np.array([2, 1, 6, 5]), (6, 8))
+    out = ev._pred_depth_at_gt_res(
+        np.ones((2, 2), np.float32), np.array([2, 1, 6, 5]), (6, 8)
+    )
     assert out[1:5, 2:6].min() == 1.0 and out.sum() == 16.0
 
 
@@ -107,7 +114,9 @@ def _fake_run(tmp_path, monkeypatch, n=6, write_report=True, unregistered=()):
         def run(self):
             if write_report:
                 (self.out / "vggt_omega").mkdir(parents=True)
-                (self.out / "vggt_omega" / "reconstruction_quality_report.json").write_text('{"ok": 1}')
+                (
+                    self.out / "vggt_omega" / "reconstruction_quality_report.json"
+                ).write_text('{"ok": 1}')
 
     # Reconstruction returns frames reversed; the runner must undo that
     rev = np.array([i for i in range(n)[::-1] if i not in unregistered])
@@ -118,7 +127,9 @@ def _fake_run(tmp_path, monkeypatch, n=6, write_report=True, unregistered=()):
         original_coords=None,
     )
     monkeypatch.setattr(ev, "Reconstructor", FakeRecon)
-    monkeypatch.setattr(ev.PointcloudResult, "load_zarr", classmethod(lambda cls, *a, **k: ff))
+    monkeypatch.setattr(
+        ev.PointcloudResult, "load_zarr", classmethod(lambda cls, *a, **k: ff)
+    )
     return ev.EvalCell("chess", "7scenes", Path("x"), n, "omega", {}, tmp_path / "cell")
 
 
@@ -127,7 +138,10 @@ def test_run_cell_scores_reordered_poses(tmp_path, monkeypatch):
     m = ev.run_cell(cell)
     assert m["ate"]["rmse"] < 1e-6
     assert m["reports"]["reconstruction_quality_report"] == {"ok": 1}
-    assert json.loads((cell.output_dir / "eval_metrics.json").read_text())["condition"] == "omega"
+    assert (
+        json.loads((cell.output_dir / "eval_metrics.json").read_text())["condition"]
+        == "omega"
+    )
     assert (cell.output_dir / "plots" / "trajectory.png").exists()
 
 

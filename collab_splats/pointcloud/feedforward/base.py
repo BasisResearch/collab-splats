@@ -113,7 +113,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         t0 = time.perf_counter()
         self.image_paths = [Path(p.stem) for p in paths]
         self.views, self.original_coords = self._preprocess(paths)
-        logger.info("Preprocessed %d images in %.1fs", len(paths), time.perf_counter() - t0)
+        logger.info(
+            "Preprocessed %d images in %.1fs", len(paths), time.perf_counter() - t0
+        )
 
     def _list_frames(self, images_dir: Path) -> list[Path]:
         """
@@ -139,7 +141,11 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         missing = sum(p.name not in self.frames for p in paths)
 
         if missing:
-            logger.warning("frames handed off but %d of %d paths missing; reading files", missing, len(paths))
+            logger.warning(
+                "frames handed off but %d of %d paths missing; reading files",
+                missing,
+                len(paths),
+            )
             return None
 
         return [self.frames[p.name] for p in paths]
@@ -187,7 +193,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         """
         ...
 
-    def _multiview_mask(self, depth: np.ndarray, intrinsics: np.ndarray, extrinsics: np.ndarray) -> np.ndarray:
+    def _multiview_mask(
+        self, depth: np.ndarray, intrinsics: np.ndarray, extrinsics: np.ndarray
+    ) -> np.ndarray:
         """
         Keep-mask of pixels that min(min_views, seen) other views agree with; all-True when off.
 
@@ -199,7 +207,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
             return np.ones(depth.shape, dtype=bool)
 
         # Keep a pixel when enough of the other views that see it agree on its depth
-        agree, seen = multiview_depth_confidence(depth, intrinsics, extrinsics, rel_thresh=self.mv_rel_thresh)
+        agree, seen = multiview_depth_confidence(
+            depth, intrinsics, extrinsics, rel_thresh=self.mv_rel_thresh
+        )
 
         return agree >= np.minimum(self.min_views, seen)
 
@@ -247,6 +257,8 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         colors_grid = (images.transpose(0, 2, 3, 1) * 255).astype(np.uint8)
         pixel_indices = np.stack(np.where(valid), axis=1).astype(np.int32)
 
+        assert self.image_paths is not None and self.original_coords is not None
+
         return PointcloudResult(
             points=world_points[valid].astype(np.float32),
             colors=colors_grid[valid],
@@ -264,7 +276,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
             depth=depth,
         )
 
-    def extract_intermediate_features(self, frames: torch.Tensor, layer_index: int) -> dict[str, Any]:
+    def extract_intermediate_features(
+        self, frames: torch.Tensor, layer_index: int
+    ) -> dict[str, Any]:
         """
         Q/K at one cross-frame block, plus joint poses, for LC verification.
 
@@ -279,7 +293,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         Raises:
             NotImplementedError: the backend does not support loop closure.
         """
-        raise NotImplementedError(f"{type(self).__name__} does not support loop closure")
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support loop closure"
+        )
 
     def _verify_loop_candidate(
         self,
@@ -295,15 +311,27 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         - lc_data: "poses" (2, 4, 4) w2c, "world_points" (2, H, W, 3), "conf" (2, H, W)
         """
         # Run both frames through the model and capture attention at the calibrated layer
+        assert self._lc_layer_index is not None and self._lc_token_offset is not None
         device = next(self.model.parameters()).device
-        features = self.extract_intermediate_features(torch.stack([frame1, frame2]).to(device), self._lc_layer_index)
+        features = self.extract_intermediate_features(
+            torch.stack([frame1, frame2]).to(device), self._lc_layer_index
+        )
 
         # Score the pair by the mean of the top quarter of per-token attention ratios
-        ratios = cross_frame_attention_ratio(features["k"], features["q"], token_offset=self._lc_token_offset)
-        thresh = np.percentile(ratios, 75)  # ignore background tokens that match nothing
+        ratios = cross_frame_attention_ratio(
+            features["k"], features["q"], token_offset=self._lc_token_offset
+        )
+        thresh = np.percentile(
+            ratios, 75
+        )  # ignore background tokens that match nothing
         ratio = float(ratios[ratios >= thresh].mean())
         accepted = ratio >= verify_match_ratio
-        logger.info("LC verify: ratio=%.4f threshold=%.4f accepted=%s", ratio, verify_match_ratio, accepted)
+        logger.info(
+            "LC verify: ratio=%.4f threshold=%.4f accepted=%s",
+            ratio,
+            verify_match_ratio,
+            accepted,
+        )
 
         if not accepted:
             return False, None
@@ -322,7 +350,9 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
 
 
 @contextmanager
-def capture_qk(qkv: torch.nn.Module, num_heads: int) -> Iterator[dict[str, torch.Tensor]]:
+def capture_qk(
+    qkv: torch.nn.Module, num_heads: int
+) -> Iterator[dict[str, torch.Tensor]]:
     """
     Capture q and k from a fused QKV projection for the duration of the block.
 
@@ -385,7 +415,9 @@ def center_crop_coords(
     return [left / sx, top / sy, (left + cw) / sx, (top + ch) / sy, ow, oh]
 
 
-def _decode_depth_head(predictions: dict, hw: tuple[int, int], decode: Callable) -> dict[str, np.ndarray]:
+def _decode_depth_head(
+    predictions: dict, hw: tuple[int, int], decode: Callable
+) -> dict[str, np.ndarray]:
     """
     Decode a VGGT-family forward's poses and depth to CPU float32 arrays.
 
@@ -405,7 +437,9 @@ def _decode_depth_head(predictions: dict, hw: tuple[int, int], decode: Callable)
     }
 
 
-def _frame_sizes(paths: list[Path], arrays: list[np.ndarray] | None) -> list[tuple[int, int]]:
+def _frame_sizes(
+    paths: list[Path], arrays: list[np.ndarray] | None
+) -> list[tuple[int, int]]:
     """
     Each frame's (w, h): from the handed-off arrays when given, else a header read per file.
     """

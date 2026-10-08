@@ -44,7 +44,9 @@ def test_monolith_golden_shape(two_submaps):
 
 def test_add_submap_matches_monolith_sequential(two_submaps):
     """Incremental add_submap + optimize per submap == monolith (no loops)."""
-    golden = drive_pose_graph(two_submaps, lc_submaps=[], total_frames=8, overlap_frames=1)
+    golden = drive_pose_graph(
+        two_submaps, lc_submaps=[], total_frames=8, overlap_frames=1
+    )
 
     pg = PoseGraph()
     for s in two_submaps:
@@ -106,7 +108,9 @@ def _lc_submap(sid: int, q_path: str, d_path: str) -> Submap:
 def test_add_loop_edge_matches_monolith(two_submaps):
     """Incremental build + deferred loop edges == monolith with the same loop."""
     lc = _lc_submap(99, "s1_f1.jpg", "s0_f1.jpg")
-    golden = drive_pose_graph(two_submaps, lc_submaps=[lc], total_frames=8, overlap_frames=1)
+    golden = drive_pose_graph(
+        two_submaps, lc_submaps=[lc], total_frames=8, overlap_frames=1
+    )
 
     pg = PoseGraph()
     for s in two_submaps:
@@ -119,7 +123,9 @@ def test_add_loop_edge_matches_monolith(two_submaps):
     np.testing.assert_allclose(incremental, golden, atol=1e-6)
 
 
-def test_min_conf_points_reaches_sequential_and_both_anchor_scale_fits(two_submaps, monkeypatch):
+def test_min_conf_points_reaches_sequential_and_both_anchor_scale_fits(
+    two_submaps, monkeypatch
+):
     """PoseGraph(min_conf_points=...) reaches the sequential scale fit and both loop-anchor fits."""
     seen = []
     real = graph_mod.calculate_pairwise_frame_scale

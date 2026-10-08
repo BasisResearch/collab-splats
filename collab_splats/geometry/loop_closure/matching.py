@@ -64,6 +64,7 @@ def find_loop_closures(
     """
     # Nearest past frame per query frame and past submap, by descriptor L2, kept under lc_threshold
     candidates: list[LoopMatch] = []
+    assert query_submap.retrieval_vectors is not None
 
     for q_idx in range(query_submap.retrieval_vectors.shape[0]):
         q_vec = query_submap.retrieval_vectors[q_idx]

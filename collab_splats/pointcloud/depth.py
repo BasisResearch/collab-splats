@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
+from typing import cast
 
 import cv2
 import numpy as np
@@ -70,7 +71,9 @@ def estimate_depth(
     """
     # Check there is exactly one name per frame
     if len(names) != len(frames):
-        raise ValueError(f"names ({len(names)}) and frames ({len(frames)}) must align one-to-one")
+        raise ValueError(
+            f"names ({len(names)}) and frames ({len(frames)}) must align one-to-one"
+        )
 
     # Work out where the cached depth maps live
     depth_dir = Path(out_dir) / "depth_vda"
@@ -89,8 +92,12 @@ def estimate_depth(
     model = _load_vda_model(device)
 
     # Predict metric depth for the whole video
-    logger.info("VDA metric inference: %d frames (writing %d maps)", len(frames), len(names))
-    depths, _fps = model.infer_video_depth(frames, target_fps=1.0, input_size=518, device=device, fp32=fp32)
+    logger.info(
+        "VDA metric inference: %d frames (writing %d maps)", len(frames), len(names)
+    )
+    depths, _fps = model.infer_video_depth(
+        frames, target_fps=1.0, input_size=518, device=device, fp32=fp32
+    )
     depths = np.asarray(depths, dtype=np.float32)
 
     # Free GPU memory, since the rest of this runs on the CPU
@@ -104,11 +111,19 @@ def estimate_depth(
     out = np.empty((len(names), depth_hw[0], depth_hw[1]), dtype=np.float32)
 
     for i, (stem, depth) in enumerate(zip(stems, depths, strict=True)):
-        small = cv2.resize(depth, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_NEAREST)
+        small = cv2.resize(
+            depth, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_NEAREST
+        )
         np.save(npy_dir / f"{stem}.npy", small)
         out[i] = small
 
-    logger.info("VDA depths written: %s (%d maps @ %dx%d)", npy_dir, len(names), depth_hw[1], depth_hw[0])
+    logger.info(
+        "VDA depths written: %s (%d maps @ %dx%d)",
+        npy_dir,
+        len(names),
+        depth_hw[1],
+        depth_hw[0],
+    )
 
     return out
 
@@ -175,11 +190,15 @@ def align_depth(
 
     # Check there is one depth map per name
     if len(stems) != n:
-        raise ValueError(f"{len(stems)} image names for {n} depth maps — rows would misalign")
+        raise ValueError(
+            f"{len(stems)} image names for {n} depth maps — rows would misalign"
+        )
 
     # Check there is one image per depth map
     if len(images) != n:
-        raise ValueError(f"{len(images)} frames for {n} depth maps — rows would misalign")
+        raise ValueError(
+            f"{len(images)} frames for {n} depth maps — rows would misalign"
+        )
 
     # Collect each frame's world-to-camera pose as a 4x4 matrix
     w2c_stack = np.stack([im.cam_from_world().matrix() for im in images_sorted])
@@ -189,7 +208,10 @@ def align_depth(
     # Check that the COLMAP cameras have the same resolution as the frames
     orig_h, orig_w = images.shape[1:3]
     cam_dims = {
-        (reconstruction.cameras[im.camera_id].width, reconstruction.cameras[im.camera_id].height)
+        (
+            reconstruction.cameras[im.camera_id].width,
+            reconstruction.cameras[im.camera_id].height,
+        )
         for im in images_sorted
     }
 
@@ -201,10 +223,17 @@ def align_depth(
 
     # Get the COLMAP intrinsics and the scale from frame size to depth-map size
     sx, sy = w / orig_w, h / orig_h
-    colmap_intrinsics = np.stack([reconstruction.cameras[im.camera_id].calibration_matrix() for im in images_sorted])
+    colmap_intrinsics = np.stack(
+        [
+            reconstruction.cameras[im.camera_id].calibration_matrix()
+            for im in images_sorted
+        ]
+    )
 
     # Scale the intrinsics down to the depth-map size
-    intrinsics = rescale_intrinsics(colmap_intrinsics, (orig_h, orig_w), (h, w)).astype(np.float32)
+    intrinsics = rescale_intrinsics(colmap_intrinsics, (orig_h, orig_w), (h, w)).astype(
+        np.float32
+    )
 
     # Find a scale per frame that matches the predicted depth to the COLMAP depth
     scales = np.full(n, np.nan)
@@ -218,7 +247,9 @@ def align_depth(
         if not observations:
             continue
 
-        xyz = np.stack([reconstruction.points3D[p.point3D_id].xyz for p in observations])
+        xyz = np.stack(
+            [reconstruction.points3D[p.point3D_id].xyz for p in observations]
+        )
         d_colmap = (image.cam_from_world() * xyz)[:, 2]
 
         # Look up the predicted depth at each point's pixel
@@ -271,8 +302,18 @@ def align_depth(
     logger.info(
         "depth alignment: global scale %.4f, ratio p10/p50/p90 %s -> %s, %d fallback frames",
         global_scale,
-        [round(float(x), 4) for x in np.percentile(ratios_all / global_scale, [10, 50, 90])],
-        [round(float(x), 4) for x in np.percentile(ratios_all / scales[rows_all], [10, 50, 90])],
+        [
+            round(float(x), 4)
+            for x in cast(
+                np.ndarray, np.percentile(ratios_all / global_scale, [10, 50, 90])
+            )
+        ],
+        [
+            round(float(x), 4)
+            for x in cast(
+                np.ndarray, np.percentile(ratios_all / scales[rows_all], [10, 50, 90])
+            )
+        ],
         len(fallback_frames),
     )
 
@@ -280,15 +321,28 @@ def align_depth(
     depths = (depths * scales[:, None, None]).astype(np.float32)
 
     # Collect the COLMAP 3D points that were seen in at least one image
-    point3d_ids = sorted(pid for pid, p in reconstruction.points3D.items() if len(p.track.elements) > 0)
-    points = np.array([reconstruction.points3D[pid].xyz for pid in point3d_ids], dtype=np.float32).reshape(-1, 3)
-    colors = np.array([reconstruction.points3D[pid].color for pid in point3d_ids], dtype=np.uint8).reshape(-1, 3)
+    point3d_ids = sorted(
+        pid for pid, p in reconstruction.points3D.items() if len(p.track.elements) > 0
+    )
+    points = np.array(
+        [reconstruction.points3D[pid].xyz for pid in point3d_ids], dtype=np.float32
+    ).reshape(-1, 3)
+    colors = np.array(
+        [reconstruction.points3D[pid].color for pid in point3d_ids], dtype=np.uint8
+    ).reshape(-1, 3)
     pixel_indices = _pixel_indices_from_reconstruction(
-        reconstruction, point3d_ids, name_to_row, scale_x=sx, scale_y=sy, depth_hw=(h, w)
+        reconstruction,
+        point3d_ids,
+        name_to_row,
+        scale_x=sx,
+        scale_y=sy,
+        depth_hw=(h, w),
     )
 
     # Resize the images to the depth-map size
-    images_arr = np.stack([cv2.resize(images[i], (w, h), interpolation=cv2.INTER_AREA) for i in range(n)])
+    images_arr = np.stack(
+        [cv2.resize(images[i], (w, h), interpolation=cv2.INTER_AREA) for i in range(n)]
+    )
     images_arr = images_arr.transpose(0, 3, 1, 2).astype(np.float32) / 255.0
 
     # Shift K half a pixel: COLMAP pixel centers sit at +0.5, unproject samples at integer pixels
@@ -303,7 +357,9 @@ def align_depth(
     world_points = world_points.numpy()
 
     # Mark each frame as uncropped
-    original_coords = np.tile(np.array([0, 0, orig_w, orig_h, orig_w, orig_h], dtype=np.float32), (n, 1))
+    original_coords = np.tile(
+        np.array([0, 0, orig_w, orig_h, orig_w, orig_h], dtype=np.float32), (n, 1)
+    )
 
     # Full-res K to pixel-center like the model K
     full_intrinsics = shift_intrinsics(colmap_intrinsics, (-0.5, -0.5))
@@ -348,7 +404,9 @@ def _load_vda_model(device: str) -> torch.nn.Module:
     - separate from estimate_depth so tests can stub it without a GPU
     """
     # Import Video-Depth-Anything from its cloned source folder
-    with vendored_path(VDA_ROOT, "run setup.sh (clones Video-Depth-Anything at 4f5ae23)"):
+    with vendored_path(
+        VDA_ROOT, "run setup.sh (clones Video-Depth-Anything at 4f5ae23)"
+    ):
         from video_depth_anything.video_depth import VideoDepthAnything
 
     # Download the model weights from Hugging Face
@@ -364,7 +422,9 @@ def _load_vda_model(device: str) -> torch.nn.Module:
         ) from exc
 
     # Build the large metric-depth model and load the weights
-    model = VideoDepthAnything(encoder="vitl", features=256, out_channels=[256, 512, 1024, 1024], metric=True)
+    model = VideoDepthAnything(
+        encoder="vitl", features=256, out_channels=[256, 512, 1024, 1024], metric=True
+    )
     model.load_state_dict(torch.load(ckpt, map_location="cpu"), strict=True)
 
     return model.to(device).eval()
@@ -376,7 +436,9 @@ def _depth_cache_complete(npy_dir: Path, names: list[str]) -> bool:
 
     - a missing stem or a leftover from another keyframe set is a miss
     """
-    return npy_dir.is_dir() and {p.stem for p in npy_dir.glob("*.npy")} == {Path(n).stem for n in names}
+    return npy_dir.is_dir() and {p.stem for p in npy_dir.glob("*.npy")} == {
+        Path(n).stem for n in names
+    }
 
 
 def _pixel_indices_from_reconstruction(

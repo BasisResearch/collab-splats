@@ -26,7 +26,9 @@ def test_loger_block_reaches_the_creator_as_kwargs(tmp_path):
     # Read the expected values from the same file the Reconstructor merges, so the test pins the
     # passthrough rather than a snapshot of the numbers a concurrent tuning pass may change.
     expected = _loger_block()
-    assert expected, "configs/base.yaml has no pointcloud.loger block — nothing left to pass through"
+    assert expected, (
+        "configs/base.yaml has no pointcloud.loger block — nothing left to pass through"
+    )
 
     # Reconstructor.__init__ deep-merges over the shipping base.yaml, so only the backend override is needed
     recon = Reconstructor(
@@ -44,7 +46,9 @@ def test_loger_block_reaches_the_creator_as_kwargs(tmp_path):
     # .get() so a dropped key reads as a named assertion, not a bare KeyError in the test itself
     kwargs = creator_cls.call_args.kwargs
     arrived = {key: kwargs.get(key) for key in expected}
-    assert arrived == expected, f"creator got {kwargs!r}; expected the base.yaml pointcloud.loger block {expected!r}"
+    assert arrived == expected, (
+        f"creator got {kwargs!r}; expected the base.yaml pointcloud.loger block {expected!r}"
+    )
 
 
 def test_base_yaml_declares_the_loger_block():
@@ -53,5 +57,9 @@ def test_base_yaml_declares_the_loger_block():
     # (LoGeR_star, 32, 3, 0, 50.0). So deleting the block changes no behaviour and raises nothing —
     # it silently turns the whole config surface into a no-op, and only this test would notice.
     block = _loger_block()
-    assert block.get("window_size") is not None, f"pointcloud.loger.window_size missing from base.yaml; got {block!r}"
-    assert block.get("variant") is not None, f"pointcloud.loger.variant missing from base.yaml; got {block!r}"
+    assert block.get("window_size") is not None, (
+        f"pointcloud.loger.window_size missing from base.yaml; got {block!r}"
+    )
+    assert block.get("variant") is not None, (
+        f"pointcloud.loger.variant missing from base.yaml; got {block!r}"
+    )

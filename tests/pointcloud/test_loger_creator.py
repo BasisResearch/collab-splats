@@ -72,7 +72,9 @@ def stub_pi3(monkeypatch):
     sys.modules["loger.models.pi3"].Pi3 = _StubPi3
 
     # Skip the network and the multi-GB checkpoint; neither is what these tests measure.
-    monkeypatch.setattr(loger_mod, "load_hf_weights", lambda repo_id, filename: "/nonexistent/latest.pt")
+    monkeypatch.setattr(
+        loger_mod, "load_hf_weights", lambda repo_id, filename: "/nonexistent/latest.pt"
+    )
     monkeypatch.setattr(loger_mod.torch, "load", lambda *args, **kwargs: {})
     return _StubPi3
 
@@ -130,8 +132,13 @@ def test_zero_area_raises_instead_of_silently_returning_a_tile():
 # and three separate mutations to _compute_target_size pass all the other cases —
 # dropping the tie-break entirely, inverting it to `patches_w > patches_h`, and swapping
 # round() for floor(). Do not remove it to trim runtime.
-@pytest.mark.skipif(not _LOGER_ROOT.exists(), reason="vendored tree absent (setup/loger.sh)")
-@pytest.mark.parametrize("orig_w,orig_h", [(1920, 1080), (1080, 1920), (640, 480), (1000, 1000), (1920, 1200)])
+@pytest.mark.skipif(
+    not _LOGER_ROOT.exists(), reason="vendored tree absent (setup/loger.sh)"
+)
+@pytest.mark.parametrize(
+    "orig_w,orig_h",
+    [(1920, 1080), (1080, 1920), (640, 480), (1000, 1000), (1920, 1200)],
+)
 def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
     # This helper is reimplemented rather than copied, so parity with upstream is a
     # thing we MEASURE, not a thing we claim. The model trains on images preprocessed
@@ -145,9 +152,11 @@ def test_target_size_matches_the_vendored_loader(tmp_path, orig_w, orig_h):
 
     # The loader takes a directory, so give it two frames at the size under test.
     for i in range(2):
-        Image.fromarray(np.random.default_rng(i).integers(0, 255, (orig_h, orig_w, 3), dtype=np.uint8)).save(
-            tmp_path / f"{i:04d}.jpg"
-        )
+        Image.fromarray(
+            np.random.default_rng(i).integers(
+                0, 255, (orig_h, orig_w, 3), dtype=np.uint8
+            )
+        ).save(tmp_path / f"{i:04d}.jpg")
 
     # PIXEL_LIMIT is upstream's casing, not a typo on our side — the vendored signature
     # is `load_images_as_tensor(path, interval, PIXEL_LIMIT, Target_W, Target_H)` at
@@ -239,7 +248,9 @@ def test_load_model_reports_missing_config(tmp_path, monkeypatch):
         LoGeRCreator()._load_model("cpu")
 
 
-def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(tmp_path, monkeypatch, stub_pi3):
+def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(
+    tmp_path, monkeypatch, stub_pi3
+):
     # The point of the whole routing. Replacing the capture with a bare
     # `model_cfg.pop("se3", None)` passes every other test in this file while producing
     # exactly the silent wrong-alignment-mode run the design exists to prevent, so the
@@ -255,7 +266,9 @@ def test_se3_is_captured_from_the_variant_yaml_not_merely_dropped(tmp_path, monk
     ):
         cfg_dir = tmp_path / "ckpts" / variant
         cfg_dir.mkdir(parents=True)
-        (cfg_dir / "original_config.yaml").write_text(yaml.safe_dump({"model": model_block}))
+        (cfg_dir / "original_config.yaml").write_text(
+            yaml.safe_dump({"model": model_block})
+        )
 
         creator = LoGeRCreator(variant=variant)
         creator._load_model("cpu")
@@ -286,10 +299,14 @@ def test_preprocess_returns_patch_aligned_unit_range_tensor(tmp_path):
 def test_preprocess_original_coords_is_full_frame(tmp_path):
     # LoGeR resizes and never crops, so every row is the whole image. This is what
     # PointcloudResult.__post_init__ consumes to derive the full-res K.
-    _, original_coords = LoGeRCreator()._preprocess(_frame_files(_fake_frames(3, 480, 640), tmp_path))
+    _, original_coords = LoGeRCreator()._preprocess(
+        _frame_files(_fake_frames(3, 480, 640), tmp_path)
+    )
 
     assert original_coords.shape == (3, 6)
-    np.testing.assert_allclose(original_coords, np.tile([0, 0, 640, 480, 640, 480], (3, 1)))
+    np.testing.assert_allclose(
+        original_coords, np.tile([0, 0, 640, 480, 640, 480], (3, 1))
+    )
 
 
 def test_preprocess_rejects_non_uniform_frame_sizes(tmp_path):
@@ -308,7 +325,9 @@ def _loaded_creator(se3: bool = False, **kwargs) -> LoGeRCreator:
     return creator
 
 
-def _synthetic_local_points(h: int, w: int, fx: float, fy: float, z: float = 2.0) -> np.ndarray:
+def _synthetic_local_points(
+    h: int, w: int, fx: float, fy: float, z: float = 2.0
+) -> np.ndarray:
     """Exact pinhole camera-frame pointmap, so a K fit over it must recover (fx, fy)."""
     # The principal point must match the one estimate_intrinsics_from_points assumes —
     # cx=(W-1)/2, cy=(H-1)/2 — set by the centered-pixel-grid meshgrid inside
@@ -332,11 +351,15 @@ class _FakeLoGeR(torch.nn.Module):
     torch.sigmoid produces an out-of-range depth_conf the assertions catch.
     """
 
-    def __init__(self, n: int, h: int, w: int, fx: float, fy: float, conf_logit: float = 4.0):
+    def __init__(
+        self, n: int, h: int, w: int, fx: float, fy: float, conf_logit: float = 4.0
+    ):
         super().__init__()
         self.register_parameter("_p", torch.nn.Parameter(torch.zeros(1)))
         pts = _synthetic_local_points(h, w, fx, fy)  # (1,H,W,3)
-        self.local_points = torch.from_numpy(np.repeat(pts, n, axis=0))[None]  # (1,N,H,W,3)
+        self.local_points = torch.from_numpy(np.repeat(pts, n, axis=0))[
+            None
+        ]  # (1,N,H,W,3)
         # conf_logit is a parameter, not a constant: the default 4.0 (sigmoid ~0.982) clears
         # both 0.02 and the 0.1 library default, so it cannot tell the two apart. The
         # threshold test below drives it down into LoGeR's real measured band.
@@ -411,7 +434,9 @@ def test_forward_inverts_camera_poses_to_world_to_camera():
 def test_forward_fits_and_broadcasts_intrinsics():
     n, h, w = 3, 56, 70
     fx, fy = 88.0, 80.0
-    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, fx, fy), torch.rand(n, 3, h, w))
+    raw = _loaded_creator()._forward(
+        _FakeLoGeR(n, h, w, fx, fy), torch.rand(n, 3, h, w)
+    )
 
     assert raw["intrinsics"].shape == (n, 3, 3)
     assert raw["intrinsics"][0, 0, 0] == pytest.approx(fx, rel=1e-3)
@@ -444,7 +469,9 @@ def test_forward_extracts_depth_from_the_third_channel():
     # LoGeR builds local_points as cat([xy * z, z]), so channel 2 IS depth — no
     # reprojection needed to recover it.
     n, h, w = 2, 56, 70
-    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+    raw = _loaded_creator()._forward(
+        _FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w)
+    )
     assert raw["depth"].shape == (n, h, w, 1)
     np.testing.assert_allclose(raw["depth"], 2.0, rtol=1e-5)
 
@@ -457,7 +484,9 @@ def test_forward_passes_window_knobs_and_se3():
     # NON-default value (defaults are 32/3/0/1, se3 False) so a hardcode dies here too.
     n, h, w = 2, 56, 70
     model = _FakeLoGeR(n, h, w, 80.0, 80.0)
-    creator = _loaded_creator(se3=True, window_size=16, overlap_size=4, reset_every=8, num_iterations=3)
+    creator = _loaded_creator(
+        se3=True, window_size=16, overlap_size=4, reset_every=8, num_iterations=3
+    )
 
     creator._forward(model, torch.rand(n, 3, h, w))
 
@@ -491,7 +520,9 @@ def test_forward_runs_under_no_grad():
     # the .numpy() calls raise. Assert plain ndarrays out so the reason is stated here rather
     # than left as an unexplained RuntimeError in whichever test happens to run first.
     n, h, w = 2, 56, 70
-    raw = _loaded_creator()._forward(_FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w))
+    raw = _loaded_creator()._forward(
+        _FakeLoGeR(n, h, w, 80.0, 80.0), torch.rand(n, 3, h, w)
+    )
     assert isinstance(raw["depth"], np.ndarray)
 
 
@@ -551,7 +582,11 @@ def test_postprocess_field_contract():
     # collab_splats/pointcloud/base.py), not an oversight, and BA consumes
     # it. Dropping it to None survived every other assertion here.
     assert isinstance(result.confidence, torch.Tensor)
-    assert tuple(result.confidence.shape) == (n, result.model_height, result.model_width)
+    assert tuple(result.confidence.shape) == (
+        n,
+        result.model_height,
+        result.model_width,
+    )
     # Forwarded from the creator, where setup_inference put them. to_colmap reads both
     # off the result (PointcloudResult.to_colmap in collab_splats/pointcloud/base.py), so
     # losing them exports a COLMAP model with no
@@ -565,7 +600,10 @@ def test_postprocess_field_contract():
     # but only a value check catches world_points sourced from the wrong array entirely.
     np.testing.assert_allclose(
         result.world_points[2] - result.world_points[0],
-        np.tile(np.array([2.0, 0.0, 0.0], dtype=np.float32), (*result.world_points.shape[1:3], 1)),
+        np.tile(
+            np.array([2.0, 0.0, 0.0], dtype=np.float32),
+            (*result.world_points.shape[1:3], 1),
+        ),
         atol=1e-4,
     )
 
@@ -573,7 +611,9 @@ def test_postprocess_field_contract():
 def test_postprocess_preserves_anisotropic_focals():
     # The separate-focal fit's aspect correction survives postprocess as fx != fy
     _, _, result = _forward_and_postprocess(fx=88.0, fy=80.0)
-    assert result.intrinsics[0, 0, 0] != pytest.approx(result.intrinsics[0, 1, 1], rel=1e-3)
+    assert result.intrinsics[0, 0, 0] != pytest.approx(
+        result.intrinsics[0, 1, 1], rel=1e-3
+    )
 
 
 def test_max_points_caps_the_returned_cloud():
@@ -582,7 +622,9 @@ def test_max_points_caps_the_returned_cloud():
     # - construct below the scene size; the cap is drawn after the outlier removal, so the cut
     #   is exact and the three arrays stay index-aligned through it
     creator, _, grid = _forward_and_postprocess(max_points=100)
-    result = clean_pointcloud(grid, remove_outliers=creator.clean, max_points=creator.max_points)
+    result = clean_pointcloud(
+        grid, remove_outliers=creator.clean, max_points=creator.max_points
+    )
 
     assert len(result.points) == 100
     assert len(result.colors) == 100
@@ -604,7 +646,10 @@ def test_multiview_confidence_mask_is_wired_and_off_by_default():
         agree[0] = 0
         return agree, seen
 
-    with patch("collab_splats.pointcloud.feedforward.base.multiview_depth_confidence", one_frame_disagrees):
+    with patch(
+        "collab_splats.pointcloud.feedforward.base.multiview_depth_confidence",
+        one_frame_disagrees,
+    ):
         _, _, on = _forward_and_postprocess(n=n, min_views=2)
 
     # The fake emits one constant confidence, so the percentile gate keeps every pixel.
@@ -616,7 +661,10 @@ def test_multiview_confidence_mask_is_wired_and_off_by_default():
 def test_conf_threshold_field_reaches_the_point_filter():
     # Found by mutation: replacing self.conf_threshold with a literal survived everything else
     # - the fake's confidence is constant, so the mask's own cut cannot tell values apart
-    with patch("collab_splats.pointcloud.feedforward.base.confidence_mask", wraps=confidence_mask) as mask:
+    with patch(
+        "collab_splats.pointcloud.feedforward.base.confidence_mask",
+        wraps=confidence_mask,
+    ) as mask:
         _forward_and_postprocess(conf_threshold=37.0)
 
     assert mask.call_args.args[1] == 37.0
@@ -632,7 +680,12 @@ def test_extract_intermediate_features_refuses():
 # CI-reproducible: 8 frames at fixed indices out of the tutorial video committed to this
 # repo. Stride 24 is ~1 fps at the source's 24000/1001, the frame rate base.yaml ships as
 # its default, so the inter-frame motion is what the model sees in production.
-_PARITY_VIDEO = Path(__file__).resolve().parents[2] / "data" / "tutorial" / "tutorial_example-video.mp4"
+_PARITY_VIDEO = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "tutorial"
+    / "tutorial_example-video.mp4"
+)
 _PARITY_FRAME_IDXS = list(range(0, 192, 24))
 
 # 3:4 center crop of the 1080x1920 portrait source. The crop is the point: uncropped,
@@ -649,7 +702,9 @@ def _tutorial_frames() -> np.ndarray:
     # the seek itself does not, so hoisting it out of the loop is 8x cheaper than
     # letting extract_frame probe per call.
     info = get_video_info(str(_PARITY_VIDEO))
-    frames = np.stack([extract_frame(_PARITY_VIDEO, idx, info=info) for idx in _PARITY_FRAME_IDXS])
+    frames = np.stack(
+        [extract_frame(_PARITY_VIDEO, idx, info=info) for idx in _PARITY_FRAME_IDXS]
+    )
 
     # Center-crop both axes. Assert first: a silently clamped slice would change the
     # aspect ratio and therefore the anisotropy this fixture exists to produce.
@@ -664,8 +719,12 @@ def _tutorial_frames() -> np.ndarray:
 
 @pytest.mark.slow
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="loads LoGeR onto cuda")
-@pytest.mark.skipif(not _LOGER_ROOT.exists(), reason="vendored tree absent (setup/loger.sh)")
-@pytest.mark.skipif(not _PARITY_VIDEO.exists(), reason="tutorial video absent (data/tutorial/)")
+@pytest.mark.skipif(
+    not _LOGER_ROOT.exists(), reason="vendored tree absent (setup/loger.sh)"
+)
+@pytest.mark.skipif(
+    not _PARITY_VIDEO.exists(), reason="tutorial video absent (data/tutorial/)"
+)
 def test_pinhole_residual_against_logers_native_pointcloud(record_property):
     """Unproject depth with the fitted K and compare to LoGeR's own world points.
 
@@ -704,7 +763,9 @@ def test_pinhole_residual_against_logers_native_pointcloud(record_property):
 
     # Ours, via the fitted K and the same reuse path production takes
     depth = torch.as_tensor(raw["depth"][..., 0], dtype=torch.float32)
-    ours = unproject(depth, torch.as_tensor(raw["extrinsic"]), torch.as_tensor(raw["intrinsics"])).numpy()
+    ours = unproject(
+        depth, torch.as_tensor(raw["extrinsic"]), torch.as_tensor(raw["intrinsics"])
+    ).numpy()
     # Same grid on both sides. Without this a resolution change makes native[mask] raise
     # IndexError instead of failing the residual — a crash that pins nothing.
     assert native.shape == ours.shape
@@ -737,7 +798,10 @@ def test_pinhole_residual_against_logers_native_pointcloud(record_property):
     record_property("pinhole_residual_p99_pct", round(p99_rel * 100, 4))
     record_property("pinhole_scene_scale", round(scene_scale, 4))
     record_property("pinhole_conf_pass_fraction", round(float(mask.mean()), 4))
-    record_property("pinhole_conf_band", f"[{raw['depth_conf'].min():.4f}, {raw['depth_conf'].max():.4f}]")
+    record_property(
+        "pinhole_conf_band",
+        f"[{raw['depth_conf'].min():.4f}, {raw['depth_conf'].max():.4f}]",
+    )
 
     # 0.4%, CALIBRATED BY MUTATION, not chosen for comfort. The original 2% gate was
     # measured inert on this fixture: multiplying the fitted fx by 1.05 in _forward moved

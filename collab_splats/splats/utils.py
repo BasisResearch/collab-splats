@@ -49,7 +49,9 @@ def knn_spacing(points: np.ndarray, k: int) -> np.ndarray:
     Returns:
         (N,) spacing, in the units of `points`.
     """
-    neighbor_dists, _ = NearestNeighbors(n_neighbors=k + 1).fit(points).kneighbors(points)
+    neighbor_dists, _ = (
+        NearestNeighbors(n_neighbors=k + 1).fit(points).kneighbors(points)
+    )
     return np.sqrt((neighbor_dists[:, 1:] ** 2).mean(-1))
 
 
@@ -134,7 +136,9 @@ def downscale_image(image: np.ndarray, factor: int) -> np.ndarray:
         return image
 
     height, width = image.shape[:2]
-    return cv2.resize(image, (width // factor, height // factor), interpolation=cv2.INTER_LINEAR)
+    return cv2.resize(
+        image, (width // factor, height // factor), interpolation=cv2.INTER_LINEAR
+    )
 
 
 def prepare_target(image: np.ndarray, depth: np.ndarray | None, device: str) -> dict:

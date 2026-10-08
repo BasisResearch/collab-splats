@@ -93,7 +93,9 @@ def _guided_upsample_depth(
     tl_x, tl_y, cr_x, cr_y = (int(round(v)) for v in crop_box)
     cw, ch = cr_x - tl_x, cr_y - tl_y
     if cw <= 0 or ch <= 0:
-        raise ValueError(f"Degenerate crop box {crop_box} — original_coords are corrupt")
+        raise ValueError(
+            f"Degenerate crop box {crop_box} — original_coords are corrupt"
+        )
     if tl_x < 0 or tl_y < 0 or cr_x > W or cr_y > H:
         raise ValueError(f"Crop box {crop_box} lies outside the {H}x{W} canvas")
 
@@ -102,7 +104,12 @@ def _guided_upsample_depth(
     valid_nn = (depth_nn > 0).astype(np.float32)
 
     # Gray guide in [0, 1] from the original-res crop; radius spans ~2x the upsample factor
-    guide = cv2.cvtColor(rgb_full[tl_y:cr_y, tl_x:cr_x], cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    guide = (
+        cv2.cvtColor(rgb_full[tl_y:cr_y, tl_x:cr_x], cv2.COLOR_RGB2GRAY).astype(
+            np.float32
+        )
+        / 255.0
+    )
 
     # Zero-mean guide: offset-invariant filter, less float32 cancellation in a and b
     guide = guide - 0.5
@@ -112,7 +119,9 @@ def _guided_upsample_depth(
 
     # Validity-weighted filtering: depth and validity as two channels of one guided filter
     guide_t = torch.as_tensor(guide, device=device)[None, None]
-    src_t = torch.as_tensor(np.stack([depth_nn * valid_nn, valid_nn]), device=device)[None]
+    src_t = torch.as_tensor(np.stack([depth_nn * valid_nn, valid_nn]), device=device)[
+        None
+    ]
     num, den = guided_blur(guide_t, src_t, 2 * radius + 1, eps)[0]
     filtered = torch.where(den > 1e-6, num / den.clamp(min=1e-6), 0.0)
 
@@ -125,7 +134,9 @@ def _guided_upsample_depth(
     return canvas
 
 
-def upsample_depths(depths: np.ndarray, rgbs: np.ndarray, crop_boxes: np.ndarray) -> np.ndarray:
+def upsample_depths(
+    depths: np.ndarray, rgbs: np.ndarray, crop_boxes: np.ndarray
+) -> np.ndarray:
     """
     Guided-filter upsample model-res depth maps onto their original-res RGB frames.
 
@@ -144,7 +155,9 @@ def upsample_depths(depths: np.ndarray, rgbs: np.ndarray, crop_boxes: np.ndarray
     rgbs = np.asarray(rgbs)
     crop_boxes = np.asarray(crop_boxes)
     if not (len(depths) == len(rgbs) == len(crop_boxes)):
-        raise ValueError(f"{len(depths)} depths, {len(rgbs)} rgbs, {len(crop_boxes)} crop boxes")
+        raise ValueError(
+            f"{len(depths)} depths, {len(rgbs)} rgbs, {len(crop_boxes)} crop boxes"
+        )
 
     # One guided upsample per frame into a preallocated stack
     device = torch.device(get_device())
@@ -152,7 +165,9 @@ def upsample_depths(depths: np.ndarray, rgbs: np.ndarray, crop_boxes: np.ndarray
     out = np.zeros((n, H, W), dtype=np.float32)
 
     for i in range(n):
-        out[i] = _guided_upsample_depth(np.asarray(depths[i], dtype=np.float32), rgbs[i], crop_boxes[i], device)
+        out[i] = _guided_upsample_depth(
+            np.asarray(depths[i], dtype=np.float32), rgbs[i], crop_boxes[i], device
+        )
 
     return out
 

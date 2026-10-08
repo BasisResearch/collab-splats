@@ -31,7 +31,9 @@ def _run(tmp_path, **pointcloud):
 @pytest.mark.parametrize("min_views", [0, 2])
 def test_multiview_knobs_forwarded(tmp_path, min_views):
     """Both knobs are passed through verbatim, alongside max_points."""
-    creator_cls = _run(tmp_path, max_points=1234, min_views=min_views, mv_rel_thresh=0.03)
+    creator_cls = _run(
+        tmp_path, max_points=1234, min_views=min_views, mv_rel_thresh=0.03
+    )
     assert creator_cls.call_args.kwargs["min_views"] == min_views
     assert creator_cls.call_args.kwargs["mv_rel_thresh"] == 0.03
     assert creator_cls.call_args.kwargs["max_points"] == 1234

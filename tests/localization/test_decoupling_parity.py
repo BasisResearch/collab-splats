@@ -35,7 +35,9 @@ class _ContentExtractor:
         kpts = torch.from_numpy(np.stack([xs % w, ys % h], axis=1))
         # Descriptors summarise per-channel statistics around each keypoint row
         desc = torch.from_numpy(
-            np.stack([img[int(y) % h, int(x) % w] / 255.0 for x, y in zip(xs, ys)]).astype(np.float32)
+            np.stack(
+                [img[int(y) % h, int(x) % w] / 255.0 for x, y in zip(xs, ys)]
+            ).astype(np.float32)
         )
         return LocalFeatures(keypoints=kpts, descriptors=desc, image_size=(w, h))
 

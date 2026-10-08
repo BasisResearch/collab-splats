@@ -39,7 +39,9 @@ def test_camera_applies_the_pose_delta():
 
     # 90 degrees about z: under an identity rotation the two composition orders are the same matrix
     cam_to_world = torch.eye(4).expand(2, 4, 4).clone()
-    cam_to_world[:, :3, :3] = torch.tensor([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    cam_to_world[:, :3, :3] = torch.tensor(
+        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+    )
 
     refined = module.camera(cam_to_world, torch.arange(2))
 
@@ -115,7 +117,9 @@ def test_denormalize_is_a_no_op_without_the_pose_half():
 def test_from_config_builds_pose_only_when_appearance_is_off():
     cfg = SplatsConfig.from_dict({"pose_opt": True, "appearance_opt": False})
 
-    module = CameraOpt.from_config(cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu")
+    module = CameraOpt.from_config(
+        cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu"
+    )
 
     assert module.translation is not None and module.rotation is not None
     assert module.appearance is None
@@ -127,7 +131,9 @@ def test_from_config_builds_pose_only_when_appearance_is_off():
 def test_from_config_builds_appearance_only_when_pose_is_off():
     cfg = SplatsConfig.from_dict({"pose_opt": False, "appearance_opt": True})
 
-    module = CameraOpt.from_config(cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu")
+    module = CameraOpt.from_config(
+        cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu"
+    )
 
     # The two halves are selected independently — appearance on with pose off is a legal run
     assert module.translation is None and module.rotation is None
@@ -139,7 +145,9 @@ def test_from_config_builds_appearance_only_when_pose_is_off():
 def test_from_config_builds_both_when_both_are_on():
     cfg = SplatsConfig.from_dict({"pose_opt": True, "appearance_opt": True})
 
-    module = CameraOpt.from_config(cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu")
+    module = CameraOpt.from_config(
+        cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu"
+    )
 
     assert module.rotation is not None and module.appearance is not None
     assert len(module.optimizers) == 2
@@ -149,16 +157,24 @@ def test_from_config_builds_both_when_both_are_on():
 def test_from_config_builds_nothing_when_both_are_off():
     cfg = SplatsConfig.from_dict({"pose_opt": False, "appearance_opt": False})
 
-    module = CameraOpt.from_config(cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu")
+    module = CameraOpt.from_config(
+        cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu"
+    )
 
-    assert module.translation is None and module.rotation is None and module.appearance is None
+    assert (
+        module.translation is None
+        and module.rotation is None
+        and module.appearance is None
+    )
     assert module.optimizers == [] and module.schedulers == []
 
 
 def test_from_config_scales_the_two_pose_learning_rates_differently():
     cfg = SplatsConfig.from_dict({"pose_opt": True})
 
-    module = CameraOpt.from_config(cfg, n_views=4, world_extent=8.0, scene_scale=2.0, lr_gamma=0.999, device="cpu")
+    module = CameraOpt.from_config(
+        cfg, n_views=4, world_extent=8.0, scene_scale=2.0, lr_gamma=0.999, device="cpu"
+    )
 
     rotation_group, translation_group = module.optimizers[0].param_groups
     # Rotation follows the world extent (unit-free), translation follows the training frame
@@ -174,7 +190,9 @@ def test_from_config_scales_the_two_pose_learning_rates_differently():
 def test_camera_opt_half_selection_is_keyword_only():
     # The bare `*` is the point: a second positional would silently become `optimize_pose`
     # - match the full count string: any arity slip in this call also says "positional"
-    with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
+    with pytest.raises(
+        TypeError, match="takes 2 positional arguments but 3 were given"
+    ):
         CameraOpt(3, True)
 
     module = CameraOpt(3, optimize_pose=False, optimize_appearance=True)
@@ -185,10 +203,18 @@ def test_from_config_weight_decay_is_keyword_only():
     cfg = SplatsConfig.from_dict({"pose_opt": True})
 
     # `device` is the sixth and last positional; a seventh would silently become `weight_decay`
-    with pytest.raises(TypeError, match="takes 7 positional arguments but 8 were given"):
+    with pytest.raises(
+        TypeError, match="takes 7 positional arguments but 8 were given"
+    ):
         CameraOpt.from_config(cfg, 4, 2.0, 1.0, 0.999, "cpu", 1e-5)
 
     module = CameraOpt.from_config(
-        cfg, n_views=4, world_extent=2.0, scene_scale=1.0, lr_gamma=0.999, device="cpu", weight_decay=1e-3
+        cfg,
+        n_views=4,
+        world_extent=2.0,
+        scene_scale=1.0,
+        lr_gamma=0.999,
+        device="cpu",
+        weight_decay=1e-3,
     )
     assert module.optimizers[0].param_groups[0]["weight_decay"] == pytest.approx(1e-3)

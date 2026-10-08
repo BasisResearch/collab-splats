@@ -51,23 +51,32 @@ def _write_tiny_mesh(path):
     """Write a one-triangle grey mesh; 3 vertices."""
     verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], dtype=np.float64)
     tris = np.array([[0, 1, 2]], dtype=np.int32)
-    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris))
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris)
+    )
     mesh.vertex_colors = o3d.utility.Vector3dVector(np.ones((3, 3)) * 0.5)
     o3d.io.write_triangle_mesh(str(path), mesh)
 
 
 def _write_mesh_6v(path):
     """Write a three-triangle mesh; 6 vertices."""
-    verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 1], [1, 0, 1]], dtype=np.float64)
+    verts = np.array(
+        [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0], [0, 0, 1], [1, 0, 1]],
+        dtype=np.float64,
+    )
     tris = np.array([[0, 1, 2], [1, 3, 2], [0, 1, 4]], dtype=np.int32)
-    mesh = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris))
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris)
+    )
     o3d.io.write_triangle_mesh(str(path), mesh)
 
 
 def _counting_read(monkeypatch):
     """Patch pv.read with an empty-PolyData stub; returns the list of paths it was called with."""
     reads = []
-    monkeypatch.setattr(viewer_module.pv, "read", lambda p: reads.append(p) or pv.PolyData())
+    monkeypatch.setattr(
+        viewer_module.pv, "read", lambda p: reads.append(p) or pv.PolyData()
+    )
     return reads
 
 
@@ -118,7 +127,11 @@ def test_view_geometry_is_built_once_and_queries_leave_it_untouched(monkeypatch)
     """Normalize toggles reuse the load-time fit; query colors never reach the shared view-space cloud."""
     calls = []
     real = viewer_module.compute_view_transform
-    monkeypatch.setattr(viewer_module, "compute_view_transform", lambda *a, **k: calls.append(1) or real(*a, **k))
+    monkeypatch.setattr(
+        viewer_module,
+        "compute_view_transform",
+        lambda *a, **k: calls.append(1) or real(*a, **k),
+    )
     v = SplitViewer(OperationLog(), off_screen=True)
     v.load(_FakeResult(p=20), mesh_path=None)
     v.set_normalize_view(False)
@@ -140,9 +153,13 @@ def test_decimate_indices_caps_to_budget():
     assert len(np.unique(idx)) == 150
 
 
-@pytest.mark.parametrize("max_points", [150, 0], ids=["under_budget", "nonpositive_budget"])
+@pytest.mark.parametrize(
+    "max_points", [150, 0], ids=["under_budget", "nonpositive_budget"]
+)
 def test_decimate_indices_keeps_every_point(max_points):
-    assert np.array_equal(_decimate_indices(n=100, max_points=max_points), np.arange(100))
+    assert np.array_equal(
+        _decimate_indices(n=100, max_points=max_points), np.arange(100)
+    )
 
 
 ########
@@ -191,7 +208,9 @@ def test_score_query_forwards_terms_and_returns_uint8_colors(monkeypatch):
     v._point_features = np.random.default_rng(0).random((20, 8)).astype(np.float32)
     stub = _CountingExtractor()
     monkeypatch.setattr(v, "_get_extractor", lambda name: stub)
-    colors = v.score_query(positive=["chair", "stool"], negative=["floor"], extractor_name="talk2dino")
+    colors = v.score_query(
+        positive=["chair", "stool"], negative=["floor"], extractor_name="talk2dino"
+    )
     assert colors.shape == (20, 3)
     assert colors.dtype == np.uint8
     assert stub.positive == ["chair", "stool"]
@@ -201,7 +220,9 @@ def test_score_query_forwards_terms_and_returns_uint8_colors(monkeypatch):
 def test_score_query_blank_positive_does_not_read_store(tmp_path, monkeypatch):
     """An empty positive query shows plain RGB without touching the lifted store."""
     reads = []
-    monkeypatch.setattr("collab_splats.dashboard.viewer.read_point_features", reads.append)
+    monkeypatch.setattr(
+        "collab_splats.dashboard.viewer.read_point_features", reads.append
+    )
     v = SplitViewer(OperationLog(), off_screen=True)
     result = _FakeResult(20)
     v.load(result, mesh_path=None, lifted_store=tmp_path / "talk2dino_lifted.zarr")
@@ -240,7 +261,9 @@ def test_score_query_targets_requested_mode(tmp_path):
     v._extractor_cache = {"talk2dino": stub}
 
     # Outgoing mode is mesh, but a switch to pointcloud scores the 20 points
-    colors = v.score_query(positive=["x"], negative=[], extractor_name="talk2dino", mode="pointcloud")
+    colors = v.score_query(
+        positive=["x"], negative=[], extractor_name="talk2dino", mode="pointcloud"
+    )
     assert stub.features.shape[0] == 20
     assert len(colors) == 20
 
@@ -323,7 +346,9 @@ def test_ensure_lifted_reads_the_lifted_store(tmp_path):
 def test_ensure_lifted_raises_when_latent_store_lacks_autoencoder(tmp_path):
     """A latent-code store without autoencoder.pt is unreadable and the error surfaces."""
     store = tmp_path / "talk2dino_lifted.zarr"
-    write_point_features(store, np.zeros((20, 8), dtype=np.float32), FeatureAutoencoder(32, 8))
+    write_point_features(
+        store, np.zeros((20, 8), dtype=np.float32), FeatureAutoencoder(32, 8)
+    )
     (store / "autoencoder.pt").unlink()
     v = SplitViewer(OperationLog(), off_screen=True)
     v.load(_FakeResult(20), mesh_path=None, lifted_store=store)
@@ -361,7 +386,9 @@ def test_recolor_updates_scalars_without_rebuilding(monkeypatch):
 
     # The new colors landed on the displayed cloud
     idx = v._display_idx
-    np.testing.assert_array_equal(np.asarray(v._right_cloud["RGB"])[:5], colors2[idx][:5])
+    np.testing.assert_array_equal(
+        np.asarray(v._right_cloud["RGB"])[:5], colors2[idx][:5]
+    )
 
 
 def test_recolor_fast_path_does_not_reapply_view(monkeypatch):
@@ -394,7 +421,9 @@ def test_render_query_length_mismatch_falls_back():
     assert any("don't match" in line for line in op_log.log_lines)
 
 
-@pytest.mark.parametrize("n_colors", [3, 20], ids=["per_vertex", "size_mismatch_falls_back"])
+@pytest.mark.parametrize(
+    "n_colors", [3, 20], ids=["per_vertex", "size_mismatch_falls_back"]
+)
 def test_render_right_colors_the_mesh(tmp_path, n_colors):
     """Per-vertex colors paint the 3-vertex mesh; point-length colors fall back to plain RGB."""
     mesh_path = tmp_path / "mesh.ply"
@@ -493,7 +522,9 @@ def _bbox_center(pts):
 
 def test_view_transform_centers_on_origin():
     """The inlier bbox center (flyers clipped by radius) maps to the origin."""
-    pts = np.random.default_rng(0).random((200, 3)).astype(np.float32) + np.array([10.0, 5.0, -3.0])
+    pts = np.random.default_rng(0).random((200, 3)).astype(np.float32) + np.array(
+        [10.0, 5.0, -3.0]
+    )
     T = compute_view_transform(pts, extrinsics=None, percentile=95.0)
     med = np.median(pts, axis=0)
     d = np.linalg.norm(pts - med, axis=1)
@@ -522,7 +553,9 @@ def test_view_transform_aligns_mean_camera_up_to_plus_z():
     assert np.allclose(d, [0.0, 0.0, 1.0], atol=1e-6)
 
 
-@pytest.mark.parametrize("cancelling_cameras", [True, False], ids=["opposite_ups", "no_extrinsics"])
+@pytest.mark.parametrize(
+    "cancelling_cameras", [True, False], ids=["opposite_ups", "no_extrinsics"]
+)
 def test_view_transform_without_a_mean_up_skips_rotation(cancelling_cameras):
     """Opposite camera ups (mean ~0) or no cameras: the 3x3 block is a pure scaling, no mixing."""
     extr = None

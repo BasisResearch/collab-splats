@@ -9,7 +9,9 @@ def _make(ref_frame_indices, inlier_mask):
     return LocalizationResult(
         pose=None,
         n_inliers=int(np.sum(inlier_mask)) if inlier_mask is not None else 0,
-        n_correspondences=len(ref_frame_indices) if ref_frame_indices is not None else 0,
+        n_correspondences=len(ref_frame_indices)
+        if ref_frame_indices is not None
+        else 0,
         pts2d=None,
         pts3d_matched=None,
         pts2d_ref=None,

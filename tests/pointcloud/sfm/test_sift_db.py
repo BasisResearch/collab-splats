@@ -26,7 +26,13 @@ def _build(image_path, database_path, **overrides):
     """
     build_sift_database with every setting explicit; overrides replace the exhaustive defaults.
     """
-    kwargs = {"pairing": "exhaustive", "overlap": 10, "num_retrieved": 20, "vocab_tree": None, "num_threads": 8}
+    kwargs = {
+        "pairing": "exhaustive",
+        "overlap": 10,
+        "num_retrieved": 20,
+        "vocab_tree": None,
+        "num_threads": 8,
+    }
     kwargs.update(overrides)
     sift_db.build_sift_database(image_path, database_path, **kwargs)
 
@@ -37,7 +43,11 @@ def _record_sift_calls(monkeypatch, *, has_cuda=False, device="cpu"):
     """
     calls = {}
     for step in _STEPS:
-        monkeypatch.setattr(pycolmap, step, lambda *args, _step=step, **kw: calls.update({_step: (args, kw)}))
+        monkeypatch.setattr(
+            pycolmap,
+            step,
+            lambda *args, _step=step, **kw: calls.update({_step: (args, kw)}),
+        )
     monkeypatch.setattr(pycolmap, "has_cuda", has_cuda)
     monkeypatch.setattr(sift_db, "get_device", lambda: device)
     return calls
@@ -57,7 +67,11 @@ def test_extraction_shares_one_simple_radial_camera(monkeypatch, tmp_path):
     "pairing, matcher, options",
     [
         ("exhaustive", "match_exhaustive", {}),
-        ("sequential", "match_sequential", {"overlap": 5, "quadratic_overlap": False, "loop_detection": False}),
+        (
+            "sequential",
+            "match_sequential",
+            {"overlap": 5, "quadratic_overlap": False, "loop_detection": False},
+        ),
         (
             "sequential+retrieval",
             "match_sequential",
@@ -69,12 +83,25 @@ def test_extraction_shares_one_simple_radial_camera(monkeypatch, tmp_path):
                 "vocab_tree_path": Path("VT"),
             },
         ),
-        ("retrieval", "match_vocabtree", {"num_images": 7, "vocab_tree_path": Path("VT")}),
+        (
+            "retrieval",
+            "match_vocabtree",
+            {"num_images": 7, "vocab_tree_path": Path("VT")},
+        ),
     ],
 )
-def test_matcher_and_pairing_options_per_pairing(monkeypatch, tmp_path, pairing, matcher, options):
+def test_matcher_and_pairing_options_per_pairing(
+    monkeypatch, tmp_path, pairing, matcher, options
+):
     calls = _record_sift_calls(monkeypatch)
-    _build(tmp_path, tmp_path / "db", pairing=pairing, overlap=5, num_retrieved=7, vocab_tree="VT")
+    _build(
+        tmp_path,
+        tmp_path / "db",
+        pairing=pairing,
+        overlap=5,
+        num_retrieved=7,
+        vocab_tree="VT",
+    )
 
     # Extraction first, then exactly the one matcher the pairing names
     assert list(calls) == ["extract_features", matcher]
@@ -85,9 +112,15 @@ def test_matcher_and_pairing_options_per_pairing(monkeypatch, tmp_path, pairing,
 
 @pytest.mark.parametrize(
     "has_cuda, torch_device, expected",
-    [(True, "cuda", pycolmap.Device.cuda), (False, "cuda", pycolmap.Device.cpu), (True, "cpu", pycolmap.Device.cpu)],
+    [
+        (True, "cuda", pycolmap.Device.cuda),
+        (False, "cuda", pycolmap.Device.cpu),
+        (True, "cpu", pycolmap.Device.cpu),
+    ],
 )
-def test_gpu_needs_a_cuda_wheel_and_a_cuda_host(monkeypatch, tmp_path, has_cuda, torch_device, expected):
+def test_gpu_needs_a_cuda_wheel_and_a_cuda_host(
+    monkeypatch, tmp_path, has_cuda, torch_device, expected
+):
     """
     The CPU wheel on a GPU host must stay on the CPU: torch seeing a GPU is not enough.
     """
@@ -139,8 +172,12 @@ def test_failure_unlinks_the_partial_database(monkeypatch, tmp_path, step, error
     assert not db.exists()
 
 
-@pytest.mark.parametrize("pairing, match", [("retrieval", "vocab_tree"), ("spatial", "pairing")])
-def test_bad_pairing_is_refused_before_any_pycolmap_call(monkeypatch, tmp_path, pairing, match):
+@pytest.mark.parametrize(
+    "pairing, match", [("retrieval", "vocab_tree"), ("spatial", "pairing")]
+)
+def test_bad_pairing_is_refused_before_any_pycolmap_call(
+    monkeypatch, tmp_path, pairing, match
+):
     calls = _record_sift_calls(monkeypatch)
     with pytest.raises(ValueError, match=match):
         _build(tmp_path, tmp_path / "db", pairing=pairing)
@@ -189,7 +226,13 @@ def _sift_db(path, names=_DB_NAMES, *, verified_pair):
     Minimal colmap SIFT database: one camera, one image per name with keypoints, optional verified pair.
     """
     db = pycolmap.Database.open(str(path))
-    cam = pycolmap.Camera(model="PINHOLE", width=64, height=48, params=[50.0, 50.0, 32.0, 24.0], camera_id=1)
+    cam = pycolmap.Camera(
+        model="PINHOLE",
+        width=64,
+        height=48,
+        params=[50.0, 50.0, 32.0, 24.0],
+        camera_id=1,
+    )
     db.write_camera(cam, True)
     keypoints = np.array([[10.0, 10.0], [20.0, 20.0]], dtype=np.float32)
     for image_id, name in enumerate(names, start=1):
@@ -253,7 +296,9 @@ def test_sift_database_is_rebuilt_when_the_image_set_changed(tmp_path):
 ########################################################
 
 
-ENSURE_KW = dict(pairing="exhaustive", overlap=10, num_retrieved=20, vocab_tree=None, num_threads=1)
+ENSURE_KW = dict(
+    pairing="exhaustive", overlap=10, num_retrieved=20, vocab_tree=None, num_threads=1
+)
 
 
 def _ensure(tmp_path, monkeypatch, **overrides):
@@ -297,7 +342,9 @@ def test_ensure_rebuilds_when_pairing_changes(tmp_path, monkeypatch):
         ("sequential+retrieval", "num_retrieved", 3, True),
     ],
 )
-def test_ensure_params_hold_only_live_knobs(tmp_path, monkeypatch, pairing, knob, value, rebuilds):
+def test_ensure_params_hold_only_live_knobs(
+    tmp_path, monkeypatch, pairing, knob, value, rebuilds
+):
     _ensure(tmp_path, monkeypatch, pairing=pairing)
     calls = _ensure(tmp_path, monkeypatch, pairing=pairing, **{knob: value})
     assert (len(calls) == 1) is rebuilds
@@ -309,7 +356,9 @@ def test_ensure_stores_params_in_the_db_not_a_sidecar(tmp_path, monkeypatch):
     conn = sqlite3.connect(tmp_path / "colmap.db")
     with closing(conn):
         rows = conn.execute("SELECT json FROM collab_params").fetchall()
-    assert [json.loads(row[0]) for row in rows] == [{"pairing": "sequential", "overlap": 3}]
+    assert [json.loads(row[0]) for row in rows] == [
+        {"pairing": "sequential", "overlap": 3}
+    ]
     assert not (tmp_path / "colmap.db.json").exists()
 
 
@@ -324,16 +373,24 @@ def test_ensure_rebuilds_a_legacy_db_without_params_table(tmp_path, monkeypatch)
 ########################################################
 
 
-def test_fetch_vocab_tree_uses_a_cached_file_with_the_pinned_hash(tmp_path, monkeypatch):
+def test_fetch_vocab_tree_uses_a_cached_file_with_the_pinned_hash(
+    tmp_path, monkeypatch
+):
     cached = tmp_path / sift_db.VOCAB_TREE_NAME
     cached.write_bytes(b"x")
     monkeypatch.setattr(sift_db, "VOCAB_TREE_SHA256", hashlib.sha256(b"x").hexdigest())
-    monkeypatch.setattr(sift_db.urllib.request, "urlretrieve", lambda *a, **k: pytest.fail("downloaded"))
+    monkeypatch.setattr(
+        sift_db.urllib.request, "urlretrieve", lambda *a, **k: pytest.fail("downloaded")
+    )
     assert sift_db.fetch_vocab_tree(tmp_path) == cached
 
 
 def test_fetch_vocab_tree_rejects_a_hash_mismatch(tmp_path, monkeypatch):
-    monkeypatch.setattr(sift_db.urllib.request, "urlretrieve", lambda url, dst: Path(dst).write_bytes(b"bad"))
+    monkeypatch.setattr(
+        sift_db.urllib.request,
+        "urlretrieve",
+        lambda url, dst: Path(dst).write_bytes(b"bad"),
+    )
     with pytest.raises(RuntimeError, match="sha256"):
         sift_db.fetch_vocab_tree(tmp_path)
     assert not (tmp_path / sift_db.VOCAB_TREE_NAME).exists()

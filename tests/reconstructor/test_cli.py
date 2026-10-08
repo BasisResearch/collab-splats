@@ -38,7 +38,10 @@ class StubRecon:
     made = []
 
     def __init__(self, config, base_config=None):
-        self.config = {**config, "pointcloud": {"backend": "vggt_omega", **config.get("pointcloud", {})}}
+        self.config = {
+            **config,
+            "pointcloud": {"backend": "vggt_omega", **config.get("pointcloud", {})},
+        }
         self.base_config = base_config
         self.viewer = None
         StubRecon.made.append(self)
@@ -109,7 +112,9 @@ class FakeSource:
         self.calls.append(("pull", scene))
         dest_dir.mkdir(parents=True, exist_ok=True)
         if self.run_config is not None:
-            run_cfg = Reconstructor.run_config_path(dest_dir, self.run_config["pointcloud"]["backend"])
+            run_cfg = Reconstructor.run_config_path(
+                dest_dir, self.run_config["pointcloud"]["backend"]
+            )
             run_cfg.parent.mkdir(parents=True, exist_ok=True)
             run_cfg.write_text(yaml.dump(self.run_config))
 
@@ -177,7 +182,13 @@ def test_local_refuses_two_inputs_sharing_a_stem(tmp_path):
     (tmp_path / "b").mkdir()
     (tmp_path / "a" / "x.mp4").touch()
     (tmp_path / "b" / "x.mov").touch()
-    argv = ["local", str(tmp_path / "a" / "x.mp4"), str(tmp_path / "b" / "x.mov"), "--output-root", str(tmp_path)]
+    argv = [
+        "local",
+        str(tmp_path / "a" / "x.mp4"),
+        str(tmp_path / "b" / "x.mov"),
+        "--output-root",
+        str(tmp_path),
+    ]
     with pytest.raises(SystemExit):
         cli.main(argv)
 
@@ -188,7 +199,9 @@ def test_local_continues_past_a_failing_input(tmp_path):
     good, bad = tmp_path / "good.mp4", tmp_path / "fail.mp4"
     good.touch()
     bad.touch()
-    code = cli.main(["local", str(bad), str(good), "--output-root", str(tmp_path / "o")])
+    code = cli.main(
+        ["local", str(bad), str(good), "--output-root", str(tmp_path / "o")]
+    )
     assert code == cli.EXIT_SCENE_FAILED
     assert len(StubRecon.made) == 2
 
@@ -208,7 +221,16 @@ def test_set_without_equals_is_a_usage_error(tmp_path, capsys):
     video = tmp_path / "v.mp4"
     video.touch()
     with pytest.raises(SystemExit) as exc:
-        cli.main(["local", str(video), "--output-root", str(tmp_path), "--set", "mesh.voxel_depth_px"])
+        cli.main(
+            [
+                "local",
+                str(video),
+                "--output-root",
+                str(tmp_path),
+                "--set",
+                "mesh.voxel_depth_px",
+            ]
+        )
 
     assert exc.value.code == 2
     assert "key=value" in capsys.readouterr().err
@@ -219,7 +241,18 @@ def test_set_under_a_scalar_is_a_usage_error(tmp_path, capsys):
     video = tmp_path / "v.mp4"
     video.write_bytes(b"x")
     with pytest.raises(SystemExit) as exc:
-        cli.main(["local", str(video), "--output-root", str(tmp_path), "--set", "a=1", "--set", "a.b=2"])
+        cli.main(
+            [
+                "local",
+                str(video),
+                "--output-root",
+                str(tmp_path),
+                "--set",
+                "a=1",
+                "--set",
+                "a.b=2",
+            ]
+        )
 
     assert exc.value.code == 2
     assert "a.b" in capsys.readouterr().err
@@ -231,7 +264,16 @@ def test_missing_config_file_is_a_usage_error(tmp_path, capsys):
     video.write_bytes(b"x")
     missing = tmp_path / "nope.yaml"
     with pytest.raises(SystemExit) as exc:
-        cli.main(["local", str(video), "--output-root", str(tmp_path), "--config", str(missing)])
+        cli.main(
+            [
+                "local",
+                str(video),
+                "--output-root",
+                str(tmp_path),
+                "--config",
+                str(missing),
+            ]
+        )
 
     assert exc.value.code == 2
     assert str(missing) in capsys.readouterr().err
@@ -256,7 +298,10 @@ def test_overrides_are_not_mutated_across_runs(tmp_path):
     for video in videos:
         video.touch()
 
-    overrides = {"mesh": {"voxel_depth_px": 0.02}, "pointcloud": {"method": "feedforward"}}
+    overrides = {
+        "mesh": {"voxel_depth_px": 0.02},
+        "pointcloud": {"method": "feedforward"},
+    }
     before = copy.deepcopy(overrides)
     args = argparse.Namespace(
         inputs=videos,
@@ -282,8 +327,17 @@ def test_config_file_merges_under_set(tmp_path):
     video = tmp_path / "v.mp4"
     video.touch()
     override = tmp_path / "o.yaml"
-    override.write_text(yaml.safe_dump({"mesh": {"voxel_depth_px": 0.05, "texture": True}}))
-    argv = ["local", str(video), "--output-root", str(tmp_path), "--config", str(override)]
+    override.write_text(
+        yaml.safe_dump({"mesh": {"voxel_depth_px": 0.05, "texture": True}})
+    )
+    argv = [
+        "local",
+        str(video),
+        "--output-root",
+        str(tmp_path),
+        "--config",
+        str(override),
+    ]
     cli.main([*argv, "--set", "mesh.voxel_depth_px=0.02"])
     assert StubRecon.made[0].config["mesh"] == {"voxel_depth_px": 0.02, "texture": True}
 
@@ -291,7 +345,17 @@ def test_config_file_merges_under_set(tmp_path):
 def test_stages_are_split_and_passed(tmp_path):
     video = tmp_path / "v.mp4"
     video.touch()
-    cli.main(["local", str(video), "--output-root", str(tmp_path), "--stages", "preproc, pointcloud", "--overwrite"])
+    cli.main(
+        [
+            "local",
+            str(video),
+            "--output-root",
+            str(tmp_path),
+            "--stages",
+            "preproc, pointcloud",
+            "--overwrite",
+        ]
+    )
     assert StubRecon.made[0].ran == (["preproc", "pointcloud"], True)
 
 
@@ -299,7 +363,16 @@ def test_base_config_reaches_the_reconstructor(tmp_path):
     video = tmp_path / "v.mp4"
     video.touch()
     base = tmp_path / "base.yaml"
-    cli.main(["local", str(video), "--output-root", str(tmp_path), "--base-config", str(base)])
+    cli.main(
+        [
+            "local",
+            str(video),
+            "--output-root",
+            str(tmp_path),
+            "--base-config",
+            str(base),
+        ]
+    )
     assert StubRecon.made[0].base_config == base
 
 
@@ -311,7 +384,16 @@ def test_run_config_is_rewritten_with_the_config_that_ran(tmp_path):
     out.mkdir(parents=True)
     (out / "run_config.yaml").write_text(yaml.dump({"mesh": {"voxel_depth_px": 0.99}}))
 
-    cli.main(["local", str(video), "--output-root", str(tmp_path / "out"), "--set", "mesh.voxel_depth_px=0.777"])
+    cli.main(
+        [
+            "local",
+            str(video),
+            "--output-root",
+            str(tmp_path / "out"),
+            "--set",
+            "mesh.voxel_depth_px=0.777",
+        ]
+    )
     recorded = yaml.safe_load((out / "run_config.yaml").read_text())
     assert recorded == StubRecon.made[0].config
     assert recorded["mesh"]["voxel_depth_px"] == 0.777
@@ -335,7 +417,9 @@ def test_keep_viewer_serves_the_last_viewer(tmp_path, monkeypatch):
     for video in videos:
         video.touch()
 
-    cli.main(["local", *map(str, videos), "--output-root", str(tmp_path), "--keep-viewer"])
+    cli.main(
+        ["local", *map(str, videos), "--output-root", str(tmp_path), "--keep-viewer"]
+    )
     assert served == [True]
 
 
@@ -352,13 +436,17 @@ def test_without_keep_viewer_a_viewer_never_blocks(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_run_scene", _run_scene)
     video = tmp_path / "a.mp4"
     video.touch()
-    assert cli.main(["local", str(video), "--output-root", str(tmp_path)]) == cli.EXIT_OK
+    assert (
+        cli.main(["local", str(video), "--output-root", str(tmp_path)]) == cli.EXIT_OK
+    )
 
 
 def test_keep_viewer_without_a_viewer_returns(tmp_path):
     video = tmp_path / "fail.mp4"
     video.touch()
-    code = cli.main(["local", str(video), "--output-root", str(tmp_path), "--keep-viewer"])
+    code = cli.main(
+        ["local", str(video), "--output-root", str(tmp_path), "--keep-viewer"]
+    )
     assert code == cli.EXIT_SCENE_FAILED
 
 
@@ -366,7 +454,9 @@ def test_keep_viewer_on_a_successful_run_without_a_viewer_returns_ok(tmp_path):
     # StubRecon.viewer is None: the run succeeds and nothing blocks
     video = tmp_path / "v.mp4"
     video.touch()
-    code = cli.main(["local", str(video), "--output-root", str(tmp_path), "--keep-viewer"])
+    code = cli.main(
+        ["local", str(video), "--output-root", str(tmp_path), "--keep-viewer"]
+    )
     assert code == cli.EXIT_OK
     assert StubRecon.made[0].viewer is None
 
@@ -394,11 +484,17 @@ def test_remote_needs_ids_or_all(tmp_path, monkeypatch):
     assert exc.value.code == 2
 
 
-def test_remote_unknown_stage_is_a_usage_error_before_any_fetch(tmp_path, monkeypatch, capsys):
+def test_remote_unknown_stage_is_a_usage_error_before_any_fetch(
+    tmp_path, monkeypatch, capsys
+):
     sources = []
-    monkeypatch.setattr(cli, "SceneSource", lambda: sources.append(FakeSource()) or sources[-1])
+    monkeypatch.setattr(
+        cli, "SceneSource", lambda: sources.append(FakeSource()) or sources[-1]
+    )
     with pytest.raises(SystemExit) as exc:
-        cli.main(["remote", "--all", "--stages", "mesh,msh", "--output-root", str(tmp_path)])
+        cli.main(
+            ["remote", "--all", "--stages", "mesh,msh", "--output-root", str(tmp_path)]
+        )
 
     assert exc.value.code == 2
     assert "msh" in capsys.readouterr().err
@@ -408,7 +504,9 @@ def test_remote_unknown_stage_is_a_usage_error_before_any_fetch(tmp_path, monkey
 
 def test_remote_scenes_with_all_is_a_usage_error(tmp_path, monkeypatch, capsys):
     sources = []
-    monkeypatch.setattr(cli, "SceneSource", lambda: sources.append(FakeSource()) or sources[-1])
+    monkeypatch.setattr(
+        cli, "SceneSource", lambda: sources.append(FakeSource()) or sources[-1]
+    )
     with pytest.raises(SystemExit) as exc:
         cli.main(["remote", SCENE, "--all", "--output-root", str(tmp_path)])
 
@@ -421,10 +519,16 @@ def test_remote_forwards_named_scenes_verbatim(tmp_path, monkeypatch):
     # A named-scene run never widens to the whole bucket; discovery's ids pass the CLI check
     recorded = {}
     monkeypatch.setattr(cli, "SceneSource", FakeSource)
-    monkeypatch.setattr(cli, "_run_remote", lambda source, scenes, args: recorded.update(scenes=scenes) or 1)
+    monkeypatch.setattr(
+        cli,
+        "_run_remote",
+        lambda source, scenes, args: recorded.update(scenes=scenes) or 1,
+    )
     assert SCENE_ID_RE.match(SCENE)
 
-    code = cli.main(["remote", SCENE, "2026_07_21-rats-C0100", "--output-root", str(tmp_path)])
+    code = cli.main(
+        ["remote", SCENE, "2026_07_21-rats-C0100", "--output-root", str(tmp_path)]
+    )
     assert code == 1
     assert recorded["scenes"] == [SCENE, "2026_07_21-rats-C0100"]
 
@@ -436,7 +540,12 @@ def test_remote_all_runs_the_bucket(tmp_path, monkeypatch):
 
 
 def test_exit_codes_are_distinct():
-    codes = (cli.EXIT_OK, cli.EXIT_SCENE_FAILED, cli.EXIT_NOTHING_TO_DO, cli.EXIT_REMOTE_UNAVAILABLE)
+    codes = (
+        cli.EXIT_OK,
+        cli.EXIT_SCENE_FAILED,
+        cli.EXIT_NOTHING_TO_DO,
+        cli.EXIT_REMOTE_UNAVAILABLE,
+    )
     assert len(set(codes)) == len(codes)
     assert cli.EXIT_OK == 0
 
@@ -475,7 +584,9 @@ def test_failed_verify_keeps_local_data(tmp_path):
 
 def test_keep_local_skips_deletion(tmp_path):
     source = FakeSource()
-    assert cli._run_remote(source, ["s1"], _args(tmp_path, keep_local=True)) == cli.EXIT_OK
+    assert (
+        cli._run_remote(source, ["s1"], _args(tmp_path, keep_local=True)) == cli.EXIT_OK
+    )
     assert (tmp_path / "s1" / "vggt_omega" / "run_config.yaml").exists()
 
 
@@ -589,7 +700,9 @@ def test_aborted_batch_reports_skipped_scenes(tmp_path, caplog):
     assert not any("s1" in m for m in skipped)
 
     # The abort itself is loud and names rclone
-    errors = [r.getMessage().lower() for r in caplog.records if r.levelno >= logging.ERROR]
+    errors = [
+        r.getMessage().lower() for r in caplog.records if r.levelno >= logging.ERROR
+    ]
     assert any("rclone" in m and "abort" in m for m in errors)
 
 
@@ -603,7 +716,9 @@ def test_failed_delete_is_not_reported_as_success(tmp_path, monkeypatch, caplog)
     assert any(str(tmp_path / "s1") in m for m in warnings)
 
 
-def test_rmtree_errors_are_swallowed_and_reported_as_a_delete_failure(tmp_path, monkeypatch, caplog):
+def test_rmtree_errors_are_swallowed_and_reported_as_a_delete_failure(
+    tmp_path, monkeypatch, caplog
+):
     # ignore_errors=True is load-bearing: an unremovable dir is a FAIL row, not a raised OSError
     def _rmtree(path, ignore_errors=False, **kwargs):
         if not ignore_errors:
@@ -611,7 +726,10 @@ def test_rmtree_errors_are_swallowed_and_reported_as_a_delete_failure(tmp_path, 
 
     monkeypatch.setattr(cli.shutil, "rmtree", _rmtree)
     with caplog.at_level(logging.INFO):
-        assert cli._run_remote(FakeSource(), ["s1"], _args(tmp_path)) == cli.EXIT_SCENE_FAILED
+        assert (
+            cli._run_remote(FakeSource(), ["s1"], _args(tmp_path))
+            == cli.EXIT_SCENE_FAILED
+        )
 
     messages = [r.getMessage() for r in caplog.records]
     assert any("local dir remains" in m for m in messages)
@@ -634,15 +752,25 @@ def test_the_deleted_dir_is_the_one_that_was_verified(tmp_path, monkeypatch):
 
 def test_reconstruction_failure_names_the_retained_dir(tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
-        assert cli._run_remote(FakeSource(), ["fail-s1"], _args(tmp_path)) == cli.EXIT_SCENE_FAILED
+        assert (
+            cli._run_remote(FakeSource(), ["fail-s1"], _args(tmp_path))
+            == cli.EXIT_SCENE_FAILED
+        )
 
     warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     assert any(str(tmp_path / "fail-s1") in m for m in warnings)
 
 
-@pytest.mark.parametrize("video_ext", [".mp4", ".MP4", ".Mp4", ".mov", ".MOV", ".Mov", ".avi", ".AVI", ".Avi"])
-def test_fetched_video_lands_in_the_pushed_dir_and_is_push_excluded(tmp_path, video_ext):
-    cli._run_remote(FakeSource(video_ext=video_ext), ["s1"], _args(tmp_path, keep_local=True))
+@pytest.mark.parametrize(
+    "video_ext",
+    [".mp4", ".MP4", ".Mp4", ".mov", ".MOV", ".Mov", ".avi", ".AVI", ".Avi"],
+)
+def test_fetched_video_lands_in_the_pushed_dir_and_is_push_excluded(
+    tmp_path, video_ext
+):
+    cli._run_remote(
+        FakeSource(video_ext=video_ext), ["s1"], _args(tmp_path, keep_local=True)
+    )
     video = tmp_path / "s1" / f"s1{video_ext}"
     assert video.exists()
 
@@ -658,7 +786,9 @@ def test_fetched_video_lands_in_the_pushed_dir_and_is_push_excluded(tmp_path, vi
 
 def test_leaf_stages_pull_from_processed(tmp_path):
     source = FakeSource()
-    config = cli._prepare_scene(source, SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"]))
+    config = cli._prepare_scene(
+        source, SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"])
+    )
     assert ("pull", SCENE) in source.calls
     assert _ops(source, "fetch") == []
 
@@ -672,7 +802,12 @@ def test_leaf_stages_pull_from_processed(tmp_path):
 def test_any_upstream_stage_fetches_the_curated_video(tmp_path, stages):
     source = FakeSource()
     overrides = {"mesh": {"voxel_depth_px": 0.001}}
-    config = cli._prepare_scene(source, SCENE, tmp_path / SCENE, _args(tmp_path, stages=stages, overrides=overrides))
+    config = cli._prepare_scene(
+        source,
+        SCENE,
+        tmp_path / SCENE,
+        _args(tmp_path, stages=stages, overrides=overrides),
+    )
     assert config["input_path"] == str(tmp_path / SCENE / f"{SCENE}.mp4")
     assert config["mesh"] == {"voxel_depth_px": 0.001}
     assert "pointcloud" not in config
@@ -681,12 +816,22 @@ def test_any_upstream_stage_fetches_the_curated_video(tmp_path, stages):
 
 def test_unprocessed_scene_raises(tmp_path):
     with pytest.raises(FileNotFoundError, match="no processed outputs"):
-        cli._prepare_scene(FakeSource(processed=False), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"]))
+        cli._prepare_scene(
+            FakeSource(processed=False),
+            SCENE,
+            tmp_path / SCENE,
+            _args(tmp_path, stages=["mesh"]),
+        )
 
 
 def test_pull_without_run_config_raises(tmp_path):
     with pytest.raises(ValueError, match="recorded backends \\[\\]"):
-        cli._prepare_scene(FakeSource(run_config=None), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"]))
+        cli._prepare_scene(
+            FakeSource(run_config=None),
+            SCENE,
+            tmp_path / SCENE,
+            _args(tmp_path, stages=["mesh"]),
+        )
 
 
 def test_two_recorded_backends_need_an_explicit_pick(tmp_path):
@@ -696,22 +841,30 @@ def test_two_recorded_backends_need_an_explicit_pick(tmp_path):
     other.write_text(yaml.dump({"pointcloud": {"backend": "colmap"}}))
 
     with pytest.raises(ValueError, match="colmap.*vggtx"):
-        cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"]))
+        cli._prepare_scene(
+            FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"])
+        )
 
 
 def test_explicit_backend_picks_its_own_record(tmp_path):
     other = Reconstructor.run_config_path(tmp_path / SCENE, "colmap")
     other.parent.mkdir(parents=True)
-    other.write_text(yaml.dump({"pointcloud": {"backend": "colmap"}, "preproc": {"max_frames": 9}}))
+    other.write_text(
+        yaml.dump({"pointcloud": {"backend": "colmap"}, "preproc": {"max_frames": 9}})
+    )
 
-    args = _args(tmp_path, stages=["mesh"], overrides={"pointcloud": {"backend": "colmap"}})
+    args = _args(
+        tmp_path, stages=["mesh"], overrides={"pointcloud": {"backend": "colmap"}}
+    )
     config = cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, args)
     assert config["pointcloud"]["backend"] == "colmap"
     assert config["preproc"]["max_frames"] == 9
 
 
 def test_explicit_backend_without_a_record_raises(tmp_path):
-    args = _args(tmp_path, stages=["mesh"], overrides={"pointcloud": {"backend": "vggt_omega"}})
+    args = _args(
+        tmp_path, stages=["mesh"], overrides={"pointcloud": {"backend": "vggt_omega"}}
+    )
     with pytest.raises(FileNotFoundError, match="vggt_omega"):
         cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, args)
 
@@ -726,36 +879,48 @@ def test_empty_run_config_file_reads_as_empty(tmp_path):
             run_cfg.write_bytes(b"")
             return dest_dir
 
-    config = cli._prepare_scene(_EmptyRunConfig(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"]))
+    config = cli._prepare_scene(
+        _EmptyRunConfig(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"])
+    )
     assert config["output_path"] == str(tmp_path / SCENE)
 
 
 def test_matching_backend_is_accepted(tmp_path):
-    args = _args(tmp_path, stages=["mesh"], overrides={"pointcloud": {"backend": "vggtx"}})
+    args = _args(
+        tmp_path, stages=["mesh"], overrides={"pointcloud": {"backend": "vggtx"}}
+    )
     config = cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, args)
     assert config["pointcloud"]["backend"] == "vggtx"
 
 
 def test_override_wins_over_pulled(tmp_path):
-    args = _args(tmp_path, stages=["mesh"], overrides={"mesh": {"voxel_depth_px": 0.001}})
+    args = _args(
+        tmp_path, stages=["mesh"], overrides={"mesh": {"voxel_depth_px": 0.001}}
+    )
     config = cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, args)
     assert config["mesh"] == {"voxel_depth_px": 0.001}
 
 
 def test_localize_drops_the_localization_section(tmp_path):
-    config = cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["localize"]))
+    config = cli._prepare_scene(
+        FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["localize"])
+    )
     assert "localization" not in config
     assert config["mesh"]["voxel_depth_px"] == 0.02
 
 
 def test_dropped_section_is_refilled_by_base_yaml_end_to_end(tmp_path):
     # The real Reconstructor must refill the dropped mesh section from base.yaml
-    config = cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"]))
+    config = cli._prepare_scene(
+        FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"])
+    )
     rec = Reconstructor(config)
 
     base_mesh = yaml.safe_load(BASE_YAML.read_text())["mesh"]
     assert rec.config["mesh"] == base_mesh
-    assert rec.config["mesh"]["voxel_depth_px"] != PULLED_CONFIG["mesh"]["voxel_depth_px"]
+    assert (
+        rec.config["mesh"]["voxel_depth_px"] != PULLED_CONFIG["mesh"]["voxel_depth_px"]
+    )
 
     # Stages not being re-run keep the pulled scene's provenance, not base.yaml's
     assert rec.config["pointcloud"]["backend"] == "vggtx"
@@ -764,7 +929,9 @@ def test_dropped_section_is_refilled_by_base_yaml_end_to_end(tmp_path):
 
 def test_rerun_plan_is_logged(tmp_path, caplog):
     with caplog.at_level(logging.INFO):
-        cli._prepare_scene(FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"]))
+        cli._prepare_scene(
+            FakeSource(), SCENE, tmp_path / SCENE, _args(tmp_path, stages=["mesh"])
+        )
 
     assert "mesh" in caplog.text and "vggtx" in caplog.text
 
@@ -778,7 +945,10 @@ def test_local_help_exits_zero():
     # The console script's module entry point parses and prints usage without running anything
     root = Path(__file__).parents[2]
     result = subprocess.run(
-        [sys.executable, "-m", "collab_splats", "local", "--help"], cwd=root, capture_output=True, text=True
+        [sys.executable, "-m", "collab_splats", "local", "--help"],
+        cwd=root,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
     assert "--output-root" in result.stdout

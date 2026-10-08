@@ -24,7 +24,11 @@ def test_write_then_read_round_trips_rgb(tmp_path):
     images = tmp_path / "images"
     written = fr.write_frames(images, _frames(3), [0, 5, 11])
 
-    assert [p.name for p in written] == ["frame_000000.png", "frame_000005.png", "frame_000011.png"]
+    assert [p.name for p in written] == [
+        "frame_000000.png",
+        "frame_000005.png",
+        "frame_000011.png",
+    ]
 
     out = fr.read_frames(images)
     assert out.shape == (3, 8, 12, 3)
@@ -72,7 +76,10 @@ def test_write_frames_clears_a_previous_longer_run(tmp_path):
     fr.write_frames(images, _frames(3), [0, 5, 11])
     fr.write_frames(images, _frames(2), [0, 5])
 
-    assert [p.name for p in fr.frame_paths(images)] == ["frame_000000.png", "frame_000005.png"]
+    assert [p.name for p in fr.frame_paths(images)] == [
+        "frame_000000.png",
+        "frame_000005.png",
+    ]
 
 
 def test_write_frames_rejects_a_length_mismatch(tmp_path):
@@ -82,9 +89,15 @@ def test_write_frames_rejects_a_length_mismatch(tmp_path):
 
 def test_write_frames_png_compression_is_a_kwarg(tmp_path):
     def size(sub, **kw):
-        return fr.write_frames(tmp_path / sub / "images", _frames(1, 64, 64), [0], **kw)[0].stat().st_size
+        return (
+            fr.write_frames(tmp_path / sub / "images", _frames(1, 64, 64), [0], **kw)[0]
+            .stat()
+            .st_size
+        )
 
-    assert size("l0", png_compression=0) > size("default") > size("l9", png_compression=9)
+    assert (
+        size("l0", png_compression=0) > size("default") > size("l9", png_compression=9)
+    )
 
 
 def test_read_frames_names_an_undecodable_frame(tmp_path):
@@ -120,7 +133,9 @@ def test_write_frames_names_an_empty_selection(tmp_path):
 
 def test_read_frames_on_threads_matches_one_thread_in_idxs_order(tmp_path):
     images = tmp_path / "images"
-    frames = list(np.random.default_rng(0).integers(0, 256, (12, 8, 12, 3), dtype=np.uint8))
+    frames = list(
+        np.random.default_rng(0).integers(0, 256, (12, 8, 12, 3), dtype=np.uint8)
+    )
     fr.write_frames(images, frames, list(range(12)))
     idxs = [7, 0, 11, 3, 5, 1, 10, 2, 9, 4, 8, 6]
 
@@ -141,7 +156,9 @@ def test_read_frames_raises_on_an_undecodable_frame_from_a_worker_thread(tmp_pat
 
 
 def test_write_frames_on_threads_matches_one_thread_byte_for_byte(tmp_path):
-    frames = list(np.random.default_rng(0).integers(0, 256, (12, 8, 12, 3), dtype=np.uint8))
+    frames = list(
+        np.random.default_rng(0).integers(0, 256, (12, 8, 12, 3), dtype=np.uint8)
+    )
     idxs = [7, 0, 11, 3, 5, 1, 10, 2, 9, 4, 8, 6]
 
     one = fr.write_frames(tmp_path / "one", frames, idxs, workers=1)
@@ -167,7 +184,9 @@ def test_read_frames_chunked_yields_in_idxs_order_across_chunks(tmp_path):
     assert [int(f[0, 0, 0]) for f in out] == [165, 5, 85, 45, 125]
 
 
-def test_read_frames_chunked_decodes_one_batch_per_read_frames_call(tmp_path, monkeypatch):
+def test_read_frames_chunked_decodes_one_batch_per_read_frames_call(
+    tmp_path, monkeypatch
+):
     images = tmp_path / "images"
     fr.write_frames(images, _frames(5), [0, 2, 4, 6, 8])
     calls = []

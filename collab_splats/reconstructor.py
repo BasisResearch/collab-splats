@@ -108,7 +108,9 @@ STAGES: dict[str, tuple[str, ...]] = {
 }
 
 # Stages nothing depends on; only these re-run alone against processed outputs
-LEAF_STAGES = frozenset(s for s in STAGES if not any(s in deps for deps in STAGES.values()))
+LEAF_STAGES = frozenset(
+    s for s in STAGES if not any(s in deps for deps in STAGES.values())
+)
 
 
 ########################################
@@ -123,7 +125,10 @@ def backends() -> dict[str, list[str]]:
     Returns:
         Method ("feedforward" or "sfm") to its sorted backend names.
     """
-    return {"feedforward": sorted(BaseFeedforwardCreator._registry), "sfm": sorted(SFM_CREATORS)}
+    return {
+        "feedforward": sorted(BaseFeedforwardCreator._registry),
+        "sfm": sorted(SFM_CREATORS),
+    }
 
 
 def store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
@@ -146,7 +151,9 @@ def store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
     """
     # Map each stored frame's source index to its row
     store_paths = frames.frame_paths(images_dir)
-    rows_by_frame_idx = {frames.frame_idx_from_path(p): row for row, p in enumerate(store_paths)}
+    rows_by_frame_idx = {
+        frames.frame_idx_from_path(p): row for row, p in enumerate(store_paths)
+    }
     frame_indices = [frames.frame_idx_from_path(name) for name in names]
 
     # A frame the store never selected means the two artifacts come from different runs
@@ -163,7 +170,7 @@ def store_rows(images_dir: Path, names: Sequence[Path | str]) -> list[int]:
 
 def _load_frame(
     features: zarr.Array,
-    rows: list[int],
+    rows: Sequence[int],
     ae: FeatureAutoencoder | None,
     i: int,
 ) -> torch.Tensor:
@@ -185,7 +192,10 @@ def _load_frame(
 
 
 def _build_localization_db(
-    pointcloud_zarr: Path, extractor_name: str, images_dir: Path, retrieval: str = "dino-salad"
+    pointcloud_zarr: Path,
+    extractor_name: str,
+    images_dir: Path,
+    retrieval: str = "dino-salad",
 ) -> None:
     """
     Build the per-frame local-feature localization cache into pointcloud.zarr.
@@ -211,7 +221,7 @@ def _build_localization_db(
     # Extract every reference frame, then replace the stored DB
     extractor = LocalMatcher(extractor_name)
     localizer = CameraLocalizer(
-        pointcloud.world_points,
+        pointcloud.world_points,  # type: ignore[arg-type]
         pointcloud.extrinsics,
         images,
         ids,
@@ -220,7 +230,11 @@ def _build_localization_db(
         retrieval=retrieval,
     )
     localizer.save_index(pointcloud_zarr, extractor_name)
-    logger.info("Localization DB built: %s :: local_features/%s", pointcloud_zarr, extractor_name)
+    logger.info(
+        "Localization DB built: %s :: local_features/%s",
+        pointcloud_zarr,
+        extractor_name,
+    )
 
 
 ########################################
@@ -288,7 +302,9 @@ class Reconstructor:
         # Required top-level fields
         for field in ("input_path", "output_path"):
             if config.get(field) is None:
-                raise ValueError(f"Reconstructor config missing required field: '{field}'")
+                raise ValueError(
+                    f"Reconstructor config missing required field: '{field}'"
+                )
 
         # Method and backend must name a registered creator
         pc = config["pointcloud"]
@@ -297,7 +313,9 @@ class Reconstructor:
         registered = backends()
 
         if method not in registered:
-            raise ValueError(f"pointcloud.method must be one of {sorted(registered)}, got {method!r}")
+            raise ValueError(
+                f"pointcloud.method must be one of {sorted(registered)}, got {method!r}"
+            )
 
         if backend not in registered[method]:
             raise ValueError(
@@ -308,24 +326,36 @@ class Reconstructor:
         lc = pc["loop_closure"]
         lc = dict(lc) if isinstance(lc, dict) else {"enabled": bool(lc)}
         lc.setdefault("enabled", True)
-        unknown = set(lc) - {"enabled"} - {f.name for f in dataclasses.fields(LoopClosureConfig)}
+        unknown = (
+            set(lc)
+            - {"enabled"}
+            - {f.name for f in dataclasses.fields(LoopClosureConfig)}
+        )
 
         if unknown:
-            raise ValueError(f"pointcloud.loop_closure has unknown keys {sorted(unknown)}")
+            raise ValueError(
+                f"pointcloud.loop_closure has unknown keys {sorted(unknown)}"
+            )
 
         pc["loop_closure"] = lc
 
         # Normalize bundle_adjustment to a dict carrying `enabled`
-        ba = pc["bundle_adjustment"]
-        ba = dict(ba) if isinstance(ba, dict) else {"enabled": bool(ba)}
+        ba_raw = pc["bundle_adjustment"]
+        ba: dict[str, Any] = (
+            dict(ba_raw) if isinstance(ba_raw, dict) else {"enabled": bool(ba_raw)}
+        )
         ba.setdefault("enabled", True)
         # Unknown keys: neither `enabled` nor a BundleAdjustmentConfig field (tracks_cache_dir is a field, so it passes)
         unknown = (
-            set(ba) - {"enabled", "tracks_cache_dir"} - {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
+            set(ba)
+            - {"enabled", "tracks_cache_dir"}
+            - {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
         )
 
         if unknown:
-            raise ValueError(f"pointcloud.bundle_adjustment has unknown keys {sorted(unknown)}")
+            raise ValueError(
+                f"pointcloud.bundle_adjustment has unknown keys {sorted(unknown)}"
+            )
 
         pc["bundle_adjustment"] = ba
 
@@ -378,7 +408,9 @@ class Reconstructor:
         Returns:
             The written run_config.yaml path.
         """
-        path = self.run_config_path(self.config["output_path"], self.config["pointcloud"]["backend"])
+        path = self.run_config_path(
+            self.config["output_path"], self.config["pointcloud"]["backend"]
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(path, "w") as f:
@@ -467,7 +499,8 @@ class Reconstructor:
             "semantics": self.backend_dir / "semantics" / f"{extractor}_lifted.zarr",
             "splats": self.backend_dir / "splats" / "ckpt.pt",
             "mesh": self.backend_dir / "mesh.ply",
-            "reconstruction_quality_report": self.backend_dir / "reconstruction_quality_report.json",
+            "reconstruction_quality_report": self.backend_dir
+            / "reconstruction_quality_report.json",
         }
 
     ########################################
@@ -488,15 +521,27 @@ class Reconstructor:
         # localize lives inside pointcloud.zarr; pointcloud also needs its COLMAP model
         if stage == "localize":
             matcher = self.config["localization"]["matcher"]
-            return self.pointcloud_zarr.exists() and localization_db_exists(self.pointcloud_zarr, matcher)
+            return self.pointcloud_zarr.exists() and localization_db_exists(
+                self.pointcloud_zarr, matcher
+            )
 
         if stage == "pointcloud":
             return self.pointcloud_zarr.exists() and self.colmap_model_dir.exists()
 
         # Semantics with vertex arrays is stale when mesh.ply changed since their lift
-        if stage == "semantics" and self.outputs["semantics"].exists() and self.outputs["mesh"].exists():
-            recorded = zarr.open(str(self.outputs["semantics"]), mode="r").attrs.get("mesh_sha256")
-            return recorded is None or recorded == hashlib.sha256(self.outputs["mesh"].read_bytes()).hexdigest()
+        if (
+            stage == "semantics"
+            and self.outputs["semantics"].exists()
+            and self.outputs["mesh"].exists()
+        ):
+            recorded = zarr.open(str(self.outputs["semantics"]), mode="r").attrs.get(
+                "mesh_sha256"
+            )
+            return (
+                recorded is None
+                or recorded
+                == hashlib.sha256(self.outputs["mesh"].read_bytes()).hexdigest()
+            )
 
         return self.outputs[stage].exists()
 
@@ -564,11 +609,15 @@ class Reconstructor:
         for stage in stages:
             for dep in STAGES[stage]:
                 if dep not in stages and not self.done(dep):
-                    raise ValueError(f"stage '{stage}' requires '{dep}', which is neither in this run nor on disk")
+                    raise ValueError(
+                        f"stage '{stage}' requires '{dep}', which is neither in this run nor on disk"
+                    )
 
             # A named leaf that is already done refuses before any stage runs
             if named and stage in LEAF_STAGES and self.done(stage) and not overwrite:
-                raise ValueError(f"stage '{stage}' output already exists; pass overwrite=True to replace it")
+                raise ValueError(
+                    f"stage '{stage}' output already exists; pass overwrite=True to replace it"
+                )
 
         # Run in table order; skip done stages; finish the PNG write and drop preproc's frames on any exit
         try:
@@ -652,7 +701,9 @@ class Reconstructor:
         else:
             total = get_video_info(str(input_path))["total_frames"]
             report_path = self.images_dir.parent / "video_quality_report.json"
-            report = load_video_quality(input_path, report_path, workers=cfg["n_workers"])
+            report = load_video_quality(
+                input_path, report_path, workers=cfg["n_workers"]
+            )
             common = {"report": report, "max_frames": cfg["max_frames"]}
 
             # Optional sampler knobs; unset ones take the sampler defaults
@@ -671,7 +722,9 @@ class Reconstructor:
                     **common,
                 )
             elif cfg["frame_selection"] == "uniform":
-                rgbs, records = sample_uniform(str(input_path), workers=cfg["n_workers"], **common)
+                rgbs, records = sample_uniform(
+                    str(input_path), workers=cfg["n_workers"], **common
+                )
             elif cfg["frame_selection"] == "optical_flow":
                 rgbs, records = sample_optical_flow(str(input_path), **common)
             else:
@@ -681,7 +734,9 @@ class Reconstructor:
 
             # Refuse an empty store; it would only surface downstream as a missing file
             if not len(rgbs):
-                raise ValueError(f"0 of {total} frames selected from {input_path}; see {report_path}")
+                raise ValueError(
+                    f"0 of {total} frames selected from {input_path}; see {report_path}"
+                )
 
         # Source frame index of each selected frame
         idxs = [r["frame_idx"] for r in records]
@@ -695,7 +750,9 @@ class Reconstructor:
         # Write the final frames under their source indices, in the background when asked
         if background_write:
             executor = ThreadPoolExecutor(1)
-            self._frames_write = executor.submit(frames.write_frames, self.images_dir, rgbs, idxs)
+            self._frames_write = executor.submit(
+                frames.write_frames, self.images_dir, rgbs, idxs
+            )
             executor.shutdown(wait=False)
         else:
             frames.write_frames(self.images_dir, rgbs, idxs)
@@ -729,6 +786,9 @@ class Reconstructor:
         # Window BA config; set only for feedforward with LC and BA on
         ba_cfg = None
 
+        # Feedforward creator, its LoopClosure proxy, or an sfm creator: no common base type
+        creator: Any
+
         # Build the feedforward creator, optionally inside loop closure
         if cfg["method"] == "feedforward":
             creator_cls = get_creator(backend)
@@ -747,7 +807,11 @@ class Reconstructor:
 
                 # BA with LC runs inside each window, with the refine stage's terms
                 if cfg["bundle_adjustment"]["enabled"]:
-                    terms = {k: v for k, v in cfg["bundle_adjustment"].items() if k != "enabled"}
+                    terms = {
+                        k: v
+                        for k, v in cfg["bundle_adjustment"].items()
+                        if k != "enabled"
+                    }
                     ba_cfg = BundleAdjustmentConfig(**terms)
 
                 creator = LoopClosure(base=creator, config=lc_config, ba=ba_cfg)
@@ -757,7 +821,9 @@ class Reconstructor:
                     try:
                         from collab_splats.viewer import Viewer
                     except ImportError as exc:
-                        raise ImportError("pointcloud.viz needs viser; install it or set viz.enabled: false") from exc
+                        raise ImportError(
+                            "pointcloud.viz needs viser; install it or set viz.enabled: false"
+                        ) from exc
 
                     self.viewer = Viewer(port=cfg["viz"]["port"])
                     creator.viz = self.viewer
@@ -766,17 +832,23 @@ class Reconstructor:
         # Build the sfm creator from its block
         else:
             warnings.warn(
-                "pointcloud.method='sfm' is experimental and not production-tested.", UserWarning, stacklevel=2
+                "pointcloud.method='sfm' is experimental and not production-tested.",
+                UserWarning,
+                stacklevel=2,
             )
             creator = SFM_CREATORS[backend](
-                clean=cfg["clean"]["enabled"], max_points=cfg["max_points"], **cfg.get(backend, {})
+                clean=cfg["clean"]["enabled"],
+                max_points=cfg["max_points"],
+                **cfg.get(backend, {}),
             )
 
         # Drop a stale refine marker before touching the artifacts it describes
         self.outputs["refine"].unlink(missing_ok=True)
 
         # Reconstruct; the creator writes the COLMAP model itself
-        result = creator.create_pointcloud(self.images_dir, self.backend_dir, self.colmap_model_dir)
+        result = creator.create_pointcloud(
+            self.images_dir, self.backend_dir, self.colmap_model_dir
+        )
 
         # Finish preproc's PNG write before the zarr marks this stage done
         self._join_frames_write()
@@ -794,7 +866,9 @@ class Reconstructor:
         # Persist the zarr and the PLY
         result.save_zarr(self.pointcloud_zarr, extra_attrs=attrs)
         result.write_ply(self.sparse_ply)
-        logger.info("pointcloud: %d pts in %s", len(result.points), self.pointcloud_zarr)
+        logger.info(
+            "pointcloud: %d pts in %s", len(result.points), self.pointcloud_zarr
+        )
 
         # Free the model before the next stage loads its own
         del creator, result
@@ -820,7 +894,9 @@ class Reconstructor:
             raise ValueError("refine is not supported for pointcloud.method: sfm")
 
         if cfg["loop_closure"]["enabled"]:
-            raise ValueError("refine is not supported with pointcloud.loop_closure — BA already ran inside each window")
+            raise ValueError(
+                "refine is not supported with pointcloud.loop_closure — BA already ran inside each window"
+            )
 
         # Build the BA config; a matcher track_source needs the images/ store before any load
         terms = {k: v for k, v in cfg["bundle_adjustment"].items() if k != "enabled"}
@@ -841,6 +917,7 @@ class Reconstructor:
             frame_paths = frames.frame_paths(self.images_dir, idxs)
 
         # Bundle-adjust, then reproject the points under the refined cameras
+        assert pointcloud.world_points is not None and pointcloud.depth is not None
         extrinsics, intrinsics = ba.refine(
             pointcloud.images,
             pointcloud.confidence,
@@ -851,14 +928,25 @@ class Reconstructor:
             frame_paths=frame_paths,
         )
         pointcloud = dataclasses.replace(
-            pointcloud, extrinsics=extrinsics, model_intrinsics=intrinsics, intrinsics=None
+            pointcloud,
+            extrinsics=extrinsics,
+            model_intrinsics=intrinsics,
+            intrinsics=None,
         )
         pointcloud = pointcloud.reproject()
 
         # Re-clean and re-cap under the refined cameras
         n_before = len(pointcloud.points)
-        pointcloud = clean_pointcloud(pointcloud, remove_outliers=cfg["clean"]["enabled"], max_points=cfg["max_points"])
-        logger.info("refine: %d of %d pts kept after clean + cap", len(pointcloud.points), n_before)
+        pointcloud = clean_pointcloud(
+            pointcloud,
+            remove_outliers=cfg["clean"]["enabled"],
+            max_points=cfg["max_points"],
+        )
+        logger.info(
+            "refine: %d of %d pts kept after clean + cap",
+            len(pointcloud.points),
+            n_before,
+        )
 
         # Rewrite the zarr with its provenance attrs, then the COLMAP model and PLY
         store = zarr.open_group(str(self.pointcloud_zarr), mode="r")
@@ -872,7 +960,10 @@ class Reconstructor:
         # Marker last: BA config and loss history
         marker = self.outputs["refine"]
         marker.parent.mkdir(parents=True, exist_ok=True)
-        config = {k: str(v) if isinstance(v, Path) else v for k, v in dataclasses.asdict(ba_cfg).items()}
+        config = {
+            k: str(v) if isinstance(v, Path) else v
+            for k, v in dataclasses.asdict(ba_cfg).items()
+        }
         report = {
             "config": config,
             "loss_history": ba.loss_history,
@@ -903,7 +994,12 @@ class Reconstructor:
         self.semantics_cache_dir.mkdir(parents=True, exist_ok=True)
 
         # 2D codes for every images/ frame; the model loads only on a miss
-        if valid_feature_cache(codes_path, name, self.images_dir, extractor_kwargs, latent_dim) is None:
+        if (
+            valid_feature_cache(
+                codes_path, name, self.images_dir, extractor_kwargs, latent_dim
+            )
+            is None
+        ):
             extractor = BaseFeatureExtractor.get(name)(**extractor_kwargs)
             paths = frames.frame_paths(self.images_dir)
             n_frames = len(paths)
@@ -916,14 +1012,19 @@ class Reconstructor:
             }
 
             # Extractor maps over every frame, decoded and run 4 at a time
-            batches = (extractor.forward([read_image(p) for p in batch]) for (batch,) in batch_iterator(4, paths))
+            batches = (
+                extractor.forward([read_image(p) for p in batch])
+                for (batch,) in batch_iterator(4, paths)
+            )
             maps = itertools.chain.from_iterable(batches)
 
             # Uncompressed: full-width maps are the codes; else they are temporary features
             target = codes_path if latent_dim is None else features_path
 
             with torch.no_grad():
-                write_feature_cache(target, maps, n_frames, attrs if latent_dim is None else {})
+                write_feature_cache(
+                    target, maps, n_frames, attrs if latent_dim is None else {}
+                )
 
             # Free the extractor's GPU memory now; a forward hook can hold it in a reference cycle
             del extractor
@@ -932,10 +1033,18 @@ class Reconstructor:
             # Train the AE on every frame's features, encode each frame into the codes store, drop the features
             if latent_dim is not None:
                 features = zarr.open(str(features_path), mode="r")["features"]
-                ae = FeatureAutoencoder(input_dim=features.shape[1], latent_dim=latent_dim)
-                ae.fit(features, epochs=cfg["max_epochs"], target_cosine=cfg["target_cosine"])
+                ae = FeatureAutoencoder(
+                    input_dim=features.shape[1], latent_dim=latent_dim
+                )
+                ae.fit(
+                    features,
+                    epochs=cfg["max_epochs"],
+                    target_cosine=cfg["target_cosine"],
+                )
                 ae.to(get_device())
-                encoded = map(partial(_load_frame, features, range(n_frames), ae), range(n_frames))
+                encoded = map(
+                    partial(_load_frame, features, range(n_frames), ae), range(n_frames)
+                )
                 write_feature_cache(codes_path, encoded, n_frames, attrs, ae=ae)
                 shutil.rmtree(features_path)
 
@@ -947,7 +1056,9 @@ class Reconstructor:
             ae = FeatureAutoencoder.load(codes_path / "autoencoder.pt")
 
         # Pick the zarr's frames, in the zarr's order, and lift the stored codes onto the points
-        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_world_points=False)
+        pointcloud = PointcloudResult.load_zarr(
+            self.pointcloud_zarr, load_world_points=False
+        )
         rows = store_rows(self.images_dir, pointcloud.image_paths)
         lifted = lift_features(partial(_load_frame, codes, rows, None), pointcloud)
 
@@ -958,13 +1069,19 @@ class Reconstructor:
 
         # Mesh vertices as points over the same cameras; no source pixel, unseen vertices stay zero
         if mesh_path.exists():
-            vertices = np.asarray(o3d.io.read_triangle_mesh(str(mesh_path)).vertices, dtype=np.float32)
+            vertices = np.asarray(
+                o3d.io.read_triangle_mesh(str(mesh_path)).vertices, dtype=np.float32
+            )
             colors = np.zeros((len(vertices), 3), dtype=np.uint8)
-            vertex_cloud = dataclasses.replace(pointcloud, points=vertices, colors=colors, pixel_indices=None)
+            vertex_cloud = dataclasses.replace(
+                pointcloud, points=vertices, colors=colors, pixel_indices=None
+            )
 
             # ocr_lens: each frame's top-64 words per patch, lifted as indexed maps; each vertex keeps its top-64
             if name == "ocr_lens":
-                model_id = extractor_kwargs.get("model_id", "llava-hf/llava-v1.6-vicuna-7b-hf")
+                model_id = extractor_kwargs.get(
+                    "model_id", "llava-hf/llava-v1.6-vicuna-7b-hf"
+                )
                 vocab = word_vocabulary(load_processor(model_id).tokenizer)
                 decoder = load_decoder(model_id)
 
@@ -978,32 +1095,62 @@ class Reconstructor:
                     fmap = _load_frame(codes, rows, None, i)
                     channels, height, width = fmap.shape
                     states = fmap.reshape(channels, -1).T
-                    probs = torch.cat([p for p, _ in word_probabilities(states, decoder, vocab, ae=ae)])
+                    probs = torch.cat(
+                        [
+                            p
+                            for p, _ in word_probabilities(
+                                states, decoder, vocab, ae=ae
+                            )
+                        ]
+                    )
                     top = probs.topk(64, dim=1)
-                    maps.append((top.indices.T.reshape(64, height, width), top.values.T.reshape(64, height, width)))
+                    maps.append(
+                        (
+                            top.indices.T.reshape(64, height, width),
+                            top.values.T.reshape(64, height, width),
+                        )
+                    )
 
                 del decoder
                 pytorch_gc()
 
                 # One lift, no chunking: host RAM plus GPU bound it, ~14 KB/vertex for the (V, n_words) float32 on CPU
-                lifted_words = lift_features(maps.__getitem__, vertex_cloud, num_classes=len(vocab.words))
+                lifted_words = lift_features(
+                    maps.__getitem__, vertex_cloud, num_classes=len(vocab.words)
+                )
                 top = lifted_words.to(get_device()).topk(64, dim=1)
-                vertex_arrays["vertex_word_ids"] = to_numpy(top.indices).astype(np.int16)
-                vertex_arrays["vertex_word_probs"] = to_numpy(top.values).astype(np.float16)
+                vertex_arrays["vertex_word_ids"] = to_numpy(top.indices).astype(
+                    np.int16
+                )
+                vertex_arrays["vertex_word_probs"] = to_numpy(top.values).astype(
+                    np.float16
+                )
                 attrs["words"] = vocab.words
                 del maps, lifted_words
 
             # Queryable: codes lifted like the points, decoded at read
             elif issubclass(BaseFeatureExtractor.get(name), BaseQueryableExtractor):
-                vertex_codes = lift_features(partial(_load_frame, codes, rows, None), vertex_cloud)
-                vertex_arrays["vertex_features"] = to_numpy(vertex_codes).astype(np.float16)
+                vertex_codes = lift_features(
+                    partial(_load_frame, codes, rows, None), vertex_cloud
+                )
+                vertex_arrays["vertex_features"] = to_numpy(vertex_codes).astype(
+                    np.float16
+                )
 
             # Record the mesh the vertex arrays index into
             if vertex_arrays:
-                attrs["mesh_sha256"] = hashlib.sha256(mesh_path.read_bytes()).hexdigest()
+                attrs["mesh_sha256"] = hashlib.sha256(
+                    mesh_path.read_bytes()
+                ).hexdigest()
 
         # Write points, vertex arrays and attrs together; the lifted store is the stage's done marker
-        write_point_features(self.outputs["semantics"], to_numpy(lifted), ae, vertex_arrays=vertex_arrays, attrs=attrs)
+        write_point_features(
+            self.outputs["semantics"],
+            to_numpy(lifted),
+            ae,
+            vertex_arrays=vertex_arrays,
+            attrs=attrs,
+        )
 
     def mesh(self) -> None:
         """
@@ -1027,11 +1174,15 @@ class Reconstructor:
         trunc_pct = cfg["depth_trunc_percentile"]
 
         if trunc_pct is None or not 0 < trunc_pct <= 99:
-            raise ValueError(f"mesh.depth_trunc_percentile must be in (0, 99], got {trunc_pct!r}")
+            raise ValueError(
+                f"mesh.depth_trunc_percentile must be in (0, 99], got {trunc_pct!r}"
+            )
 
         # Texturing is CUDA-only; refuse before fusion rather than after it
         if cfg["texture"] and not torch.cuda.is_available():
-            raise RuntimeError("mesh.texture needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines")
+            raise RuntimeError(
+                "mesh.texture needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines"
+            )
 
         # Splats source: renders at frame resolution, with the poses they were rendered from
         if source == "splats":
@@ -1039,25 +1190,36 @@ class Reconstructor:
             try:
                 from collab_splats.splats.checkpoint import render_tsdf_inputs
             except ImportError as exc:
-                raise ImportError("mesh.source: splats needs gsplat; see setup.sh") from exc
+                raise ImportError(
+                    "mesh.source: splats needs gsplat; see setup.sh"
+                ) from exc
 
             # Refuse a missing checkpoint; the splats stage is never auto-run
             ckpt = self.outputs["splats"]
 
             if not ckpt.exists():
-                raise FileNotFoundError(f"mesh.source: splats needs {ckpt}; run the splats stage first")
+                raise FileNotFoundError(
+                    f"mesh.source: splats needs {ckpt}; run the splats stage first"
+                )
 
-            depths, rgbs, c2w, intrinsics, image_ids = render_tsdf_inputs(ckpt, self.images_dir)
+            depths, rgbs, c2w, intrinsics, image_ids = render_tsdf_inputs(
+                ckpt, self.images_dir
+            )
             depth_fx = float(np.median(intrinsics[:, 0, 0]))
 
         # Feedforward source: the zarr's depth on the zarr's own frames
         elif source == "feedforward":
-            pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=False, load_world_points=False)
+            pointcloud = PointcloudResult.load_zarr(
+                self.pointcloud_zarr, load_images=False, load_world_points=False
+            )
             image_ids = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
             rgbs = frames.read_frames(self.images_dir, image_ids)
-            depths = frame_depths(pointcloud, rgbs, conf_percentile=cfg["conf_percentile"])
+            depths = frame_depths(
+                pointcloud, rgbs, conf_percentile=cfg["conf_percentile"]
+            )
             c2w = invert_poses(pointcloud.extrinsics)
             intrinsics = pointcloud.intrinsics
+            assert intrinsics is not None
 
             # Depth was predicted on the model grid; its pixels, not the frame's, set the voxel
             depth_fx = float(np.median(pointcloud.model_intrinsics[:, 0, 0]))
@@ -1066,7 +1228,9 @@ class Reconstructor:
             del pointcloud
 
         else:
-            raise ValueError(f"mesh.source must be 'feedforward' or 'splats', got {source!r}")
+            raise ValueError(
+                f"mesh.source must be 'feedforward' or 'splats', got {source!r}"
+            )
 
         # Sky fuses as a backdrop and seeds floaters; the share is of pixels that had depth
         if cfg["mask_sky"]:
@@ -1081,7 +1245,10 @@ class Reconstructor:
             n_valid = max(np.count_nonzero(depths), 1)
             dropped = np.count_nonzero(sky & (depths > 0)) / n_valid
             depths = np.where(sky, 0.0, depths)
-            logger.info("mesh.mask_sky: dropped %.2f%% of valid depth pixels as sky", 100 * dropped)
+            logger.info(
+                "mesh.mask_sky: dropped %.2f%% of valid depth pixels as sky",
+                100 * dropped,
+            )
             del sky
 
         # Cut far depth before voxel sizing
@@ -1121,14 +1288,25 @@ class Reconstructor:
 
         # Fill, decimate and repair; the full-density cleaned mesh is freed before texturing
         prepared = prepare_mesh(
-            cleaned, voxel_size=voxel_size, smooth_iterations=cfg["smooth_iterations"], max_faces=cfg["max_faces"]
+            cleaned,
+            voxel_size=voxel_size,
+            smooth_iterations=cfg["smooth_iterations"],
+            max_faces=cfg["max_faces"],
         )
         del cleaned
 
         # Optionally UV-unwrap the prepared mesh and project the fused views onto it
         if cfg["texture"]:
             texture_dir = self.backend_dir / "texture"
-            create_texture_mesh(prepared, real, texture_dir, rgbs, c2w, intrinsics, voxel_size=voxel_size)
+            create_texture_mesh(
+                prepared,
+                real,
+                texture_dir,
+                rgbs,
+                c2w,
+                intrinsics,
+                voxel_size=voxel_size,
+            )
 
         # Write mesh.ply last, so it exists only when every step above finished
         o3d.io.write_triangle_mesh(str(mesh_path), prepared)
@@ -1141,7 +1319,9 @@ class Reconstructor:
         - always rebuilds: an existing group for the matcher is dropped first
         """
         cfg = self.config["localization"]
-        _build_localization_db(self.pointcloud_zarr, cfg["matcher"], self.images_dir, cfg["retrieval"])
+        _build_localization_db(
+            self.pointcloud_zarr, cfg["matcher"], self.images_dir, cfg["retrieval"]
+        )
 
     def splats(self) -> None:
         """
@@ -1167,12 +1347,21 @@ class Reconstructor:
         # Depth targets on the frame grid, 0 = no target; the light result carries no depth, so reload it
         depth_targets = None
 
+        assert cfg.losses is not None
+
         if "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0:
             conf_percentile = self.config["mesh"]["conf_percentile"]
-            pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=False, load_world_points=False)
-            depth_targets = frame_depths(pointcloud, rgbs, conf_percentile=conf_percentile)
-            logger.info("splats depth targets use mesh.conf_percentile=%s", conf_percentile)
+            pointcloud = PointcloudResult.load_zarr(
+                self.pointcloud_zarr, load_images=False, load_world_points=False
+            )
+            depth_targets = frame_depths(
+                pointcloud, rgbs, conf_percentile=conf_percentile
+            )
+            logger.info(
+                "splats depth targets use mesh.conf_percentile=%s", conf_percentile
+            )
 
+        assert result.intrinsics is not None
         train(
             cfg,
             rgbs,
@@ -1209,8 +1398,11 @@ class Reconstructor:
         names = [Path(str(p)).name for p in pointcloud.image_paths]
 
         # Optional pair pruning; 0.0 keeps every ordered pair
-        min_pair_overlap = self.config["reconstruction_quality_report"]["min_pair_overlap"]
+        min_pair_overlap = self.config["reconstruction_quality_report"][
+            "min_pair_overlap"
+        ]
 
+        assert pointcloud.depth is not None and pointcloud.intrinsics is not None
         tables = compute_reconstruction_quality(
             pointcloud.depth,
             pointcloud.model_intrinsics,
@@ -1232,9 +1424,18 @@ class Reconstructor:
             "zarr": str(self.pointcloud_zarr),
             "min_pair_overlap": min_pair_overlap,
         }
-        write_json(self.outputs["reconstruction_quality_report"], {"scene": scene, **tables})
-        logger.info("Reconstruction quality report written to %s", self.outputs["reconstruction_quality_report"])
+        write_json(
+            self.outputs["reconstruction_quality_report"], {"scene": scene, **tables}
+        )
+        logger.info(
+            "Reconstruction quality report written to %s",
+            self.outputs["reconstruction_quality_report"],
+        )
 
         # NCC-by-gap plot beside the report; skipped without images
         plot_path = self.backend_dir / "reconstruction_quality_ncc.png"
-        plot_photometric_ncc(tables["photometric_pairs"], plot_path, title=f"{scene['backend']}: cross-view NCC by gap")
+        plot_photometric_ncc(
+            tables["photometric_pairs"],
+            plot_path,
+            title=f"{scene['backend']}: cross-view NCC by gap",
+        )

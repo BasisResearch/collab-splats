@@ -1,4 +1,5 @@
 """Tests for pointcloud density alignment across feedforward backends."""
+
 import dataclasses
 
 from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
@@ -23,10 +24,12 @@ def test_vggtx_inherits_max_points():
 
 def test_mapanything_inherits_max_points():
     from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
+
     fields = {f.name: f for f in dataclasses.fields(MapAnythingCreator)}
     assert fields["max_points"].default == 500_000
 
 
 def test_mapanything_no_collect_pts3d_import():
     import collab_splats.pointcloud.feedforward.mapanything as m
+
     assert not hasattr(m, "collect_pts3d_from_outputs")

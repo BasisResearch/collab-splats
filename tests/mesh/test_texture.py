@@ -24,9 +24,16 @@ def _dense_plane(n=60, noise=0.0, seed=0):
     xs, ys = np.meshgrid(np.linspace(0, 1, n), np.linspace(0, 1, n))
     v = np.stack([xs.ravel(), ys.ravel(), rng.normal(0, noise, n * n)], axis=1)
     i = np.arange(n * n).reshape(n, n)
-    a, b, c, d = i[:-1, :-1].ravel(), i[:-1, 1:].ravel(), i[1:, :-1].ravel(), i[1:, 1:].ravel()
+    a, b, c, d = (
+        i[:-1, :-1].ravel(),
+        i[:-1, 1:].ravel(),
+        i[1:, :-1].ravel(),
+        i[1:, 1:].ravel(),
+    )
     f = np.concatenate([np.stack([a, b, c], 1), np.stack([b, d, c], 1)])
-    return o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f))
+    return o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f)
+    )
 
 
 def _sphere(res=40):
@@ -60,7 +67,10 @@ def _squares(squares):
         faces.append(f)
         normals.append(np.tile([0, 0, -1.0 if flip else 1.0], (4, 1)))
         uvs.append(
-            (np.asarray(uv_offset) + np.asarray(uv_scale) * v[f - 4 * (len(verts) - 1)][..., :2]).astype(np.float32)
+            (
+                np.asarray(uv_offset)
+                + np.asarray(uv_scale) * v[f - 4 * (len(verts) - 1)][..., :2]
+            ).astype(np.float32)
         )
 
     return np.vstack(verts), np.vstack(faces), np.vstack(normals), np.concatenate(uvs)
@@ -94,7 +104,9 @@ def test_unwrap_view_charts_uvs_in_unit_square_at_one_texel_density():
 
     # Seen faces (camera chart) and hidden faces (flat patch) share one texel density
     fv = np.asarray(mesh.vertices)[np.asarray(mesh.triangles)]
-    world = 0.5 * np.linalg.norm(np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0]), axis=1)
+    world = 0.5 * np.linalg.norm(
+        np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0]), axis=1
+    )
     e1, e2 = uv[:, 1] - uv[:, 0], uv[:, 2] - uv[:, 0]
     atlas = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e2[:, 0] * e1[:, 1])
     ratio = atlas / world
@@ -105,7 +117,9 @@ def test_unwrap_view_charts_accepts_float32_cameras():
     """The pipeline's poses and intrinsics are float32; Open3D vertices are float64."""
     mesh = _two_planes()
     c2w, K = _camera()
-    uv, _ = unwrap_view_charts(mesh, c2w.astype(np.float32), K.astype(np.float32), (128, 128), tex_size=256)
+    uv, _ = unwrap_view_charts(
+        mesh, c2w.astype(np.float32), K.astype(np.float32), (128, 128), tex_size=256
+    )
     assert uv.shape == (len(mesh.triangles), 3, 2)
 
 
@@ -131,9 +145,13 @@ def test_unwrap_view_charts_faces_never_share_texels():
 def test_project_images_to_texture_constant_view_gives_constant_albedo():
     mesh = _squares([(0.0, (1, 1), (0, 0), (1, 1), False)])
     c2w, K = _camera()
-    albedo = project_images_to_texture(*mesh, _constant_image(), c2w, K, tex_size=64, occlusion_eps=0.01)
+    albedo = project_images_to_texture(
+        *mesh, _constant_image(), c2w, K, tex_size=64, occlusion_eps=0.01
+    )
     assert albedo.shape == (64, 64, 3) and albedo.dtype == np.uint8
-    assert np.abs(albedo.astype(int) - [51, 128, 204]).max() <= 2  # the fill reaches every texel
+    assert (
+        np.abs(albedo.astype(int) - [51, 128, 204]).max() <= 2
+    )  # the fill reaches every texel
 
 
 @cuda
@@ -144,13 +162,21 @@ def test_project_images_to_texture_base_band_averages_views_the_detail_band_drop
     # Second camera twice as far: 2x the pixel size, outside view_ratio 1.5, so it votes in the base only
     far = c2w.copy()
     far[0, 2, 3] = 4.0
-    rgbs = np.concatenate([_constant_image((200, 100, 50)), _constant_image((50, 100, 200))])
+    rgbs = np.concatenate(
+        [_constant_image((200, 100, 50)), _constant_image((50, 100, 200))]
+    )
     c2w, K = np.concatenate([c2w, far]), np.repeat(K, 2, 0)
 
-    sharp = project_images_to_texture(*mesh, rgbs, c2w, K, tex_size=64, occlusion_eps=0.01, blur_pix_sigma=0.0)
-    split = project_images_to_texture(*mesh, rgbs, c2w, K, tex_size=64, occlusion_eps=0.01, blur_pix_sigma=4.0)
+    sharp = project_images_to_texture(
+        *mesh, rgbs, c2w, K, tex_size=64, occlusion_eps=0.01, blur_pix_sigma=0.0
+    )
+    split = project_images_to_texture(
+        *mesh, rgbs, c2w, K, tex_size=64, occlusion_eps=0.01, blur_pix_sigma=4.0
+    )
     assert np.abs(sharp.astype(int) - [200, 100, 50]).max() <= 2  # near view only
-    assert np.abs(np.median(split.reshape(-1, 3), 0) - [150, 100, 100]).max() <= 5  # base weighted 1 : 0.5 at center
+    assert (
+        np.abs(np.median(split.reshape(-1, 3), 0) - [150, 100, 100]).max() <= 5
+    )  # base weighted 1 : 0.5 at center
 
 
 def _two_color_image():
@@ -169,7 +195,10 @@ def _floor_and_occluder():
     - occluder overhangs the floor to y=-0.05: an edge at y=0 would sit on pixel row 64's center, a lookup tie
     """
     verts, faces, normals, uvs = _squares(
-        [(0.0, (1, 1), (0, 0), (0.5, 1), False), (0.5, (0.5, 1), (0.5, 0), (1, 1), False)]
+        [
+            (0.0, (1, 1), (0, 0), (0.5, 1), False),
+            (0.5, (0.5, 1), (0.5, 0), (1, 1), False),
+        ]
     )
     verts[4:, 1] = verts[4:, 1] * 1.05 - 0.05
     return verts, faces, normals, uvs
@@ -179,28 +208,54 @@ def _floor_and_occluder():
 def test_project_images_to_texture_occluded_texels_take_fill_not_occluder_color():
     c2w, K = _camera()
     albedo = project_images_to_texture(
-        *_floor_and_occluder(), _two_color_image(), c2w, K, tex_size=64, occlusion_eps=0.01
+        *_floor_and_occluder(),
+        _two_color_image(),
+        c2w,
+        K,
+        tex_size=64,
+        occlusion_eps=0.01,
     ).astype(int)
-    assert (albedo[:, 32:] == [255, 0, 0]).all(axis=-1).mean() > 0.9  # the occluder sees red
-    assert (albedo[:, 23:32] == [0, 0, 255]).all(axis=-1).mean() > 0.9  # floor x>0.72 sees blue
-    assert albedo[:, :16, 2].min() > 0  # hidden floor: filled, never the red it would sample
+    assert (albedo[:, 32:] == [255, 0, 0]).all(
+        axis=-1
+    ).mean() > 0.9  # the occluder sees red
+    assert (albedo[:, 23:32] == [0, 0, 255]).all(
+        axis=-1
+    ).mean() > 0.9  # floor x>0.72 sees blue
+    assert (
+        albedo[:, :16, 2].min() > 0
+    )  # hidden floor: filled, never the red it would sample
 
 
 @cuda
 def test_project_images_to_texture_separate_occluder_replaces_mesh():
-    floor = (np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], float), np.array([[0, 1, 2], [0, 2, 3]]))
+    floor = (
+        np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], float),
+        np.array([[0, 1, 2], [0, 2, 3]]),
+    )
     c2w, K = _camera()
     albedo = project_images_to_texture(
-        *_floor_and_occluder(), _two_color_image(), c2w, K, tex_size=64, occlusion_eps=0.01, occluder=floor
+        *_floor_and_occluder(),
+        _two_color_image(),
+        c2w,
+        K,
+        tex_size=64,
+        occlusion_eps=0.01,
+        occluder=floor,
     ).astype(int)
-    assert (albedo[:, :16] == [255, 0, 0]).all(axis=-1).mean() > 0.9  # floor under the square now seen
+    assert (albedo[:, :16] == [255, 0, 0]).all(
+        axis=-1
+    ).mean() > 0.9  # floor under the square now seen
 
 
 @cuda
 def test_project_images_to_texture_back_faces_get_nothing():
-    mesh = _squares([(0.0, (1, 1), (0, 0), (1, 1), True)])  # winding flipped: normal points away
+    mesh = _squares(
+        [(0.0, (1, 1), (0, 0), (1, 1), True)]
+    )  # winding flipped: normal points away
     c2w, K = _camera()
-    albedo = project_images_to_texture(*mesh, _constant_image(), c2w, K, tex_size=64, occlusion_eps=0.01)
+    albedo = project_images_to_texture(
+        *mesh, _constant_image(), c2w, K, tex_size=64, occlusion_eps=0.01
+    )
     assert albedo.max() == 0  # nothing seen, so the fill has nothing to spread
 
 
@@ -214,16 +269,32 @@ def test_create_texture_mesh_writes_obj_mtl_and_albedo(tmp_path):
     # The plane's rim is 2.8 × its scene scale, under the 3.9 gate; it stays open as the outer rim
     prepared = prepare_mesh(plane, voxel_size=0.01)
     out = create_texture_mesh(
-        prepared, plane, tmp_path / "texture", _constant_image(), c2w, K, voxel_size=0.01, tex_size=64
+        prepared,
+        plane,
+        tmp_path / "texture",
+        _constant_image(),
+        c2w,
+        K,
+        voxel_size=0.01,
+        tex_size=64,
     )
     assert out == tmp_path / "texture" / "mesh.obj"
-    assert sorted(p.name for p in out.parent.iterdir()) == ["albedo.png", "mesh.mtl", "mesh.obj"]
+    assert sorted(p.name for p in out.parent.iterdir()) == [
+        "albedo.png",
+        "mesh.mtl",
+        "mesh.obj",
+    ]
     assert "Kd 1.0 1.0 1.0" in (out.parent / "mesh.mtl").read_text()
-    assert "\nvn " in out.read_text()  # smooth normals; without them viewers shade split corners flat
+    assert (
+        "\nvn " in out.read_text()
+    )  # smooth normals; without them viewers shade split corners flat
     loaded = trimesh.load(out, process=False)
     assert loaded.visual.uv.shape == (len(loaded.vertices), 2)
     albedo = np.asarray(loaded.visual.material.image)
-    assert albedo.shape[:2] == (64, 64) and np.abs(albedo[..., :3].astype(int) - [51, 128, 204]).max() <= 2
+    assert (
+        albedo.shape[:2] == (64, 64)
+        and np.abs(albedo[..., :3].astype(int) - [51, 128, 204]).max() <= 2
+    )
     assert len(plane.triangles) == 2 * 29 * 29  # the cleaned mesh is never modified
 
 
@@ -251,6 +322,8 @@ def test_create_texture_mesh_refuses_without_cuda(tmp_path, monkeypatch):
     mesh = _dense_plane(n=4)
 
     with pytest.raises(RuntimeError, match="mesh.texture"):
-        create_texture_mesh(mesh, mesh, tmp_path / "tex", None, None, None, voxel_size=0.01)
+        create_texture_mesh(
+            mesh, mesh, tmp_path / "tex", None, None, None, voxel_size=0.01
+        )
 
     assert not (tmp_path / "tex").exists()

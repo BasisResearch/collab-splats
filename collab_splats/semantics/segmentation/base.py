@@ -5,12 +5,13 @@ Segmentation base class and mask utilities.
 - create_composite_mask, mask_id_to_binary_mask, convert_matched_mask: integer-ID masks
 - create_patch_mask, aggregate_masked_features: patch grids and per-mask feature pooling
 """
+
 from __future__ import annotations
 
 import logging
 import math
 from abc import ABC, abstractmethod
-from typing import Any, Tuple
+from typing import Any, ClassVar, Tuple
 
 import numpy as np
 import torch
@@ -35,7 +36,7 @@ class BaseSegmentation(RegistryMixin, ABC):
     - retrieve with `.get("name")`
     """
 
-    _registry: dict[str, type["BaseSegmentation"]] = {}
+    _registry: ClassVar[dict[str, type["BaseSegmentation"]]] = {}
 
     @abstractmethod
     def segment(self, image: np.ndarray | Image.Image) -> tuple[torch.Tensor, Any]:
@@ -113,7 +114,9 @@ def create_patch_mask(image: np.ndarray, num_patches: int = 32) -> torch.Tensor:
 
 
 def create_composite_mask(
-    results: list[dict], confidence_threshold: float = 0.85, min_visible_frac: float = 0.1
+    results: list[dict],
+    confidence_threshold: float = 0.85,
+    min_visible_frac: float = 0.1,
 ) -> np.ndarray:
     """
     Merge SAM results into one (H, W) uint16 mask of integer IDs.
@@ -164,7 +167,10 @@ def create_composite_mask(
         logger.debug("Mask %d has %d pixels", i, mask.sum())
 
         # ID idx was painted from masks[sorted_idxs[idx - 1]], not masks[idx - 1]
-        if mask.sum() > 0 and (mask.sum() / masks[sorted_idxs[idx - 1]].sum()) > min_visible_frac:
+        if (
+            mask.sum() > 0
+            and (mask.sum() / masks[sorted_idxs[idx - 1]].sum()) > min_visible_frac
+        ):
             composite_mask[mask] = i
 
     return composite_mask
@@ -238,7 +244,9 @@ def aggregate_masked_features(
         features.unsqueeze(0), size=resolution, mode="bilinear", align_corners=False
     )[0]
 
-    masks = F.interpolate(masks.unsqueeze(1), size=resolution, mode="nearest").bool()[:, 0]
+    masks = F.interpolate(masks.unsqueeze(1), size=resolution, mode="nearest").bool()[
+        :, 0
+    ]
     masks = masks.to(features.device)
 
     # Mean feature per mask: (N, C)

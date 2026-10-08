@@ -47,7 +47,10 @@ MPL_CALL = re.compile(r"\bplt\.|\bax\.|\baxes\[")
 MPL_OVERRIDES: dict[str, int] = {}
 
 # Prose markers of plan or draft text
-BANNED_PROSE = {"§": "use '## 1. Title' headings", "Package gap": "plan language, not tutorial text"}
+BANNED_PROSE = {
+    "§": "use '## 1. Title' headings",
+    "Package gap": "plan language, not tutorial text",
+}
 
 # Readability caps per page
 EM_DASH_CAP = 3
@@ -76,7 +79,9 @@ def _strip_magics(src: str) -> str:
     """
     Blank out IPython magic and shell lines so the cell parses as Python.
     """
-    return "\n".join("" if ln.lstrip().startswith(("%", "!", "?")) else ln for ln in src.split("\n"))
+    return "\n".join(
+        "" if ln.lstrip().startswith(("%", "!", "?")) else ln for ln in src.split("\n")
+    )
 
 
 def _parsed_cells(nb_path: Path):
@@ -134,7 +139,9 @@ def test_matplotlib_cap(nb: Path):
     """
     n = len(MPL_CALL.findall("\n".join(_code_sources(nb))))
     cap = MPL_OVERRIDES.get(_rel(nb), MPL_CAP)
-    assert n <= cap, f"{nb.name} has {n} hand-written matplotlib calls (cap {cap}); use a package plotter"
+    assert n <= cap, (
+        f"{nb.name} has {n} hand-written matplotlib calls (cap {cap}); use a package plotter"
+    )
 
 
 @pytest.mark.parametrize("nb", NOTEBOOKS, ids=lambda p: p.stem)
@@ -200,7 +207,11 @@ def test_imports_resolve(nb: Path):
                 except ImportError as exc:
                     missing.append(f"{node.module} ({exc})")
                     continue
-                missing += [f"{node.module}.{a.name}" for a in node.names if not hasattr(mod, a.name)]
+                missing += [
+                    f"{node.module}.{a.name}"
+                    for a in node.names
+                    if not hasattr(mod, a.name)
+                ]
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name.split(".")[0] not in FIRST_PARTY:
@@ -235,7 +246,9 @@ def test_em_dash_and_bold_caps(nb: Path):
     text = "\n".join(_markdown_sources(nb) + _code_sources(nb))
     dashes = text.count("—")
     bold = len(BOLD.findall("\n".join(_markdown_sources(nb))))
-    assert dashes <= EM_DASH_CAP, f"{nb.name} has {dashes} em-dashes (cap {EM_DASH_CAP})"
+    assert dashes <= EM_DASH_CAP, (
+        f"{nb.name} has {dashes} em-dashes (cap {EM_DASH_CAP})"
+    )
     assert bold <= BOLD_CAP, f"{nb.name} has {bold} bold phrases (cap {BOLD_CAP})"
 
 
@@ -246,4 +259,6 @@ def test_code_line_length(nb: Path):
     """
     lines = "\n".join(_code_sources(nb)).split("\n")
     long = [ln for ln in lines if len(ln) > LINE_CAP]
-    assert not long, f"{nb.name} has {len(long)} code lines over {LINE_CAP} chars: {long[0]!r}"
+    assert not long, (
+        f"{nb.name} has {len(long)} code lines over {LINE_CAP} chars: {long[0]!r}"
+    )

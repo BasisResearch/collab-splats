@@ -16,7 +16,9 @@ def _import_without_torch(module: str) -> subprocess.CompletedProcess:
     """
     code = f"import sys; sys.modules['torch'] = None; import {module}"
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
-    return subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True
+    )
 
 
 def test_utils_package_imports_without_torch():

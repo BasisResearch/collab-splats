@@ -138,8 +138,12 @@ class PoseGraph:
         self._initial = gtsam.Values()
 
         # Sigma 0.05 on every edge (sequential, inter-submap, loop chain), 1e-6 on the first-frame prior
-        self._seq_noise = gtsam.noiseModel.Diagonal.Sigmas(0.05 * np.ones(15, dtype=np.float64))
-        self._anchor_noise = gtsam.noiseModel.Diagonal.Sigmas(np.full(15, 1e-6, dtype=np.float64))
+        self._seq_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            0.05 * np.ones(15, dtype=np.float64)
+        )
+        self._anchor_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.full(15, 1e-6, dtype=np.float64)
+        )
 
         # Incremental submap-build bookkeeping (per-submap cadence state)
         self._global_node_id = 0
@@ -198,10 +202,14 @@ class PoseGraph:
         # Levenberg-Marquardt over the whole graph; failures keep the initial values
         try:
             params = gtsam.LevenbergMarquardtParams()
-            optimizer = gtsam.LevenbergMarquardtOptimizer(self._graph, self._initial, params)
+            optimizer = gtsam.LevenbergMarquardtOptimizer(
+                self._graph, self._initial, params
+            )
             self._initial = optimizer.optimize()
         except RuntimeError as exc:
-            logger.warning("GTSAM optimization failed: %s — returning initial values", exc)
+            logger.warning(
+                "GTSAM optimization failed: %s — returning initial values", exc
+            )
 
     def get_homography(self, node_id: int) -> np.ndarray:
         """
@@ -253,7 +261,7 @@ class PoseGraph:
             # Previous submap and the usable overlap length
             prev_submap = self._submaps_seen[-1]
             n_prev = len(prev_submap.poses)
-            O = min(overlap_frames, k, n_prev)
+            n_overlap = min(overlap_frames, k, n_prev)
 
             # T = inv(K_prev[-1]) @ K_curr[0], VGGT-SLAM's P_temp (solver.py:140); see decompose_camera
             K_prev_last = intrinsics_4x4(prev_submap.intrinsics[-1].astype(np.float64))
@@ -263,10 +271,12 @@ class PoseGraph:
             # Overlap scale, each frame in its own camera (rotation_only; diverges from solver.py:141, docs/parity.md)
             scale = None
 
-            if O > 0:
-                prev_idx = list(range(n_prev - O, n_prev))
-                curr_idx = list(range(O))
-                scale = calculate_pairwise_frame_scale(submap, curr_idx, prev_submap, prev_idx, self.min_conf_points)
+            if n_overlap > 0:
+                prev_idx = list(range(n_prev - n_overlap, n_prev))
+                curr_idx = list(range(n_overlap))
+                scale = calculate_pairwise_frame_scale(
+                    submap, curr_idx, prev_submap, prev_idx, self.min_conf_points
+                )
 
             if scale is None:
                 logger.warning(
@@ -294,7 +304,9 @@ class PoseGraph:
             H_inner = poses[local_i - 1] @ np.linalg.inv(poses[local_i])
             prev_H = self.get_homography(node_ids_this[local_i - 1])
             self.add_homography(node_ids_this[local_i], prev_H @ H_inner)
-            self.add_between_factor(node_ids_this[local_i - 1], node_ids_this[local_i], H_inner)
+            self.add_between_factor(
+                node_ids_this[local_i - 1], node_ids_this[local_i], H_inner
+            )
 
         # Book the submap for later overlap lookups and extraction
         self._submap_node_ids[submap.submap_id] = node_ids_this
@@ -317,7 +329,9 @@ class PoseGraph:
 
         for sub in self._submaps_seen:
             for local_i, p in enumerate(sub.image_paths):
-                located.setdefault(p, (self._submap_node_ids[sub.submap_id][local_i], sub, local_i))
+                located.setdefault(
+                    p, (self._submap_node_ids[sub.submap_id][local_i], sub, local_i)
+                )
 
         # Graph node, submap and local frame of each carrier image
         nid_q, sub_q, qi = located[lc.image_paths[0]]

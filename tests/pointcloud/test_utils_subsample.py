@@ -34,7 +34,9 @@ def test_subsample_points_is_deterministic_and_leaves_global_rng():
 
 def test_subsample_points_seed_changes_draw():
     mask = np.ones(1000, bool)
-    assert not np.array_equal(subsample_points(mask, 100, seed=0), subsample_points(mask, 100, seed=1))
+    assert not np.array_equal(
+        subsample_points(mask, 100, seed=0), subsample_points(mask, 100, seed=1)
+    )
 
 
 def test_subsample_points_matches_seeded_choice():
@@ -45,7 +47,9 @@ def test_subsample_points_matches_seeded_choice():
     idx = np.flatnonzero(mask)
     expected = np.zeros(mask.size, bool)
     expected[np.random.default_rng(3).choice(idx, size=40, replace=False)] = True
-    np.testing.assert_array_equal(subsample_points(mask, 40, seed=3), expected.reshape(mask.shape))
+    np.testing.assert_array_equal(
+        subsample_points(mask, 40, seed=3), expected.reshape(mask.shape)
+    )
 
 
 def test_confidence_mask_global_percentile_strict():
@@ -65,5 +69,9 @@ def test_confidence_mask_uniform_confidence_keeps_all(caplog):
 def test_confidence_mask_ties_at_the_max_keep_only_the_max():
     """p100, or a saturated max: the fallback keeps the max pixels, never the unfiltered map."""
     conf = np.array([0.1, 0.5, 0.9, 0.9])
-    np.testing.assert_array_equal(confidence_mask(conf, 100.0), [False, False, True, True])
-    np.testing.assert_array_equal(confidence_mask(conf, 60.0), [False, False, True, True])
+    np.testing.assert_array_equal(
+        confidence_mask(conf, 100.0), [False, False, True, True]
+    )
+    np.testing.assert_array_equal(
+        confidence_mask(conf, 60.0), [False, False, True, True]
+    )

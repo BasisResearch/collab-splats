@@ -97,7 +97,9 @@ def cluster_points(
     xyz = np.asarray(points)[valid]
     pairs = cKDTree(xyz).query_pairs(spatial_radius, output_type="ndarray")
     n = len(valid)
-    adjacency = csr_matrix((np.ones(len(pairs), dtype=bool), (pairs[:, 0], pairs[:, 1])), shape=(n, n))
+    adjacency = csr_matrix(
+        (np.ones(len(pairs), dtype=bool), (pairs[:, 0], pairs[:, 1])), shape=(n, n)
+    )
     _, labels = connected_components(adjacency, directed=False)
 
     # Map component labels back to original point indices; drop small clusters
@@ -117,7 +119,9 @@ def cluster_points(
 ########################################################################
 
 
-def _tokens_to_feature_map(tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int) -> torch.Tensor:
+def _tokens_to_feature_map(
+    tokens: torch.Tensor, input_h: int, input_w: int, patch_size: int
+) -> torch.Tensor:
     """
     Reshape (N, D) patch tokens to (D, H_p, W_p), L2-normalized along the channel dim.
 

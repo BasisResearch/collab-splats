@@ -42,7 +42,9 @@ def _make_raw_outputs(n: int = 2, h: int = 4, w: int = 4) -> dict:
     }
 
 
-def _make_mock_model(n_frames: int = 2, num_heads: int = 2, n_blocks: int = 2, h: int = 4, w: int = 4):
+def _make_mock_model(
+    n_frames: int = 2, num_heads: int = 2, n_blocks: int = 2, h: int = 4, w: int = 4
+):
     """VGGTOmega-shaped mock with real qkv linears so hooks fire."""
     total_dim = num_heads * 8  # head_dim=8
     n_tokens = 10
@@ -100,7 +102,9 @@ def test_vggt_omega_creator_missing_image_dir_raises(tmp_path):
     """create_pointcloud raises FileNotFoundError for nonexistent image dir."""
     c = VGGTOmegaCreator()
     with pytest.raises(FileNotFoundError):
-        c.create_pointcloud(tmp_path / "nonexistent", tmp_path / "out", tmp_path / "model")
+        c.create_pointcloud(
+            tmp_path / "nonexistent", tmp_path / "out", tmp_path / "model"
+        )
 
 
 ########################################################################
@@ -155,7 +159,10 @@ def test_omega_crop_box_multiple_images():
 
 @pytest.mark.parametrize(
     "size, box",
-    [((1001, 400), [100, 0, 900, 400, 1001, 400]), ((300, 1001), [0, 200, 300, 800, 300, 1001])],
+    [
+        ((1001, 400), [100, 0, 900, 400, 1001, 400]),
+        ((300, 1001), [0, 200, 300, 800, 300, 1001]),
+    ],
 )
 def test_omega_crop_box_is_upstream_integer_crop(size, box):
     """An odd margin floors to upstream's integer offset, not a half-pixel float one."""
@@ -169,7 +176,9 @@ def test_omega_crop_box_is_upstream_integer_crop(size, box):
 
 def test_preprocess_returns_correct_shapes(tmp_path):
     """_preprocess returns (views [N,3,H,W], original_coords [N,6])."""
-    paths = _frame_files([np.full((64, 64, 3), i * 80, dtype=np.uint8) for i in range(3)], tmp_path)
+    paths = _frame_files(
+        [np.full((64, 64, 3), i * 80, dtype=np.uint8) for i in range(3)], tmp_path
+    )
 
     creator = VGGTOmegaCreator(resolution=64)
     with patch(
@@ -190,7 +199,9 @@ def test_preprocess_chunks_match_one_upstream_call(tmp_path, sizes):
     frames = [rng.integers(0, 256, (h, w, 3), dtype=np.uint8) for w, h in sizes]
     paths = _frame_files(frames, tmp_path)
 
-    one = load_and_preprocess_images([str(p) for p in paths], image_resolution=64, mode="balanced")
+    one = load_and_preprocess_images(
+        [str(p) for p in paths], image_resolution=64, mode="balanced"
+    )
     chunked = VGGTOmegaCreator(resolution=64)._preprocess_files(paths, workers=3)
 
     assert torch.equal(chunked, one)
@@ -221,7 +232,10 @@ def test_forward_output_keys(tmp_path):
     views = torch.zeros(n, 3, h, w)
     with patch(
         "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-        return_value=(torch.zeros(1, n, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, n, 3, 3)),
+        return_value=(
+            torch.zeros(1, n, 3, 4),
+            torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, n, 3, 3),
+        ),
     ):
         raw = creator._forward(mock_model, views)
 
@@ -249,7 +263,8 @@ def test_forward_extrinsic_shape(tmp_path):
     ext_tensor = torch.zeros(1, n, 3, 4)
     intr_tensor = torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, n, 3, 3).contiguous()
     with patch(
-        "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera", return_value=(ext_tensor, intr_tensor)
+        "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
+        return_value=(ext_tensor, intr_tensor),
     ):
         raw = creator._forward(mock_model, torch.zeros(n, 3, h, w))
 
@@ -271,7 +286,9 @@ def test_postprocess_returns_feedforward_result(tmp_path):
 
     creator = VGGTOmegaCreator()
     creator.image_paths = image_paths
-    creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1))  # full-frame box
+    creator.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+    )  # full-frame box
     creator.model = MagicMock()
     creator.model.parameters = lambda: iter([nn.Parameter(torch.zeros(1))])
 
@@ -295,7 +312,9 @@ def test_postprocess_world_points_populated(tmp_path):
 
     creator = VGGTOmegaCreator()
     creator.image_paths = [tmp_path / f"{i}.jpg" for i in range(n)]
-    creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1))  # full-frame box
+    creator.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+    )  # full-frame box
     creator.model = MagicMock()
     creator.model.parameters = lambda: iter([nn.Parameter(torch.zeros(1))])
 
@@ -326,9 +345,12 @@ def test_load_model_with_explicit_path(tmp_path):
 
     with (
         patch(
-            "collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_model_instance
+            "collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
+            return_value=mock_model_instance,
         ) as mock_cls,
-        patch("collab_splats.pointcloud.feedforward.vggt_omega.load_hf_weights") as mock_hf,
+        patch(
+            "collab_splats.pointcloud.feedforward.vggt_omega.load_hf_weights"
+        ) as mock_hf,
     ):
         creator._load_model("cpu")
 
@@ -357,9 +379,13 @@ def test_load_model_without_path_calls_hf_download(tmp_path):
     mock_model_instance.to.return_value = mock_model_instance
 
     with (
-        patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_model_instance),
         patch(
-            "collab_splats.pointcloud.feedforward.vggt_omega.load_hf_weights", return_value=str(ckpt_path)
+            "collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
+            return_value=mock_model_instance,
+        ),
+        patch(
+            "collab_splats.pointcloud.feedforward.vggt_omega.load_hf_weights",
+            return_value=str(ckpt_path),
         ) as mock_hf,
     ):
         creator._load_model("cpu")
@@ -382,7 +408,10 @@ def test_load_model_keeps_fp32_params(tmp_path):
     mock_model_instance.eval.return_value = mock_model_instance
     mock_model_instance.to.return_value = mock_model_instance
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_model_instance):
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
+        return_value=mock_model_instance,
+    ):
         creator._load_model("cpu")
 
     # No .to() call may pass a low-precision dtype
@@ -408,7 +437,10 @@ def test_load_model_matches_cpu_init_load():
     ref = VGGTOmega()
     ref.load_state_dict(torch.load(str(ckpt), map_location="cpu"))
     ref = ref.eval().to("cuda")
-    ref_state = {k: v.detach().cpu().clone() for k, v in [*ref.named_parameters(), *ref.named_buffers()]}
+    ref_state = {
+        k: v.detach().cpu().clone()
+        for k, v in [*ref.named_parameters(), *ref.named_buffers()]
+    }
     del ref
     torch.cuda.empty_cache()
 
@@ -439,9 +471,14 @@ def test_extract_intermediate_features_returns_q_k_poses():
 
     with patch(
         "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-        return_value=(torch.zeros(1, 2, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3)),
+        return_value=(
+            torch.zeros(1, 2, 3, 4),
+            torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3),
+        ),
     ):
-        result = creator.extract_intermediate_features(torch.zeros(2, 3, 16, 16), layer_index=-1)
+        result = creator.extract_intermediate_features(
+            torch.zeros(2, 3, 16, 16), layer_index=-1
+        )
 
     assert "q" in result and "k" in result
     assert "poses" in result
@@ -465,7 +502,10 @@ def test_extract_intermediate_features_hook_removed_after_call():
 
     with patch(
         "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
-        return_value=(torch.zeros(1, 2, 3, 4), torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3)),
+        return_value=(
+            torch.zeros(1, 2, 3, 4),
+            torch.eye(3).unsqueeze(0).unsqueeze(0).expand(1, 2, 3, 3),
+        ),
     ):
         creator.extract_intermediate_features(torch.zeros(2, 3, 4, 4), layer_index=-1)
 
@@ -489,7 +529,9 @@ def test_extract_intermediate_features_hook_removed_on_error():
             "collab_splats.pointcloud.feedforward.vggt_omega.encoding_to_camera",
             return_value=(torch.zeros(1, 2, 3, 4), torch.zeros(1, 2, 3, 3)),
         ):
-            creator.extract_intermediate_features(torch.zeros(2, 3, 4, 4), layer_index=-1)
+            creator.extract_intermediate_features(
+                torch.zeros(2, 3, 4, 4), layer_index=-1
+            )
 
     assert len(block.attn.qkv._forward_hooks) == 0
 
@@ -521,7 +563,10 @@ def test_load_model_builds_on_upstream_defaults(tmp_path):
     mock_instance.eval.return_value = mock_instance
     mock_instance.to.return_value = mock_instance
 
-    with patch("collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega", return_value=mock_instance) as mock_cls:
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmega",
+        return_value=mock_instance,
+    ) as mock_cls:
         creator._load_model("cpu")
 
     mock_cls.assert_called_once_with()
@@ -535,7 +580,12 @@ def test_load_model_builds_on_upstream_defaults(tmp_path):
 @pytest.mark.parametrize("mode", ["balanced", "max_size"])
 @pytest.mark.parametrize(
     "sizes",
-    [[(96, 48)] * 9, [(96, 48)] * 4 + [(48, 96)] * 3, [(200, 50)] * 3, [(1920, 1080), (1080, 1920), (1920, 1080)]],
+    [
+        [(96, 48)] * 9,
+        [(96, 48)] * 4 + [(48, 96)] * 3,
+        [(200, 50)] * 3,
+        [(1920, 1080), (1080, 1920), (1920, 1080)],
+    ],
 )
 def test_preprocess_frames_match_files(tmp_path, mode, sizes):
     """

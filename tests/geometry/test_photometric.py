@@ -11,17 +11,26 @@ import torch
 pp = pytest.importorskip("pypose")
 pytest.importorskip("bae.autograd.function")
 
-from collab_splats.geometry.photometric import photometric_residual, photometric_samples
+from collab_splats.geometry.photometric import (  # noqa: E402
+    photometric_residual,
+    photometric_samples,
+)
 
 
 def _scene(n_frames=2, H=16, W=24):
     """
     Smooth texture seen by identity cameras at depth 2, with a centered f=50 K.
     """
-    v, u = torch.meshgrid(torch.arange(H, dtype=torch.float64), torch.arange(W, dtype=torch.float64), indexing="ij")
+    v, u = torch.meshgrid(
+        torch.arange(H, dtype=torch.float64),
+        torch.arange(W, dtype=torch.float64),
+        indexing="ij",
+    )
     gray = (torch.sin(u / 3.0) + torch.cos(v / 4.0)).expand(n_frames, H, W).clone()
     depth = torch.full((n_frames, H, W), 2.0, dtype=torch.float64)
-    K = torch.tensor([[50.0, 0, W / 2], [0, 50.0, H / 2], [0, 0, 1]], dtype=torch.float64)
+    K = torch.tensor(
+        [[50.0, 0, W / 2], [0, 50.0, H / 2], [0, 0, 1]], dtype=torch.float64
+    )
     w2c = torch.eye(4, dtype=torch.float64).expand(n_frames, 4, 4).clone()
     return w2c, gray, depth, K.expand(n_frames, 3, 3).clone()
 
@@ -133,7 +142,9 @@ def test_same_seed_draws_same_samples_and_new_seed_differs():
         assert torch.equal(first[key], again[key]), key
 
     # Another seed draws other pixels
-    same_draw = first["x_i"].shape == other["x_i"].shape and torch.equal(first["x_i"], other["x_i"])
+    same_draw = first["x_i"].shape == other["x_i"].shape and torch.equal(
+        first["x_i"], other["x_i"]
+    )
     assert not same_draw
 
 
@@ -153,8 +164,12 @@ def test_samples_read_pixel_centers_at_integer_coordinates():
 
     # Brightness is the raw pixel at that index, not a blend of neighbors
     u, v = uv.round().long().unbind(1)
-    torch.testing.assert_close(samples["I_i"], gray[samples["i_idx"], v, u], atol=1e-9, rtol=0)
+    torch.testing.assert_close(
+        samples["I_i"], gray[samples["i_idx"], v, u], atol=1e-9, rtol=0
+    )
 
     # Identity poses carry each pixel onto itself in frame j
     torch.testing.assert_close(samples["uv_j"], uv, atol=1e-9, rtol=0)
-    torch.testing.assert_close(samples["I_j"], gray[samples["j_idx"], v, u], atol=1e-9, rtol=0)
+    torch.testing.assert_close(
+        samples["I_j"], gray[samples["j_idx"], v, u], atol=1e-9, rtol=0
+    )

@@ -9,7 +9,6 @@ Tests for collab_splats.geometry.bundle_adjustment.
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -21,16 +20,16 @@ pp = pytest.importorskip("pypose")
 bae_graph = pytest.importorskip("bae.autograd.graph")
 bae_optim = pytest.importorskip("bae.optim")
 
-from collab_splats.geometry import bundle_adjustment
-from collab_splats.geometry.bundle_adjustment import (
+from collab_splats.geometry import bundle_adjustment  # noqa: E402
+from collab_splats.geometry.bundle_adjustment import (  # noqa: E402
     BundleAdjustment,
     BundleAdjustmentConfig,
     _align_to_input_poses,
     _BAModel,
     _filter_observations,
 )
-from collab_splats.geometry.photometric import photometric_samples
-from collab_splats.geometry.projection import project
+from collab_splats.geometry.photometric import photometric_samples  # noqa: E402
+from collab_splats.geometry.projection import project  # noqa: E402
 
 # Reprojection-only solve: these tests exercise the track path, which takes no depth
 REPROJ_ONLY = {"use_photometric": False, "use_depth": False}
@@ -56,14 +55,21 @@ def _flat(tracks, vis):
     """
     vis = np.asarray(vis, dtype=np.float32)
     frame, track = np.nonzero(vis > 0)
-    return frame.astype(np.int32), track.astype(np.int32), tracks[frame, track], vis[frame, track]
+    return (
+        frame.astype(np.int32),
+        track.astype(np.int32),
+        tracks[frame, track],
+        vis[frame, track],
+    )
 
 
 def _flat_tracks(N, P):
     """
     extract_tracks return value: every frame sees every one of P zero tracks.
     """
-    return *_flat(np.zeros((N, P, 2), np.float32), np.ones((N, P), np.float32)), np.zeros((P, 3), np.float32)
+    return *_flat(
+        np.zeros((N, P, 2), np.float32), np.ones((N, P), np.float32)
+    ), np.zeros((P, 3), np.float32)
 
 
 def _refine_with(cfg, optimize, N=2, P=5):
@@ -102,14 +108,18 @@ def _build_synthetic_scene(N=4, P=50, H=128, W=128, seed=42):
 
     f = 100.0
     cx, cy = W / 2.0, H / 2.0
-    intrinsics = np.tile(np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], dtype=np.float32), (N, 1, 1))
+    intrinsics = np.tile(
+        np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], dtype=np.float32), (N, 1, 1)
+    )
 
     # Project points to 2D: K @ (R @ p + t) / z
     tracks = np.zeros((N, P, 2), dtype=np.float32)
     vis_mask = np.ones((N, P), dtype=bool)
 
     for i in range(N):
-        pts_cam = (extrinsics[i, :3, :3] @ points3d.T).T + extrinsics[i, :3, 3]  # (P, 3)
+        pts_cam = (extrinsics[i, :3, :3] @ points3d.T).T + extrinsics[
+            i, :3, 3
+        ]  # (P, 3)
         z = pts_cam[:, 2]
         tracks[i, :, 0] = f * pts_cam[:, 0] / z + cx
         tracks[i, :, 1] = f * pts_cam[:, 1] / z + cy
@@ -126,10 +136,16 @@ def test_optimize_raises_below_inlier_threshold():
     ba = BundleAdjustment(BundleAdjustmentConfig(max_reproj_error=4.0, **REPROJ_ONLY))
 
     with (
-        patch.object(bundle_adjustment, "reprojection_error", wraps=bundle_adjustment.reprojection_error) as spy,
+        patch.object(
+            bundle_adjustment,
+            "reprojection_error",
+            wraps=bundle_adjustment.reprojection_error,
+        ) as spy,
         pytest.raises(ValueError, match="too few active frames/points"),
     ):
-        ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+        ba._optimize(
+            pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+        )
 
     # The reprojection filter projects all gated pairs in one device batch
     assert spy.call_count == 1
@@ -153,7 +169,9 @@ def test_optimize_reduces_reproj_error(dtype):
         extrinsics_clean[i, :3, :3] = np.eye(3)
         extrinsics_clean[i, :3, 3] = rng.uniform(-0.3, 0.3, 3).astype(np.float32)
 
-    intrinsics = np.tile(np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], dtype=np.float32), (N, 1, 1))
+    intrinsics = np.tile(
+        np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], dtype=np.float32), (N, 1, 1)
+    )
 
     tracks = np.zeros((N, P, 2), dtype=np.float32)
     vis_mask = np.ones((N, P), dtype=bool)
@@ -165,7 +183,11 @@ def test_optimize_reduces_reproj_error(dtype):
         tracks[i, :, 0] = f * pts_cam[:, 0] / z + W / 2
         tracks[i, :, 1] = f * pts_cam[:, 1] / z + H / 2
         vis_mask[i] = (
-            (z > 0.1) & (tracks[i, :, 0] >= 0) & (tracks[i, :, 0] < W) & (tracks[i, :, 1] >= 0) & (tracks[i, :, 1] < H)
+            (z > 0.1)
+            & (tracks[i, :, 0] >= 0)
+            & (tracks[i, :, 0] < W)
+            & (tracks[i, :, 1] >= 0)
+            & (tracks[i, :, 1] < H)
         )
 
     extrinsics_noisy = extrinsics_clean.copy()
@@ -191,12 +213,26 @@ def test_optimize_reduces_reproj_error(dtype):
     # Squared reprojection error at the start, the units of losses
     err_before = sq_reproj_error(extrinsics_noisy)
 
-    ba = BundleAdjustment(BundleAdjustmentConfig(max_reproj_error=None, lm_steps=20, dtype=dtype, **REPROJ_ONLY))
-    ba._optimize(points3d, extrinsics_noisy, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+    ba = BundleAdjustment(
+        BundleAdjustmentConfig(
+            max_reproj_error=None, lm_steps=20, dtype=dtype, **REPROJ_ONLY
+        )
+    )
+    ba._optimize(
+        points3d,
+        extrinsics_noisy,
+        intrinsics,
+        *_flat(tracks, vis_mask),
+        None,
+        None,
+        None,
+    )
 
     # Final solve loss: gauge-free, unlike re-scoring the aligned cameras against the input points
     err_after = ba.losses["reprojection"]
-    assert err_after < err_before, f"BA did not reduce error: {err_before:.4f} → {err_after:.4f}"
+    assert err_after < err_before, (
+        f"BA did not reduce error: {err_before:.4f} → {err_after:.4f}"
+    )
 
 
 def test_optimize_no_reproj_filter():
@@ -208,10 +244,16 @@ def test_optimize_no_reproj_filter():
 
     # P=50 is below min_inliers_per_frame, so the solve is refused after the (skipped) filter
     with (
-        patch.object(bundle_adjustment, "reprojection_error", wraps=bundle_adjustment.reprojection_error) as spy,
+        patch.object(
+            bundle_adjustment,
+            "reprojection_error",
+            wraps=bundle_adjustment.reprojection_error,
+        ) as spy,
         pytest.raises(ValueError, match="too few active frames/points"),
     ):
-        ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+        ba._optimize(
+            pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+        )
 
     spy.assert_not_called()
 
@@ -236,11 +278,13 @@ def test_bundle_adjustment_refine_returns_arrays():
             "extract_tracks",
             return_value=_flat_tracks(N, 5),
         ),
-        patch.object(BundleAdjustment, "_optimize", return_value=(refined_ext, refined_intr)),
+        patch.object(
+            BundleAdjustment, "_optimize", return_value=(refined_ext, refined_intr)
+        ),
     ):
-        ext, K = BundleAdjustment(BundleAdjustmentConfig(track_source="vggsfm", **REPROJ_ONLY)).refine(
-            **_refine_inputs(N)
-        )
+        ext, K = BundleAdjustment(
+            BundleAdjustmentConfig(track_source="vggsfm", **REPROJ_ONLY)
+        ).refine(**_refine_inputs(N))
 
     assert ext.shape == (N, 4, 4)
     assert K.shape == (N, 3, 3)
@@ -254,7 +298,10 @@ def test_bundle_adjustment_refine_threads_config():
     Track source and track_kwargs reach extract_tracks, the solve device does not, and _optimize runs once.
     """
     N = 2
-    refined = (np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32), np.tile(np.eye(3), (N, 1, 1)).astype(np.float32))
+    refined = (
+        np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32),
+        np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
+    )
 
     with (
         patch.object(
@@ -288,11 +335,15 @@ def test_optimize_rejects_cpu_device():
 
     # min_inliers_per_frame lowered so frames survive the filter and reach the device check
     ba = BundleAdjustment(
-        config=BundleAdjustmentConfig(device="cpu", min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY)
+        config=BundleAdjustmentConfig(
+            device="cpu", min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY
+        )
     )
 
     with pytest.raises(RuntimeError, match="CUDA"):
-        ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+        ba._optimize(
+            pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+        )
 
 
 def test_ba_config_rejects_unknown_dtype():
@@ -366,12 +417,18 @@ def test_optimize_captures_loss_history_unconditionally():
 
     n_steps = 5
     cfg = BundleAdjustmentConfig(
-        lm_steps=n_steps, lm_tol=0.0, min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY
+        lm_steps=n_steps,
+        lm_tol=0.0,
+        min_inliers_per_frame=10,
+        max_reproj_error=None,
+        **REPROJ_ONLY,
     )
     ba = BundleAdjustment(config=cfg)
     assert ba.loss_history == []
 
-    ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+    ba._optimize(
+        pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+    )
 
     hist = ba.loss_history
     assert isinstance(hist, list)
@@ -391,11 +448,21 @@ def test_optimize_warns_when_no_lm_step_runs(caplog):
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
     images = np.zeros((N, 3, H, W), np.float32)
     depth = np.ones((N, H, W), np.float32)
-    cfg = BundleAdjustmentConfig(min_inliers_per_frame=10, max_reproj_error=None, use_depth=False)
+    cfg = BundleAdjustmentConfig(
+        min_inliers_per_frame=10, max_reproj_error=None, use_depth=False
+    )
     ba = BundleAdjustment(config=cfg)
 
     with patch.object(bundle_adjustment, "photometric_samples", return_value=None):
-        ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), images, depth, depth)
+        ba._optimize(
+            pts3d,
+            extrinsics,
+            intrinsics,
+            *_flat(tracks, vis_mask),
+            images,
+            depth,
+            depth,
+        )
 
     assert ba.loss_history == [[]]
     assert "no LM step ran" in caplog.text
@@ -408,11 +475,17 @@ def test_optimize_loss_history_never_increases():
     """
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
-    extrinsics[:, :3, 3] += np.random.default_rng(3).normal(0, 0.05, (N, 3)).astype(np.float32)
-    cfg = BundleAdjustmentConfig(lm_steps=20, min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY)
+    extrinsics[:, :3, 3] += (
+        np.random.default_rng(3).normal(0, 0.05, (N, 3)).astype(np.float32)
+    )
+    cfg = BundleAdjustmentConfig(
+        lm_steps=20, min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY
+    )
     ba = BundleAdjustment(config=cfg)
 
-    ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+    ba._optimize(
+        pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+    )
 
     hist = np.array(ba.loss_history[0])
     assert len(hist) > 1
@@ -427,7 +500,11 @@ def test_optimize_undoes_a_step_that_raises_the_loss(caplog):
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
     cfg = BundleAdjustmentConfig(
-        lm_steps=3, lm_patience=3, min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY
+        lm_steps=3,
+        lm_patience=3,
+        min_inliers_per_frame=10,
+        max_reproj_error=None,
+        **REPROJ_ONLY,
     )
     ba = BundleAdjustment(config=cfg)
     real_step = bundle_adjustment.Schur.step
@@ -442,7 +519,9 @@ def test_optimize_undoes_a_step_that_raises_the_loss(caplog):
         return self.last * 10
 
     with patch.object(bundle_adjustment.Schur, "step", bad_step):
-        refined, _ = ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+        refined, _ = ba._optimize(
+            pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+        )
 
     hist = ba.loss_history[0]
     assert len(hist) == 3
@@ -459,11 +538,18 @@ def test_optimize_stops_after_patience_stalled_steps():
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
     cfg = BundleAdjustmentConfig(
-        lm_steps=20, lm_tol=1.0, lm_patience=3, min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY
+        lm_steps=20,
+        lm_tol=1.0,
+        lm_patience=3,
+        min_inliers_per_frame=10,
+        max_reproj_error=None,
+        **REPROJ_ONLY,
     )
     ba = BundleAdjustment(config=cfg)
 
-    ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None)
+    ba._optimize(
+        pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+    )
 
     assert len(ba.loss_history[0]) == 3
 
@@ -489,11 +575,23 @@ def test_photometric_stall_ends_each_resample_not_the_scale():
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
     images, depth, confidence = _textured_plane(N, H, W)
     cfg = BundleAdjustmentConfig(
-        lm_tol=1.0, lm_patience=2, use_depth=False, min_inliers_per_frame=10, max_reproj_error=None
+        lm_tol=1.0,
+        lm_patience=2,
+        use_depth=False,
+        min_inliers_per_frame=10,
+        max_reproj_error=None,
     )
     ba = BundleAdjustment(config=cfg)
 
-    ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), images, depth, confidence)
+    ba._optimize(
+        pts3d,
+        extrinsics,
+        intrinsics,
+        *_flat(tracks, vis_mask),
+        images,
+        depth,
+        confidence,
+    )
 
     assert len(ba.loss_history[0]) == 6 * 2
 
@@ -508,7 +606,9 @@ def test_photometric_level_K_is_pixel_center_rescale():
     N, P, H, W = 4, 60, 130, 130
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
     images, depth, confidence = _textured_plane(N, H, W)
-    cfg = BundleAdjustmentConfig(use_depth=False, min_inliers_per_frame=10, max_reproj_error=None)
+    cfg = BundleAdjustmentConfig(
+        use_depth=False, min_inliers_per_frame=10, max_reproj_error=None
+    )
     seen = []
 
     # Record each scale's K; None skips the scale, so no LM step moves the focal
@@ -517,14 +617,24 @@ def test_photometric_level_K_is_pixel_center_rescale():
 
     with patch.object(bundle_adjustment, "photometric_samples", side_effect=record):
         BundleAdjustment(cfg)._optimize(
-            pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), images, depth, confidence
+            pts3d,
+            extrinsics,
+            intrinsics,
+            *_flat(tracks, vis_mask),
+            images,
+            depth,
+            confidence,
         )
 
     assert len(seen) == 3
 
     for K, factor in zip(seen, (4, 2, 1)):
-        np.testing.assert_allclose(K[:, [0, 1], [0, 1]], intrinsics[:, [0, 1], [0, 1]] / factor, rtol=1e-6)
-        np.testing.assert_allclose(K[:, :2, 2], (intrinsics[:, :2, 2] + 0.5) / factor - 0.5, rtol=1e-6)
+        np.testing.assert_allclose(
+            K[:, [0, 1], [0, 1]], intrinsics[:, [0, 1], [0, 1]] / factor, rtol=1e-6
+        )
+        np.testing.assert_allclose(
+            K[:, :2, 2], (intrinsics[:, :2, 2] + 0.5) / factor - 0.5, rtol=1e-6
+        )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
@@ -539,7 +649,11 @@ def test_photometric_resample_reads_live_per_camera_focal():
     # Start 5% off the true focal so the solve moves it
     intrinsics[:, [0, 1], [0, 1]] *= 1.05
     cfg = BundleAdjustmentConfig(
-        shared_camera=False, refine_focal=True, use_depth=False, min_inliers_per_frame=10, max_reproj_error=None
+        shared_camera=False,
+        refine_focal=True,
+        use_depth=False,
+        min_inliers_per_frame=10,
+        max_reproj_error=None,
     )
     models = []
     seen = []
@@ -563,7 +677,13 @@ def test_photometric_resample_reads_live_per_camera_focal():
         patch.object(bundle_adjustment, "photometric_samples", side_effect=record),
     ):
         BundleAdjustment(cfg)._optimize(
-            pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), images, depth, confidence
+            pts3d,
+            extrinsics,
+            intrinsics,
+            *_flat(tracks, vis_mask),
+            images,
+            depth,
+            confidence,
         )
 
     # The focal moved by the last (full-res) re-sample, and every re-sample saw the live value
@@ -580,15 +700,21 @@ def test_incremental_ba_increment_size_n_matches_global():
     N = 4
     optimize_frame_counts = []
 
-    def mock_optimize(self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs):
+    def mock_optimize(
+        self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs
+    ):
         optimize_frame_counts.append(len(np.unique(frame)))
         return extrinsics, intrinsics
 
     for increment_size in (0, N, N + 10):
-        cfg = BundleAdjustmentConfig(increment_size=increment_size, track_source="vggsfm", **REPROJ_ONLY)
+        cfg = BundleAdjustmentConfig(
+            increment_size=increment_size, track_source="vggsfm", **REPROJ_ONLY
+        )
         _refine_with(cfg, mock_optimize, N=N)
 
-    assert optimize_frame_counts == [N, N, N], f"expected one N-frame solve each; got {optimize_frame_counts}"
+    assert optimize_frame_counts == [N, N, N], (
+        f"expected one N-frame solve each; got {optimize_frame_counts}"
+    )
 
 
 def test_incremental_ba_warm_start_updates_registered_frames():
@@ -598,21 +724,29 @@ def test_incremental_ba_warm_start_updates_registered_frames():
     N = 6
     received_extrinsics = []
 
-    def mock_optimize(self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs):
+    def mock_optimize(
+        self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs
+    ):
         received_extrinsics.append(extrinsics.copy())
         refined = extrinsics.copy()
         refined[:, 0, 0] += float(len(received_extrinsics))
         return refined, intrinsics.copy()
 
-    _refine_with(BundleAdjustmentConfig(increment_size=2, track_source="vggsfm", **REPROJ_ONLY), mock_optimize, N=N)
+    _refine_with(
+        BundleAdjustmentConfig(increment_size=2, track_source="vggsfm", **REPROJ_ONLY),
+        mock_optimize,
+        N=N,
+    )
 
     # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls
-    assert len(received_extrinsics) == 3, f"expected 3 steps for N=6 increment_size=2, got {len(received_extrinsics)}"
+    assert len(received_extrinsics) == 3, (
+        f"expected 3 steps for N=6 increment_size=2, got {len(received_extrinsics)}"
+    )
 
     # Warm start: step-2 extrinsics[:2] should be step-1 refined output (diagonal+1), not original
-    assert (
-        received_extrinsics[1][:2, 0, 0].mean() > 1.0
-    ), "warm start failed: step-2 extrinsics[:2] should be step-1 refined output, not original feedforward"
+    assert received_extrinsics[1][:2, 0, 0].mean() > 1.0, (
+        "warm start failed: step-2 extrinsics[:2] should be step-1 refined output, not original feedforward"
+    )
 
 
 def test_incremental_ba_loss_history_has_one_entry_per_step():
@@ -620,7 +754,9 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
     loss_history contains one inner list per incremental k-step.
     """
 
-    def mock_optimize(self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs):
+    def mock_optimize(
+        self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs
+    ):
         self.loss_history.append([len(np.unique(frame)) * 0.1])
         return extrinsics, intrinsics
 
@@ -628,7 +764,9 @@ def test_incremental_ba_loss_history_has_one_entry_per_step():
     ba = _refine_with(cfg, mock_optimize, N=6)
 
     # N=6, increment_size=2 → steps k=2,4,6 → 3 _optimize calls → 3 inner lists
-    assert len(ba.loss_history) == 3, f"expected 3 inner lists for 3 steps; got {len(ba.loss_history)}"
+    assert len(ba.loss_history) == 3, (
+        f"expected 3 inner lists for 3 steps; got {len(ba.loss_history)}"
+    )
     assert all(isinstance(entry, list) for entry in ba.loss_history)
 
 
@@ -638,11 +776,15 @@ def test_incremental_steps_skip_single_frame_windows():
     """
     seen = []
 
-    def mock_optimize(self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs):
+    def mock_optimize(
+        self, pts3d, extrinsics, intrinsics, frame, track, xy, score, **kwargs
+    ):
         seen.append(len(extrinsics))
         return extrinsics, intrinsics
 
-    _refine_with(BundleAdjustmentConfig(increment_size=1, **REPROJ_ONLY), mock_optimize, N=4)
+    _refine_with(
+        BundleAdjustmentConfig(increment_size=1, **REPROJ_ONLY), mock_optimize, N=4
+    )
 
     assert seen == [2, 3, 4]
 
@@ -719,7 +861,17 @@ def test_filter_observations_no_single_obs_landmark_after_frame_drop():
     assert (vis.sum(0)[vis.any(0)] >= 2).all()
 
 
-def _dense_filter_reference(vis_scores, tracks, pts3d, extrinsics, intrinsics, *, vis_thresh, max_reproj, min_inliers):
+def _dense_filter_reference(
+    vis_scores,
+    tracks,
+    pts3d,
+    extrinsics,
+    intrinsics,
+    *,
+    vis_thresh,
+    max_reproj,
+    min_inliers,
+):
     """
     Pre-perf dense N x P CPU float64 _filter_observations, kept verbatim as the equivalence reference.
     """
@@ -758,7 +910,10 @@ def _filter_case(seed):
     R = np.stack([_rotation_from_angles(a) for a in angles])
     t = rng.normal(scale=0.2, size=(N, 3))
     ext = np.concatenate([R, t[..., None]], axis=-1).astype(np.float32)
-    K = np.tile(np.array([[500.0, 0, 320], [0, 520.0, 240], [0, 0, 1]], dtype=np.float32), (N, 1, 1))
+    K = np.tile(
+        np.array([[500.0, 0, 320], [0, 520.0, 240], [0, 0, 1]], dtype=np.float32),
+        (N, 1, 1),
+    )
     K[:, 0, 0] += rng.normal(scale=5.0, size=N).astype(np.float32)
 
     # Points mostly in front, some behind or at the camera plane, some NaN, some out of range
@@ -791,7 +946,13 @@ def _rotation_from_angles(angles):
     return Rz @ Ry @ Rx
 
 
-DEVICES = ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"))]
+DEVICES = [
+    "cpu",
+    pytest.param(
+        "cuda",
+        marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA"),
+    ),
+]
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -806,8 +967,12 @@ def test_filter_observations_matches_dense_reference(monkeypatch, device, seed):
     frame, track = np.nonzero(np.ones(vis_scores.shape, bool))
     flat = (frame, track, tracks[frame, track], vis_scores[frame, track])
 
-    expected = _dense_filter_reference(vis_scores, tracks, pts, ext, K, min_inliers=50, **kwargs)
-    got = _filter_observations(*flat, pts, ext, K, min_inliers_per_frame=50, batch_size=97, **kwargs)
+    expected = _dense_filter_reference(
+        vis_scores, tracks, pts, ext, K, min_inliers=50, **kwargs
+    )
+    got = _filter_observations(
+        *flat, pts, ext, K, min_inliers_per_frame=50, batch_size=97, **kwargs
+    )
     got = got.reshape(vis_scores.shape)
 
     assert np.array_equal(got, expected)
@@ -877,7 +1042,9 @@ def test_align_to_input_poses_undoes_roll_about_collinear_centers():
 
     # World roll of 10 deg about the x-axis trajectory line: centers unchanged, orientations rotated
     a = np.deg2rad(10.0)
-    R_g = np.array([[1.0, 0.0, 0.0], [0.0, np.cos(a), -np.sin(a)], [0.0, np.sin(a), np.cos(a)]])
+    R_g = np.array(
+        [[1.0, 0.0, 0.0], [0.0, np.cos(a), -np.sin(a)], [0.0, np.sin(a), np.cos(a)]]
+    )
     R_ref = R0 @ R_g.T
     refined = _w2c_from_rt(R_ref, -np.einsum("nij,nj->ni", R_ref, centers))
 
@@ -892,7 +1059,9 @@ def test_align_to_input_poses_needs_three_active_frames():
     original = refined.copy()
     refined[:2, :, 3] += 5.0  # move only the active pair
 
-    out, scale = _align_to_input_poses(refined, original, np.array([0, 1]), fix_scale=False)
+    out, scale = _align_to_input_poses(
+        refined, original, np.array([0, 1]), fix_scale=False
+    )
 
     assert scale is None
     assert np.allclose(out, refined)
@@ -923,17 +1092,27 @@ def test_optimize_keeps_dropped_frame_and_shares_focal():
     vis = vis_mask.astype(np.float32)
     vis[0] = 0.0  # frame 0 has no admissible observations -> dropped by the inlier gate
     intrinsics = intrinsics.copy()
-    intrinsics[0, 0, 0] = intrinsics[0, 1, 1] = 50.0  # distinct focal on the dropped frame
+    intrinsics[0, 0, 0] = intrinsics[0, 1, 1] = (
+        50.0  # distinct focal on the dropped frame
+    )
 
     cfg = BundleAdjustmentConfig(
-        lm_steps=3, min_inliers_per_frame=10, shared_camera=True, max_reproj_error=None, **REPROJ_ONLY
+        lm_steps=3,
+        min_inliers_per_frame=10,
+        shared_camera=True,
+        max_reproj_error=None,
+        **REPROJ_ONLY,
     )
     ba = BundleAdjustment(config=cfg)
-    ref_ext, ref_K = ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis), None, None, None)
+    ref_ext, ref_K = ba._optimize(
+        pts3d, extrinsics, intrinsics, *_flat(tracks, vis), None, None, None
+    )
 
     # shared_camera=True: the solved focal reaches the dropped frame too
     assert ref_K[0, 0, 0] == pytest.approx(ref_K[1, 0, 0], rel=1e-6)
-    assert ref_K[0, 0, 0] != pytest.approx(50.0, rel=1e-6), "dropped frame kept its stale focal"
+    assert ref_K[0, 0, 0] != pytest.approx(50.0, rel=1e-6), (
+        "dropped frame kept its stale focal"
+    )
 
     # The dropped frame sits at its input pose, which is the frame the active set is aligned to
     assert np.allclose(ref_ext[0], extrinsics[0, :3], atol=1e-6)
@@ -949,7 +1128,13 @@ def test_optimize_raises_when_too_few_observations_survive():
 
     with pytest.raises(ValueError, match=r"0 frames, 0 points"):
         ba._optimize(
-            np.zeros((P, 3)), ext, intr, *_flat(np.zeros((N, P, 2), np.float32), np.zeros((N, P))), None, None, None
+            np.zeros((P, 3)),
+            ext,
+            intr,
+            *_flat(np.zeros((N, P, 2), np.float32), np.zeros((N, P))),
+            None,
+            None,
+            None,
         )
 
 
@@ -967,16 +1152,31 @@ def _term_problem(config, seed=0):
 
     # Non-collinear camera path looking at a 3-5 m slab of points
     pts = torch.tensor(rng.uniform([-1, -1, 3], [1, 1, 5], (P, 3)), device=dev)
-    rot = pp.so3(torch.tensor([[0.02 * i, 0.08 * (i - N / 2), 0.01] for i in range(N)], device=dev, dtype=f64)).Exp()
-    trans = torch.tensor([[0.15 * i, 0.05 * (i % 2), 0.03 * i] for i in range(N)], device=dev, dtype=f64)
+    rot = pp.so3(
+        torch.tensor(
+            [[0.02 * i, 0.08 * (i - N / 2), 0.01] for i in range(N)],
+            device=dev,
+            dtype=f64,
+        )
+    ).Exp()
+    trans = torch.tensor(
+        [[0.15 * i, 0.05 * (i % 2), 0.03 * i] for i in range(N)], device=dev, dtype=f64
+    )
     poses = torch.cat([trans, rot.tensor()], 1)
     pc = torch.tensor([[W / 2, H / 2]] * N, device=dev, dtype=f64)
 
     # Every point seen by every frame: noisy pixels and 1% noisy depth
-    cam_idx, pt_idx = (t.reshape(-1) for t in torch.meshgrid(torch.arange(N), torch.arange(P), indexing="ij"))
+    cam_idx, pt_idx = (
+        t.reshape(-1)
+        for t in torch.meshgrid(torch.arange(N), torch.arange(P), indexing="ij")
+    )
     cam_idx, pt_idx = cam_idx.to(dev), pt_idx.to(dev)
     x_cam = pp.SE3(poses)[cam_idx].Act(pts[pt_idx])
-    uv = x_cam[:, :2] / x_cam[:, 2:] * f + pc[cam_idx] + 0.3 * torch.randn(len(cam_idx), 2, device=dev, dtype=f64)
+    uv = (
+        x_cam[:, :2] / x_cam[:, 2:] * f
+        + pc[cam_idx]
+        + 0.3 * torch.randn(len(cam_idx), 2, device=dev, dtype=f64)
+    )
     D = x_cam[:, 2] * (1 + 0.01 * torch.randn(len(cam_idx), device=dev, dtype=f64))
     w_z = 1 / (D * config.depth_sigma) if config.use_depth else torch.zeros_like(D)
     inputs = {
@@ -989,12 +1189,29 @@ def _term_problem(config, seed=0):
 
     # Photometric rows over a smooth texture and a wavy depth map
     if config.use_photometric:
-        yy, xx = torch.meshgrid(torch.arange(H, device=dev), torch.arange(W, device=dev), indexing="ij")
-        gray = torch.stack([0.5 + 0.2 * torch.sin(xx / 3.0 + 0.1 * i) * torch.cos(yy / 4.0) for i in range(N)])
-        depth = (4.0 + 0.3 * torch.sin(xx / 7.0) + 0.2 * torch.cos(yy / 5.0)).expand(N, H, W).contiguous()
-        K = torch.tensor([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], device=dev, dtype=f64).expand(N, 3, 3)
+        yy, xx = torch.meshgrid(
+            torch.arange(H, device=dev), torch.arange(W, device=dev), indexing="ij"
+        )
+        gray = torch.stack(
+            [
+                0.5 + 0.2 * torch.sin(xx / 3.0 + 0.1 * i) * torch.cos(yy / 4.0)
+                for i in range(N)
+            ]
+        )
+        depth = (
+            (4.0 + 0.3 * torch.sin(xx / 7.0) + 0.2 * torch.cos(yy / 5.0))
+            .expand(N, H, W)
+            .contiguous()
+        )
+        K = torch.tensor(
+            [[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], device=dev, dtype=f64
+        ).expand(N, 3, 3)
         inputs["photometric"] = photometric_samples(
-            pp.SE3(poses).matrix(), gray.double(), depth.double(), K.contiguous(), n_samples=256
+            pp.SE3(poses).matrix(),
+            gray.double(),
+            depth.double(),
+            K.contiguous(),
+            n_samples=256,
         )
 
     # Parameter layout as _optimize builds it
@@ -1016,12 +1233,16 @@ TERM_SETS = [
 @pytest.mark.parametrize("terms,n_gauge", TERM_SETS)
 def test_term_jacobian_matches_fd_and_gauge_count(terms, n_gauge, shared_camera):
     """bae Jacobian equals central differences under LM's own update; null space is the expected gauge."""
-    model, inputs = _term_problem(BundleAdjustmentConfig(shared_camera=shared_camera, **terms))
+    model, inputs = _term_problem(
+        BundleAdjustmentConfig(shared_camera=shared_camera, **terms)
+    )
     params = list(model.parameters())
 
     # bae sparse Jacobian, densified
     with torch.enable_grad():
-        J = torch.cat([j.to_dense() for j in bae_graph.jacobian(model(**inputs), params)], 1).detach()
+        J = torch.cat(
+            [j.to_dense() for j in bae_graph.jacobian(model(**inputs), params)], 1
+        ).detach()
 
     # Central differences through LM.update_parameter (SE3 retraction, additive elsewhere)
     eps, cols = 1e-6, []
@@ -1064,12 +1285,14 @@ def test_refine_threads_frame_paths_and_input_poses_to_extract_tracks():
     tracks = _flat_tracks(N, 5)
 
     with (
-        patch.object(bundle_adjustment, "extract_tracks", return_value=tracks) as mock_extract,
+        patch.object(
+            bundle_adjustment, "extract_tracks", return_value=tracks
+        ) as mock_extract,
         patch.object(BundleAdjustment, "_optimize", return_value=refined),
     ):
-        BundleAdjustment(BundleAdjustmentConfig(**REPROJ_ONLY, track_kwargs={"seed_fraction": 0.5})).refine(
-            **inputs, frame_paths=[Path("a.png"), Path("b.png")]
-        )
+        BundleAdjustment(
+            BundleAdjustmentConfig(**REPROJ_ONLY, track_kwargs={"seed_fraction": 0.5})
+        ).refine(**inputs, frame_paths=[Path("a.png"), Path("b.png")])
 
     kwargs = mock_extract.call_args.kwargs
     assert kwargs["frame_paths"] == [Path("a.png"), Path("b.png")]

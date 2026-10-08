@@ -7,7 +7,6 @@ Old code used inv(K_prev) @ K_curr which = I when K=identity, ignoring rotation.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from scipy.spatial.transform import Rotation as ScipyR
 
 from collab_splats.geometry.loop_closure.submap import Submap
@@ -21,7 +20,9 @@ def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
     return M
 
 
-def _make_submap(poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0) -> Submap:
+def _make_submap(
+    poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
+) -> Submap:
     k = poses.shape[0]
     # Submap.points is a dense (K, H, W, 3) grid; lay any (K, P, 3) input out as H = 1
     pts = np.asarray(world_points, dtype=np.float32).reshape(k, 1, -1, 3)
@@ -60,15 +61,17 @@ def test_hw_formula_uses_full_pose_not_k_only():
     H_w_new = H_overlap @ T @ H_scale
 
     # Old formula collapses to H_overlap (no rotation encoded)
-    assert np.allclose(H_w_old, H_overlap), "Old K-only formula should equal H_overlap when K=I"
+    assert np.allclose(H_w_old, H_overlap), (
+        "Old K-only formula should equal H_overlap when K=I"
+    )
 
     # New formula includes the 30° rotation
-    assert not np.allclose(
-        H_w_new, H_overlap, atol=1e-6
-    ), "New T-based formula must differ when world frames have a rotation"
-    assert np.allclose(
-        H_w_new[:3, :3], R_w, atol=1e-6
-    ), "New H_w rotation block should match the world-frame rotation R_w"
+    assert not np.allclose(H_w_new, H_overlap, atol=1e-6), (
+        "New T-based formula must differ when world frames have a rotation"
+    )
+    assert np.allclose(H_w_new[:3, :3], R_w, atol=1e-6), (
+        "New H_w rotation block should match the world-frame rotation R_w"
+    )
 
 
 def test_hw_formula_integration_two_submaps_rotated():
@@ -81,9 +84,13 @@ def test_hw_formula_integration_two_submaps_rotated():
     k = 2
 
     # Prev submap: identity camera (overlap frame = last frame = identity)
-    poses_prev = np.stack([_make_w2c(np.eye(3), np.array([i * 0.1, 0.0, 0.0])) for i in range(k)])
+    poses_prev = np.stack(
+        [_make_w2c(np.eye(3), np.array([i * 0.1, 0.0, 0.0])) for i in range(k)]
+    )
     # Curr submap: first frame (overlap) has 30° rotation in curr world
-    poses_curr = np.stack([_make_w2c(R_w, np.array([i * 0.1, 0.0, 0.0])) for i in range(k)])
+    poses_curr = np.stack(
+        [_make_w2c(R_w, np.array([i * 0.1, 0.0, 0.0])) for i in range(k)]
+    )
 
     wp_prev = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
     wp_curr = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
@@ -92,14 +99,20 @@ def test_hw_formula_integration_two_submaps_rotated():
     curr_sub = _make_submap(poses_curr.astype(np.float32), wp_curr, submap_id=1)
 
     total_frames = k + (k - 1)  # 3 with overlap=1
-    result = drive_pose_graph([prev_sub, curr_sub], lc_submaps=[], total_frames=total_frames, overlap_frames=1)
+    result = drive_pose_graph(
+        [prev_sub, curr_sub], lc_submaps=[], total_frames=total_frames, overlap_frames=1
+    )
 
     assert result.shape == (total_frames, 4, 4)
     # First frame (reference) should be near identity
-    assert np.allclose(result[0], np.eye(4), atol=0.15), f"Frame 0 should be near identity, got\n{result[0]}"
+    assert np.allclose(result[0], np.eye(4), atol=0.15), (
+        f"Frame 0 should be near identity, got\n{result[0]}"
+    )
     # T-based H_w: R_w in H_opt and local_proj cancels to I; the old K-only H_w left R_w visible
-    R_out = result[k, :3, :3]  # unique frame of curr submap (starts at frame_start=submap_id*k=k)
+    R_out = result[
+        k, :3, :3
+    ]  # unique frame of curr submap (starts at frame_start=submap_id*k=k)
     rot_vs_identity = np.linalg.norm(R_out - np.eye(3), "fro")
-    assert (
-        rot_vs_identity < 0.3
-    ), f"With correct H_w, rotation should cancel in extraction (got rot_vs_identity={rot_vs_identity:.3f})"
+    assert rot_vs_identity < 0.3, (
+        f"With correct H_w, rotation should cancel in extraction (got rot_vs_identity={rot_vs_identity:.3f})"
+    )

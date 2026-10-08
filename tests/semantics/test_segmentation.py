@@ -174,8 +174,14 @@ def test_base_segmentation_abstract():
 
 
 def _mobilesam_stub(strategy="object", box_batch_size=320):
-    with patch.object(mobile_sam, "_load_mobile_sam", return_value=(MagicMock(), MagicMock(), MagicMock())):
-        return mobile_sam.MobileSAMSegmentation(strategy=strategy, box_batch_size=box_batch_size)
+    with patch.object(
+        mobile_sam,
+        "_load_mobile_sam",
+        return_value=(MagicMock(), MagicMock(), MagicMock()),
+    ):
+        return mobile_sam.MobileSAMSegmentation(
+            strategy=strategy, box_batch_size=box_batch_size
+        )
 
 
 def test_mobilesamv2_bad_strategy_raises_at_init():
@@ -209,7 +215,9 @@ def test_mobilesamv2_box_batch_size_reaches_decoder_loop(monkeypatch):
     det = MagicMock()
     det.boxes.__len__.return_value = 2
     seg.object_model.return_value = [det]
-    seg.predictor.transform.apply_boxes.return_value = np.zeros((2, 4), dtype=np.float32)
+    seg.predictor.transform.apply_boxes.return_value = np.zeros(
+        (2, 4), dtype=np.float32
+    )
     seg.seg_model.parameters.return_value = iter([torch.zeros(1)])
     sizes = []
 
@@ -229,6 +237,7 @@ def test_mobilesamv2_box_batch_size_reaches_decoder_loop(monkeypatch):
 ########################################################
 ########## SAM3Segmentation ###########################
 ########################################################
+
 
 def test_registry_get_sam3():
     cls = BaseSegmentation.get("sam3")
@@ -263,7 +272,9 @@ def test_sam3_segment_with_text_interface():
     masks, boxes, scores = seg.segment_with_text(fake_img, "a cat")
 
     mock_processor.set_image.assert_called_once_with(fake_img)
-    mock_processor.set_text_prompt.assert_called_once_with(state="state", prompt="a cat")
+    mock_processor.set_text_prompt.assert_called_once_with(
+        state="state", prompt="a cat"
+    )
     assert masks.shape == (2, 1, 4, 4)
     assert boxes.shape == (2, 4)
     assert scores.shape == (2,)
@@ -305,5 +316,7 @@ def test_aggregate_masked_features_paints_each_mask_mean():
     pooled = aggregate_masked_features(features, masks, (4, 4), (4, 4))
 
     assert torch.allclose(pooled[0, :2], torch.full((2, 4), features[0, :2].mean()))
-    assert torch.allclose(pooled[0, 2:, :2], torch.full((2, 2), features[0, 2:, :2].mean()))
+    assert torch.allclose(
+        pooled[0, 2:, :2], torch.full((2, 2), features[0, 2:, :2].mean())
+    )
     assert torch.all(pooled[0, 2:, 2:] == 0)

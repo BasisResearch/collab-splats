@@ -70,7 +70,16 @@ def _render(primitive, gaussians, cam_to_world, intrinsics, width, height, **kwa
         (render, gsplat strategy info).
     """
     model = _render_only_model(gaussians, primitive)
-    return render_gaussians(primitive, model.activate(), cam_to_world, intrinsics, width, height, 0, **kwargs)
+    return render_gaussians(
+        primitive,
+        model.activate(),
+        cam_to_world,
+        intrinsics,
+        width,
+        height,
+        0,
+        **kwargs,
+    )
 
 
 def _gaussians(n_points=200, device="cuda"):
@@ -110,7 +119,9 @@ def _camera(device="cuda"):
     """
     cam_to_world = torch.eye(4, device=device)[None]
     cam_to_world[0, 2, 3] = -4.0
-    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[None]
+    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[
+        None
+    ]
     return cam_to_world, intrinsics
 
 
@@ -132,7 +143,9 @@ def test_render_shapes(primitive):
 @cuda
 def test_render_3dgs_without_normals_omits_normal_keys():
     cam_to_world, intrinsics = _camera()
-    render, info = _render("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=False)
+    render, info = _render(
+        "3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=False
+    )
     assert set(render) == {"rgb", "alpha", "depth"}
     assert render["rgb"].shape == (1, 64, 64, 3)
     assert "render_extra_signals" not in info or info["render_extra_signals"] is None
@@ -145,7 +158,9 @@ def test_gaussian_normals_face_the_camera():
     cam_to_world, _ = _camera()
     world_to_cam = torch.linalg.inv(cam_to_world)[0]
     scales = torch.exp(gaussians["scales"])
-    normals = gaussian_normals_in_camera_frame(gaussians["quats"], scales, gaussians["means"], world_to_cam)
+    normals = gaussian_normals_in_camera_frame(
+        gaussians["quats"], scales, gaussians["means"], world_to_cam
+    )
 
     rotation_w2c = world_to_cam[:3, :3]
     translation_w2c = world_to_cam[:3, 3]
@@ -201,7 +216,9 @@ def _rotated_camera(device="cuda"):
     cam_to_world[0, :3, 2] = torch.tensor([-1.0, 0, 0])
     cam_to_world[0, :3, 3] = torch.tensor([4.0, 0, 0])
     cam_to_world[0, 3, 3] = 1.0
-    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[None]
+    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[
+        None
+    ]
     return cam_to_world, intrinsics
 
 
@@ -256,8 +273,17 @@ def test_2dgs_median_depth_equals_expected_depth_on_a_single_surface():
 def test_2dgs_without_normals_omits_the_finite_differenced_depth_normals():
     # The rasterizer's own normal and median depth come free and stay; only depth_to_normal is skipped
     cam_to_world, intrinsics = _camera()
-    render, _info = _render("2dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=False)
-    assert set(render) == {"rgb", "alpha", "depth", "median_depth", "normal", "distortion"}
+    render, _info = _render(
+        "2dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=False
+    )
+    assert set(render) == {
+        "rgb",
+        "alpha",
+        "depth",
+        "median_depth",
+        "normal",
+        "distortion",
+    }
 
 
 @cuda
@@ -277,7 +303,9 @@ def test_model_render_is_the_same_call_as_render_gaussians(primitive):
     model = _render_only_model(_gaussians(), primitive)
     camera_id = torch.zeros(1, dtype=torch.long, device="cuda")
 
-    reference, _ = render_gaussians(primitive, model.activate(), cam_to_world, intrinsics, 64, 64, 0)
+    reference, _ = render_gaussians(
+        primitive, model.activate(), cam_to_world, intrinsics, 64, 64, 0
+    )
     actual, _ = model.render(cam_to_world, intrinsics, 64, 64, camera_id, step=0)
 
     assert set(actual) == set(reference)
@@ -313,10 +341,21 @@ def _train_stub(tmp_path, n_views=4, **overrides):
     Returns:
         The training frames, so a caller can score the report against what was trained on.
     """
-    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=n_views, height=24, width=40)
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(
+        n_views=n_views, height=24, width=40
+    )
     block = {"max_steps": 3, "cap_max": 500, "losses": {}, **overrides}
     cfg = SplatsConfig.from_dict(block)
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS[:n_views])
+    train(
+        cfg,
+        images,
+        world_to_cam,
+        intrinsics,
+        points,
+        colors,
+        tmp_path,
+        image_ids=_STUB_IMAGE_IDS[:n_views],
+    )
     return images
 
 
@@ -351,7 +390,11 @@ def _seed_pose_deltas(monkeypatch, shift=0.02):
         module = build(cls, *args, **kwargs)
 
         with torch.no_grad():
-            ramp = torch.arange(1, len(module.translation.weight) + 1, device=module.translation.weight.device)
+            ramp = torch.arange(
+                1,
+                len(module.translation.weight) + 1,
+                device=module.translation.weight.device,
+            )
             module.translation.weight += ramp[:, None].float() * shift
 
         return module
@@ -374,7 +417,15 @@ def test_checkpoint_is_self_contained(tmp_path):
     _train_stub(tmp_path)
     ckpt = torch.load(tmp_path / "ckpt.pt", weights_only=False)
 
-    assert set(ckpt) >= {"splats", "config", "cam_to_world", "intrinsics", "image_ids", "image_size", "appearance"}
+    assert set(ckpt) >= {
+        "splats",
+        "config",
+        "cam_to_world",
+        "intrinsics",
+        "image_ids",
+        "image_size",
+        "appearance",
+    }
     # The pose deltas are folded into cam_to_world, so there is nothing left to restore separately
     assert "pose_adjust" not in ckpt
     assert ckpt["cam_to_world"].shape == (4, 4, 4)
@@ -395,9 +446,22 @@ def test_checkpoint_is_self_contained(tmp_path):
 def test_checkpointed_poses_carry_the_pose_correction(tmp_path):
     # pose_opt is on by default: stored poses are the refined ones, not the raw inputs
     # - three steps is enough to move them off zero
-    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=4, height=32, width=32)
-    cfg = SplatsConfig.from_dict({"max_steps": 3, "cap_max": 500, "losses": {}, "pose_opt": True})
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS)
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(
+        n_views=4, height=32, width=32
+    )
+    cfg = SplatsConfig.from_dict(
+        {"max_steps": 3, "cap_max": 500, "losses": {}, "pose_opt": True}
+    )
+    train(
+        cfg,
+        images,
+        world_to_cam,
+        intrinsics,
+        points,
+        colors,
+        tmp_path,
+        image_ids=_STUB_IMAGE_IDS,
+    )
     stored = torch.load(tmp_path / "ckpt.pt", weights_only=False)["cam_to_world"]
 
     raw = torch.from_numpy(np.linalg.inv(world_to_cam)).float()
@@ -411,7 +475,14 @@ def test_quality_report_keeps_its_schema(tmp_path):
     report = json.loads((tmp_path / "splats_quality_report.json").read_text())
 
     assert set(report) == {"summary", "per_frame"}
-    assert set(report["summary"]) >= {"psnr", "ssim", "n_gaussians", "seconds", "final_losses", "config"}
+    assert set(report["summary"]) >= {
+        "psnr",
+        "ssim",
+        "n_gaussians",
+        "seconds",
+        "final_losses",
+        "config",
+    }
     assert len(report["per_frame"]) == 4
     assert set(report["per_frame"][0]) == {"image_id", "psnr", "ssim"}
 
@@ -444,7 +515,9 @@ def test_quality_report_carries_the_decoded_count_for_scaffold(tmp_path):
 
 
 @cuda
-def test_the_scaffold_ply_bakes_against_the_uncorrected_training_poses(tmp_path, monkeypatch):
+def test_the_scaffold_ply_bakes_against_the_uncorrected_training_poses(
+    tmp_path, monkeypatch
+):
     # The pose set the export receives decides the ply bytes
     # - splats.ply is frozen byte-for-byte; Scaffold bakes each anchor at the mean direction of
     #   the cameras that saw it
@@ -459,11 +532,28 @@ def test_the_scaffold_ply_bakes_against_the_uncorrected_training_poses(tmp_path,
 
     monkeypatch.setattr(Scaffold, "export_gaussians", spy)
 
-    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=24, width=40)
-    cfg = SplatsConfig.from_dict(
-        {"max_steps": 3, "cap_max": 500, "losses": {}, "representation": "scaffold", "pose_opt": True}
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(
+        n_views=3, height=24, width=40
     )
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS[:3])
+    cfg = SplatsConfig.from_dict(
+        {
+            "max_steps": 3,
+            "cap_max": 500,
+            "losses": {},
+            "representation": "scaffold",
+            "pose_opt": True,
+        }
+    )
+    train(
+        cfg,
+        images,
+        world_to_cam,
+        intrinsics,
+        points,
+        colors,
+        tmp_path,
+        image_ids=_STUB_IMAGE_IDS[:3],
+    )
 
     stored = torch.load(tmp_path / "ckpt.pt", weights_only=False)["cam_to_world"]
     exported = baked_against[0].cpu()
@@ -491,8 +581,8 @@ def test_write_outputs_takes_the_training_poses_keyword_only():
 def test_load_checkpoint_round_trips_the_model_and_the_cameras(tmp_path):
     _train_stub(tmp_path)
 
-    model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = load_checkpoint(
-        tmp_path / "ckpt.pt", "cpu"
+    model, camera_opt, cam_to_world, intrinsics, image_ids, (height, width) = (
+        load_checkpoint(tmp_path / "ckpt.pt", "cpu")
     )
 
     assert isinstance(model, Gaussians)
@@ -533,15 +623,22 @@ def test_load_checkpoint_rebuilds_a_scaffold_from_the_representation(tmp_path):
 @cuda
 def test_render_views_yields_one_render_per_view(tmp_path):
     _train_stub(tmp_path)
-    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(tmp_path / "ckpt.pt", "cuda")
+    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(
+        tmp_path / "ckpt.pt", "cuda"
+    )
 
-    renders = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))
+    renders = list(
+        render_views(model, camera_opt, cam_to_world, intrinsics, height, width)
+    )
 
     assert len(renders) == 4
     assert set(renders[0]) >= {"rgb", "depth", "alpha", "normal"}
     assert renders[0]["rgb"].shape == (1, 24, 40, 3)
     # A generator, not a list: the mesh stage streams 300 views through it
-    assert isinstance(render_views(model, camera_opt, cam_to_world, intrinsics, height, width), types.GeneratorType)
+    assert isinstance(
+        render_views(model, camera_opt, cam_to_world, intrinsics, height, width),
+        types.GeneratorType,
+    )
 
 
 @cuda
@@ -552,15 +649,21 @@ def test_render_views_leaves_grad_enabled_while_suspended(tmp_path):
     #   manufacturing failures in unrelated files and corrupting mutation-kill attribution
     # - the decorator form is what keeps this true; a `with` inside the body breaks it
     _train_stub(tmp_path, n_views=2)
-    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(tmp_path / "ckpt.pt", "cuda")
+    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(
+        tmp_path / "ckpt.pt", "cuda"
+    )
 
-    assert torch.is_grad_enabled(), "precondition: the suite runs with grad on, or this is vacuous"
+    assert torch.is_grad_enabled(), (
+        "precondition: the suite runs with grad on, or this is vacuous"
+    )
 
     # Suspend the generator mid-stream, exactly as a partial consumer leaves it
     renders = render_views(model, camera_opt, cam_to_world, intrinsics, height, width)
     first = next(renders)
 
-    assert torch.is_grad_enabled(), "render_views leaked no_grad out of a suspended generator"
+    assert torch.is_grad_enabled(), (
+        "render_views leaked no_grad out of a suspended generator"
+    )
 
     # ...and grad really was off INSIDE the body, so the guard above is not just a deleted no_grad
     assert not first["rgb"].requires_grad
@@ -575,30 +678,53 @@ def test_render_views_applies_each_views_own_color_affine(tmp_path):
     # - the two views get DIFFERENT weights: one shared weight makes lookup-by-own-id and
     #   lookup-by-constant-zero the same computation
     _train_stub(tmp_path, n_views=2, appearance_opt=True)
-    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(tmp_path / "ckpt.pt", "cuda")
+    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(
+        tmp_path / "ckpt.pt", "cuda"
+    )
     per_view = [(1.0, 0.2), (-0.5, 0.05)]
 
     with torch.no_grad():
         for view, (gain, bias) in enumerate(per_view):
-            camera_opt.appearance.weight[view] = torch.tensor([gain] * 3 + [bias] * 3, device="cuda")
+            camera_opt.appearance.weight[view] = torch.tensor(
+                [gain] * 3 + [bias] * 3, device="cuda"
+            )
 
-    corrected = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))
+    corrected = list(
+        render_views(model, camera_opt, cam_to_world, intrinsics, height, width)
+    )
 
     assert len(corrected) == len(per_view)
 
     for view, (gain, bias) in enumerate(per_view):
         camera_id = torch.tensor([view], device="cuda")
         raw, _ = model.render(
-            cam_to_world[view : view + 1], intrinsics[view : view + 1], width, height, camera_id, step=None
+            cam_to_world[view : view + 1],
+            intrinsics[view : view + 1],
+            width,
+            height,
+            camera_id,
+            step=None,
         )
 
         # gain = 1 + params[:3], bias = params[3:], then the clamp render_views owns
-        assert torch.allclose(corrected[view]["rgb"], (raw["rgb"] * (1.0 + gain) + bias).clamp(0, 1), atol=1e-6)
+        assert torch.allclose(
+            corrected[view]["rgb"],
+            (raw["rgb"] * (1.0 + gain) + bias).clamp(0, 1),
+            atol=1e-6,
+        )
         assert not torch.allclose(corrected[view]["rgb"], raw["rgb"].clamp(0, 1))
 
     # And the two views really are told apart: view 1 through view 0's affine is a different image
-    view_one_raw, _ = model.render(cam_to_world[1:2], intrinsics[1:2], width, height, torch.tensor([1], device="cuda"))
-    assert not torch.allclose(corrected[1]["rgb"], (view_one_raw["rgb"] * 2.0 + 0.2).clamp(0, 1), atol=1e-6)
+    view_one_raw, _ = model.render(
+        cam_to_world[1:2],
+        intrinsics[1:2],
+        width,
+        height,
+        torch.tensor([1], device="cuda"),
+    )
+    assert not torch.allclose(
+        corrected[1]["rgb"], (view_one_raw["rgb"] * 2.0 + 0.2).clamp(0, 1), atol=1e-6
+    )
 
 
 @cuda
@@ -630,9 +756,12 @@ def test_load_checkpoint_refuses_an_unknown_representation(tmp_path):
 
 @cuda
 @pytest.mark.parametrize(
-    "representation, unit, other", [("vanilla", "gaussians", "anchors"), ("scaffold", "anchors", "gaussians")]
+    "representation, unit, other",
+    [("vanilla", "gaussians", "anchors"), ("scaffold", "anchors", "gaussians")],
 )
-def test_write_outputs_logs_the_models_own_primitive_unit(tmp_path, caplog, representation, unit, other):
+def test_write_outputs_logs_the_models_own_primitive_unit(
+    tmp_path, caplog, representation, unit, other
+):
     # The summary line names the model's own primitive unit
     # - n_primitives counts anchors for a scaffold, gaussians for a vanilla model
     # - off the model, not type(model).__name__, which falls through to "gaussians" on any rename
@@ -642,7 +771,8 @@ def test_write_outputs_logs_the_models_own_primitive_unit(tmp_path, caplog, repr
     summaries = [
         record.getMessage()
         for record in caplog.records
-        if record.name == "collab_splats.splats.checkpoint" and record.getMessage().startswith("splats: ")
+        if record.name == "collab_splats.splats.checkpoint"
+        and record.getMessage().startswith("splats: ")
     ]
     assert len(summaries) == 1
     assert f" {unit}" in summaries[0]
@@ -658,29 +788,45 @@ def test_quality_report_scores_each_frame_against_its_own_image(tmp_path):
     #   of the source frame index fails the id assertion below
     images = _train_stub(tmp_path)
     report = json.loads((tmp_path / "splats_quality_report.json").read_text())
-    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(tmp_path / "ckpt.pt", "cuda")
+    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(
+        tmp_path / "ckpt.pt", "cuda"
+    )
 
     # Recompute each psnr from the render at that ROW against the image at that row
     # - the id is a frame index, not a row, so indexing `images` by it would IndexError here
     #   and be a silent mismatch on a real scene
-    renders = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))
+    renders = list(
+        render_views(model, camera_opt, cam_to_world, intrinsics, height, width)
+    )
 
     for view, (frame, render) in enumerate(zip(report["per_frame"], renders)):
-        target = torch.from_numpy(images[view]).to(render["rgb"].device).float()[None] / 255.0
+        target = (
+            torch.from_numpy(images[view]).to(render["rgb"].device).float()[None]
+            / 255.0
+        )
         mse = torch.nn.functional.mse_loss(render["rgb"], target).item()
         assert frame["image_id"] == _STUB_IMAGE_IDS[view]
-        assert frame["psnr"] == pytest.approx(10 * np.log10(1.0 / max(mse, 1e-12)), rel=1e-4)
+        assert frame["psnr"] == pytest.approx(
+            10 * np.log10(1.0 / max(mse, 1e-12)), rel=1e-4
+        )
 
     # The frames are distinguishable, so that comparison is not vacuous
     # - the same render scored against the next view's photo is a materially different number
     first_render = renders[0]
-    wrong_target = torch.from_numpy(images[1]).to(first_render["rgb"].device).float()[None] / 255.0
+    wrong_target = (
+        torch.from_numpy(images[1]).to(first_render["rgb"].device).float()[None] / 255.0
+    )
     wrong_mse = torch.nn.functional.mse_loss(first_render["rgb"], wrong_target).item()
-    assert abs(10 * np.log10(1.0 / max(wrong_mse, 1e-12)) - report["per_frame"][0]["psnr"]) > 0.1
+    assert (
+        abs(10 * np.log10(1.0 / max(wrong_mse, 1e-12)) - report["per_frame"][0]["psnr"])
+        > 0.1
+    )
 
 
 @cuda
-def test_the_scaffold_ply_holds_the_values_exported_at_the_frame_size(tmp_path, monkeypatch):
+def test_the_scaffold_ply_holds_the_values_exported_at_the_frame_size(
+    tmp_path, monkeypatch
+):
     # splats.ply is a frozen surface and `.exists()` cannot see into it
     # - swapping `width, height` in the export changes the frustum every anchor is tested against,
     #   and so the baked view direction, decoded colors, and which offsets pass the opacity gate
@@ -698,42 +844,71 @@ def test_the_scaffold_ply_holds_the_values_exported_at_the_frame_size(tmp_path, 
 
     monkeypatch.setattr(Scaffold, "export_gaussians", spy)
 
-    images, world_to_cam, intrinsics, points, colors, _ = make_scene(n_views=3, height=24, width=40)
-    cfg = SplatsConfig.from_dict({"max_steps": 3, "cap_max": 500, "losses": {}, "representation": "scaffold"})
-    train(cfg, images, world_to_cam, intrinsics, points, colors, tmp_path, image_ids=_STUB_IMAGE_IDS[:3])
+    images, world_to_cam, intrinsics, points, colors, _ = make_scene(
+        n_views=3, height=24, width=40
+    )
+    cfg = SplatsConfig.from_dict(
+        {"max_steps": 3, "cap_max": 500, "losses": {}, "representation": "scaffold"}
+    )
+    train(
+        cfg,
+        images,
+        world_to_cam,
+        intrinsics,
+        points,
+        colors,
+        tmp_path,
+        image_ids=_STUB_IMAGE_IDS[:3],
+    )
 
     # Re-export the same model at the size the fixture built: 40 wide, 24 high
     # - the two literals are the independent guard; a swap at the call site cannot move them
-    expected = export_gaussians(captured["model"], captured["cam_to_world"], captured["intrinsics"], 40, 24)
+    expected = export_gaussians(
+        captured["model"], captured["cam_to_world"], captured["intrinsics"], 40, 24
+    )
     written = load_ply_to_splats(str(tmp_path / "splats.ply"))
-    expected_np = {name: value.detach().cpu().numpy() for name, value in expected.items()}
+    expected_np = {
+        name: value.detach().cpu().numpy() for name, value in expected.items()
+    }
 
     # Vacuity guard: a swapped frame size must actually change what is exported
     # - measured: 6 of 1009 decoded Gaussians move — 0.40 opacities, 0.066 sh0, 0.037 scales, 0.35 quats
     # - `means` excluded: anchor positions do not depend on the frustum, measured 0 of 1009
     # - if the fixture drifts to orientation-invariant anchors, all five match under the mutant
     #   and the assertion below passes green with nothing to notice
-    swapped = export_gaussians(captured["model"], captured["cam_to_world"], captured["intrinsics"], 24, 40)
-    assert len(swapped["means"]) == len(expected["means"]), "fixture drifted — re-measure the margins below"
+    swapped = export_gaussians(
+        captured["model"], captured["cam_to_world"], captured["intrinsics"], 24, 40
+    )
+    assert len(swapped["means"]) == len(expected["means"]), (
+        "fixture drifted — re-measure the margins below"
+    )
 
     for name in ("opacities", "sh0", "scales", "quats"):
         margin = (expected[name] - swapped[name]).abs().max().item()
-        assert margin > 0.01, f"{name}: a swapped frame size changes nothing, so the check below is vacuous"
+        assert margin > 0.01, (
+            f"{name}: a swapped frame size changes nothing, so the check below is vacuous"
+        )
 
     # A single-splat fallback would make every comparison below vacuous
     assert len(written["means"]) > 1
     assert len(written["means"]) == len(expected_np["means"])
 
     for name in ("means", "opacities", "sh0", "scales", "quats"):
-        assert np.allclose(written[name].numpy(), expected_np[name], rtol=1e-4, atol=1e-6), name
+        assert np.allclose(
+            written[name].numpy(), expected_np[name], rtol=1e-4, atol=1e-6
+        ), name
 
 
 @cuda
 def test_render_views_yields_median_depth_for_2dgs(tmp_path):
     _train_stub(tmp_path, n_views=2, primitive="2dgs")
-    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(tmp_path / "ckpt.pt", "cuda")
+    model, camera_opt, cam_to_world, intrinsics, _, (height, width) = load_checkpoint(
+        tmp_path / "ckpt.pt", "cuda"
+    )
 
-    render = list(render_views(model, camera_opt, cam_to_world, intrinsics, height, width))[0]
+    render = list(
+        render_views(model, camera_opt, cam_to_world, intrinsics, height, width)
+    )[0]
 
     assert "median_depth" in render
 
@@ -742,8 +917,12 @@ def test_render_views_yields_median_depth_for_2dgs(tmp_path):
 def test_3dgs_normals_do_not_change_rgb_or_depth():
     # One rasterization call serves both settings; the extra signal must not leak into rgb/depth
     cam_to_world, intrinsics = _camera()
-    with_normals, _ = _render("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=True)
-    without, _ = _render("3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=False)
+    with_normals, _ = _render(
+        "3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=True
+    )
+    without, _ = _render(
+        "3dgs", _gaussians(), cam_to_world, intrinsics, 64, 64, render_normals=False
+    )
 
     assert torch.equal(with_normals["rgb"], without["rgb"])
     assert torch.equal(with_normals["depth"], without["depth"])

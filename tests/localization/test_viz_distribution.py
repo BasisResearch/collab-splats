@@ -50,7 +50,9 @@ def test_distribution_per_bar_ticks_when_totals_vary():
     # Drop 3 correspondences from frame 0 → totals no longer uniform
     keep = np.ones(len(loc.ref_frame_indices), dtype=bool)
     keep[:3] = False
-    fig = plot_inlier_distribution(loc.ref_frame_indices[keep], loc.inlier_mask[keep], n_frames=4)
+    fig = plot_inlier_distribution(
+        loc.ref_frame_indices[keep], loc.inlier_mask[keep], n_frames=4
+    )
     ax = fig.axes[0]
     # No global dashed line; per-bar ticks drawn as solid short hlines
     assert not any(line.get_linestyle() == "--" for line in ax.get_lines())
@@ -70,7 +72,10 @@ def test_distribution_clamps_short_n_frames():
 def test_distribution_marks_localized_frames():
     loc = _fake_result()
     fig = plot_inlier_distribution(
-        loc.ref_frame_indices, loc.inlier_mask, n_frames=4, frame_sources=["reconstruction"] * 3 + ["localized"]
+        loc.ref_frame_indices,
+        loc.inlier_mask,
+        n_frames=4,
+        frame_sources=["reconstruction"] * 3 + ["localized"],
     )
     assert fig is not None
     plt.close(fig)
@@ -80,7 +85,9 @@ def test_correspondences_returns_figure_for_selected_ref():
     loc = _fake_result()  # frame 2 has 3 inliers of 10
     query = np.full((48, 64, 3), 100, dtype=np.uint8)
     ref_image = np.full((48, 64, 3), 60, dtype=np.uint8)
-    fig = plot_correspondences(query, ref_image, *correspondences_for_ref(loc, 2), show=False)
+    fig = plot_correspondences(
+        query, ref_image, *correspondences_for_ref(loc, 2), show=False
+    )
     assert fig is not None
     assert "3/10 inliers" in fig.axes[0].get_title()
     plt.close(fig)
@@ -91,6 +98,8 @@ def test_correspondences_uses_ranked_ref_frame():
     query = np.full((48, 64, 3), 100, dtype=np.uint8)
     ref_image = np.full((48, 64, 3), 60, dtype=np.uint8)
     ri = loc.ranked_ref_frames[0]
-    fig = plot_correspondences(query, ref_image, *correspondences_for_ref(loc, ri), show=False)
+    fig = plot_correspondences(
+        query, ref_image, *correspondences_for_ref(loc, ri), show=False
+    )
     assert "4/10 inliers" in fig.axes[0].get_title()
     plt.close(fig)

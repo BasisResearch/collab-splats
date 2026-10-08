@@ -19,12 +19,12 @@ nbqa mypy $INCLUDED_NOTEBOOKS --nbqa-exclude "$EXCLUDE_PATTERN" || true
 # Auto-fix import ordering and formatting
 nbqa isort $INCLUDED_NOTEBOOKS --nbqa-exclude "$EXCLUDE_PATTERN"
 
-# Check formatting
-nbqa black --check $INCLUDED_NOTEBOOKS --nbqa-exclude "$EXCLUDE_PATTERN"
+# Check formatting at the tutorial contract's 100-char cap
+nbqa black --check --line-length=100 $INCLUDED_NOTEBOOKS --nbqa-exclude "$EXCLUDE_PATTERN"
 
-# Lint while relaxing common notebook patterns and matching repo line length
+# Lint while relaxing notebook patterns; F821: names come from %run ../tutorial.py and IPython
 nbqa flake8 \
   $INCLUDED_NOTEBOOKS \
   --nbqa-exclude "$EXCLUDE_PATTERN" \
   --max-line-length=120 \
-  --extend-ignore=E203,E402,E401,F401,E501
+  --extend-ignore=E203,E402,E401,F401,E501,F821

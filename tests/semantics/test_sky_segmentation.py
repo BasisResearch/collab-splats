@@ -72,7 +72,12 @@ class _ConstantBackend:
 
 
 # The repo's config.json fields the backend reads
-_CONFIG = {"encoder_name": "mit_b2", "decoder_channels": 256, "in_channels": 3, "classes": 4}
+_CONFIG = {
+    "encoder_name": "mit_b2",
+    "decoder_channels": 256,
+    "in_channels": 3,
+    "classes": 4,
+}
 
 
 def _logits_for(prob: np.ndarray) -> np.ndarray:
@@ -80,7 +85,9 @@ def _logits_for(prob: np.ndarray) -> np.ndarray:
     (4, h, w) logits whose softmax puts exactly `prob` on the sky class.
     """
     rest = np.log(np.clip((1.0 - prob) / 3.0, 1e-12, None))
-    return np.stack([rest, np.log(np.clip(prob, 1e-12, None)), rest, rest]).astype(np.float32)
+    return np.stack([rest, np.log(np.clip(prob, 1e-12, None)), rest, rest]).astype(
+        np.float32
+    )
 
 
 def _wire(monkeypatch, logits, threshold=0.5):
@@ -89,7 +96,9 @@ def _wire(monkeypatch, logits, threshold=0.5):
     """
     model = _FakeModel(lambda n: logits)
     monkeypatch.setattr(sky, "load_hf_weights", lambda repo_id, filename: filename)
-    monkeypatch.setattr(sky, "open", lambda path: io.StringIO(json.dumps(_CONFIG)), raising=False)
+    monkeypatch.setattr(
+        sky, "open", lambda path: io.StringIO(json.dumps(_CONFIG)), raising=False
+    )
     monkeypatch.setattr(sky, "load_file", lambda path: {})
     monkeypatch.setattr(sky.smp, "Segformer", lambda **kwargs: model)
     return sky.SkyWaterSegmentation(threshold=threshold, device="cpu"), model
@@ -217,7 +226,9 @@ def _scene(tmp_path, monkeypatch, prob, frame_idxs=(0, 5, 7)):
     fr.write_frames(tmp_path / "images", images, frame_idxs)
 
     backend, model = _backend(monkeypatch, prob)
-    monkeypatch.setattr(sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: backend))
+    monkeypatch.setattr(
+        sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: backend)
+    )
     return tmp_path / "images", model
 
 
@@ -235,7 +246,9 @@ def test_sky_masks_reads_every_frame_in_filename_order(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("threshold", [-0.1, 1.0, 1.5])
-def test_sky_masks_rejects_threshold_outside_unit_interval(tmp_path, monkeypatch, threshold):
+def test_sky_masks_rejects_threshold_outside_unit_interval(
+    tmp_path, monkeypatch, threshold
+):
     """A threshold that makes every pixel sky, or none, raises before any frame is segmented."""
     images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
 
@@ -247,7 +260,9 @@ def test_sky_masks_rejects_threshold_outside_unit_interval(tmp_path, monkeypatch
 def test_sky_masks_returns_masks_in_the_order_idxs_names_them(tmp_path, monkeypatch):
     # Per-frame probability so a permutation is detectable: frame_idx 7 is the only sky one
     images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
-    model.logits_for = lambda n: _logits_for(np.full((384, 384), 0.9 if n == 3 else 0.0, np.float32))
+    model.logits_for = lambda n: _logits_for(
+        np.full((384, 384), 0.9 if n == 3 else 0.0, np.float32)
+    )
 
     # Filename order is (0, 5, 7), so the third segmented frame is frame_idx 7
     sky.sky_masks(images_dir)
@@ -263,7 +278,9 @@ def test_sky_masks_caches_probability_as_8bit(tmp_path, monkeypatch):
     images_dir, model = _scene(tmp_path, monkeypatch, prob)
 
     sky.sky_masks(images_dir)
-    cached = cv2.imread(str(tmp_path / "sky" / "frame_000005.png"), cv2.IMREAD_GRAYSCALE)
+    cached = cv2.imread(
+        str(tmp_path / "sky" / "frame_000005.png"), cv2.IMREAD_GRAYSCALE
+    )
 
     assert cached.shape == (16, 16)
     assert abs(int(cached[0, 0]) - 230) <= 1  # 0.9 * 255
@@ -273,14 +290,24 @@ def test_sky_masks_caches_probability_as_8bit(tmp_path, monkeypatch):
 def test_sky_masks_rethresholds_cache_without_model(tmp_path, monkeypatch):
     """A new threshold re-reads the cached probability; the model is not called again."""
     images_dir, _ = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
-    monkeypatch.setattr(sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: _ConstantBackend(True)))
-    sky.sky_masks(images_dir)  # warm the cache with a 0.9 probability at the default threshold
+    monkeypatch.setattr(
+        sky.BaseSegmentation,
+        "get",
+        classmethod(lambda cls, name: lambda: _ConstantBackend(True)),
+    )
+    sky.sky_masks(
+        images_dir
+    )  # warm the cache with a 0.9 probability at the default threshold
 
     # The model factory must not be asked for again: any call raises
     monkeypatch.setattr(
         sky.BaseSegmentation,
         "get",
-        classmethod(lambda cls, name: MagicMock(side_effect=AssertionError("model should not be called"))),
+        classmethod(
+            lambda cls, name: MagicMock(
+                side_effect=AssertionError("model should not be called")
+            )
+        ),
     )
 
     assert not sky.sky_masks(images_dir, threshold=0.95).any()
@@ -302,7 +329,11 @@ def test_sky_masks_reads_old_binary_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(
         sky.BaseSegmentation,
         "get",
-        classmethod(lambda cls, name: MagicMock(side_effect=AssertionError("model should not be called"))),
+        classmethod(
+            lambda cls, name: MagicMock(
+                side_effect=AssertionError("model should not be called")
+            )
+        ),
     )
 
     mask = sky.sky_masks(images_dir, cache_dir=cache_dir)
@@ -346,7 +377,9 @@ def test_sky_masks_asks_the_registry_for_skywater(tmp_path, monkeypatch):
     monkeypatch.setattr(
         sky.BaseSegmentation,
         "get",
-        classmethod(lambda cls, name: asked.append(name) or (lambda: _ConstantBackend(False))),
+        classmethod(
+            lambda cls, name: asked.append(name) or (lambda: _ConstantBackend(False))
+        ),
     )
 
     sky.sky_masks(images_dir)
@@ -354,13 +387,23 @@ def test_sky_masks_asks_the_registry_for_skywater(tmp_path, monkeypatch):
     assert asked == ["skywater"]
 
 
-def test_sky_masks_segments_without_stacking_every_uncached_frame(tmp_path, monkeypatch):
+def test_sky_masks_segments_without_stacking_every_uncached_frame(
+    tmp_path, monkeypatch
+):
     # read_frames returns one np.stack of every miss — ~10 GB for an 853-frame scene, on top
     # of whatever fusion buffers the mesh stage is already holding. Segmenting reads one batch
     # at a time, so this whole run must never reach read_frames.
     images_dir, _ = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
-    monkeypatch.setattr(sky.BaseSegmentation, "get", classmethod(lambda cls, name: lambda: _ConstantBackend(True)))
-    monkeypatch.setattr(sky.frames, "read_frames", lambda *a, **k: pytest.fail("sky_masks called read_frames"))
+    monkeypatch.setattr(
+        sky.BaseSegmentation,
+        "get",
+        classmethod(lambda cls, name: lambda: _ConstantBackend(True)),
+    )
+    monkeypatch.setattr(
+        sky.frames,
+        "read_frames",
+        lambda *a, **k: pytest.fail("sky_masks called read_frames"),
+    )
 
     assert sky.sky_masks(images_dir).all()
 
@@ -370,8 +413,15 @@ def test_sky_masks_segments_without_stacking_every_uncached_frame(tmp_path, monk
 
 def test_sky_masks_segments_misses_in_batches_of_batch_size(tmp_path, monkeypatch):
     # Five misses at batch_size=2 are three forwards; only the third frame is sky
-    images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32), frame_idxs=(0, 1, 2, 3, 4))
-    model.logits_for = lambda n: _logits_for(np.full((384, 384), 0.9 if n == 3 else 0.0, np.float32))
+    images_dir, model = _scene(
+        tmp_path,
+        monkeypatch,
+        np.zeros((384, 384), np.float32),
+        frame_idxs=(0, 1, 2, 3, 4),
+    )
+    model.logits_for = lambda n: _logits_for(
+        np.full((384, 384), 0.9 if n == 3 else 0.0, np.float32)
+    )
 
     masks = sky.sky_masks(images_dir, batch_size=2)
 
@@ -384,7 +434,9 @@ def test_segment_batch_returns_each_frame_at_its_own_size(monkeypatch):
     prob[:192] = 0.9
     backend, model = _backend(monkeypatch, prob)
 
-    results = backend.segment_batch([np.zeros((64, 96, 3), np.uint8), np.zeros((20, 10, 3), np.uint8)])
+    results = backend.segment_batch(
+        [np.zeros((64, 96, 3), np.uint8), np.zeros((20, 10, 3), np.uint8)]
+    )
 
     assert model.batch_sizes == [2]
     assert [mask.shape for mask, _ in results] == [(64, 96), (20, 10)]

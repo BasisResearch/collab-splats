@@ -93,7 +93,9 @@ class PointcloudResult:
     pixel_indices: "np.ndarray | None" = None
 
     # Path of the zarr store this result was loaded from
-    _zarr_path: "Path | None" = field(default=None, init=False, repr=False, compare=False)
+    _zarr_path: "Path | None" = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         """
@@ -145,12 +147,16 @@ class PointcloudResult:
             ("model_intrinsics", self.model_intrinsics),
             ("original_coords", self.original_coords),
         ):
+            assert arr is not None, name
             store.create_array(name, data=arr, chunks=arr.shape, compressors=LZ4)
 
         # Write the optional point-to-pixel map as one chunk
         if self.pixel_indices is not None:
             store.create_array(
-                "pixel_indices", data=self.pixel_indices, chunks=self.pixel_indices.shape, compressors=LZ4
+                "pixel_indices",
+                data=self.pixel_indices,
+                chunks=self.pixel_indices.shape,
+                compressors=LZ4,
             )
 
         # Write the optional per-pixel arrays as numpy, one chunk per frame
@@ -163,7 +169,9 @@ class PointcloudResult:
                 continue
 
             arr = to_numpy(arr)
-            store.create_array(name, data=arr, chunks=(1, *arr.shape[1:]), compressors=LZ4)
+            store.create_array(
+                name, data=arr, chunks=(1, *arr.shape[1:]), compressors=LZ4
+            )
 
     @classmethod
     def load_zarr(
@@ -208,9 +216,21 @@ class PointcloudResult:
         model_height = int(attrs["model_height"])
 
         # Read the optional arrays, or None when missing or not requested
-        pixel_indices = store["pixel_indices"][:] if (load_pixel_indices and "pixel_indices" in store) else None
-        depth = store["depth"][:] if ((load_depth or load_world_points) and "depth" in store) else None
-        confidence = torch.from_numpy(store["confidence"][:]) if (load_confidence and "confidence" in store) else None
+        pixel_indices = (
+            store["pixel_indices"][:]
+            if (load_pixel_indices and "pixel_indices" in store)
+            else None
+        )
+        depth = (
+            store["depth"][:]
+            if ((load_depth or load_world_points) and "depth" in store)
+            else None
+        )
+        confidence = (
+            torch.from_numpy(store["confidence"][:])
+            if (load_confidence and "confidence" in store)
+            else None
+        )
 
         # Rebuild world points from depth, then drop depth if it was read only for them
         world_points = None
@@ -221,7 +241,11 @@ class PointcloudResult:
             depth = None
 
         # Load images only when asked, since they are large
-        images = torch.from_numpy(store["images"][:]) if load_images and "images" in store else None
+        images = (
+            torch.from_numpy(store["images"][:])
+            if load_images and "images" in store
+            else None
+        )
 
         result = cls(
             points=pts3d,
@@ -266,7 +290,9 @@ class PointcloudResult:
             raise ValueError(f"depth must be (N, H, W), got {self.depth.shape}")
 
         # Unproject every frame under the current poses, then read each point's source pixel
-        world_points = unproject_frames(self.depth, self.extrinsics, self.model_intrinsics)
+        world_points = unproject_frames(
+            self.depth, self.extrinsics, self.model_intrinsics
+        )
         frame, row, col = self.pixel_indices.T
         points = world_points[frame, row, col]
 
@@ -286,7 +312,12 @@ class PointcloudResult:
         """
         pixel_indices = None if self.pixel_indices is None else self.pixel_indices[mask]
 
-        return replace(self, points=self.points[mask], colors=self.colors[mask], pixel_indices=pixel_indices)
+        return replace(
+            self,
+            points=self.points[mask],
+            colors=self.colors[mask],
+            pixel_indices=pixel_indices,
+        )
 
     def to_colmap(self) -> pycolmap.Reconstruction:
         """
@@ -335,7 +366,9 @@ class PointcloudResult:
             cam_from_world = pycolmap.Rigid3d(exts[i].astype(np.float64))
 
             # Add the image together with its pose
-            image = pycolmap.Image(name=path.name, camera_id=camera_id, image_id=image_id)
+            image = pycolmap.Image(
+                name=path.name, camera_id=camera_id, image_id=image_id
+            )
             recon.add_image_with_trivial_frame(image, cam_from_world)
 
         return recon
@@ -350,8 +383,12 @@ class PointcloudResult:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write points and 0-255 colors through Open3D, which stores colors in [0, 1]
-        pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(np.asarray(self.points, dtype=np.float64)))
-        pcd.colors = o3d.utility.Vector3dVector(np.asarray(self.colors, dtype=np.float64) / 255.0)
+        pcd = o3d.geometry.PointCloud(
+            o3d.utility.Vector3dVector(np.asarray(self.points, dtype=np.float64))
+        )
+        pcd.colors = o3d.utility.Vector3dVector(
+            np.asarray(self.colors, dtype=np.float64) / 255.0
+        )
         o3d.io.write_point_cloud(str(path), pcd)
 
         # Log the output file and point count
@@ -379,7 +416,9 @@ class BasePointcloudCreator(ABC):
     max_points: int = 500_000
     clean: bool = True
 
-    def create_pointcloud(self, images_dir: Path, out_dir: Path, model_dir: Path | None = None) -> PointcloudResult:
+    def create_pointcloud(
+        self, images_dir: Path, out_dir: Path, model_dir: Path | None = None
+    ) -> PointcloudResult:
         """
         Reconstruct the frames in images_dir, clean and cap, and optionally export a COLMAP model.
 
@@ -411,7 +450,9 @@ class BasePointcloudCreator(ABC):
         result = self._reconstruct(paths, out_dir)
 
         # Remove outliers and cap the number of points
-        result = clean_pointcloud(result, remove_outliers=self.clean, max_points=self.max_points)
+        result = clean_pointcloud(
+            result, remove_outliers=self.clean, max_points=self.max_points
+        )
         logger.info("pointcloud: %d pts after clean + cap", len(result.points))
 
         # Export a COLMAP model if a directory was given

@@ -12,7 +12,10 @@ def _make_submap(k=4, h=224, w=224, d=128, submap_id=0):
         submap_id=submap_id,
         frames=torch.zeros(k, 3, h, w),
         poses=np.tile(np.eye(4), (k, 1, 1)).astype(np.float32),
-        intrinsics=np.tile(np.array([[500, 0, 112], [0, 500, 112], [0, 0, 1]], dtype=np.float32), (k, 1, 1)),
+        intrinsics=np.tile(
+            np.array([[500, 0, 112], [0, 500, 112], [0, 0, 1]], dtype=np.float32),
+            (k, 1, 1),
+        ),
         retrieval_vectors=torch.zeros(k, d),
         image_paths=[Path(f"frame_{i:04d}.jpg") for i in range(k)],
     )
@@ -41,7 +44,13 @@ def test_loop_closure_config_defaults():
 
 
 def test_loop_match_dataclass():
-    m = LoopMatch(0.3, query_submap_id=0, detected_submap_id=1, query_frame_idx=2, detected_frame_idx=5)
+    m = LoopMatch(
+        0.3,
+        query_submap_id=0,
+        detected_submap_id=1,
+        query_frame_idx=2,
+        detected_frame_idx=5,
+    )
     assert m.similarity_score == 0.3
     assert m.detected_submap_id == 1
     assert m.accepted is False  # default
@@ -52,7 +61,9 @@ def test_loop_match_dataclass():
 def test_find_loop_closures_detects_similar():
     d = 512
     base_vec = torch.nn.functional.normalize(torch.randn(d), p=2, dim=0)
-    similar_vec = torch.nn.functional.normalize(base_vec + torch.randn(d) * 0.01, p=2, dim=0)
+    similar_vec = torch.nn.functional.normalize(
+        base_vec + torch.randn(d) * 0.01, p=2, dim=0
+    )
     different_vec = torch.nn.functional.normalize(torch.randn(d), p=2, dim=0)
 
     k = 2
@@ -112,7 +123,9 @@ def test_find_loop_closures_no_match():
         image_paths=[Path(f"g{i}.jpg") for i in range(2)],
     )
 
-    matches = find_loop_closures(query, [past], lc_threshold=0.001, max_loops=1, nms_frame_distance=0)
+    matches = find_loop_closures(
+        query, [past], lc_threshold=0.001, max_loops=1, nms_frame_distance=0
+    )
     assert matches == []
 
 
@@ -132,7 +145,9 @@ def _find_at(frame_scores, max_loops, nms):
         query.retrieval_vectors[i, frame_idx] = 10.0
         query.retrieval_vectors[i, n_past] = score
 
-    matches = find_loop_closures(query, [past], lc_threshold=1.0, max_loops=max_loops, nms_frame_distance=nms)
+    matches = find_loop_closures(
+        query, [past], lc_threshold=1.0, max_loops=max_loops, nms_frame_distance=nms
+    )
     return [m.detected_frame_idx for m in matches]
 
 

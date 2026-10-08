@@ -4,6 +4,7 @@ MobileSAMv2 segmentation backend ("mobilesamv2").
 - "object": YOLOv8 boxes prompt SAM
 - "auto": SAM's automatic mask generator
 """
+
 from __future__ import annotations
 
 import logging
@@ -61,7 +62,9 @@ def _stack_masks(results: list[dict], height: int, width: int) -> torch.Tensor:
     """
     if not results:
         return torch.zeros((0, height, width), dtype=torch.float32)
-    return torch.stack([torch.tensor(m["segmentation"]).to(torch.float32) for m in results])
+    return torch.stack(
+        [torch.tensor(m["segmentation"]).to(torch.float32) for m in results]
+    )
 
 
 ########################################################
@@ -92,7 +95,9 @@ class MobileSAMSegmentation(BaseSegmentation):
         box_batch_size: int = 320,
     ):
         if strategy not in ("object", "auto"):
-            raise ValueError(f"Strategy '{strategy}' not supported. Available: ['object', 'auto']")
+            raise ValueError(
+                f"Strategy '{strategy}' not supported. Available: ['object', 'auto']"
+            )
         self.seg_model, self.object_model, self.predictor = _load_mobile_sam(
             mobilesam_encoder_name, device
         )
@@ -189,7 +194,9 @@ class MobileSAMSegmentation(BaseSegmentation):
                 )
 
                 masks = self.predictor.model.postprocess_masks(
-                    low_res_masks, self.predictor.input_size, self.predictor.original_size
+                    low_res_masks,
+                    self.predictor.input_size,
+                    self.predictor.original_size,
                 )
                 masks = masks > self.seg_model.mask_threshold
                 masks = masks.squeeze(1).cpu().numpy()

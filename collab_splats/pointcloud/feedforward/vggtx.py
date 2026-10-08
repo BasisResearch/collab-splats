@@ -50,7 +50,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
     """
 
     # Loop-closure settings for VGGT-X, calibrated in docs/parity.md
-    _lc_layer_index: ClassVar[int] = 10  # layer 20, used for other VGGT models, does not detect loops here
+    _lc_layer_index: ClassVar[int] = (
+        10  # layer 20, used for other VGGT models, does not detect loops here
+    )
     default_verify_match_ratio: ClassVar[float] = 1.17
     _lc_token_offset: ClassVar[int] = 5
 
@@ -66,7 +68,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
         """
         # VGGT-X's mlp.py compiles gelu on CUDA at import; refuse first with a clear message
         if not torch.cuda.is_available():
-            raise RuntimeError("the vggtx backend needs a CUDA GPU; VGGT-X runs CUDA kernels at import")
+            raise RuntimeError(
+                "the vggtx backend needs a CUDA GPU; VGGT-X runs CUDA kernels at import"
+            )
 
         from vggt.models.vggt import VGGT
 
@@ -106,7 +110,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
         return images, original_coords
 
-    def _preprocess_arrays(self, arrays: list[np.ndarray], *, workers: int = 8) -> torch.Tensor:
+    def _preprocess_arrays(
+        self, arrays: list[np.ndarray], *, workers: int = 8
+    ) -> torch.Tensor:
         """
         RGB arrays through upstream crop mode on a thread pool, minus the file open.
 
@@ -144,9 +150,16 @@ class VGGTXCreator(BaseFeedforwardCreator):
                 predictions = model(images.unsqueeze(0))
 
         # Convert the predictions into poses, intrinsics and depth maps
-        return {"images": images, **_decode_depth_head(predictions, images.shape[-2:], pose_encoding_to_extri_intri)}
+        return {
+            "images": images,
+            **_decode_depth_head(
+                predictions, images.shape[-2:], pose_encoding_to_extri_intri
+            ),
+        }
 
-    def extract_intermediate_features(self, frames: torch.Tensor, layer_index: int) -> dict[str, Any]:
+    def extract_intermediate_features(
+        self, frames: torch.Tensor, layer_index: int
+    ) -> dict[str, Any]:
         """
         Hook aggregator.global_blocks[layer_index].attn.qkv on a 2-frame forward.
 
@@ -173,7 +186,9 @@ class VGGTXCreator(BaseFeedforwardCreator):
             predictions = self.model(batch)
 
         # Decode poses and depth from that same forward pass
-        raw = _decode_depth_head(predictions, frames.shape[-2:], pose_encoding_to_extri_intri)
+        raw = _decode_depth_head(
+            predictions, frames.shape[-2:], pose_encoding_to_extri_intri
+        )
 
         # Unproject each frame's depth into world points
         depth = torch.from_numpy(raw["depth"][..., 0])
@@ -203,7 +218,9 @@ def _crop_boxes(sizes: list[tuple[int, int]]) -> np.ndarray:
     for w, h in sizes:
         new_h = round(h * (518 / w) / 14) * 14
         crop_h = min(new_h, 518)
-        box = center_crop_coords((w, h), (518, new_h), (518, crop_h), (518 / w, new_h / h))
+        box = center_crop_coords(
+            (w, h), (518, new_h), (518, crop_h), (518 / w, new_h / h)
+        )
         rows.append(box)
 
     return np.array(rows, dtype=np.float32)
@@ -228,7 +245,9 @@ def _preprocess_frame(rgb: np.ndarray) -> torch.Tensor:
     return tensor
 
 
-def _pad_to_largest(images: list[torch.Tensor], shapes: set[tuple[int, int]]) -> list[torch.Tensor]:
+def _pad_to_largest(
+    images: list[torch.Tensor], shapes: set[tuple[int, int]]
+) -> list[torch.Tensor]:
     """
     (3, H, W) images padded white, centered, to the largest of shapes' heights and widths.
     """

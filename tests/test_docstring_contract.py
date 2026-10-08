@@ -19,7 +19,16 @@ import tokenize
 
 import pytest
 
-PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh", "localization", "dashboard")
+PACKAGES = (
+    "preproc",
+    "semantics",
+    "pointcloud",
+    "geometry",
+    "splats",
+    "mesh",
+    "localization",
+    "dashboard",
+)
 
 # Single modules held to the contract, release checks included, before their whole package is
 MODULES = ("utils/io.py", "reconstructor.py", "remote.py", "__main__.py", "viewer.py")
@@ -80,12 +89,16 @@ def _documented_defs(path: pathlib.Path) -> list[tuple[ast.AST, str]]:
     tree = ast.parse(path.read_text())
     out: list[tuple[ast.AST, str]] = []
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ) and not node.name.startswith("_"):
             out.append((node, node.name))
         elif isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
             out.append((node, node.name))
             for sub in node.body:
-                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) and not sub.name.startswith("_"):
+                if isinstance(
+                    sub, (ast.FunctionDef, ast.AsyncFunctionDef)
+                ) and not sub.name.startswith("_"):
                     out.append((sub, f"{node.name}.{sub.name}"))
     return out
 
@@ -118,7 +131,11 @@ def _check_body(doc: str, where: str) -> list[str]:
         if SECTION_RE.match(para):
             break
         head = next((ln for ln in para.splitlines() if ln.strip()), "")
-        if head and not head.lstrip().startswith(("-", "*")) and not head.rstrip().endswith(":"):
+        if (
+            head
+            and not head.lstrip().startswith(("-", "*"))
+            and not head.rstrip().endswith(":")
+        ):
             bad.append(f"{where}: prose paragraph, not bullets — {head.strip()[:60]!r}")
             break
 
@@ -151,7 +168,11 @@ def test_public_defs_are_documented_and_annotated(path):
             continue
 
         # Every parameter is annotated in the signature and named in Args:
-        params = [a.arg for a in node.args.args + node.args.kwonlyargs if a.arg not in ("self", "cls")]
+        params = [
+            a.arg
+            for a in node.args.args + node.args.kwonlyargs
+            if a.arg not in ("self", "cls")
+        ]
         if node.args.vararg:
             params.append(node.args.vararg.arg)
         if node.args.kwarg:
@@ -161,7 +182,11 @@ def test_public_defs_are_documented_and_annotated(path):
         elif params:
             # Anchored to a line start, so the name inside prose or inside another
             # parameter's description does not count as documentation
-            undocumented = [p for p in params if not re.search(rf"^\s*\*{{0,2}}{re.escape(p)}\b", doc, re.M)]
+            undocumented = [
+                p
+                for p in params
+                if not re.search(rf"^\s*\*{{0,2}}{re.escape(p)}\b", doc, re.M)
+            ]
             if undocumented:
                 bad.append(f"{where}: does not document {undocumented}")
         for arg in node.args.args + node.args.kwonlyargs:
@@ -169,9 +194,15 @@ def test_public_defs_are_documented_and_annotated(path):
                 bad.append(f"{where}: parameter '{arg.arg}' is unannotated")
 
         # A generator documents its stream with Yields:, everything else with Returns:
-        is_generator = any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+        is_generator = any(
+            isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node)
+        )
         returns_something = node.returns is None or ast.unparse(node.returns) != "None"
-        if returns_something and "Returns:" not in doc and not (is_generator and "Yields:" in doc):
+        if (
+            returns_something
+            and "Returns:" not in doc
+            and not (is_generator and "Yields:" in doc)
+        ):
             bad.append(f"{where}: returns something and documents nothing")
         if node.returns is None:
             bad.append(f"{where}: return type is unannotated")
@@ -197,7 +228,9 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
         run = [lines[k].strip().lstrip("#").strip() for k in range(i, j)]
         if j - i >= MIN_RUN and run[0] and not run[0].startswith(RUN_SKIP_PREFIXES):
             if not run[1].startswith("- "):
-                bad.append(f"{path.name}:{i + 1}: {j - i}-line comment is prose — {run[0][:60]!r}")
+                bad.append(
+                    f"{path.name}:{i + 1}: {j - i}-line comment is prose — {run[0][:60]!r}"
+                )
         i = j
 
     assert not bad, "\n".join(bad)
@@ -209,7 +242,17 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 
 # Packages that finished their release cleanup; the rest xfail the release checks
 RELEASED: frozenset[str] = frozenset(
-    {"preproc", "semantics", "geometry", "splats", "mesh", "evals", "localization", "dashboard", "scripts"}
+    {
+        "preproc",
+        "semantics",
+        "geometry",
+        "splats",
+        "mesh",
+        "evals",
+        "localization",
+        "dashboard",
+        "scripts",
+    }
 )
 
 # Module-level numbers that are facts, not tunables
@@ -227,7 +270,10 @@ FIXED_FACTS = frozenset(
 FALLBACK_OWNERS = frozenset({"SceneSource.__init__"})
 
 UPPER_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
-BANNED_RE = re.compile(r"\bmeasured\b|\bhypothesis\b|\d+(\.\d+)?x faster|ffmpeg pipe|replaces the old", re.I)
+BANNED_RE = re.compile(
+    r"\bmeasured\b|\bhypothesis\b|\d+(\.\d+)?x faster|ffmpeg pipe|replaces the old",
+    re.I,
+)
 SCENE_ID_RE = re.compile(r"\b(GH\d{6}|C\d{4})\b")
 MAX_BULLETS = 6
 MAX_COMMENT_LINES = 4
@@ -255,10 +301,18 @@ def _numeric_constants(src: str) -> list[str]:
 
         # Flag a bare (optionally negated) int/float; bool is an int subclass, skip it
         num = node.value.operand if isinstance(node.value, ast.UnaryOp) else node.value
-        if not isinstance(num, ast.Constant) or not isinstance(num.value, (int, float)) or isinstance(num.value, bool):
+        if (
+            not isinstance(num, ast.Constant)
+            or not isinstance(num.value, (int, float))
+            or isinstance(num.value, bool)
+        ):
             continue
         for target in targets:
-            if isinstance(target, ast.Name) and UPPER_RE.match(target.id) and target.id not in FIXED_FACTS:
+            if (
+                isinstance(target, ast.Name)
+                and UPPER_RE.match(target.id)
+                and target.id not in FIXED_FACTS
+            ):
                 out.append(f"{node.lineno}: {target.id} = {ast.unparse(node.value)}")
     return out
 
@@ -274,7 +328,11 @@ def _comments(src: str) -> list[tuple[int, str]]:
         One entry per comment token, text without the leading `#`.
     """
     toks = tokenize.generate_tokens(io.StringIO(src).readline)
-    return [(t.start[0], t.string.lstrip("#").strip()) for t in toks if t.type == tokenize.COMMENT]
+    return [
+        (t.start[0], t.string.lstrip("#").strip())
+        for t in toks
+        if t.type == tokenize.COMMENT
+    ]
 
 
 def _docstrings(src: str) -> list[tuple[str, str]]:
@@ -288,8 +346,16 @@ def _docstrings(src: str) -> list[tuple[str, str]]:
         One entry per documented node.
     """
     tree = ast.parse(src)
-    nodes = [tree] + [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
-    return [(getattr(n, "name", "module"), ast.get_docstring(n)) for n in nodes if ast.get_docstring(n)]
+    nodes = [tree] + [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    return [
+        (getattr(n, "name", "module"), ast.get_docstring(n))
+        for n in nodes
+        if ast.get_docstring(n)
+    ]
 
 
 def _banned_words(src: str) -> list[str]:
@@ -357,7 +423,9 @@ def _long_comment_runs(src: str) -> list[str]:
             j += 1
         text = [k for k in range(i, j) if lines[k].strip().strip("#").strip()]
         if len(text) > MAX_COMMENT_LINES:
-            out.append(f"{text[0] + 1}: {len(text)}-line comment run (max {MAX_COMMENT_LINES})")
+            out.append(
+                f"{text[0] + 1}: {len(text)}-line comment run (max {MAX_COMMENT_LINES})"
+            )
         i = j
     return out
 
@@ -371,11 +439,18 @@ def _records_failure(handler: ast.ExceptHandler) -> bool:
     - a bare pass, a log-only handler, or a log plus a fallback assignment is still silent
     """
     nodes = [n for stmt in handler.body for n in ast.walk(stmt)]
-    calls = [n.func for n in nodes if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
+    calls = [
+        n.func
+        for n in nodes
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    ]
 
     # Logged at error level through the module logger
     logged = any(
-        isinstance(f.value, ast.Name) and f.value.id == "logger" and f.attr in ("exception", "error") for f in calls
+        isinstance(f.value, ast.Name)
+        and f.value.id == "logger"
+        and f.attr in ("exception", "error")
+        for f in calls
     )
 
     # Recorded as a failure the caller can see
@@ -408,7 +483,11 @@ def _owned_handlers(tree: ast.Module) -> set[int]:
         if isinstance(m, funcs)
     ]
     return {
-        id(h) for name, n in owners if name in FALLBACK_OWNERS for h in ast.walk(n) if isinstance(h, ast.ExceptHandler)
+        id(h)
+        for name, n in owners
+        if name in FALLBACK_OWNERS
+        for h in ast.walk(n)
+        if isinstance(h, ast.ExceptHandler)
     }
 
 
@@ -439,10 +518,16 @@ def _silent_fallbacks(src: str) -> list[str]:
                 out.append(f"{node.lineno}: `or {last.value!r}` fallback")
         if isinstance(node, ast.ExceptHandler):
             broad = node.type is None or (
-                isinstance(node.type, ast.Name) and node.type.id in ("Exception", "BaseException")
+                isinstance(node.type, ast.Name)
+                and node.type.id in ("Exception", "BaseException")
             )
             reraises = any(isinstance(n, ast.Raise) for n in ast.walk(node))
-            if broad and not reraises and not _records_failure(node) and id(node) not in owned:
+            if (
+                broad
+                and not reraises
+                and not _records_failure(node)
+                and id(node) not in owned
+            ):
                 out.append(f"{node.lineno}: except Exception without re-raise")
     return out
 
@@ -467,7 +552,11 @@ def _nested_defs(src: str) -> list[str]:
         if not isinstance(outer, funcs):
             continue
         for inner in ast.walk(outer):
-            if inner is not outer and isinstance(inner, funcs) and inner.lineno not in seen:
+            if (
+                inner is not outer
+                and isinstance(inner, funcs)
+                and inner.lineno not in seen
+            ):
                 seen.add(inner.lineno)
                 out.append(f"{inner.lineno}: nested def {inner.name} in {outer.name}")
     return out
@@ -484,7 +573,11 @@ def _quote_line_docstrings(src: str) -> list[str]:
         "<label>: summary on the quote line" per offender.
     """
     tree = ast.parse(src)
-    nodes = [tree] + [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    nodes = [tree] + [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
     out = []
     for n in nodes:
         doc = ast.get_docstring(n, clean=False)
@@ -520,10 +613,16 @@ def _prose_comment_pairs(src: str) -> list[str]:
         text = [r for r in run if r.strip()]
 
         # Flag a 2-line run whose second line is prose, not a bullet
-        if j - i == 2 and len(text) == 2 and not text[0].strip().startswith(RUN_SKIP_PREFIXES):
+        if (
+            j - i == 2
+            and len(text) == 2
+            and not text[0].strip().startswith(RUN_SKIP_PREFIXES)
+        ):
             second = text[1]
             if not second.strip().startswith("- "):
-                out.append(f"{i + 1}: 2-line comment is prose — {text[0].strip()[:60]!r}")
+                out.append(
+                    f"{i + 1}: 2-line comment is prose — {text[0].strip()[:60]!r}"
+                )
         i = j
     return out
 
@@ -549,7 +648,15 @@ def _release_params() -> list:
         rel = _package_path(path)
         pkg = rel.parts[0]
         released = pkg in RELEASED or str(rel) in MODULES
-        marks = [] if released else [pytest.mark.xfail(strict=False, reason=f"{pkg}: release cleanup pending")]
+        marks = (
+            []
+            if released
+            else [
+                pytest.mark.xfail(
+                    strict=False, reason=f"{pkg}: release cleanup pending"
+                )
+            ]
+        )
         for name in RELEASE_CHECKS:
             params.append(pytest.param(path, name, marks=marks, id=f"{pid}::{name}"))
     return params
@@ -564,7 +671,11 @@ def test_release_rules(path, check):
 def test_numeric_constant_check_flags_a_tunable_and_spares_a_fact():
     src = "EXIT_OK = 0\n_LEVEL = 1\nNEG = -0.5\nIMAGE_EXTS = ('.png',)\nFLAG = True\n"
     assert _numeric_constants(src) == ["2: _LEVEL = 1", "3: NEG = -0.5"]
-    assert _numeric_constants("A = B = 5\nC: int = 3\n") == ["1: A = 5", "1: B = 5", "2: C = 3"]
+    assert _numeric_constants("A = B = 5\nC: int = 3\n") == [
+        "1: A = 5",
+        "1: B = 5",
+        "2: C = 3",
+    ]
 
 
 def test_banned_word_check_flags_lore_and_ignores_paths():
@@ -606,7 +717,10 @@ def test_silent_fallback_check_flags_or_number_and_swallowed_exception():
         "try:\n    pass\nexcept Exception:\n    raise\n"
         "try:\n    pass\nexcept ValueError:\n    pass\n"
     )
-    assert _silent_fallbacks(src) == ["1: `or 30.0` fallback", "5: except Exception without re-raise"]
+    assert _silent_fallbacks(src) == [
+        "1: `or 30.0` fallback",
+        "5: except Exception without re-raise",
+    ]
 
 
 def _handler_src(body: str) -> str:
@@ -637,7 +751,9 @@ def test_silent_fallback_check_spares_a_logged_and_recorded_failure():
         "logger.error('x');return None",
     ]
     for body in rejected:
-        assert _silent_fallbacks(_handler_src(body)) == ["3: except Exception without re-raise"], body
+        assert _silent_fallbacks(_handler_src(body)) == [
+            "3: except Exception without re-raise"
+        ], body
 
 
 def test_silent_fallback_check_spares_only_named_owners():
@@ -689,7 +805,9 @@ def test_quote_line_docstring_check_flags_a_one_liner():
 
 def test_prose_comment_pair_check_flags_prose_and_spares_bullets():
     assert _prose_comment_pairs("# a header\n# - a bullet\nx = 1\n") == []
-    assert _prose_comment_pairs("# first sentence of prose\n# second sentence\nx = 1\n") == [
-        "1: 2-line comment is prose — 'first sentence of prose'"
+    assert _prose_comment_pairs(
+        "# first sentence of prose\n# second sentence\nx = 1\n"
+    ) == ["1: 2-line comment is prose — 'first sentence of prose'"]
+    assert _prose_comment_pairs("# a header\n#    continued\nx = 1\n") == [
+        "1: 2-line comment is prose — 'a header'"
     ]
-    assert _prose_comment_pairs("# a header\n#    continued\nx = 1\n") == ["1: 2-line comment is prose — 'a header'"]

@@ -21,11 +21,15 @@ def _tiny_result(box: list[float] = CROPPED_BOX, n: int = 3) -> PointcloudResult
     """
     n frames on a 64x48 model grid sharing one crop box; fx != fy, full-res K derived.
     """
-    model_intrinsics = np.array([[40.0, 0.0, 31.5], [0.0, 44.0, 23.5], [0.0, 0.0, 1.0]], dtype=np.float32)
+    model_intrinsics = np.array(
+        [[40.0, 0.0, 31.5], [0.0, 44.0, 23.5], [0.0, 0.0, 1.0]], dtype=np.float32
+    )
     extrinsics = np.eye(4, dtype=np.float32)[None].repeat(n, axis=0)
     extrinsics[:, 0, 3] = np.arange(n, dtype=np.float32) * 0.5
     return PointcloudResult(
-        points=np.array([[0.0, 0.0, 2.0], [0.1, 0.0, 2.0], [0.0, 0.1, 2.5]], dtype=np.float32),
+        points=np.array(
+            [[0.0, 0.0, 2.0], [0.1, 0.0, 2.0], [0.0, 0.1, 2.5]], dtype=np.float32
+        ),
         colors=np.array([[10, 20, 30], [40, 50, 60], [70, 80, 90]], dtype=np.uint8),
         extrinsics=extrinsics,
         intrinsics=None,
@@ -75,7 +79,9 @@ def test_post_init_sets_full_res_intrinsics_on_cropped_box():
     # Hand-computed for CROPPED_BOX: 64x48 grid -> 640x360 crop at y=60, pixel-center cx = (cx + 0.5) s - 0.5
     # - x scale 640 / 64 = 10: fx 40 -> 400, cx 31.5 -> 319.5, the crop's center column
     # - y scale 360 / 48 = 7.5: fy 44 -> 330, cy 23.5 -> 179.5, + 60 crop origin -> 239.5
-    expected = np.array([[400.0, 0.0, 319.5], [0.0, 330.0, 239.5], [0.0, 0.0, 1.0]], dtype=np.float32)
+    expected = np.array(
+        [[400.0, 0.0, 319.5], [0.0, 330.0, 239.5], [0.0, 0.0, 1.0]], dtype=np.float32
+    )
     assert result.intrinsics.dtype == np.float32
     np.testing.assert_array_equal(result.intrinsics[0], expected)
 
@@ -127,7 +133,9 @@ def test_to_colmap_sizes_each_camera_by_its_own_frame():
     """
     # Frame 0 keeps CROPPED_BOX; frame 1 is the full frame of a smaller 320x240 source
     result = _tiny_result(n=2)
-    coords = np.array([CROPPED_BOX, [0.0, 0.0, 320.0, 240.0, 320.0, 240.0]], dtype=np.float32)
+    coords = np.array(
+        [CROPPED_BOX, [0.0, 0.0, 320.0, 240.0, 320.0, 240.0]], dtype=np.float32
+    )
     result = replace(result, original_coords=coords, intrinsics=None)
     recon = result.to_colmap()
 
@@ -149,8 +157,12 @@ def test_to_colmap_accepts_3x4_extrinsics():
 
     # Frame 2 sits at x = 1.0 with identity rotation (_tiny_result's 0.5 stride)
     for image_id, image in recon.images.items():
-        np.testing.assert_array_equal(image.cam_from_world().matrix(), result.extrinsics[image_id - 1])
-    np.testing.assert_array_equal(recon.images[3].cam_from_world().translation, [1.0, 0.0, 0.0])
+        np.testing.assert_array_equal(
+            image.cam_from_world().matrix(), result.extrinsics[image_id - 1]
+        )
+    np.testing.assert_array_equal(
+        recon.images[3].cam_from_world().translation, [1.0, 0.0, 0.0]
+    )
 
 
 def test_load_zarr_round_trips_both_intrinsics(tmp_path):
@@ -187,8 +199,12 @@ def test_write_ply_round_trip(tmp_path):
     result.write_ply(out)
 
     pcd = o3d.io.read_point_cloud(str(out))
-    np.testing.assert_array_equal(np.asarray(pcd.points).astype(np.float32), result.points)
-    np.testing.assert_array_equal(np.round(np.asarray(pcd.colors) * 255).astype(np.uint8), result.colors)
+    np.testing.assert_array_equal(
+        np.asarray(pcd.points).astype(np.float32), result.points
+    )
+    np.testing.assert_array_equal(
+        np.round(np.asarray(pcd.colors) * 255).astype(np.uint8), result.colors
+    )
 
 
 def _outlier_result() -> PointcloudResult:
@@ -243,9 +259,15 @@ def test_create_pointcloud_reads_frames_and_writes_the_model(tmp_path):
     Frame files reach the backend as stems, in order; model_dir gets a COLMAP model.
     """
     creator = _EchoCreator(canned=_tiny_result(), clean=False)
-    creator.create_pointcloud(_images_dir(tmp_path, n=3), tmp_path / "out", tmp_path / "model")
+    creator.create_pointcloud(
+        _images_dir(tmp_path, n=3), tmp_path / "out", tmp_path / "model"
+    )
 
-    assert [p.name for p in creator.image_paths] == ["frame_000000", "frame_000001", "frame_000002"]
+    assert [p.name for p in creator.image_paths] == [
+        "frame_000000",
+        "frame_000001",
+        "frame_000002",
+    ]
     assert (tmp_path / "model" / "cameras.bin").exists()
 
 
@@ -262,7 +284,9 @@ def test_clean_drops_the_outlier_from_every_per_point_array(tmp_path):
     clean=True removes the far point from points, colors and pixel_indices together.
     """
     raw = _outlier_result()
-    out = _EchoCreator(canned=raw, clean=True).create_pointcloud(_images_dir(tmp_path), tmp_path / "out")
+    out = _EchoCreator(canned=raw, clean=True).create_pointcloud(
+        _images_dir(tmp_path), tmp_path / "out"
+    )
 
     # Exactly the outlier row went; the three per-point arrays stay row-aligned
     assert len(out.points) == len(out.colors) == len(out.pixel_indices) == 200
@@ -288,7 +312,9 @@ def test_clean_before_the_cap(tmp_path):
     n, h, w = 2, 16, 16
     depth = 2.0 + 0.01 * np.random.default_rng(0).standard_normal((n, h, w, 1))
     depth[0, [1, 4, 7, 10, 13], [2, 5, 8, 11, 14]] = 100.0
-    intrinsics = np.array([[16.0, 0.0, 7.5], [0.0, 16.0, 7.5], [0.0, 0.0, 1.0]], dtype=np.float32)
+    intrinsics = np.array(
+        [[16.0, 0.0, 7.5], [0.0, 16.0, 7.5], [0.0, 0.0, 1.0]], dtype=np.float32
+    )
     raw = {
         "images": torch.zeros(n, 3, h, w),
         "extrinsic": np.tile(np.eye(4)[:3], (n, 1, 1)).astype(np.float32),
@@ -298,7 +324,9 @@ def test_clean_before_the_cap(tmp_path):
     }
     creator = _EchoCreator(max_points=300, conf_threshold=0.0, clean=True)
     creator.image_paths = [Path(f"frame_{i:06d}") for i in range(n)]
-    creator.original_coords = np.tile(np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1))
+    creator.original_coords = np.tile(
+        np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1)
+    )
 
     # Raw conf cutoff 0.0 keeps all 512 pixels; the cap is well under that
     grid = BaseFeedforwardCreator._postprocess(creator, raw)
@@ -359,4 +387,6 @@ def test_load_zarr_load_images_flag(tmp_path: Path):
     loaded_with_images = PointcloudResult.load_zarr(store_path, load_images=True)
     assert loaded_with_images.images is not None
     assert loaded_with_images.images.shape == (n, 3, h, w)
-    np.testing.assert_allclose(loaded_with_images.images.numpy(), images.numpy(), atol=1e-5)
+    np.testing.assert_allclose(
+        loaded_with_images.images.numpy(), images.numpy(), atol=1e-5
+    )

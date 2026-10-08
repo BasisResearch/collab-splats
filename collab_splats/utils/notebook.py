@@ -31,7 +31,11 @@ def feature_viz_row(
         pca_to_rgb,
     )
 
-    sim_title = f"{title_prefix}Similarity: {query_label}" if query_label else f"{title_prefix}Similarity"
+    sim_title = (
+        f"{title_prefix}Similarity: {query_label}"
+        if query_label
+        else f"{title_prefix}Similarity"
+    )
     axes[0].imshow(pca_to_rgb(features, frame))
     axes[0].set_title(f"{title_prefix}PCA → RGB")
     axes[1].imshow(compute_heatmap(frame, sim_map))

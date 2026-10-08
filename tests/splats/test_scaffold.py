@@ -36,7 +36,9 @@ def test_representation_defaults_to_vanilla():
 
 
 def test_scaffold_block_parses_into_scaffold_config():
-    cfg = SplatsConfig.from_dict({"representation": "scaffold", "scaffold": {"n_offsets": 5, "feat_dim": 16}})
+    cfg = SplatsConfig.from_dict(
+        {"representation": "scaffold", "scaffold": {"n_offsets": 5, "feat_dim": 16}}
+    )
     assert isinstance(cfg.scaffold_config, ScaffoldConfig)
     assert cfg.scaffold_config.n_offsets == 5
     assert cfg.scaffold_config.feat_dim == 16
@@ -54,7 +56,9 @@ def test_unknown_representation_is_rejected():
 
 def test_unknown_scaffold_key_is_rejected():
     with pytest.raises(ValueError, match="n_offset"):
-        SplatsConfig.from_dict({"representation": "scaffold", "scaffold": {"n_offset": 5}})
+        SplatsConfig.from_dict(
+            {"representation": "scaffold", "scaffold": {"n_offset": 5}}
+        )
 
 
 def test_scaffold_block_without_scaffold_representation_is_rejected():
@@ -70,14 +74,18 @@ def test_sh_degree_is_rejected_under_scaffold():
         SplatsConfig.from_dict({"representation": "scaffold", "sh_degree": 0})
 
     with pytest.raises(ValueError, match="sh_degree"):
-        SplatsConfig.from_dict({"representation": "scaffold", "sh_degree_interval": 500})
+        SplatsConfig.from_dict(
+            {"representation": "scaffold", "sh_degree_interval": 500}
+        )
 
 
 def test_scaffold_accepts_the_inherited_sh_defaults():
     """
     base.yaml deep-merges sh_degree/sh_degree_interval into every block at their defaults.
     """
-    cfg = SplatsConfig.from_dict({"representation": "scaffold", "sh_degree": 3, "sh_degree_interval": 1000})
+    cfg = SplatsConfig.from_dict(
+        {"representation": "scaffold", "sh_degree": 3, "sh_degree_interval": 1000}
+    )
     assert cfg.representation == "scaffold"
 
 
@@ -102,11 +110,15 @@ def test_appearance_embedding_changes_color_only_when_enabled():
     features = torch.zeros(3, 8 + 3)
     camera_id = torch.zeros(3, dtype=torch.long)
 
-    off = ScaffoldMLPs(ScaffoldConfig(n_offsets=2, feat_dim=8, appearance_dim=0), n_views=5)
+    off = ScaffoldMLPs(
+        ScaffoldConfig(n_offsets=2, feat_dim=8, appearance_dim=0), n_views=5
+    )
     assert off.embedding_appearance is None
     off(features, camera_id)  # camera_id is accepted and ignored
 
-    on = ScaffoldMLPs(ScaffoldConfig(n_offsets=2, feat_dim=8, appearance_dim=6), n_views=5)
+    on = ScaffoldMLPs(
+        ScaffoldConfig(n_offsets=2, feat_dim=8, appearance_dim=6), n_views=5
+    )
     assert on.embedding_appearance is not None
     assert on.embedding_appearance.weight.shape == (5, 6)
 
@@ -118,7 +130,10 @@ def test_mlp_bf16_returns_float32_close_to_the_float32_heads():
     torch.manual_seed(0)
     cfg = ScaffoldConfig(n_offsets=4, feat_dim=8, appearance_dim=6)
     full = ScaffoldMLPs(cfg, n_views=5)
-    half = ScaffoldMLPs(ScaffoldConfig(n_offsets=4, feat_dim=8, appearance_dim=6, mlp_bf16=True), n_views=5)
+    half = ScaffoldMLPs(
+        ScaffoldConfig(n_offsets=4, feat_dim=8, appearance_dim=6, mlp_bf16=True),
+        n_views=5,
+    )
     half.load_state_dict(full.state_dict())
     features = torch.randn(64, cfg.feat_dim + 3, requires_grad=True)
     camera_id = torch.tensor([2])
@@ -171,7 +186,9 @@ def _scaffold_config(run=None, **scaffold):
     Returns:
         SplatsConfig.
     """
-    return SplatsConfig.from_dict({"representation": "scaffold", "scaffold": scaffold, **(run or {})})
+    return SplatsConfig.from_dict(
+        {"representation": "scaffold", "scaffold": scaffold, **(run or {})}
+    )
 
 
 def test_anchor_init_voxelizes_seed_points():
@@ -197,7 +214,9 @@ def test_anchor_count_is_invariant_to_scene_scale():
     cfg = _scaffold_config(n_offsets=2, feat_dim=8)
     points, colors = _seed_points()
     small = Scaffold(cfg, points, colors, scene_scale=1.0, n_views=1, device="cpu")
-    large = Scaffold(cfg, points * 10.0, colors, scene_scale=10.0, n_views=1, device="cpu")
+    large = Scaffold(
+        cfg, points * 10.0, colors, scene_scale=10.0, n_views=1, device="cpu"
+    )
     assert len(large.params["anchors"]) == len(small.params["anchors"])
     assert large.voxel_size == pytest.approx(small.voxel_size * 10.0, rel=1e-5)
 
@@ -217,7 +236,14 @@ def test_explicit_voxel_size_overrides_the_derived_one():
 
 def test_optimizers_cover_every_anchor_parameter():
     points, colors = _seed_points()
-    model = Scaffold(_scaffold_config(n_offsets=2, feat_dim=8), points, colors, 1.0, n_views=1, device="cpu")
+    model = Scaffold(
+        _scaffold_config(n_offsets=2, feat_dim=8),
+        points,
+        colors,
+        1.0,
+        n_views=1,
+        device="cpu",
+    )
     assert set(model.param_optimizers) == set(model.params)
 
     for optimizer in model.param_optimizers.values():
@@ -231,8 +257,12 @@ def test_scaffold_adam_epsilon_is_a_kwarg():
     custom = Scaffold(cfg, points, colors, 1.0, n_views=1, device="cpu", adam_eps=1e-8)
 
     # Every optimizer, the MLP one included, takes the kwarg; the default stays upstream's 1e-15
-    assert {group["eps"] for opt in default.optimizers for group in opt.param_groups} == {1e-15}
-    assert {group["eps"] for opt in custom.optimizers for group in opt.param_groups} == {1e-8}
+    assert {
+        group["eps"] for opt in default.optimizers for group in opt.param_groups
+    } == {1e-15}
+    assert {
+        group["eps"] for opt in custom.optimizers for group in opt.param_groups
+    } == {1e-8}
 
 
 ########################################
@@ -240,7 +270,15 @@ def test_scaffold_adam_epsilon_is_a_kwarg():
 ########################################
 
 
-def _field(n_offsets=4, appearance_dim=0, n_views=3, device="cpu", scene_scale=1.0, run=None, **scaffold):
+def _field(
+    n_offsets=4,
+    appearance_dim=0,
+    n_views=3,
+    device="cpu",
+    scene_scale=1.0,
+    run=None,
+    **scaffold,
+):
     """
     The one Scaffold builder in this file: a fixed 200-point seed cloud voxelized into anchors.
 
@@ -252,9 +290,13 @@ def _field(n_offsets=4, appearance_dim=0, n_views=3, device="cpu", scene_scale=1
     Returns:
         Scaffold over 200 seed points.
     """
-    cfg = _scaffold_config(run, n_offsets=n_offsets, feat_dim=8, appearance_dim=appearance_dim, **scaffold)
+    cfg = _scaffold_config(
+        run, n_offsets=n_offsets, feat_dim=8, appearance_dim=appearance_dim, **scaffold
+    )
     points, colors = _seed_points(n=200)
-    return Scaffold(cfg, points, colors, scene_scale=scene_scale, n_views=n_views, device=device)
+    return Scaffold(
+        cfg, points, colors, scene_scale=scene_scale, n_views=n_views, device=device
+    )
 
 
 def _cam(device="cpu"):
@@ -269,7 +311,9 @@ def _cam(device="cpu"):
     """
     cam_to_world = torch.eye(4, device=device)[None]
     cam_to_world[0, 2, 3] = -4.0
-    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[None]
+    intrinsics = torch.tensor([[60.0, 0, 32], [0, 60.0, 32], [0, 0, 1]], device=device)[
+        None
+    ]
     return cam_to_world, intrinsics
 
 
@@ -311,7 +355,9 @@ def test_decode_returns_rasterizer_inputs_and_index():
     model = _field()
     _open_every_offset(model)
     cam_to_world, intrinsics = _cam()
-    decoded, index = model.decode("3dgs", cam_to_world, intrinsics, width=64, height=64, camera_id=None)
+    decoded, index = model.decode(
+        "3dgs", cam_to_world, intrinsics, width=64, height=64, camera_id=None
+    )
 
     # Shapes checked over the whole slot grid, not the all-closed fallback's single row
     n = len(decoded["means"])
@@ -320,8 +366,14 @@ def test_decode_returns_rasterizer_inputs_and_index():
     assert decoded["quats"].shape == (n, 4)
     assert decoded["scales"].shape == (n, 3)
     assert decoded["opacities"].shape == (n,)
-    assert decoded["colors"].shape == (n, 3)  # post-activation RGB, so sh_degree=None at rasterize
-    assert decoded["log_scales"].shape == (n, 3)  # scale_reg reads this instead of a parameter
+    assert decoded["colors"].shape == (
+        n,
+        3,
+    )  # post-activation RGB, so sh_degree=None at rasterize
+    assert decoded["log_scales"].shape == (
+        n,
+        3,
+    )  # scale_reg reads this instead of a parameter
     assert index.shape == (n,)
     assert index.dtype == torch.int64
     assert int(index.max()) < len(model.params["anchors"]) * model.cfg.n_offsets
@@ -335,15 +387,21 @@ def test_decode_index_points_at_the_generating_anchor():
     # Per-slot ramp arms the displacement bound
     # - `offsets` zero at init: every mean lands ON its anchor, bound holds whatever the index said
     with torch.no_grad():
-        model.params["offsets"] += torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        model.params["offsets"] += (
+            torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        )
 
-    decoded, index = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    decoded, index = model.decode(
+        "3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None
+    )
     anchor_ids = index // model.cfg.n_offsets
 
     # Index is anchor * n_offsets + offset — with every slot open it walks the anchors in order
     # - a transposed encoding stays in range but does not reproduce this
     assert len(decoded["means"]) == model.n_primitives * model.cfg.n_offsets
-    assert torch.equal(anchor_ids, decoded["visible_ids"].repeat_interleave(model.cfg.n_offsets))
+    assert torch.equal(
+        anchor_ids, decoded["visible_ids"].repeat_interleave(model.cfg.n_offsets)
+    )
 
     # Each decoded mean is its anchor plus a scaled offset, so it must sit within the offset extent
     anchors = model.params["anchors"][anchor_ids]
@@ -362,7 +420,9 @@ def test_decode_drops_offsets_with_non_positive_opacity():
         model.mlps.mlp_opacity[-2].weight.zero_()
         model.mlps.mlp_opacity[-2].bias.copy_(torch.tensor([-5.0, 5.0, -5.0, 5.0]))
 
-    decoded, index = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    decoded, index = model.decode(
+        "3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None
+    )
     n_visible = int(model.visible_anchors(cam_to_world, intrinsics, 64, 64).sum())
     assert len(decoded["means"]) == 2 * n_visible
     assert set((index % 4).tolist()) == {1, 3}
@@ -422,7 +482,9 @@ def test_decode_never_returns_zero_gaussians_when_every_offset_is_closed():
         model.mlps.mlp_opacity[-2].bias.fill_(-50.0)
         model.mlps.mlp_opacity[-2].weight.zero_()
 
-    decoded, decode_index = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
+    decoded, decode_index = model.decode(
+        "3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None
+    )
     assert len(decoded["means"]) == 1
     assert len(decode_index) == 1
 
@@ -436,7 +498,9 @@ def test_offsets_to_gaussians_keeps_the_most_opaque_offset_when_all_are_closed()
     cov[:, 3] = 1.0
     color = torch.rand(6, 3)
 
-    kept, gaussians = scaffold_module._offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, 3)
+    kept, gaussians = scaffold_module._offsets_to_gaussians(
+        anchors, scaling, offsets, neural_opacity, cov, color, 3
+    )
 
     assert kept.tolist() == [1]
     assert gaussians["opacities"].tolist() == pytest.approx([-0.1])
@@ -475,8 +539,12 @@ def test_scaffold_decode_renders_through_gsplat(primitive):
 
     model = _field(device="cuda")
     cam_to_world, intrinsics = _cam(device="cuda")
-    decoded, _ = model.decode(primitive, cam_to_world, intrinsics, 64, 64, camera_id=None)
-    render, info = render_gaussians(primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None)
+    decoded, _ = model.decode(
+        primitive, cam_to_world, intrinsics, 64, 64, camera_id=None
+    )
+    render, info = render_gaussians(
+        primitive, decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None
+    )
     assert render["rgb"].shape == (1, 64, 64, 3)
     assert render["depth"].shape == (1, 64, 64, 1)
     expected_gradient_key = "means2d" if primitive == "3dgs" else "gradient_2dgs"
@@ -491,7 +559,9 @@ def test_render_gradient_reaches_the_anchor_features():
     _open_every_offset(model)
     cam_to_world, intrinsics = _cam(device="cuda")
     decoded, _ = model.decode("3dgs", cam_to_world, intrinsics, 64, 64, camera_id=None)
-    render, _ = render_gaussians("3dgs", decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None)
+    render, _ = render_gaussians(
+        "3dgs", decoded, cam_to_world, intrinsics, 64, 64, sh_degree=None
+    )
     render["rgb"].sum().backward()
 
     # `grad is not None` and `isfinite` both hold on an all-zero gradient
@@ -521,10 +591,14 @@ def _bare_strategy(cfg, n_anchors, primitive="3dgs"):
     Returns:
         AnchorStrategy on the CPU, voxel_size 0.
     """
-    return AnchorStrategy(cfg, primitive=primitive, voxel_size=0.0, n_anchors=n_anchors, device="cpu")
+    return AnchorStrategy(
+        cfg, primitive=primitive, voxel_size=0.0, n_anchors=n_anchors, device="cpu"
+    )
 
 
-def _accumulation_info(grad, radii, decode_index, opacities, visible_ids, key="means2d", shape=None):
+def _accumulation_info(
+    grad, radii, decode_index, opacities, visible_ids, key="means2d", shape=None
+):
     """
     The gsplat info dict `accumulate` reads, with the retained gradient already attached.
 
@@ -557,8 +631,14 @@ COUNTING_STEP = 1000
 
 
 def test_gradient_key_follows_the_primitive():
-    assert _bare_strategy(ScaffoldConfig(), 4, primitive="3dgs").key_for_gradient == "means2d"
-    assert _bare_strategy(ScaffoldConfig(), 4, primitive="2dgs").key_for_gradient == "gradient_2dgs"
+    assert (
+        _bare_strategy(ScaffoldConfig(), 4, primitive="3dgs").key_for_gradient
+        == "means2d"
+    )
+    assert (
+        _bare_strategy(ScaffoldConfig(), 4, primitive="2dgs").key_for_gradient
+        == "gradient_2dgs"
+    )
 
 
 def test_accumulation_renormalizes_gradients_like_gsplat():
@@ -658,7 +738,9 @@ def test_statistics_window_opens_before_growing_does(step, counts):
       refine reads a full window.
     - Asserted through `accumulate`'s own effect: the guard is folded into it.
     """
-    cfg = ScaffoldConfig(n_offsets=2, feat_dim=8, start_stat=500, update_from=1500, update_until=15000)
+    cfg = ScaffoldConfig(
+        n_offsets=2, feat_dim=8, start_stat=500, update_from=1500, update_until=15000
+    )
     strategy = _bare_strategy(cfg, n_anchors=4)
     info = _accumulation_info(
         grad=torch.tensor([[[1e-3, 0.0]]]),
@@ -733,7 +815,9 @@ def test_growing_skips_slots_below_threshold():
 
 
 @pytest.mark.parametrize("window_fraction, grows", [(0.4, False), (0.75, True)])
-def test_the_seen_gate_opens_at_half_a_refine_window(monkeypatch, window_fraction, grows):
+def test_the_seen_gate_opens_at_half_a_refine_window(
+    monkeypatch, window_fraction, grows
+):
     """
     A slot counts after HALF of `refine_every * success_threshold` decodes, not all of them.
     """
@@ -787,7 +871,9 @@ def test_scaffold_init_tuning_literals_are_keyword_only():
 
     # lr_decay sits behind a bare `*`: an eighth positional must be rejected
     # - `device` is the seventh and last, so the count string pins which slot the eighth hit
-    with pytest.raises(TypeError, match="takes 7 positional arguments but 8 were given"):
+    with pytest.raises(
+        TypeError, match="takes 7 positional arguments but 8 were given"
+    ):
         Scaffold(cfg, points, colors, 1.0, 3, "cpu", 0.5)
 
 
@@ -806,7 +892,9 @@ def test_fine_levels_need_a_coarse_anchor_in_the_same_call(monkeypatch):
     anchor = model.params["anchors"][0]
 
     with torch.no_grad():
-        model.params["offsets"][0, 0] = (torch.round(anchor / coarse) * coarse - anchor) / model.voxel_size
+        model.params["offsets"][0, 0] = (
+            torch.round(anchor / coarse) * coarse - anchor
+        ) / model.voxel_size
 
     strategy.offset_gradient_accum[0] = 100.0
     strategy.offset_denom[0] = 100.0
@@ -931,14 +1019,40 @@ def test_defaults_match_the_reference_implementation():
     cfg = ScaffoldConfig()
 
     assert (cfg.feat_dim, cfg.n_offsets, cfg.appearance_dim) == (32, 10, 32)
-    assert (cfg.start_stat, cfg.update_from, cfg.update_until, cfg.refine_every) == (500, 1500, 15000, 100)
-    assert (cfg.update_depth, cfg.update_init_factor, cfg.update_hierarchy_factor) == (3, 16, 4)
-    assert (cfg.grad_threshold, cfg.min_opacity, cfg.success_threshold) == (0.0002, 0.005, 0.8)
-    assert (cfg.anchor_lr, cfg.anchor_feat_lr, cfg.scaling_lr, cfg.rotation_lr) == (0.0, 0.0075, 0.007, 0.002)
+    assert (cfg.start_stat, cfg.update_from, cfg.update_until, cfg.refine_every) == (
+        500,
+        1500,
+        15000,
+        100,
+    )
+    assert (cfg.update_depth, cfg.update_init_factor, cfg.update_hierarchy_factor) == (
+        3,
+        16,
+        4,
+    )
+    assert (cfg.grad_threshold, cfg.min_opacity, cfg.success_threshold) == (
+        0.0002,
+        0.005,
+        0.8,
+    )
+    assert (cfg.anchor_lr, cfg.anchor_feat_lr, cfg.scaling_lr, cfg.rotation_lr) == (
+        0.0,
+        0.0075,
+        0.007,
+        0.002,
+    )
     assert (cfg.offset_lr, cfg.offset_lr_final) == (0.01, 0.0001)
     assert (cfg.mlp_opacity_lr, cfg.mlp_opacity_lr_final) == (0.002, 0.00002)
-    assert (cfg.mlp_cov_lr, cfg.mlp_color_lr, cfg.mlp_color_lr_final) == (0.004, 0.008, 0.00005)
-    assert (cfg.appearance_lr, cfg.appearance_lr_final, cfg.lr_max_steps) == (0.05, 0.0005, 30000)
+    assert (cfg.mlp_cov_lr, cfg.mlp_color_lr, cfg.mlp_color_lr_final) == (
+        0.004,
+        0.008,
+        0.00005,
+    )
+    assert (cfg.appearance_lr, cfg.appearance_lr_final, cfg.lr_max_steps) == (
+        0.05,
+        0.0005,
+        30000,
+    )
 
 
 def test_pruning_removes_persistently_transparent_anchors():
@@ -992,7 +1106,9 @@ def test_the_scale_cap_is_a_keyword_a_caller_can_move():
     strategy.prune(model, scale_cap=0.5)
 
     assert float(model.params["scaling"][:, 3:].max()) == pytest.approx(0.5)
-    assert inspect.signature(AnchorStrategy.prune).parameters["scale_cap"].default == 0.05
+    assert (
+        inspect.signature(AnchorStrategy.prune).parameters["scale_cap"].default == 0.05
+    )
 
 
 def test_prune_takes_the_scale_cap_as_a_keyword_only_argument():
@@ -1019,7 +1135,9 @@ def test_prune_refuses_the_scale_cap_positionally():
     model = _field(n_offsets=2)
     strategy = _strategy(model)
 
-    with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
+    with pytest.raises(
+        TypeError, match="takes 2 positional arguments but 3 were given"
+    ):
         strategy.prune(model, 0.5)
 
 
@@ -1058,8 +1176,12 @@ def test_refine_acts_only_inside_the_window():
       refines on a step it must not; asserting only the interior hides both flips.
     """
     model = _field(n_offsets=2)
-    model.cfg = ScaffoldConfig(n_offsets=2, feat_dim=8, update_from=10, update_until=20, refine_every=5)
-    strategy = _strategy(model)  # reads the window off model.cfg, so it must be built after it
+    model.cfg = ScaffoldConfig(
+        n_offsets=2, feat_dim=8, update_from=10, update_until=20, refine_every=5
+    )
+    strategy = _strategy(
+        model
+    )  # reads the window off model.cfg, so it must be built after it
     n_before = len(model.params["anchors"])
 
     def arm():
@@ -1211,7 +1333,9 @@ def _reachable_state(model):
                 state[f"{prefix}{name}"] = value.detach().clone()
             elif isinstance(value, dict):
                 for key, item in value.items():
-                    state[f"{prefix}{name}.{key}"] = item.detach().clone() if torch.is_tensor(item) else repr(item)
+                    state[f"{prefix}{name}.{key}"] = (
+                        item.detach().clone() if torch.is_tensor(item) else repr(item)
+                    )
             else:
                 state[f"{prefix}{name}"] = repr(value)
 
@@ -1231,7 +1355,13 @@ def _reachable_state(model):
 def test_scaffold_exposes_anchor_parameters():
     model = _field(n_offsets=2)
 
-    assert set(model.params) == {"anchors", "offsets", "anchor_feat", "scaling", "rotation"}
+    assert set(model.params) == {
+        "anchors",
+        "offsets",
+        "anchor_feat",
+        "scaling",
+        "rotation",
+    }
     assert model.n_primitives == len(model.params["anchors"])
 
 
@@ -1258,7 +1388,9 @@ def test_scaffold_lambda_schedulers_reproduce_the_exponential_curve():
         for scheduler in model.schedulers:
             scheduler.step()
 
-    expected = math.sqrt((model.cfg.offset_lr * 2.0) * (model.cfg.offset_lr_final * 2.0))
+    expected = math.sqrt(
+        (model.cfg.offset_lr * 2.0) * (model.cfg.offset_lr_final * 2.0)
+    )
     assert offset_optimizer.param_groups[0]["lr"] == pytest.approx(expected, rel=1e-4)
 
 
@@ -1270,7 +1402,9 @@ def test_scaffold_lambda_schedulers_hold_at_the_final_lr_past_the_horizon():
         for scheduler in model.schedulers:
             scheduler.step()
 
-    assert offset_optimizer.param_groups[0]["lr"] == pytest.approx(model.cfg.offset_lr_final * 2.0, rel=1e-4)
+    assert offset_optimizer.param_groups[0]["lr"] == pytest.approx(
+        model.cfg.offset_lr_final * 2.0, rel=1e-4
+    )
 
 
 def test_anchor_scheduler_decays_over_the_run_not_the_lr_horizon():
@@ -1288,7 +1422,11 @@ def test_anchor_scheduler_decays_over_the_run_not_the_lr_horizon():
     assert lr_init == pytest.approx(0.01)
     assert anchors.param_groups[0]["lr"] == pytest.approx(lr_init * 0.01, rel=1e-5)
     assert len(model.schedulers) == 3
-    assert set(model.schedulers) == {model.anchor_scheduler, model.offset_scheduler, model.mlp_scheduler}
+    assert set(model.schedulers) == {
+        model.anchor_scheduler,
+        model.offset_scheduler,
+        model.mlp_scheduler,
+    }
 
 
 def test_scaffold_denormalize_inverts_the_sim3():
@@ -1301,8 +1439,14 @@ def test_scaffold_denormalize_inverts_the_sim3():
 
     model.denormalize(center, scale)
 
-    assert torch.allclose(model.params["anchors"], anchors_before / scale + torch.from_numpy(center), atol=1e-5)
-    assert torch.allclose(model.params["scaling"], scaling_before - math.log(scale), atol=1e-5)
+    assert torch.allclose(
+        model.params["anchors"],
+        anchors_before / scale + torch.from_numpy(center),
+        atol=1e-5,
+    )
+    assert torch.allclose(
+        model.params["scaling"], scaling_before - math.log(scale), atol=1e-5
+    )
     # Offsets are stored in units of the anchor's own extent, so they are scale-free
     assert torch.allclose(model.params["offsets"], offsets_before)
 
@@ -1405,7 +1549,9 @@ def test_post_backward_respects_the_statistics_window():
     Counting outside (start_stat, update_until) pollutes the window the first refine reads.
     """
     model = _field(n_offsets=2)
-    _window(model, start_stat=500, update_from=1500, update_until=15000, refine_every=100)
+    _window(
+        model, start_stat=500, update_from=1500, update_until=15000, refine_every=100
+    )
 
     model.post_backward(100, _backward_info(model, anchors=(0,), opacity=1e-6))
 
@@ -1436,7 +1582,9 @@ def test_post_backward_accumulates_a_cuda_render_inside_the_window():
     _window(model, start_stat=0, update_from=10000, update_until=15000)
     cam_to_world, intrinsics = _cam(device="cuda")
 
-    render, info = model.render(cam_to_world, intrinsics, 64, 64, torch.tensor([0], device="cuda"))
+    render, info = model.render(
+        cam_to_world, intrinsics, 64, 64, torch.tensor([0], device="cuda")
+    )
     model.pre_backward(5, info)
     render["rgb"].sum().backward()
     model.post_backward(5, info)
@@ -1499,12 +1647,16 @@ def test_export_gaussians_writes_the_decoded_values_in_the_ply_s_raw_forms():
     #   permuted decode would be indistinguishable from a correct one
     with torch.no_grad():
         model.params["scaling"][:, 3:] += 0.75
-        model.params["offsets"] += torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        model.params["offsets"] += (
+            torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        )
 
     assert bool(model.visible_anchors(cam_to_world, intrinsics, 64, 64).all())
 
     baked = model.export_gaussians(cam_to_world, intrinsics, 64, 64)
-    decoded, _ = model.decode(model.primitive, cam_to_world, intrinsics, 64, 64, camera_id)
+    decoded, _ = model.decode(
+        model.primitive, cam_to_world, intrinsics, 64, 64, camera_id
+    )
 
     # Non-vacuity, three ways the comparison below can be weakened without failing
     # - the whole slot grid, not the fallback's single row
@@ -1519,8 +1671,12 @@ def test_export_gaussians_writes_the_decoded_values_in_the_ply_s_raw_forms():
     assert torch.allclose(baked["means"], decoded["means"], atol=1e-6)
     assert torch.allclose(baked["quats"], decoded["quats"], atol=1e-6)
     assert torch.allclose(torch.exp(baked["scales"]), decoded["scales"], rtol=1e-5)
-    assert torch.allclose(torch.sigmoid(baked["opacities"]), decoded["opacities"], atol=2e-4)
-    assert torch.allclose(baked["sh0"][:, 0, :] * SH_C0 + 0.5, decoded["colors"], atol=1e-6)
+    assert torch.allclose(
+        torch.sigmoid(baked["opacities"]), decoded["opacities"], atol=2e-4
+    )
+    assert torch.allclose(
+        baked["sh0"][:, 0, :] * SH_C0 + 0.5, decoded["colors"], atol=1e-6
+    )
 
 
 def test_export_gaussians_clamps_the_all_closed_opacity_decode_returns_raw():
@@ -1548,7 +1704,9 @@ def test_export_gaussians_clamps_the_all_closed_opacity_decode_returns_raw():
     # - the opacity head reads `anchor_feat` and view direction only: neither bump reopens a closed one
     with torch.no_grad():
         model.params["scaling"][:, 3:] += 0.75
-        model.params["offsets"] += torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        model.params["offsets"] += (
+            torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        )
 
     # A -3.0 final bias closes every offset on every draw, not most
     # - `anchor_feat` zeros, both Linears U(-1/sqrt(fan_in)): pre-activation bounded by 2.33
@@ -1562,7 +1720,9 @@ def test_export_gaussians_clamps_the_all_closed_opacity_decode_returns_raw():
     assert bool((neural_opacity <= 0).all())
 
     baked = model.export_gaussians(cam_to_world, intrinsics, 64, 64)
-    decoded, decode_index = model.decode(model.primitive, cam_to_world, intrinsics, 64, 64, camera_id)
+    decoded, decode_index = model.decode(
+        model.primitive, cam_to_world, intrinsics, 64, 64, camera_id
+    )
 
     # Both fall back to the single most opaque slot, and to the same one
     assert len(decoded["means"]) == 1
@@ -1570,16 +1730,22 @@ def test_export_gaussians_clamps_the_all_closed_opacity_decode_returns_raw():
     assert int(decode_index[0]) == int(neural_opacity.reshape(-1).argmax())
 
     # The divergence itself: raw and negative out of decode, clamped and logit-ed out of the export
-    assert float(decoded["opacities"][0]) == pytest.approx(float(neural_opacity.max()), abs=1e-6)
+    assert float(decoded["opacities"][0]) == pytest.approx(
+        float(neural_opacity.max()), abs=1e-6
+    )
     assert float(decoded["opacities"][0]) < 0.0
     assert float(baked["opacities"][0]) == pytest.approx(-9.2102, abs=1e-3)
-    assert not torch.allclose(torch.sigmoid(baked["opacities"]), decoded["opacities"], atol=2e-4)
+    assert not torch.allclose(
+        torch.sigmoid(baked["opacities"]), decoded["opacities"], atol=2e-4
+    )
 
     # Every other raw form still round-trips on that row, so the clamp is the only difference
     assert torch.allclose(baked["means"], decoded["means"], atol=1e-6)
     assert torch.allclose(baked["quats"], decoded["quats"], atol=1e-6)
     assert torch.allclose(torch.exp(baked["scales"]), decoded["scales"], rtol=1e-5)
-    assert torch.allclose(baked["sh0"][:, 0, :] * SH_C0 + 0.5, decoded["colors"], atol=1e-6)
+    assert torch.allclose(
+        baked["sh0"][:, 0, :] * SH_C0 + 0.5, decoded["colors"], atol=1e-6
+    )
 
 
 def test_decode_means_are_the_anchor_plus_its_offset_extent():
@@ -1602,9 +1768,13 @@ def test_decode_means_are_the_anchor_plus_its_offset_extent():
     # - at init `offsets` is zero and `scaling`'s halves are equal: the forms are inseparable
     with torch.no_grad():
         model.params["scaling"][:, 3:] += 0.75
-        model.params["offsets"] += torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        model.params["offsets"] += (
+            torch.arange(1, model.cfg.n_offsets + 1).float().view(1, -1, 1) * 0.3
+        )
 
-    decoded, decode_index = model.decode(model.primitive, cam_to_world, intrinsics, 64, 64, camera_id)
+    decoded, decode_index = model.decode(
+        model.primitive, cam_to_world, intrinsics, 64, 64, camera_id
+    )
 
     anchors = model.params["anchors"]
     offsets = model.params["offsets"]
@@ -1612,7 +1782,9 @@ def test_decode_means_are_the_anchor_plus_its_offset_extent():
 
     def slots(anchor_term, offset_term, extent):
         # decode_index is anchor * n_offsets + offset, so it indexes this full slot grid directly
-        return (anchor_term[:, None, :] + offset_term * extent).reshape(-1, 3)[decode_index]
+        return (anchor_term[:, None, :] + offset_term * extent).reshape(-1, 3)[
+            decode_index
+        ]
 
     expected = slots(anchors, offsets, scaling[:, None, :3])
     wrong_extent = slots(anchors, offsets, scaling[:, None, 3:6])
@@ -1644,7 +1816,9 @@ def test_export_gaussians_decodes_at_the_unit_mean_view_direction():
     seen[0] = False
 
     for view in range(len(cam_to_world)):
-        visible = model.visible_anchors(cam_to_world[view : view + 1], intrinsics[view : view + 1], 64, 64)
+        visible = model.visible_anchors(
+            cam_to_world[view : view + 1], intrinsics[view : view + 1], 64, 64
+        )
         assert torch.equal(visible, seen)
 
     # Capture what the heads are actually asked to decode
@@ -1663,15 +1837,26 @@ def test_export_gaussians_decodes_at_the_unit_mean_view_direction():
     # Dropping the unseen fallback divides by zero
     # - dropping the re-normalization leaves a short vector: the heads are scale-free only on a unit one
     assert torch.isfinite(directions).all()
-    assert torch.allclose(directions.norm(dim=-1), torch.ones(len(directions)), atol=1e-5)
+    assert torch.allclose(
+        directions.norm(dim=-1), torch.ones(len(directions)), atol=1e-5
+    )
 
     anchors = model.params["anchors"].detach()
     centers = cam_to_world[:, :3, 3]
-    per_camera = torch.stack([(anchors - center) / (anchors - center).norm(dim=-1, keepdim=True) for center in centers])
+    per_camera = torch.stack(
+        [
+            (anchors - center) / (anchors - center).norm(dim=-1, keepdim=True)
+            for center in centers
+        ]
+    )
     mean_direction = per_camera.mean(dim=0)
-    assert (mean_direction[seen].norm(dim=-1) < 0.999).all()  # re-normalizing is not a no-op here
+    assert (
+        mean_direction[seen].norm(dim=-1) < 0.999
+    ).all()  # re-normalizing is not a no-op here
     assert torch.allclose(
-        directions[seen], mean_direction[seen] / mean_direction[seen].norm(dim=-1, keepdim=True), atol=1e-5
+        directions[seen],
+        mean_direction[seen] / mean_direction[seen].norm(dim=-1, keepdim=True),
+        atol=1e-5,
     )
 
     # The unseen anchor takes the nearest camera's direction
@@ -1688,7 +1873,9 @@ def test_scaffold_render_rasterizes_with_the_configured_primitive(primitive):
     model = _field(n_offsets=2, device="cuda", run={"primitive": primitive})
     cam_to_world, intrinsics = _cam(device="cuda")
 
-    render, info = model.render(cam_to_world, intrinsics, 64, 64, torch.tensor([0], device="cuda"))
+    render, info = model.render(
+        cam_to_world, intrinsics, 64, 64, torch.tensor([0], device="cuda")
+    )
 
     # The strategy's gradient key and the 2dgs-only signals both follow the configured primitive
     assert model.strategy.key_for_gradient in info
@@ -1706,7 +1893,9 @@ def test_scaffold_render_passes_the_normal_flag_through():
     camera_id = torch.tensor([0], device="cuda")
 
     default, _ = model.render(cam_to_world, intrinsics, 64, 64, camera_id)
-    without_normals, _ = model.render(cam_to_world, intrinsics, 64, 64, camera_id, render_normals=False)
+    without_normals, _ = model.render(
+        cam_to_world, intrinsics, 64, 64, camera_id, render_normals=False
+    )
 
     assert {"normal", "depth_normal"} <= set(default)
     assert not {"normal", "depth_normal"} & set(without_normals)
@@ -1722,7 +1911,9 @@ def test_scaffold_render_carries_per_view_state_in_info_not_on_self():
     state_before = _reachable_state(model)
 
     # The first render: everything post_backward and the regularizers read travels in the return values
-    render, info = model.render(cam_to_world, intrinsics, 64, 64, torch.tensor([0], device="cuda"))
+    render, info = model.render(
+        cam_to_world, intrinsics, 64, 64, torch.tensor([0], device="cuda")
+    )
     assert {"decode_index", "decoded_opacities", "visible_ids"} <= set(info)
     assert {"log_scales", "opacities"} <= set(render)
     first_index = info["decode_index"].clone()
@@ -1732,7 +1923,9 @@ def test_scaffold_render_carries_per_view_state_in_info_not_on_self():
     # - otherwise both comparisons below pass against a render that clobbered the first render's decode
     second = cam_to_world.clone()
     second[0, 0, 3] += 3.0
-    _, second_info = model.render(second, intrinsics, 64, 64, torch.tensor([1], device="cuda"))
+    _, second_info = model.render(
+        second, intrinsics, 64, 64, torch.tensor([1], device="cuda")
+    )
     assert not torch.equal(second_info["visible_ids"], first_visible)
 
     # post_backward is handed the first render's info, so it must still describe that decode
@@ -1772,7 +1965,9 @@ def test_anchor_strategy_owns_its_state():
     # - a strategy that allocated late reads as owning nothing until a step had run
     assert len(strategy.opacity_accum) == model.n_primitives
     assert len(strategy.anchor_denom) == model.n_primitives
-    assert len(strategy.offset_gradient_accum) == model.n_primitives * model.cfg.n_offsets
+    assert (
+        len(strategy.offset_gradient_accum) == model.n_primitives * model.cfg.n_offsets
+    )
     assert len(strategy.offset_denom) == model.n_primitives * model.cfg.n_offsets
 
     # The dict they replaced is gone from the model, not merely unused
@@ -1801,7 +1996,10 @@ def test_anchor_strategy_calls_do_not_take_a_state_argument():
     assert list(inspect.signature(strategy.accumulate).parameters) == ["step", "info"]
     assert list(inspect.signature(strategy.refine).parameters) == ["scaffold", "step"]
     assert list(inspect.signature(strategy.grow).parameters) == ["scaffold"]
-    assert list(inspect.signature(strategy.prune).parameters) == ["scaffold", "scale_cap"]
+    assert list(inspect.signature(strategy.prune).parameters) == [
+        "scaffold",
+        "scale_cap",
+    ]
 
     # The gsplat lifecycle hooks this strategy no longer implements
     assert not hasattr(strategy, "initialize_state")
@@ -1874,8 +2072,14 @@ def test_the_by_name_check_still_sees_a_planted_identifier(planted, name):
 @pytest.mark.parametrize(
     ("planted", "name"),
     (
-        ("# VIEW_DIM was retired; its literal 3 now lives on the head that reads it", "VIEW_DIM"),
-        ('"""SCALE_CAP is a keyword on prune now, not a module constant."""', "SCALE_CAP"),
+        (
+            "# VIEW_DIM was retired; its literal 3 now lives on the head that reads it",
+            "VIEW_DIM",
+        ),
+        (
+            '"""SCALE_CAP is a keyword on prune now, not a module constant."""',
+            "SCALE_CAP",
+        ),
         ('logger.info("verbose tracing was dropped")', "verbose"),
     ),
 )
@@ -1926,7 +2130,9 @@ def _module_level_bindings(source):
             targets = [node.target]
 
         for target in targets:
-            names.update(child.id for child in ast.walk(target) if isinstance(child, ast.Name))
+            names.update(
+                child.id for child in ast.walk(target) if isinstance(child, ast.Name)
+            )
 
         # A module-level if / try / with still runs at import
         # - walk its bodies only, never a `with`'s own `as` target
@@ -1947,7 +2153,9 @@ def test_the_scaffold_module_binds_no_module_level_constants():
     bindings = _module_level_bindings(Path(scaffold_module.__file__).read_text())
 
     unexpected = sorted(bindings - SCAFFOLD_MODULE_BINDINGS)
-    assert bindings == SCAFFOLD_MODULE_BINDINGS, f"unexpected module-level constants: {unexpected}"
+    assert bindings == SCAFFOLD_MODULE_BINDINGS, (
+        f"unexpected module-level constants: {unexpected}"
+    )
 
 
 @pytest.mark.parametrize(

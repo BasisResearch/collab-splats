@@ -20,6 +20,11 @@ MODULES = (
 
 @pytest.mark.parametrize("module", MODULES)
 def test_fresh_import(module):
-    proc = subprocess.run([sys.executable, "-c", f"import {module}"], capture_output=True, text=True, timeout=300)
+    proc = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
 
     assert proc.returncode == 0, proc.stderr

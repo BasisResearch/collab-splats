@@ -45,7 +45,9 @@ def test_tokens_to_feature_map_wrong_count_raises():
         _tokens_to_feature_map(torch.randn(99, 8), 196, 196, 14)
 
 
-def _make_fake_dino(resize_mode="max_size", image_resolution=224, patch_size=14, svd_components=500):
+def _make_fake_dino(
+    resize_mode="max_size", image_resolution=224, patch_size=14, svd_components=500
+):
     """Build a DINOFeatureExtractor with a mocked backbone (no weights download)."""
     mock_model = MagicMock()
     mock_model.config.patch_size = patch_size
@@ -60,7 +62,10 @@ def _make_fake_dino(resize_mode="max_size", image_resolution=224, patch_size=14,
 
     mock_model.side_effect = fake_forward
 
-    with patch("collab_splats.semantics.features.dino.AutoModel.from_pretrained", return_value=mock_model):
+    with patch(
+        "collab_splats.semantics.features.dino.AutoModel.from_pretrained",
+        return_value=mock_model,
+    ):
         ext = DINOFeatureExtractor(
             resize_mode=resize_mode,
             image_resolution=image_resolution,
@@ -96,7 +101,9 @@ def test_dino_preprocess_imagenet_normalization():
     img = Image.new("RGB", (224, 224), color=(255, 255, 255))
     t = ext.preprocess(img)
     # Green channel: (1.0 - 0.456) / 0.224 ≈ 2.43 under ImageNet; 1.0 under [0.5] norm
-    assert t[1].mean().item() > 1.5, "Expected ImageNet normalization (green channel > 1.5 for white img)"
+    assert t[1].mean().item() > 1.5, (
+        "Expected ImageNet normalization (green channel > 1.5 for white img)"
+    )
 
 
 def test_dino_forward_returns_list_of_maps():
@@ -130,7 +137,11 @@ def _make_fake_maskclip(resize_mode="max_size", image_resolution=336, patch_size
     mock_maskclip_onnx.clip.load.return_value = (mock_model, MagicMock())
 
     with patch.dict("sys.modules", {"maskclip_onnx": mock_maskclip_onnx}):
-        with patch("collab_splats.semantics.features.maskclip.maskclip_onnx", mock_maskclip_onnx, create=True):
+        with patch(
+            "collab_splats.semantics.features.maskclip.maskclip_onnx",
+            mock_maskclip_onnx,
+            create=True,
+        ):
             ext = MaskCLIPExtractor(
                 resize_mode=resize_mode,
                 image_resolution=image_resolution,
@@ -186,12 +197,17 @@ def _make_fake_talk2dino(resize_mode="max_size", image_resolution=512, patch_siz
     mock_backbone.patch_embed.proj.stride = (patch_size, patch_size)
 
     # Provide a real Normalize as image_transforms.transforms[-1]
-    mock_model.image_transforms = T.Compose([
-        T.ToTensor(),
-        T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-    ])
+    mock_model.image_transforms = T.Compose(
+        [
+            T.ToTensor(),
+            T.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+        ]
+    )
 
-    with patch("collab_splats.semantics.features.talk2dino.AutoModel.from_pretrained", return_value=mock_model):
+    with patch(
+        "collab_splats.semantics.features.talk2dino.AutoModel.from_pretrained",
+        return_value=mock_model,
+    ):
         ext = Talk2DinoExtractor(
             resize_mode=resize_mode,
             image_resolution=image_resolution,
@@ -220,7 +236,9 @@ def test_talk2dino_preprocess_patch_aligned():
 def test_talk2dino_forward_single_path():
     """forward() must work for both resize modes without _forward_max_size/_forward_square."""
     for mode in ("max_size", "square"):
-        ext = _make_fake_talk2dino(resize_mode=mode, image_resolution=196, patch_size=14)
+        ext = _make_fake_talk2dino(
+            resize_mode=mode, image_resolution=196, patch_size=14
+        )
         imgs = [Image.new("RGB", (196, 196)) for _ in range(2)]
         out = ext.forward(imgs)
         assert len(out) == 2
@@ -242,7 +260,9 @@ def test_talk2dino_no_dual_forward_methods():
 def test_preprocess_is_defined_once_on_the_base():
     """All three extractors share BaseFeatureExtractor.preprocess — no per-backend copies."""
     for cls in (DINOFeatureExtractor, MaskCLIPExtractor, Talk2DinoExtractor):
-        assert "preprocess" not in vars(cls), f"{cls.__name__} still overrides preprocess"
+        assert "preprocess" not in vars(cls), (
+            f"{cls.__name__} still overrides preprocess"
+        )
         assert cls.preprocess is BaseFeatureExtractor.preprocess
 
 
@@ -269,7 +289,12 @@ def test_svd_components_still_reaches_the_base():
     assert ext.svd_components == 37
 
     # The default itself is the INSID3 reference value and must not drift.
-    assert inspect.signature(DINOFeatureExtractor.__init__).parameters["svd_components"].default == 500
+    assert (
+        inspect.signature(DINOFeatureExtractor.__init__)
+        .parameters["svd_components"]
+        .default
+        == 500
+    )
 
 
 def test_preprocess_square_mode_center_crops_to_square():
@@ -307,7 +332,9 @@ def test_base_forward_drops_prefix_tokens(prefix):
     """The base drops the backend's declared prefix and keeps the H_p * W_p patch tokens."""
     backend = _TokenBackend(prefix)
     [feat] = backend.forward([Image.new("RGB", (28, 28))])
-    expected = torch.nn.functional.normalize(backend.patches[0].reshape(2, 2, 8).permute(2, 0, 1), dim=0)
+    expected = torch.nn.functional.normalize(
+        backend.patches[0].reshape(2, 2, 8).permute(2, 0, 1), dim=0
+    )
     assert feat.shape == (8, 2, 2)
     assert torch.allclose(feat, expected)
 

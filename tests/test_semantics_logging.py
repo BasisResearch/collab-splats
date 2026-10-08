@@ -43,7 +43,9 @@ def test_score_queries_logs_negative_count(caplog):
     extractor = _MockQueryable()
     features = torch.randn(64, 8, 8)
     with caplog.at_level(logging.DEBUG, logger="collab_splats.semantics.features"):
-        extractor.score_queries(features, positive=["cat"], negative=["background", "wall"])
+        extractor.score_queries(
+            features, positive=["cat"], negative=["background", "wall"]
+        )
     assert "1 positive" in caplog.text
     assert "2 negative" in caplog.text
 
@@ -52,7 +54,9 @@ def test_score_queries_no_negative_omits_count(caplog):
     extractor = _MockQueryable()
     features = torch.randn(64, 8, 8)
     with caplog.at_level(logging.DEBUG, logger="collab_splats.semantics.features"):
-        extractor.score_queries(features, positive=["cat"], negative=[], reduction="pool")
+        extractor.score_queries(
+            features, positive=["cat"], negative=[], reduction="pool"
+        )
     assert "reduction=pool" in caplog.text
     assert "negative" not in caplog.text
 
@@ -71,12 +75,14 @@ def test_dino_forward_logs(caplog):
 
     mock_model = MagicMock()
     mock_model.config.patch_size = 14
+
     def _call(tensors):
         b, _, H, W = tensors.shape
         ph, pw = H // 14, W // 14
         out = MagicMock()
         out.last_hidden_state = torch.zeros(b, ph * pw + 1, 384)
         return out
+
     mock_model.side_effect = _call
     extractor.model = mock_model
 
@@ -94,15 +100,18 @@ def test_maskclip_forward_logs(caplog):
     extractor._image_resolution = 64
     extractor._resize_mode = "max_size"
     extractor.patch_size = 16
-    extractor._normalize = T.Normalize([0.48145466, 0.4578275, 0.40821073],
-                                        [0.26862954, 0.26130258, 0.27577711])
+    extractor._normalize = T.Normalize(
+        [0.48145466, 0.4578275, 0.40821073], [0.26862954, 0.26130258, 0.27577711]
+    )
     extractor._device = torch.device("cpu")
 
     mock_model = MagicMock()
     mock_model.parameters.side_effect = lambda: iter([torch.zeros(1)])
+
     def _get_patch_encodings(stacked):
         b, _, H, W = stacked.shape
         return torch.randn(b, (H // 16) * (W // 16), 512)
+
     mock_model.get_patch_encodings.side_effect = _get_patch_encodings
     extractor.model = mock_model
 

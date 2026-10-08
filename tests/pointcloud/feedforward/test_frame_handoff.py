@@ -32,7 +32,9 @@ _backends = pytest.mark.parametrize(
 
 
 @_backends
-def test_preprocess_falls_back_to_files_when_a_frame_is_missing(tmp_path, caplog, creator_cls, assert_views_equal):
+def test_preprocess_falls_back_to_files_when_a_frame_is_missing(
+    tmp_path, caplog, creator_cls, assert_views_equal
+):
     """
     A partial handoff is ignored with one warning: every frame is read from disk.
     """
@@ -43,10 +45,14 @@ def test_preprocess_falls_back_to_files_when_a_frame_is_missing(tmp_path, caplog
     creator = creator_cls()
     creator.frames = {paths[0].name: np.zeros_like(frames[0])}
 
-    with caplog.at_level(logging.WARNING, logger="collab_splats.pointcloud.feedforward.base"):
+    with caplog.at_level(
+        logging.WARNING, logger="collab_splats.pointcloud.feedforward.base"
+    ):
         views, _ = creator._preprocess(paths)
 
-    assert [r.getMessage() for r in caplog.records] == ["frames handed off but 2 of 3 paths missing; reading files"]
+    assert [r.getMessage() for r in caplog.records] == [
+        "frames handed off but 2 of 3 paths missing; reading files"
+    ]
     assert_views_equal(views, creator_cls()._preprocess(paths)[0])
 
 

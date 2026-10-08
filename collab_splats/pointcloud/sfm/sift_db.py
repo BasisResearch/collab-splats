@@ -41,7 +41,9 @@ PAIRINGS = tuple(_MATCHERS)
 
 # COLMAP's vocab tree file for image retrieval, in the newer FAISS format
 VOCAB_TREE_NAME = "vocab_tree_faiss_flickr100K_words32K.bin"  # pycolmap 4 crashes on the older flann file
-VOCAB_TREE_URL = f"https://github.com/colmap/colmap/releases/download/3.11.1/{VOCAB_TREE_NAME}"
+VOCAB_TREE_URL = (
+    f"https://github.com/colmap/colmap/releases/download/3.11.1/{VOCAB_TREE_NAME}"
+)
 VOCAB_TREE_SHA256 = "921e894b7d81f5cf223df824a02b9932660cddf00a815c93fc7c0bd690fc639e"
 VOCAB_TREE_CACHE = Path.home() / ".cache" / "collab_splats"
 
@@ -86,15 +88,21 @@ def build_sift_database(
         raise ValueError(f"pairing must be one of {PAIRINGS}, got {pairing!r}")
 
     if "retrieval" in pairing and vocab_tree is None:
-        raise ValueError(f"pairing {pairing!r} needs a vocab_tree (see fetch_vocab_tree)")
+        raise ValueError(
+            f"pairing {pairing!r} needs a vocab_tree (see fetch_vocab_tree)"
+        )
 
     # Set the pairing options for the chosen mode
     if pairing == "retrieval":
-        pairing_options = pycolmap.VocabTreePairingOptions(num_images=num_retrieved, vocab_tree_path=vocab_tree)
+        pairing_options = pycolmap.VocabTreePairingOptions(
+            num_images=num_retrieved, vocab_tree_path=vocab_tree
+        )
     elif pairing == "exhaustive":
         pairing_options = pycolmap.ExhaustivePairingOptions()
     else:
-        pairing_options = pycolmap.SequentialPairingOptions(overlap=overlap, quadratic_overlap=False)
+        pairing_options = pycolmap.SequentialPairingOptions(
+            overlap=overlap, quadratic_overlap=False
+        )
 
         if pairing == "sequential+retrieval":
             pairing_options.loop_detection = True
@@ -107,7 +115,9 @@ def build_sift_database(
 
     # Limit the number of CPU threads
     if "retrieval" in pairing:
-        pairing_options.num_threads = num_threads  # uncapped, OpenBLAS can crash on many cores
+        pairing_options.num_threads = (
+            num_threads  # uncapped, OpenBLAS can crash on many cores
+        )
 
     extraction_options = pycolmap.FeatureExtractionOptions()
     matching_options = pycolmap.FeatureMatchingOptions()
@@ -118,7 +128,12 @@ def build_sift_database(
 
     # Extract features with one shared camera, then match, and delete the partial database on failure
     try:
-        logger.info("SIFT database %s: extract + %s (%s)", database_path, _MATCHERS[pairing], device.name)
+        logger.info(
+            "SIFT database %s: extract + %s (%s)",
+            database_path,
+            _MATCHERS[pairing],
+            device.name,
+        )
         pycolmap.extract_features(
             database_path,
             image_path,
@@ -128,11 +143,16 @@ def build_sift_database(
             device=device,
         )
         getattr(pycolmap, _MATCHERS[pairing])(
-            database_path, matching_options=matching_options, pairing_options=pairing_options, device=device
+            database_path,
+            matching_options=matching_options,
+            pairing_options=pairing_options,
+            device=device,
         )
     except (RuntimeError, ValueError) as err:
         database_path.unlink(missing_ok=True)
-        raise RuntimeError(f"COLMAP SIFT database build failed on {device.name} ({err})") from err
+        raise RuntimeError(
+            f"COLMAP SIFT database build failed on {device.name} ({err})"
+        ) from err
 
 
 def ensure_sift_database(
@@ -168,7 +188,7 @@ def ensure_sift_database(
         RuntimeError: the rebuild fails.
     """
     # Collect the settings this pairing mode uses, to compare with the stored ones
-    params = {"pairing": pairing}
+    params: dict[str, str | int] = {"pairing": pairing}
 
     if pairing.startswith("sequential"):
         params["overlap"] = overlap
@@ -236,14 +256,18 @@ def fetch_vocab_tree(cache_dir: Path | None = None) -> Path:
             urllib.request.urlretrieve(VOCAB_TREE_URL, path)
         except OSError as err:
             path.unlink(missing_ok=True)
-            raise RuntimeError(f"vocab tree download failed ({err}): {VOCAB_TREE_URL} -> {path}") from err
+            raise RuntimeError(
+                f"vocab tree download failed ({err}): {VOCAB_TREE_URL} -> {path}"
+            ) from err
 
     # Check the file hash, and delete the file if it does not match
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
     if digest != VOCAB_TREE_SHA256:
         path.unlink()
-        raise RuntimeError(f"vocab tree sha256 {digest} != pinned {VOCAB_TREE_SHA256} ({VOCAB_TREE_URL}, {path})")
+        raise RuntimeError(
+            f"vocab tree sha256 {digest} != pinned {VOCAB_TREE_SHA256} ({VOCAB_TREE_URL}, {path})"
+        )
 
     return path
 

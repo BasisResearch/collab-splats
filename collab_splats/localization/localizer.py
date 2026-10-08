@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import cv2
 import numpy as np
@@ -56,10 +56,15 @@ def seed_intrinsics(height: int, width: int) -> np.ndarray:
         (3, 3) float32 K.
     """
     f = 1.2 * max(width, height)
-    return np.array([[f, 0.0, width / 2.0], [0.0, f, height / 2.0], [0.0, 0.0, 1.0]], dtype=np.float32)
+    return np.array(
+        [[f, 0.0, width / 2.0], [0.0, f, height / 2.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
 
 
-def _crop_to_model_grid(px: np.ndarray, box: np.ndarray, model_hw: tuple[int, int]) -> np.ndarray:
+def _crop_to_model_grid(
+    px: np.ndarray, box: np.ndarray, model_hw: tuple[int, int]
+) -> np.ndarray:
     """
     Full-res pixels on the model grid: inverse of PointcloudResult.__post_init__'s crop map.
 
@@ -89,7 +94,9 @@ def _to_query_grid(
     pts2d = result.pts2d
 
     if pts2d is not None:
-        scale = np.array([full_hw[1] / small_hw[1], full_hw[0] / small_hw[0]], dtype=np.float32)
+        scale = np.array(
+            [full_hw[1] / small_hw[1], full_hw[0] / small_hw[0]], dtype=np.float32
+        )
         pts2d = pts2d * scale
 
     return dataclasses.replace(result, query_intrinsics=K, pts2d=pts2d)
@@ -136,7 +143,11 @@ def localization_db_exists(zarr_path: Path | str, extractor_name: str) -> bool:
     # Open read-only; a missing or non-group store has no DB
     try:
         store = zarr.open_group(str(zarr_path), mode="r")
-    except (FileNotFoundError, zarr.errors.NodeNotFoundError, zarr.errors.ContainsArrayError):
+    except (
+        FileNotFoundError,
+        zarr.errors.NodeNotFoundError,
+        zarr.errors.ContainsArrayError,
+    ):
         return False
 
     # save_index writes image_paths last; without it the build never finished
@@ -158,7 +169,9 @@ def _append_rows(group: zarr.Group, name: str, rows: np.ndarray) -> None:
     arr[n:] = rows
 
 
-def _features_from_csr(group: zarr.Group, image_sizes: list[tuple[int, int]]) -> list[LocalFeatures]:
+def _features_from_csr(
+    group: zarr.Group, image_sizes: list[tuple[int, int]]
+) -> list[LocalFeatures]:
     """
     Per-frame LocalFeatures from the reconstruction CSR feature group.
     """
@@ -183,7 +196,9 @@ def _features_from_csr(group: zarr.Group, image_sizes: list[tuple[int, int]]) ->
     return feats
 
 
-def _write_csr(group: zarr.Group, feats: list[LocalFeatures], chunk_rows: int = 65536) -> None:
+def _write_csr(
+    group: zarr.Group, feats: list[LocalFeatures], chunk_rows: int = 65536
+) -> None:
     """
     Create the CSR arrays of a feature group: offsets, keypoints, descriptors, normalized keypoints.
 
@@ -199,22 +214,36 @@ def _write_csr(group: zarr.Group, feats: list[LocalFeatures], chunk_rows: int = 
     d = feats[0].descriptors.shape[1] if feats else 1
     kpts = [to_numpy(f.keypoints) for f in feats]
     descs = [to_numpy(f.descriptors) for f in feats]
-    all_kpts = np.concatenate(kpts).astype(np.float32) if offsets[-1] else np.zeros((0, 2), np.float32)
-    all_descs = np.concatenate(descs).astype(np.float32) if offsets[-1] else np.zeros((0, d), np.float32)
+    all_kpts = (
+        np.concatenate(kpts).astype(np.float32)
+        if offsets[-1]
+        else np.zeros((0, 2), np.float32)
+    )
+    all_descs = (
+        np.concatenate(descs).astype(np.float32)
+        if offsets[-1]
+        else np.zeros((0, d), np.float32)
+    )
 
     # Row chunks no taller than the table, so a small DB stays one chunk
     n_rows = int(offsets[-1])
     rows = min(chunk_rows, max(n_rows, 1))
 
-    group.create_array("frame_offsets", data=offsets, chunks=offsets.shape, compressors=LZ4)
+    group.create_array(
+        "frame_offsets", data=offsets, chunks=offsets.shape, compressors=LZ4
+    )
     group.create_array("keypoints", data=all_kpts, chunks=(rows, 2), compressors=LZ4)
-    group.create_array("descriptors", data=all_descs, chunks=(rows, max(d, 1)), compressors=LZ4)
+    group.create_array(
+        "descriptors", data=all_descs, chunks=(rows, max(d, 1)), compressors=LZ4
+    )
 
     # Normalized keypoints only when every frame carries them
     if feats and offsets[-1] and all(f.keypoints_normalized is not None for f in feats):
         parts = [to_numpy(f.keypoints_normalized) for f in feats]
         data = np.concatenate(parts).astype(np.float32)
-        group.create_array("keypoints_normalized", data=data, chunks=(rows, 2), compressors=LZ4)
+        group.create_array(
+            "keypoints_normalized", data=data, chunks=(rows, 2), compressors=LZ4
+        )
 
 
 def _append_csr(group: zarr.Group, feats: list[LocalFeatures]) -> None:
@@ -235,7 +264,9 @@ def _append_csr(group: zarr.Group, feats: list[LocalFeatures]) -> None:
     # Normalized keypoints must exist for every appended frame, or the array would misalign
     if "keypoints_normalized" in group:
         if any(f.keypoints_normalized is None for f in feats):
-            raise ValueError("feature DB stores keypoints_normalized; every appended frame must carry it")
+            raise ValueError(
+                "feature DB stores keypoints_normalized; every appended frame must carry it"
+            )
 
         parts = [to_numpy(f.keypoints_normalized) for f in feats]
         data = np.concatenate(parts, dtype=np.float32)
@@ -265,7 +296,9 @@ class LocalizationResult:
     inlier_mask: np.ndarray | None  # (M,) bool
     pts2d_ref: np.ndarray | None = None  # (M, 2) reference px
     ref_frame_indices: np.ndarray | None = None  # (M,) int32
-    query_intrinsics: np.ndarray | None = None  # (3, 3) refined K when a pose is found, else the input K
+    query_intrinsics: np.ndarray | None = (
+        None  # (3, 3) refined K when a pose is found, else the input K
+    )
     ref_hw: tuple[int, int] | None = None  # (H, W) of the reference images
 
     @property
@@ -320,7 +353,9 @@ def read_localization_db(
     group = store[rec_key]
 
     if "image_paths" not in group.attrs or "global_desc" not in group:
-        raise KeyError(f"feature DB for '{extractor_name}' is incomplete (no image_paths or global_desc); rebuild it")
+        raise KeyError(
+            f"feature DB for '{extractor_name}' is incomplete (no image_paths or global_desc); rebuild it"
+        )
 
     ids = [str(p) for p in group.attrs["image_paths"]]
     n_frames = group["frame_offsets"].shape[0] - 1
@@ -336,8 +371,12 @@ def read_localization_db(
     hw = tuple(int(x) for x in group.attrs["hw"])
     t0 = time.perf_counter()
     feats = _features_from_csr(group, [(hw[1], hw[0])] * len(ids))
-    logger.info("CameraLocalizer: read feature DB (%d frames) in %.1fs", len(feats), time.perf_counter() - t0)
-    return feats, ids, hw
+    logger.info(
+        "CameraLocalizer: read feature DB (%d frames) in %.1fs",
+        len(feats),
+        time.perf_counter() - t0,
+    )
+    return feats, ids, cast(tuple[int, int], hw)
 
 
 ########################################
@@ -403,7 +442,11 @@ class CameraLocalizer:
 
         # Extract and embed per chunk; tqdm only without an external progress sink
         bar = tqdm(
-            total=len(ids), desc="Indexing frames", unit="frame", leave=False, disable=progress_callback is not None
+            total=len(ids),
+            desc="Indexing frames",
+            unit="frame",
+            leave=False,
+            disable=progress_callback is not None,
         )
 
         for chunk in _chunked(images, batch_size):
@@ -422,6 +465,7 @@ class CameraLocalizer:
                         )
 
             feats = self._extractor.extract(chunk)
+            assert isinstance(feats, list)
             self._frame_features += feats
             descs.append(self._embed(chunk))
             bar.update(len(chunk))
@@ -436,7 +480,9 @@ class CameraLocalizer:
             raise ValueError("CameraLocalizer: no reference frames")
 
         # Reference image size, and the crop each frame went through
-        w, h = self._frame_features[0].image_size
+        image_size = self._frame_features[0].image_size
+        assert image_size is not None
+        w, h = image_size
         self._set_frames(self._frame_features, np.concatenate(descs), (h, w))
         logger.info("CameraLocalizer: indexed %d frames", len(self._frame_features))
 
@@ -469,7 +515,12 @@ class CameraLocalizer:
         self._localized_extrinsics: list[np.ndarray] = []
         self._frame_features: list[LocalFeatures] = []
 
-    def _set_frames(self, features: list[LocalFeatures], global_desc: np.ndarray, hw: tuple[int, int]) -> None:
+    def _set_frames(
+        self,
+        features: list[LocalFeatures],
+        global_desc: np.ndarray,
+        hw: tuple[int, int],
+    ) -> None:
         """
         Reference features, descriptors and image size; uncropped coords when none were given.
         """
@@ -495,7 +546,9 @@ class CameraLocalizer:
         Returns:
             'reconstruction' or 'localized' per frame.
         """
-        return ["reconstruction"] * len(self._ids) + ["localized"] * len(self._localized_ids)
+        return ["reconstruction"] * len(self._ids) + ["localized"] * len(
+            self._localized_ids
+        )
 
     @property
     def image_paths(self) -> list[str]:
@@ -554,7 +607,9 @@ class CameraLocalizer:
     # Persistence
     ########################################
 
-    def save_index(self, zarr_path: Path | str, extractor_name: str, attrs: dict | None = None) -> None:
+    def save_index(
+        self, zarr_path: Path | str, extractor_name: str, attrs: dict | None = None
+    ) -> None:
         """
         Persist the reconstruction features and global descriptors to pointcloud.zarr.
 
@@ -581,12 +636,22 @@ class CameraLocalizer:
         # Arrays first, then the cache stamps, then the image_paths commit marker
         group = store.require_group(f"{ext_key}/reconstruction")
         _write_csr(group, self._frame_features)
-        group.create_array("global_desc", data=self._global_desc, chunks=self._global_desc.shape, compressors=LZ4)
+        group.create_array(
+            "global_desc",
+            data=self._global_desc,
+            chunks=self._global_desc.shape,
+            compressors=LZ4,
+        )
         group.attrs["hw"] = list(self._image_hw)
         group.attrs["max_num_keypoints"] = self._extractor.max_num_keypoints
         group.attrs["retrieval"] = self._retrieval_name
         group.attrs["image_paths"] = list(self._ids)
-        logger.info("CameraLocalizer.save_index: %d frames to %s [%s]", len(self._ids), zarr_path, extractor_name)
+        logger.info(
+            "CameraLocalizer.save_index: %d frames to %s [%s]",
+            len(self._ids),
+            zarr_path,
+            extractor_name,
+        )
 
     @classmethod
     def load_index(
@@ -662,8 +727,12 @@ class CameraLocalizer:
 
         if loc_key in store:
             loc_group = store[loc_key]
-            obj._localized_ids = [str(p) for p in loc_group.attrs.get("image_paths", [])]
-            obj._localized_extrinsics = list(loc_group["extrinsics"][: len(obj._localized_ids)])
+            obj._localized_ids = [
+                str(p) for p in loc_group.attrs.get("image_paths", [])
+            ]
+            obj._localized_extrinsics = list(
+                loc_group["extrinsics"][: len(obj._localized_ids)]
+            )
 
         logger.info(
             "CameraLocalizer.load_index: %d rec + %d loc frames [%s]",
@@ -701,6 +770,7 @@ class CameraLocalizer:
         for chunk in _chunked(new_images, self._batch_size):
             start = len(new_features)
             feats = self._extractor.extract(chunk)
+            assert isinstance(feats, list)
             new_features += feats
             descs.append(self._embed(chunk))
 
@@ -724,7 +794,11 @@ class CameraLocalizer:
         paths = [str(p) for p in group.attrs["image_paths"]]
         paths += [str(i) for i in new_ids]
         group.attrs["image_paths"] = paths
-        logger.info("CameraLocalizer.update_index: appended %d frames [%s]", len(new_ids), extractor_name)
+        logger.info(
+            "CameraLocalizer.update_index: appended %d frames [%s]",
+            len(new_ids),
+            extractor_name,
+        )
 
     def add_localized_frame(
         self,
@@ -751,14 +825,19 @@ class CameraLocalizer:
         frame_id = str(image_path)
 
         if frame_id in self._ids or frame_id in self._localized_ids:
-            logger.warning("CameraLocalizer.add_localized_frame: %s already in index, skipping", frame_id)
+            logger.warning(
+                "CameraLocalizer.add_localized_frame: %s already in index, skipping",
+                frame_id,
+            )
             return
 
         self._localized_ids.append(frame_id)
         self._localized_extrinsics.append(np.asarray(pose))
 
         if zarr_path is not None and extractor_name is not None:
-            self._append_localized_to_zarr(frame_id, pose, zarr_path, extractor_name, provenance)
+            self._append_localized_to_zarr(
+                frame_id, pose, zarr_path, extractor_name, provenance
+            )
 
     @staticmethod
     def _append_localized_to_zarr(
@@ -781,7 +860,9 @@ class CameraLocalizer:
         # First frame creates the group
         if loc_key not in store:
             group = store.require_group(loc_key)
-            group.create_array("extrinsics", data=pose_row, chunks=(1, 4, 4), compressors=LZ4)
+            group.create_array(
+                "extrinsics", data=pose_row, chunks=(1, 4, 4), compressors=LZ4
+            )
             group.attrs.update({"provenance": [meta], "image_paths": [frame_id]})
             return
 
@@ -792,7 +873,9 @@ class CameraLocalizer:
         n = len(paths)
         group["extrinsics"].resize((n + 1, 4, 4))
         group["extrinsics"][n] = pose_row[0]
-        group.attrs.update({"provenance": metas[:n] + [meta], "image_paths": paths + [frame_id]})
+        group.attrs.update(
+            {"provenance": metas[:n] + [meta], "image_paths": paths + [frame_id]}
+        )
 
     @staticmethod
     def clear_localized_frames(zarr_path: Path | str, extractor_name: str) -> None:
@@ -810,7 +893,11 @@ class CameraLocalizer:
 
         if loc_key in store:
             del store[loc_key]
-            logger.info("CameraLocalizer.clear_localized_frames: cleared '%s' from %s", extractor_name, zarr_path)
+            logger.info(
+                "CameraLocalizer.clear_localized_frames: cleared '%s' from %s",
+                extractor_name,
+                zarr_path,
+            )
 
     @classmethod
     def from_pointcloud(
@@ -852,14 +939,21 @@ class CameraLocalizer:
                 or a rebuild's frame size disagrees with original_coords.
         """
         coords = result.original_coords
+        assert result.world_points is not None
         n = len(result.world_points)
 
         # Default labels: the reconstruction's own image paths
         if ids is None:
             ids = [str(p) for p in result.image_paths]
 
-        if len(result.extrinsics) != n or len(ids) != n or (coords is not None and len(coords) != n):
-            raise ValueError("from_pointcloud: world_points, extrinsics, ids and original_coords must align per frame")
+        if (
+            len(result.extrinsics) != n
+            or len(ids) != n
+            or (coords is not None and len(coords) != n)
+        ):
+            raise ValueError(
+                "from_pointcloud: world_points, extrinsics, ids and original_coords must align per frame"
+            )
 
         extractor = extractor if extractor is not None else LocalMatcher("loma")
         name = extractor.model_name
@@ -952,7 +1046,9 @@ class CameraLocalizer:
         n_rec = len(self._world_points)
 
         if refs is not None and any(not 0 <= i < n_rec for i in refs):
-            raise ValueError(f"localize: refs {list(refs)} must index reconstruction frames [0, {n_rec})")
+            raise ValueError(
+                f"localize: refs {list(refs)} must index reconstruction frames [0, {n_rec})"
+            )
 
         # Match on a query no larger than the references; K follows the resize
         full_hw = query_image.shape[:2]
@@ -965,6 +1061,7 @@ class CameraLocalizer:
             query_intrinsics = rescale_intrinsics(query_intrinsics, full_hw, small_hw)
 
         query_feats = self._extractor.extract(small)
+        assert isinstance(query_feats, LocalFeatures)
         query_feats = self._extractor.to_device(query_feats)
         refs = self._rank_refs(small) if refs is None else list(refs)
         model_hw = self._world_points.shape[1:3]
@@ -990,7 +1087,9 @@ class CameraLocalizer:
             all_ref.append(m.ref_px[valid])
             all_frame.append(np.full(n_valid, i, dtype=np.int32))
 
-        result = self._solve_pnp(all_q, all_3d, all_ref, all_frame, small_hw, query_intrinsics)
+        result = self._solve_pnp(
+            all_q, all_3d, all_ref, all_frame, small_hw, query_intrinsics
+        )
         return _to_query_grid(result, small_hw, full_hw)
 
     def _shrink_query(self, query_image: np.ndarray) -> np.ndarray:
@@ -1049,8 +1148,13 @@ class CameraLocalizer:
 
         # PnP needs at least 4 correspondences
         if n_corr < 4:
-            logger.warning("CameraLocalizer: only %d 2D-3D correspondences, need >= 4 for PnP", n_corr)
+            logger.warning(
+                "CameraLocalizer: only %d 2D-3D correspondences, need >= 4 for PnP",
+                n_corr,
+            )
             return failed
+
+        assert pts2d is not None and pts3d_matched is not None
 
         # Single-focal pinhole camera from the query intrinsics
         H, W = query_hw
@@ -1059,7 +1163,9 @@ class CameraLocalizer:
             float(query_intrinsics[0, 2]),
             float(query_intrinsics[1, 2]),
         ]
-        camera = pycolmap.Camera(model="SIMPLE_PINHOLE", width=int(W), height=int(H), params=params)
+        camera = pycolmap.Camera(
+            model="SIMPLE_PINHOLE", width=int(W), height=int(H), params=params
+        )
 
         # Solver options from the config dict
         est_cfg = self.config.get("estimation", {})
@@ -1068,8 +1174,12 @@ class CameraLocalizer:
         estimation_options.ransac.max_error = ransac_cfg.get("max_error", 50)
         ref_cfg = self.config.get("refinement", {})
         refinement_options = pycolmap.AbsolutePoseRefinementOptions()
-        refinement_options.refine_focal_length = ref_cfg.get("refine_focal_length", True)
-        refinement_options.refine_extra_params = ref_cfg.get("refine_extra_params", False)
+        refinement_options.refine_focal_length = ref_cfg.get(
+            "refine_focal_length", True
+        )
+        refinement_options.refine_extra_params = ref_cfg.get(
+            "refine_extra_params", False
+        )
 
         # Solve with LO-RANSAC + refinement
         pts2d_f64 = pts2d.astype(np.float64)
@@ -1085,7 +1195,11 @@ class CameraLocalizer:
 
         # Too few inliers: no pose, but keep the correspondences for display
         if n_inliers < 4:
-            logger.warning("CameraLocalizer: pycolmap failed (inliers=%d / %d correspondences)", n_inliers, n_corr)
+            logger.warning(
+                "CameraLocalizer: pycolmap failed (inliers=%d / %d correspondences)",
+                n_inliers,
+                n_corr,
+            )
             failed.n_inliers = n_inliers
             return failed
 
@@ -1101,5 +1215,9 @@ class CameraLocalizer:
         refined_K = camera.calibration_matrix()
         refined_K = refined_K.astype(np.float32)
         return dataclasses.replace(
-            failed, pose=pose, n_inliers=n_inliers, inlier_mask=ret["inlier_mask"], query_intrinsics=refined_K
+            failed,
+            pose=pose,
+            n_inliers=n_inliers,
+            inlier_mask=ret["inlier_mask"],
+            query_intrinsics=refined_K,
         )

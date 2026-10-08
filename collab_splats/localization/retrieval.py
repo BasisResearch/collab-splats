@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 import torch
 import torch.nn as nn
@@ -28,7 +29,7 @@ class BaseRetrievalExtractor(RegistryMixin, nn.Module, ABC):
     - used for top-K candidate retrieval before local feature matching
     """
 
-    _registry: dict[str, type["BaseRetrievalExtractor"]] = {}
+    _registry: ClassVar[dict[str, type["BaseRetrievalExtractor"]]] = {}
 
     @abstractmethod
     def forward(self, images: list | torch.Tensor) -> torch.Tensor:
@@ -54,7 +55,9 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
     - weights: https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt
     """
 
-    _WEIGHTS_URL = "https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt"
+    _WEIGHTS_URL = (
+        "https://github.com/serizba/salad/releases/download/v1.0.0/dino_salad.ckpt"
+    )
     _INPUT_SIZE = 224  # divisible by 14 for DINOv2 patch grid
 
     def __init__(self, device: str | None = None):
@@ -77,7 +80,9 @@ class DinoSaladExtractor(BaseRetrievalExtractor):
         ).to(self._device)
 
         # Load pretrained weights; strict=False tolerates minor key mismatches
-        sd = torch.hub.load_state_dict_from_url(self._WEIGHTS_URL, map_location=torch.device("cpu"))
+        sd = torch.hub.load_state_dict_from_url(
+            self._WEIGHTS_URL, map_location=torch.device("cpu")
+        )
         self.load_state_dict(sd, strict=False)
         self.eval()
 
@@ -150,7 +155,9 @@ class MegaLocExtractor(BaseRetrievalExtractor):
     def __init__(self, device: str | None = None):
         super().__init__()
         self._device = device or get_device()
-        self.model = torch.hub.load(self._HUB_REPO, "get_trained_model", trust_repo=True)
+        self.model = torch.hub.load(
+            self._HUB_REPO, "get_trained_model", trust_repo=True
+        )
         self.model = self.model.to(self._device).eval()
 
         # PIL input: tensor in [0, 1], ImageNet stats, upstream's eval size
@@ -181,7 +188,9 @@ class MegaLocExtractor(BaseRetrievalExtractor):
         else:
             imgs = images.float()
             imgs = T.functional.normalize(imgs, mean=IMAGENET_MEAN, std=IMAGENET_STD)
-            imgs = T.functional.resize(imgs, [self._INPUT_SIZE, self._INPUT_SIZE], antialias=True)
+            imgs = T.functional.resize(
+                imgs, [self._INPUT_SIZE, self._INPUT_SIZE], antialias=True
+            )
 
         logger.debug("MegaLocExtractor: embedding batch of %d images", len(imgs))
 

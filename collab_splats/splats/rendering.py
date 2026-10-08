@@ -25,7 +25,9 @@ if TYPE_CHECKING:
     from collab_splats.splats.scaffold import Scaffold
 
 
-def gaussian_normals_in_camera_frame(quats: Tensor, scales: Tensor, means: Tensor, world_to_cam: Tensor) -> Tensor:
+def gaussian_normals_in_camera_frame(
+    quats: Tensor, scales: Tensor, means: Tensor, world_to_cam: Tensor
+) -> Tensor:
     """
     Camera-frame normal per Gaussian: its shortest axis, flipped to face the camera.
 
@@ -120,9 +122,15 @@ def render_gaussians(
 
     # 2DGS: normals come back in the world frame; rotate them into the camera
     if primitive == "2dgs":
-        rgb_depth, alpha, normal_world, _depth_normal_world, distortion, median_depth, info = rasterization_2dgs(
-            **shared_kwargs, distloss=True
-        )
+        (
+            rgb_depth,
+            alpha,
+            normal_world,
+            _depth_normal_world,
+            distortion,
+            median_depth,
+            info,
+        ) = rasterization_2dgs(**shared_kwargs, distloss=True)
         rgb = rgb_depth[..., :3]
         depth = rgb_depth[..., 3:4]
         rotation_w2c = world_to_cam[:, :3, :3]
@@ -141,7 +149,9 @@ def render_gaussians(
         # Depth normals only when asked for; they feed the normal consistency loss
         if render_normals:
             render["depth_normal"] = depth_to_normal(depth, identity_pose, intrinsics)
-            render["depth_normal_median"] = depth_to_normal(median_depth, identity_pose, intrinsics)
+            render["depth_normal_median"] = depth_to_normal(
+                median_depth, identity_pose, intrinsics
+            )
 
         return render, info
 
@@ -149,10 +159,16 @@ def render_gaussians(
     extra_signals = None
 
     if render_normals:
-        normals_cam = gaussian_normals_in_camera_frame(quats, scales, means, world_to_cam[0])
-        extra_signals = torch.cat([normals_cam, torch.zeros_like(normals_cam[:, :1])], dim=-1)
+        normals_cam = gaussian_normals_in_camera_frame(
+            quats, scales, means, world_to_cam[0]
+        )
+        extra_signals = torch.cat(
+            [normals_cam, torch.zeros_like(normals_cam[:, :1])], dim=-1
+        )
 
-    rgb_depth, alpha, info = rasterization(**shared_kwargs, rasterize_mode="antialiased", extra_signals=extra_signals)
+    rgb_depth, alpha, info = rasterization(
+        **shared_kwargs, rasterize_mode="antialiased", extra_signals=extra_signals
+    )
     depth = rgb_depth[..., 3:4]
     render = {"rgb": rgb_depth[..., :3], "alpha": alpha, "depth": depth}
 

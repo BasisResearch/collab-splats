@@ -15,7 +15,9 @@ def _tiny_result_with_dense(tmp_path):
         intrinsics=None,
         model_intrinsics=np.tile(np.eye(3, dtype=np.float32), (n, 1, 1)),
         image_paths=[tmp_path / f"{i:05d}.jpg" for i in range(n)],
-        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+        ),  # full-frame box
         model_width=w,
         model_height=h,
         depth=np.ones((n, h, w), dtype=np.float32),

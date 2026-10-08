@@ -18,11 +18,15 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 import panel as pn
 
 from collab_splats.dashboard.operation_log import OperationLog
+
+# Type-only: GpuWorker imports torch, which this module must not load at import
+if TYPE_CHECKING:
+    from collab_splats.dashboard.gpu_worker import GpuWorker
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +54,7 @@ class ServerState:
         Start cold, with no GPU worker.
         """
         self.ready = False
-        self.gpu_worker = None
+        self.gpu_worker: GpuWorker | None = None
 
 
 def _ensure_display() -> None:
@@ -63,7 +67,9 @@ def _ensure_display() -> None:
         return
 
     if not shutil.which("Xvfb"):
-        logger.warning("no DISPLAY and Xvfb not installed; VTK rendering will fail on a headless host")
+        logger.warning(
+            "no DISPLAY and Xvfb not installed; VTK rendering will fail on a headless host"
+        )
         return
 
     # Software GL via Mesa; containers rarely expose GLX on the GPU
@@ -118,7 +124,9 @@ def warm(
             with op_log.step(f"import {label}"):
                 importlib.import_module(name)
 
-        op_log.update_progress(int(100 * len(modules) / total), "preparing display + GPU worker")
+        op_log.update_progress(
+            int(100 * len(modules) / total), "preparing display + GPU worker"
+        )
         finalize(state)
     except Exception as exc:
         logger.exception("dashboard warm-up failed")
@@ -135,7 +143,9 @@ def warm(
 ########
 
 
-def _loading_page(state: ServerState, op_log: OperationLog) -> pn.template.MaterialTemplate:
+def _loading_page(
+    state: ServerState, op_log: OperationLog
+) -> pn.template.MaterialTemplate:
     """
     Session shown while the stack warms: live import progress, then self-reload.
     """
@@ -151,7 +161,9 @@ def _loading_page(state: ServerState, op_log: OperationLog) -> pn.template.Mater
     try:
         pn.state.add_periodic_callback(_tick, period=300, start=True)
     except RuntimeError:
-        logger.debug("no periodic callback (no server doc); progress is static", exc_info=True)
+        logger.debug(
+            "no periodic callback (no server doc); progress is static", exc_info=True
+        )
 
     body = pn.Column(
         pn.indicators.LoadingSpinner(value=True, size=48),
@@ -163,7 +175,9 @@ def _loading_page(state: ServerState, op_log: OperationLog) -> pn.template.Mater
         sizing_mode="stretch_width",
         max_width=700,
     )
-    return pn.template.MaterialTemplate(title="splats", main=[body], header_background="#2596be")
+    return pn.template.MaterialTemplate(
+        title="splats", main=[body], header_background="#2596be"
+    )
 
 
 def make_factory(
@@ -188,7 +202,11 @@ def make_factory(
         # Import stays local: app pulls the heavy stack, guaranteed warm here
         from collab_splats.dashboard.app import SplatsApp
 
-        return SplatsApp(base_dir=Path(base_dir), gpu_worker=state.gpu_worker, op_log=op_log).view()
+        return SplatsApp(
+            base_dir=Path(base_dir),
+            gpu_worker=cast("GpuWorker", state.gpu_worker),
+            op_log=op_log,
+        ).view()
 
     return factory
 
@@ -223,14 +241,20 @@ def run_app(
 
     op_log = OperationLog()
     state = ServerState()
-    threading.Thread(target=warm, args=(state, op_log), name="warm", daemon=True).start()
+    threading.Thread(
+        target=warm, args=(state, op_log), name="warm", daemon=True
+    ).start()
 
     if websocket_origin is None:
         origin: str | list[str] = [f"{host}:{port}", f"localhost:{port}"]
     else:
         origin = websocket_origin
 
-    logger.info("dashboard listening on http://%s:%s — open it now; import progress shows on the page", host, port)
+    logger.info(
+        "dashboard listening on http://%s:%s — open it now; import progress shows on the page",
+        host,
+        port,
+    )
     pn.serve(
         make_factory(base_dir, state, op_log),
         address=host,

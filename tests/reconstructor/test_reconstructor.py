@@ -46,7 +46,12 @@ def _make_config(tmp_path, overrides=None):
             "loop_closure": False,
             "clean": {"enabled": False},
         },
-        "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
+        "semantics": {
+            "enabled": False,
+            "extractor": "dinov2",
+            "n_components": 64,
+            "resolution": 512,
+        },
         "mesh": {"enabled": False},
         "localization": {"enabled": False},
     }
@@ -80,7 +85,9 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
             calls.clear()
             calls["sampler"] = name
             calls.update(kwargs)
-            return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
+            return [np.zeros((4, 4, 3), dtype=np.uint8)], [
+                {"frame_idx": 0, "blur_score": 1.0}
+            ]
 
         return fake
 
@@ -95,7 +102,8 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
 
     # fps: rate + both band bounds
     rec = _video_reconstructor(
-        tmp_path / "a", {"frame_selection": "fps", "fps": 2.0, "min_frames": 5, "max_frames": 50}
+        tmp_path / "a",
+        {"frame_selection": "fps", "fps": 2.0, "min_frames": 5, "max_frames": 50},
     )
     rec.preproc()
     quality = rec.config["preproc"]["quality"]
@@ -112,14 +120,31 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
     }
 
     # uniform: max_frames is the count, with no fps and no floor
-    rec = _video_reconstructor(tmp_path / "b", {"frame_selection": "uniform", "min_frames": 5, "max_frames": 50})
+    rec = _video_reconstructor(
+        tmp_path / "b",
+        {"frame_selection": "uniform", "min_frames": 5, "max_frames": 50},
+    )
     rec.preproc()
-    assert calls == {"sampler": "uniform", "workers": workers, "max_frames": 50, "report": report, "quality": quality}
+    assert calls == {
+        "sampler": "uniform",
+        "workers": workers,
+        "max_frames": 50,
+        "report": report,
+        "quality": quality,
+    }
 
     # optical_flow: max_frames caps the selector
-    rec = _video_reconstructor(tmp_path / "c", {"frame_selection": "optical_flow", "min_frames": 5, "max_frames": 50})
+    rec = _video_reconstructor(
+        tmp_path / "c",
+        {"frame_selection": "optical_flow", "min_frames": 5, "max_frames": 50},
+    )
     rec.preproc()
-    assert calls == {"sampler": "optical_flow", "max_frames": 50, "report": report, "quality": quality}
+    assert calls == {
+        "sampler": "optical_flow",
+        "max_frames": 50,
+        "report": report,
+        "quality": quality,
+    }
 
 
 def test_preproc_forwards_quality_overrides_to_every_sampler(tmp_path, monkeypatch):
@@ -130,7 +155,9 @@ def test_preproc_forwards_quality_overrides_to_every_sampler(tmp_path, monkeypat
 
     def fake(path, **kwargs):
         seen.append(kwargs["quality"])
-        return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
+        return [np.zeros((4, 4, 3), dtype=np.uint8)], [
+            {"frame_idx": 0, "blur_score": 1.0}
+        ]
 
     monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: {"frames": {}})
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": 100})
@@ -141,7 +168,9 @@ def test_preproc_forwards_quality_overrides_to_every_sampler(tmp_path, monkeypat
 
     overrides = {"sharpness_k": 1.0, "max_clipped_frac": 0.1}
     for i, selection in enumerate(("fps", "uniform", "optical_flow")):
-        rec = _video_reconstructor(tmp_path / str(i), {"frame_selection": selection, "quality": overrides})
+        rec = _video_reconstructor(
+            tmp_path / str(i), {"frame_selection": selection, "quality": overrides}
+        )
         rec.preproc()
 
     assert seen == [overrides] * 3
@@ -153,7 +182,9 @@ def test_preproc_forwards_on_empty_slot_to_fps_only(tmp_path, monkeypatch):
     def fake(name):
         def _f(path, **kwargs):
             seen[name] = kwargs
-            return [np.zeros((4, 4, 3), dtype=np.uint8)], [{"frame_idx": 0, "blur_score": 1.0}]
+            return [np.zeros((4, 4, 3), dtype=np.uint8)], [
+                {"frame_idx": 0, "blur_score": 1.0}
+            ]
 
         return _f
 
@@ -165,11 +196,16 @@ def test_preproc_forwards_on_empty_slot_to_fps_only(tmp_path, monkeypatch):
     _stub_plots(monkeypatch)
 
     for i, selection in enumerate(("fps", "uniform", "optical_flow")):
-        rec = _video_reconstructor(tmp_path / str(i), {"frame_selection": selection, "on_empty_slot": "drop"})
+        rec = _video_reconstructor(
+            tmp_path / str(i), {"frame_selection": selection, "on_empty_slot": "drop"}
+        )
         rec.preproc()
 
     assert seen["sample_fps"]["on_empty_slot"] == "drop"
-    assert "on_empty_slot" not in seen["sample_uniform"] and "on_empty_slot" not in seen["sample_optical_flow"]
+    assert (
+        "on_empty_slot" not in seen["sample_uniform"]
+        and "on_empty_slot" not in seen["sample_optical_flow"]
+    )
 
 
 def test_preproc_rejects_unknown_selection(tmp_path, monkeypatch):
@@ -329,7 +365,9 @@ def test_pointcloud_stage_feedforward_vggtx(tmp_path):
 
     creator_cls = stub_creator_cls(mock_result)
 
-    with patch("collab_splats.reconstructor.get_creator", return_value=creator_cls) as mock_get:
+    with patch(
+        "collab_splats.reconstructor.get_creator", return_value=creator_cls
+    ) as mock_get:
         rec.pointcloud()
 
     # Creator built from the shared knobs, preproc's frames (none without preproc) and the backend block
@@ -373,11 +411,16 @@ def test_pointcloud_stage_frees_the_dense_arrays_after_save(tmp_path):
                 refs[name] = weakref.ref(getattr(self.outputs, name))
             return self.outputs
 
-    with patch.object(R, "get_creator", return_value=_Creator), patch.object(R, "pytorch_gc"):
+    with (
+        patch.object(R, "get_creator", return_value=_Creator),
+        patch.object(R, "pytorch_gc"),
+    ):
         rec.pointcloud()
 
     # Freed by refcount alone, no gc.collect: nothing, creator included, still holds them
-    assert {name: ref() is None for name, ref in refs.items()} == dict.fromkeys(refs, True)
+    assert {name: ref() is None for name, ref in refs.items()} == dict.fromkeys(
+        refs, True
+    )
     assert rec.result.points.shape == (5, 3)
 
     # The dense arrays live on in the zarr the downstream stages read
@@ -415,7 +458,10 @@ def _seed_codes(rec, name, maps, latent_dim=None, extractor_kwargs=None):
 
 def test_semantics_valid_cache_skips_the_extractor(tmp_path):
     """A codes store valid for this extractor, kwargs and width is lifted without building the extractor."""
-    config = _make_config(tmp_path, {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}})
+    config = _make_config(
+        tmp_path,
+        {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}},
+    )
     rec = Reconstructor(config)
     _touch_frames(rec, [0, 1])
     _seed_disk_reconstruction(rec, [0, 1])
@@ -436,7 +482,12 @@ def test_semantics_valid_cache_skips_the_extractor(tmp_path):
 
 def test_semantics_invalid_cache_extracts_with_extractor_kwargs(tmp_path):
     """semantics.extractor_kwargs reaches the extractor build and the codes store's attrs."""
-    semantics = {"enabled": True, "extractor": "dinov2", "extractor_kwargs": {"layer": 20}, "n_components": None}
+    semantics = {
+        "enabled": True,
+        "extractor": "dinov2",
+        "extractor_kwargs": {"layer": 20},
+        "n_components": None,
+    }
     rec = _semantics_rec(tmp_path, semantics)
 
     with _stub_extraction() as extractor_base:
@@ -444,13 +495,18 @@ def test_semantics_invalid_cache_extracts_with_extractor_kwargs(tmp_path):
 
     extractor_base.get.assert_called_once_with("dinov2")
     extractor_base.get.return_value.assert_called_once_with(layer=20)
-    attrs = dict(zarr.open(str(rec.semantics_cache_dir / "dinov2_codes.zarr"), mode="r").attrs)
+    attrs = dict(
+        zarr.open(str(rec.semantics_cache_dir / "dinov2_codes.zarr"), mode="r").attrs
+    )
     assert attrs["extractor_kwargs"] == {"layer": 20}
     assert attrs["latent_dim"] is None
 
 
 def test_run_refuses_semantics_if_lifted_exists(tmp_path):
-    config = _make_config(tmp_path, {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}})
+    config = _make_config(
+        tmp_path,
+        {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}},
+    )
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
     lifted_dir = rec.backend_dir / "semantics"
@@ -488,7 +544,9 @@ def _stub_extraction(dim=32):
     def forward(frames):
         first = len(calls)
         calls.extend(frames)
-        return [torch.full((dim, 2, 2), float(first + j + 1)) for j in range(len(frames))]
+        return [
+            torch.full((dim, 2, 2), float(first + j + 1)) for j in range(len(frames))
+        ]
 
     def lift(frame_features, result):
         return frame_features(0)[:, 0, 0].float().cpu().repeat(len(result.points), 1)
@@ -504,7 +562,12 @@ def _stub_extraction(dim=32):
         yield extractor_base
 
 
-COMPRESSED = {"extractor": "dinov2", "n_components": 8, "max_epochs": 1, "target_cosine": None}
+COMPRESSED = {
+    "extractor": "dinov2",
+    "n_components": 8,
+    "max_epochs": 1,
+    "target_cosine": None,
+}
 
 
 def test_semantics_encodes_every_frame_and_deletes_the_features(tmp_path, monkeypatch):
@@ -512,7 +575,9 @@ def test_semantics_encodes_every_frame_and_deletes_the_features(tmp_path, monkey
     written = []
     real_write = R.write_feature_cache
     monkeypatch.setattr(
-        R, "write_feature_cache", lambda path, *a, **k: (written.append(path), real_write(path, *a, **k))
+        R,
+        "write_feature_cache",
+        lambda path, *a, **k: (written.append(path), real_write(path, *a, **k)),
     )
 
     with _stub_extraction():
@@ -534,7 +599,9 @@ def test_semantics_encodes_every_frame_and_deletes_the_features(tmp_path, monkey
         with torch.no_grad():
             expected = ae.encode(torch.full((32, 2, 2), float(k + 1))).numpy()
 
-        np.testing.assert_allclose(codes[k].astype(np.float32), expected, rtol=1e-2, atol=1e-3)
+        np.testing.assert_allclose(
+            codes[k].astype(np.float32), expected, rtol=1e-2, atol=1e-3
+        )
 
 
 def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
@@ -548,7 +615,12 @@ def test_semantics_writes_weights_inside_the_lifted_store(tmp_path):
     assert (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").is_file()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert store["features"].shape == (1, 8) and store["features"].dtype == np.float16
-    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 8, "extractor": "dinov2", "extractor_kwargs": {}}
+    assert dict(store.attrs) == {
+        "input_dim": 32,
+        "latent_dim": 8,
+        "extractor": "dinov2",
+        "extractor_kwargs": {},
+    }
 
 
 def test_semantics_second_run_neither_extracts_nor_fits(tmp_path):
@@ -557,7 +629,10 @@ def test_semantics_second_run_neither_extracts_nor_fits(tmp_path):
     with _stub_extraction():
         rec.semantics()
 
-    with _stub_extraction() as extractor_base, patch.object(FeatureAutoencoder, "fit") as fit:
+    with (
+        _stub_extraction() as extractor_base,
+        patch.object(FeatureAutoencoder, "fit") as fit,
+    ):
         rec.semantics()
 
     extractor_base.get.assert_not_called()
@@ -576,16 +651,22 @@ def test_semantics_n_components_change_re_extracts(tmp_path):
         rec.semantics()
 
     extractor_base.get.assert_called_once()
-    stored = FeatureAutoencoder.load(rec.semantics_cache_dir / "dinov2_codes.zarr" / "autoencoder.pt")
+    stored = FeatureAutoencoder.load(
+        rec.semantics_cache_dir / "dinov2_codes.zarr" / "autoencoder.pt"
+    )
     assert stored.latent_dim == 4
 
 
-def test_semantics_uncompressed_writes_full_width_codes_without_features(tmp_path, monkeypatch):
+def test_semantics_uncompressed_writes_full_width_codes_without_features(
+    tmp_path, monkeypatch
+):
     rec = _semantics_rec(tmp_path, {"extractor": "dinov2", "n_components": None})
     written = []
     real_write = R.write_feature_cache
     monkeypatch.setattr(
-        R, "write_feature_cache", lambda path, *a, **k: (written.append(path), real_write(path, *a, **k))
+        R,
+        "write_feature_cache",
+        lambda path, *a, **k: (written.append(path), real_write(path, *a, **k)),
     )
 
     with _stub_extraction():
@@ -630,7 +711,12 @@ def test_semantics_uncompressed_writes_full_dim_and_no_weights(tmp_path):
     assert not (out_dir / "dinov2_lifted.zarr" / "autoencoder.pt").exists()
     store = zarr.open(str(out_dir / "dinov2_lifted.zarr"), mode="r")
     assert np.asarray(store["features"]).shape == (1, 32)
-    assert dict(store.attrs) == {"input_dim": 32, "latent_dim": 32, "extractor": "dinov2", "extractor_kwargs": {}}
+    assert dict(store.attrs) == {
+        "input_dim": 32,
+        "latent_dim": 32,
+        "extractor": "dinov2",
+        "extractor_kwargs": {},
+    }
 
 
 def test_run_skips_mesh_if_ply_exists(tmp_path):
@@ -640,7 +726,9 @@ def test_run_skips_mesh_if_ply_exists(tmp_path):
     _seed_pointcloud_markers(rec)
     (rec.backend_dir / "mesh.ply").touch()
     calls = []
-    rec.reconstruction_quality_report = lambda: calls.append("reconstruction_quality_report")
+    rec.reconstruction_quality_report = lambda: calls.append(
+        "reconstruction_quality_report"
+    )
 
     with patch("collab_splats.reconstructor.create_tsdf_mesh") as mock_fuse:
         rec.run()
@@ -685,7 +773,9 @@ def _tsdf_mesh_ff(n=2, model_hw=(8, 8)):
         intrinsics=K_orig,
         model_intrinsics=K_model,
         image_paths=[Path(f"frame_{i:06d}.png") for i in range(n)],
-        original_coords=np.tile([0, 0, 2 * W, 2 * H, 2 * W, 2 * H], (n, 1)).astype(np.float32),
+        original_coords=np.tile([0, 0, 2 * W, 2 * H, 2 * W, 2 * H], (n, 1)).astype(
+            np.float32
+        ),
         model_width=W,
         model_height=H,
         depth=np.ones((n, H, W), dtype=np.float32),
@@ -705,11 +795,19 @@ def _mesh_fuse(tmp_path, monkeypatch, ff, upsample=_unit_upsample, **mesh_overri
 
     - upsample stands in for the frame-grid lift inside frame_depths
     """
-    mesh_cfg = {"enabled": True, "source": "feedforward", "mask_sky": False, "texture": False, **mesh_overrides}
+    mesh_cfg = {
+        "enabled": True,
+        "source": "feedforward",
+        "mask_sky": False,
+        "texture": False,
+        **mesh_overrides,
+    }
     rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
 
     monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
-    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    monkeypatch.setattr(
+        R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8)
+    )
     monkeypatch.setattr(pointcloud_utils, "upsample_depths", upsample)
     fuse = MagicMock()
     tet = o3d.geometry.TriangleMesh.create_tetrahedron()
@@ -756,10 +854,14 @@ def test_mesh_sdf_trunc_mult_scales_the_truncation_band(tmp_path, monkeypatch):
     - measured on GH010229 at voxel 0.2 (scene diagonal 262 world units): the default floor is
       1.60 units, while the voxel grid alone would resolve 0.40
     """
-    default = _mesh_fuse(tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16))).call_args.kwargs
+    default = _mesh_fuse(
+        tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16))
+    ).call_args.kwargs
     assert default["sdf_trunc"] == pytest.approx(0.04)
 
-    narrow = _mesh_fuse(tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), sdf_trunc_mult=1.5)
+    narrow = _mesh_fuse(
+        tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), sdf_trunc_mult=1.5
+    )
     assert narrow.call_args.kwargs["sdf_trunc"] == pytest.approx(0.015)
     assert narrow.call_args.kwargs["voxel_size"] == pytest.approx(0.01)
 
@@ -772,7 +874,9 @@ def test_mesh_uses_zarr_poses(tmp_path, monkeypatch):
 
     fuse = _mesh_fuse(tmp_path, monkeypatch, ff)
 
-    np.testing.assert_allclose(fuse.call_args.args[2], np.linalg.inv(ff.extrinsics), atol=1e-5)
+    np.testing.assert_allclose(
+        fuse.call_args.args[2], np.linalg.inv(ff.extrinsics), atol=1e-5
+    )
 
 
 def test_mesh_depth_trunc_zeroes_depth_before_voxel_sizing(tmp_path, monkeypatch):
@@ -781,10 +885,16 @@ def test_mesh_depth_trunc_zeroes_depth_before_voxel_sizing(tmp_path, monkeypatch
 
     - the voxel's 8 GB block guard counted cut depth: GH010229 coarsened 0.0059 -> 0.0134
     """
-    ramp = np.tile(np.linspace(1.0, 10.0, 32 * 32, dtype=np.float32).reshape(32, 32), (2, 1, 1))
+    ramp = np.tile(
+        np.linspace(1.0, 10.0, 32 * 32, dtype=np.float32).reshape(32, 32), (2, 1, 1)
+    )
 
     fuse = _mesh_fuse(
-        tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), upsample=lambda *a: ramp, depth_trunc_percentile=50
+        tmp_path,
+        monkeypatch,
+        _tsdf_mesh_ff(model_hw=(16, 16)),
+        upsample=lambda *a: ramp,
+        depth_trunc_percentile=50,
     )
 
     sized = R.compute_tsdf_voxel_size.call_args.args[0]
@@ -800,7 +910,12 @@ def test_mesh_depth_trunc_percentile_required(tmp_path, monkeypatch, pct):
     - an uncut far tail (tutorial scene: p99 2.65, max 24) crashed Open3D's extract_triangle_mesh
     """
     with pytest.raises(ValueError, match="depth_trunc_percentile"):
-        _mesh_fuse(tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), depth_trunc_percentile=pct)
+        _mesh_fuse(
+            tmp_path,
+            monkeypatch,
+            _tsdf_mesh_ff(model_hw=(16, 16)),
+            depth_trunc_percentile=pct,
+        )
 
 
 def test_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
@@ -829,11 +944,18 @@ def _run_prepared_mesh(tmp_path, monkeypatch, texture, texture_error=None):
 
     - texture_error is raised by the texture step, to fail the stage after fusion
     """
-    mesh_cfg = {"enabled": True, "source": "feedforward", "mask_sky": False, "texture": texture}
+    mesh_cfg = {
+        "enabled": True,
+        "source": "feedforward",
+        "mask_sky": False,
+        "texture": texture,
+    }
     rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
     ff = _tsdf_mesh_ff(model_hw=(16, 16))
     monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
-    monkeypatch.setattr(R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8))
+    monkeypatch.setattr(
+        R.frames, "read_frames", lambda *a, **k: np.full((2, 32, 32, 3), 128, np.uint8)
+    )
     monkeypatch.setattr(pointcloud_utils, "upsample_depths", _unit_upsample)
 
     # A previous run's mesh.ply, which this run must replace or remove
@@ -863,11 +985,17 @@ def _run_prepared_mesh(tmp_path, monkeypatch, texture, texture_error=None):
 
 def test_mesh_writes_the_prepared_mesh_without_texture(tmp_path, monkeypatch):
     """mesh.ply is prepare_mesh's output even with texture off, prepared from the cleaned mesh."""
-    rec, fused, cleaned, _, prepared, prepare, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=False)
+    rec, fused, cleaned, _, prepared, prepare, texture_mesh = _run_prepared_mesh(
+        tmp_path, monkeypatch, texture=False
+    )
 
     assert R.clean_repair_mesh.call_args.args == (fused,)
     assert prepare.call_args.args == (cleaned,)
-    assert prepare.call_args.kwargs == {"voxel_size": 0.01, "smooth_iterations": 10, "max_faces": 1_500_000}
+    assert prepare.call_args.kwargs == {
+        "voxel_size": 0.01,
+        "smooth_iterations": 10,
+        "max_faces": 1_500_000,
+    }
     written = o3d.io.read_triangle_mesh(str(rec.backend_dir / "mesh.ply"))
     assert len(written.triangles) == len(prepared.triangles)
     assert rec.done("mesh")
@@ -877,7 +1005,12 @@ def test_mesh_writes_the_prepared_mesh_without_texture(tmp_path, monkeypatch):
 def test_mesh_failing_after_fusion_leaves_no_mesh_ply(tmp_path, monkeypatch):
     """A step failing after fusion leaves no mesh.ply, not even the stale one, so the stage never reads as done."""
     with pytest.raises(RuntimeError, match="texture failed"):
-        _run_prepared_mesh(tmp_path, monkeypatch, texture=True, texture_error=RuntimeError("texture failed"))
+        _run_prepared_mesh(
+            tmp_path,
+            monkeypatch,
+            texture=True,
+            texture_error=RuntimeError("texture failed"),
+        )
 
     rec = Reconstructor(_make_config(tmp_path, {"mesh": {"enabled": True}}))
     assert not rec.done("mesh")
@@ -885,7 +1018,9 @@ def test_mesh_failing_after_fusion_leaves_no_mesh_ply(tmp_path, monkeypatch):
 
 def test_mesh_textures_the_prepared_mesh_behind_the_real_surface(tmp_path, monkeypatch):
     """Texturing unwraps the same mesh.ply geometry; the floater-cut surface cleaning returns is the occluder."""
-    rec, _, _, real, prepared, _, texture_mesh = _run_prepared_mesh(tmp_path, monkeypatch, texture=True)
+    rec, _, _, real, prepared, _, texture_mesh = _run_prepared_mesh(
+        tmp_path, monkeypatch, texture=True
+    )
 
     mesh, occluder, out_dir = texture_mesh.call_args.args[:3]
     assert mesh is prepared
@@ -917,7 +1052,9 @@ def test_run_calls_stages_in_order(tmp_path):
     calls = []
 
     rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
-    rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    rec.pointcloud = lambda: (
+        calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    )
     rec.semantics = lambda: calls.append("semantics") or tmp_path
     rec.mesh = lambda: calls.append("mesh") or tmp_path
 
@@ -931,7 +1068,9 @@ def test_run_subset(tmp_path):
     calls = []
 
     rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
-    rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    rec.pointcloud = lambda: (
+        calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    )
 
     rec.run(["preproc", "pointcloud"])
     assert calls == ["preproc", "pointcloud"]
@@ -956,7 +1095,9 @@ def test_run_dep_satisfied_by_existing_output(tmp_path):
 
     # Preprocess output already present → dependency is satisfied without re-running it.
     rec.images_dir.mkdir(parents=True, exist_ok=True)
-    rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    rec.pointcloud = lambda: (
+        calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    )
 
     rec.run(["pointcloud"])
     assert calls == ["pointcloud"]
@@ -983,10 +1124,14 @@ def test_run_default_uses_config_enabled(tmp_path):
     calls = []
 
     rec.preproc = lambda **kwargs: calls.append("preprocess") or rec.images_dir
-    rec.pointcloud = lambda: calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    rec.pointcloud = lambda: (
+        calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
+    )
     rec.semantics = lambda: calls.append("semantics") or tmp_path
     # report is always on and has no config flag, so a config-derived run always includes it
-    rec.reconstruction_quality_report = lambda: calls.append("reconstruction_quality_report") or tmp_path
+    rec.reconstruction_quality_report = lambda: (
+        calls.append("reconstruction_quality_report") or tmp_path
+    )
 
     rec.run()  # no stages arg — uses config
     assert "semantics" in calls
@@ -1003,14 +1148,18 @@ def test_localize_in_stage_order_and_deps():
 
 
 def test_run_auto_includes_localize_when_enabled(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
+    config = _make_config(
+        tmp_path, {"localization": {"enabled": True, "matcher": "loma"}}
+    )
     rec = Reconstructor(config)
     called = []
     with (
         patch.object(rec, "preproc"),
         patch.object(rec, "pointcloud", return_value=None),
         patch.object(rec, "localize", side_effect=lambda: called.append("localize")),
-        patch.object(rec, "reconstruction_quality_report"),  # always on, and it would resolve a real reconstruction
+        patch.object(
+            rec, "reconstruction_quality_report"
+        ),  # always on, and it would resolve a real reconstruction
     ):
         rec.run()
     assert called == ["localize"]
@@ -1024,7 +1173,9 @@ def test_run_omits_localize_when_disabled(tmp_path):
         patch.object(rec, "preproc"),
         patch.object(rec, "pointcloud", return_value=None),
         patch.object(rec, "localize", side_effect=lambda: called.append("localize")),
-        patch.object(rec, "reconstruction_quality_report"),  # always on, and it would resolve a real reconstruction
+        patch.object(
+            rec, "reconstruction_quality_report"
+        ),  # always on, and it would resolve a real reconstruction
     ):
         rec.run()
     assert called == []
@@ -1038,7 +1189,9 @@ def test_localize_without_pointcloud_raises(tmp_path):
 
 
 def test_localize_missing_zarr_raises(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
+    config = _make_config(
+        tmp_path, {"localization": {"enabled": True, "matcher": "loma"}}
+    )
     rec = Reconstructor(config)
     with pytest.raises(FileNotFoundError, match="pointcloud.zarr"):
         rec.localize()
@@ -1048,7 +1201,9 @@ def test_localize_missing_zarr_raises(tmp_path):
 
 
 def test_run_refuses_localize_when_db_exists(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
+    config = _make_config(
+        tmp_path, {"localization": {"enabled": True, "matcher": "loma"}}
+    )
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
 
@@ -1080,20 +1235,29 @@ def test_base_yaml_has_viz_defaults(tmp_path):
 
 def test_pointcloud_stage_attaches_viewer_when_lc_and_viz_enabled(tmp_path):
     """Loop closure + viz wraps the creator, attaches a live Viewer, and keeps it on reconstructor.viewer."""
-    config = _make_config(tmp_path, {"pointcloud": {"loop_closure": True, "viz": {"enabled": True, "port": 9001}}})
+    config = _make_config(
+        tmp_path,
+        {"pointcloud": {"loop_closure": True, "viz": {"enabled": True, "port": 9001}}},
+    )
     rec = Reconstructor(config)
     creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
     mock_lc_instance = MagicMock()
-    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(tmp_path)
+    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(
+        tmp_path
+    )
 
     with (
         patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
-        patch("collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch(
+            "collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance
+        ) as mock_lc_cls,
         patch("collab_splats.viewer.Viewer") as mock_viewer_cls,
     ):
         rec.pointcloud()
 
-    mock_lc_cls.assert_called_once_with(base=creator_cls.return_value, config=None, ba=None)
+    mock_lc_cls.assert_called_once_with(
+        base=creator_cls.return_value, config=None, ba=None
+    )
     mock_viewer_cls.assert_called_once_with(port=9001)
     assert mock_lc_instance.viz is mock_viewer_cls.return_value
     assert mock_lc_instance.config.loop_edge_timing == "live"
@@ -1129,11 +1293,15 @@ def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
     mock_lc_instance = MagicMock()
     result = _make_mock_pointcloud_result(tmp_path)
     mock_lc_instance.create_pointcloud.return_value = result
-    mock_lc_instance.window_ba = [{"start": 0, "focal": np.float32(368.5), "loss_final": float("nan")}]
+    mock_lc_instance.window_ba = [
+        {"start": 0, "focal": np.float32(368.5), "loss_final": float("nan")}
+    ]
 
     with (
         patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
-        patch("collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch(
+            "collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance
+        ) as mock_lc_cls,
     ):
         rec.pointcloud()
 
@@ -1156,7 +1324,9 @@ def test_pointcloud_stage_lc_without_ba_passes_none(tmp_path):
 
     with (
         patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
-        patch("collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch(
+            "collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance
+        ) as mock_lc_cls,
     ):
         rec.pointcloud()
 
@@ -1166,15 +1336,22 @@ def test_pointcloud_stage_lc_without_ba_passes_none(tmp_path):
 
 def test_pointcloud_stage_builds_lc_config_from_dict(tmp_path):
     """A dict loop_closure builds a LoopClosureConfig from its knobs and passes it through."""
-    config = _make_config(tmp_path, {"pointcloud": {"loop_closure": {"submap_size": 32, "submap_overlap": 2}}})
+    config = _make_config(
+        tmp_path,
+        {"pointcloud": {"loop_closure": {"submap_size": 32, "submap_overlap": 2}}},
+    )
     rec = Reconstructor(config)
     creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
     mock_lc_instance = MagicMock()
-    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(tmp_path)
+    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(
+        tmp_path
+    )
 
     with (
         patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
-        patch("collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance) as mock_lc_cls,
+        patch(
+            "collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance
+        ) as mock_lc_cls,
     ):
         rec.pointcloud()
 
@@ -1186,7 +1363,10 @@ def test_pointcloud_stage_builds_lc_config_from_dict(tmp_path):
 
 def test_pointcloud_stage_dict_enabled_false_skips_lc(tmp_path):
     """loop_closure={'enabled': False} runs the bare creator — no LoopClosure wrap."""
-    config = _make_config(tmp_path, {"pointcloud": {"loop_closure": {"enabled": False, "submap_size": 32}}})
+    config = _make_config(
+        tmp_path,
+        {"pointcloud": {"loop_closure": {"enabled": False, "submap_size": 32}}},
+    )
     rec = Reconstructor(config)
     creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
 
@@ -1206,7 +1386,9 @@ def test_pointcloud_stage_no_viewer_when_viz_disabled(tmp_path):
     rec = Reconstructor(config)
     creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
     mock_lc_instance = MagicMock()
-    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(tmp_path)
+    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(
+        tmp_path
+    )
 
     with (
         patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
@@ -1236,7 +1418,10 @@ def test_pointcloud_stage_no_loop_closure_no_viewer(tmp_path):
 
 
 def test_localize_stage_builds_the_db(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma", "retrieval": "megaloc"}})
+    config = _make_config(
+        tmp_path,
+        {"localization": {"enabled": True, "matcher": "loma", "retrieval": "megaloc"}},
+    )
     rec = Reconstructor(config)
     pc_zarr = rec.backend_dir / "pointcloud.zarr"
     pc_zarr.mkdir(parents=True)
@@ -1260,7 +1445,14 @@ def test_leaf_stages_derived_from_dep_graph():
     assert R.LEAF_STAGES == expected
 
     # Today's graph spelled out, so a failure above reads as a real change
-    assert expected == {"refine", "semantics", "splats", "mesh", "localize", "reconstruction_quality_report"}
+    assert expected == {
+        "refine",
+        "semantics",
+        "splats",
+        "mesh",
+        "localize",
+        "reconstruction_quality_report",
+    }
 
 
 def _seed_disk_reconstruction(rec, frame_idxs):
@@ -1334,7 +1526,8 @@ def _seed_mesh(rec):
     """A two-triangle quad as the backend's mesh.ply, its last vertex behind the cameras; returns its vertices."""
     vertices = np.array([[0, 0, 1], [1, 0, 1], [0, 1, 1], [1, 1, -1]], dtype=np.float64)
     mesh = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(np.array([[0, 1, 2], [1, 3, 2]]))
+        o3d.utility.Vector3dVector(vertices),
+        o3d.utility.Vector3iVector(np.array([[0, 1, 2], [1, 3, 2]])),
     )
     rec.backend_dir.mkdir(parents=True, exist_ok=True)
     o3d.io.write_triangle_mesh(str(rec.outputs["mesh"]), mesh)
@@ -1350,7 +1543,12 @@ def _mesh_semantics_rec(tmp_path, extractor, extractor_kwargs=None, dim=4):
         "n_components": None,
     }
     rec = _semantics_rec(tmp_path, semantics)
-    _seed_codes(rec, extractor, [np.ones((dim, 2, 2), np.float16)] * 2, extractor_kwargs=extractor_kwargs)
+    _seed_codes(
+        rec,
+        extractor,
+        [np.ones((dim, 2, 2), np.float16)] * 2,
+        extractor_kwargs=extractor_kwargs,
+    )
     return rec, _seed_mesh(rec)
 
 
@@ -1365,7 +1563,9 @@ def _arange_lift(calls):
         frame = frame_features(0)
         calls.append((result, num_classes, frame))
         width = num_classes or frame.shape[0]
-        rows = torch.arange(len(result.points) * width, dtype=torch.float32).reshape(-1, width)
+        rows = torch.arange(len(result.points) * width, dtype=torch.float32).reshape(
+            -1, width
+        )
         rows[torch.from_numpy(result.points[:, 2] < 0)] = 0
         return rows
 
@@ -1392,7 +1592,10 @@ def test_semantics_lifts_queryable_codes_onto_mesh_vertices(tmp_path):
 
     # The vertex behind the cameras stays all zero
     assert not store["vertex_features"][3].any()
-    assert store.attrs["mesh_sha256"] == hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
+    assert (
+        store.attrs["mesh_sha256"]
+        == hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
+    )
     assert rec.done("semantics")
 
 
@@ -1419,7 +1622,11 @@ def test_semantics_without_mesh_writes_points_only(tmp_path):
         rec.semantics()
 
     store = zarr.open(str(rec.outputs["semantics"]), mode="r")
-    assert len(calls) == 1 and "vertex_features" not in store and "mesh_sha256" not in store.attrs
+    assert (
+        len(calls) == 1
+        and "vertex_features" not in store
+        and "mesh_sha256" not in store.attrs
+    )
 
 
 @contextlib.contextmanager
@@ -1447,7 +1654,9 @@ def _stub_lens(n_words=70):
 
 
 def test_semantics_stores_each_vertex_top_64_words(tmp_path):
-    rec, _ = _mesh_semantics_rec(tmp_path, "ocr_lens", extractor_kwargs={"model_id": "local/llava"})
+    rec, _ = _mesh_semantics_rec(
+        tmp_path, "ocr_lens", extractor_kwargs={"model_id": "local/llava"}
+    )
     calls = []
 
     with (
@@ -1473,9 +1682,16 @@ def test_semantics_stores_each_vertex_top_64_words(tmp_path):
     # Each seen vertex keeps the top-64 of its lifted row, descending
     expected = torch.arange(4 * 70, dtype=torch.float32).reshape(4, 70).topk(64, dim=1)
     store = zarr.open(str(rec.outputs["semantics"]), mode="r")
-    assert store["vertex_word_ids"].dtype == np.int16 and store["vertex_word_probs"].dtype == np.float16
-    np.testing.assert_array_equal(store["vertex_word_ids"][:3], expected.indices.numpy()[:3])
-    np.testing.assert_array_equal(store["vertex_word_probs"][:3], expected.values.numpy()[:3].astype(np.float16))
+    assert (
+        store["vertex_word_ids"].dtype == np.int16
+        and store["vertex_word_probs"].dtype == np.float16
+    )
+    np.testing.assert_array_equal(
+        store["vertex_word_ids"][:3], expected.indices.numpy()[:3]
+    )
+    np.testing.assert_array_equal(
+        store["vertex_word_probs"][:3], expected.values.numpy()[:3].astype(np.float16)
+    )
 
     # The vertex behind the cameras has no word mass
     assert store["vertex_word_probs"][3].max() == 0
@@ -1487,7 +1703,12 @@ def test_done_semantics_is_stale_once_mesh_ply_changes(tmp_path):
     rec = Reconstructor(_make_config(tmp_path, {"semantics": {"extractor": "dinov2"}}))
     _seed_mesh(rec)
     sha = hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
-    write_point_features(rec.outputs["semantics"], np.zeros((1, 2), np.float32), None, attrs={"mesh_sha256": sha})
+    write_point_features(
+        rec.outputs["semantics"],
+        np.zeros((1, 2), np.float32),
+        None,
+        attrs={"mesh_sha256": sha},
+    )
     assert rec.done("semantics") is True
 
     rec.outputs["mesh"].write_bytes(rec.outputs["mesh"].read_bytes() + b"\n")
@@ -1503,7 +1724,9 @@ def test_done_semantics_without_a_recorded_mesh_stays_done(tmp_path):
 
 
 def test_done_localize(tmp_path):
-    config = _make_config(tmp_path, {"localization": {"enabled": True, "matcher": "loma"}})
+    config = _make_config(
+        tmp_path, {"localization": {"enabled": True, "matcher": "loma"}}
+    )
     rec = Reconstructor(config)
     # No zarr at all: absent, and localization_db_exists must not even be consulted.
     assert rec.done("localize") is False
@@ -1524,7 +1747,9 @@ def test_mesh_reads_frames_and_poses_from_the_zarr_on_disk(tmp_path):
     """
     `--stages mesh` on a pulled scene: rows, frames and poses all follow pointcloud.zarr.
     """
-    config = _make_config(tmp_path, {"mesh": {"enabled": True, "mask_sky": False, "texture": False}})
+    config = _make_config(
+        tmp_path, {"mesh": {"enabled": True, "mask_sky": False, "texture": False}}
+    )
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
 
@@ -1554,7 +1779,9 @@ def test_mesh_without_pointcloud_on_disk_still_raises(tmp_path):
 
 
 def test_semantics_reads_pointcloud_zarr_from_disk(tmp_path):
-    config = _make_config(tmp_path, {"semantics": {"extractor": "dinov2", "n_components": None}})
+    config = _make_config(
+        tmp_path, {"semantics": {"extractor": "dinov2", "n_components": None}}
+    )
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
     _touch_frames(rec, [0, 1, 2])
@@ -1602,7 +1829,9 @@ def test_run_config_derived_stages_still_skip_silently(tmp_path):
     rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
     rec.pointcloud = lambda: calls.append("pointcloud")
     rec.mesh = lambda: calls.append("mesh")
-    rec.reconstruction_quality_report = lambda: calls.append("reconstruction_quality_report")
+    rec.reconstruction_quality_report = lambda: calls.append(
+        "reconstruction_quality_report"
+    )
 
     # Must not raise: every done stage, leaf mesh included, is skipped
     rec.run()
@@ -1610,7 +1839,9 @@ def test_run_config_derived_stages_still_skip_silently(tmp_path):
 
 
 def test_base_yaml_mesh_has_fidelity_keys():
-    cfg = yaml.safe_load((Path(__file__).parents[2] / "configs" / "base.yaml").read_text())
+    cfg = yaml.safe_load(
+        (Path(__file__).parents[2] / "configs" / "base.yaml").read_text()
+    )
     assert set(cfg["mesh"]) == {
         "enabled",
         "source",
@@ -1656,7 +1887,9 @@ def test_report_is_appended_with_no_config_boolean_to_turn_it_off(tmp_path):
     calls = []
     rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
     rec.pointcloud = lambda: calls.append("pointcloud")
-    rec.reconstruction_quality_report = lambda: calls.append("reconstruction_quality_report")
+    rec.reconstruction_quality_report = lambda: calls.append(
+        "reconstruction_quality_report"
+    )
 
     rec.run()  # stages=None: the config-derived list
     assert calls == ["preproc", "pointcloud", "reconstruction_quality_report"]
@@ -1702,7 +1935,9 @@ def _save_tiny_zarr(rec, n=3, with_confidence=True, confidence=None):
         intrinsics=None,
         model_intrinsics=np.stack([K] * n),
         image_paths=[Path(f"frame_{4 * k:06d}.png") for k in range(n)],
-        original_coords=np.tile(np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1)),
+        original_coords=np.tile(
+            np.array([4, 2, 20, 18, 32, 24], dtype=np.float32), (n, 1)
+        ),
         model_width=hw,
         model_height=hw,
         depth=np.stack([base * (1.0 + 0.01 * k) for k in range(n)]),
@@ -1763,12 +1998,18 @@ def test_report_writes_the_ncc_by_gap_plot_beside_the_json(tmp_path):
 
     report = json.loads(rec.outputs["reconstruction_quality_report"].read_text())
     plot = rec.backend_dir / "reconstruction_quality_ncc.png"
-    assert plot.exists() == bool(report["photometric_pairs"] and report["photometric_pairs"]["photometric_ncc"])
+    assert plot.exists() == bool(
+        report["photometric_pairs"] and report["photometric_pairs"]["photometric_ncc"]
+    )
 
 
 def test_report_scene_block_records_min_pair_overlap(tmp_path):
     """The pruning knob is part of how the numbers were made, so the report carries it."""
-    rec = Reconstructor(_make_config(tmp_path, {"reconstruction_quality_report": {"min_pair_overlap": 0.05}}))
+    rec = Reconstructor(
+        _make_config(
+            tmp_path, {"reconstruction_quality_report": {"min_pair_overlap": 0.05}}
+        )
+    )
     _save_tiny_zarr(rec, with_confidence=False)
 
     rec.reconstruction_quality_report()
@@ -1797,14 +2038,20 @@ def test_report_writes_nan_as_null(tmp_path):
     text = rec.outputs["reconstruction_quality_report"].read_text()
 
     assert "NaN" not in text
-    assert json.loads(text)["frames"]["confidence_median"] == [pytest.approx(0.9), None, pytest.approx(0.9)]
+    assert json.loads(text)["frames"]["confidence_median"] == [
+        pytest.approx(0.9),
+        None,
+        pytest.approx(0.9),
+    ]
 
 
 def test_report_runs_photometric_when_images_exist(tmp_path, monkeypatch):
     """Keyframes present: photometric_pairs is a filled table, not null."""
     rec = Reconstructor(_make_config(tmp_path))
     _save_tiny_zarr(rec)
-    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(
+        fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)]
+    )
     monkeypatch.setattr(fr, "read_frames", lambda d, idxs: _texture_frames())
 
     rec.reconstruction_quality_report()
@@ -1816,7 +2063,9 @@ def test_report_hands_photometric_the_uint8_frames_uncast(tmp_path, monkeypatch)
     """A float32 cast of every 1080p frame quadruples the stack; the stage passes uint8 as read."""
     rec = Reconstructor(_make_config(tmp_path))
     _save_tiny_zarr(rec)
-    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(
+        fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)]
+    )
     monkeypatch.setattr(fr, "read_frames", lambda d, idxs: _texture_frames())
     real = metrics.compute_photometric_ncc
     seen = []
@@ -1834,7 +2083,9 @@ def test_report_raises_when_photometric_raises(tmp_path, monkeypatch):
     """A failing measurement fails the report; nothing is caught."""
     rec = Reconstructor(_make_config(tmp_path))
     _save_tiny_zarr(rec)
-    monkeypatch.setattr(fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)])
+    monkeypatch.setattr(
+        fr, "frame_paths", lambda d: [Path(f"frame_{4 * k:06d}.png") for k in range(3)]
+    )
     monkeypatch.setattr(fr, "read_frames", lambda d, idxs: _texture_frames())
 
     def _boom(*args, **kwargs):
@@ -1877,9 +2128,18 @@ def test_preproc_writes_video_quality_pngs(tmp_path, monkeypatch):
         "clipped_high_frac",
     )
     report = {
-        "video": {"path": "/data/clip.mp4", "fps": 10.0, "total_frames": n, "width": 64, "height": 48},
+        "video": {
+            "path": "/data/clip.mp4",
+            "fps": 10.0,
+            "total_frames": n,
+            "width": 64,
+            "height": 48,
+        },
         "params": {"motion_stride": 2},
-        "frames": {"frame_idx": list(range(n)), **{k: rng.uniform(0, 1, n).tolist() for k in columns}},
+        "frames": {
+            "frame_idx": list(range(n)),
+            **{k: rng.uniform(0, 1, n).tolist() for k in columns},
+        },
         "pairs": {
             "frame_idx_a": list(range(0, 20, 2)),
             "frame_idx_b": list(range(2, 22, 2)),
@@ -1889,12 +2149,17 @@ def test_preproc_writes_video_quality_pngs(tmp_path, monkeypatch):
         },
     }
     two_frames = [np.zeros((4, 4, 3), dtype=np.uint8)] * 2
-    two_records = [{"frame_idx": 3, "blur_score": 1.0}, {"frame_idx": 7, "blur_score": 1.0}]
+    two_records = [
+        {"frame_idx": 3, "blur_score": 1.0},
+        {"frame_idx": 7, "blur_score": 1.0},
+    ]
     monkeypatch.setattr(R, "load_video_quality", lambda *a, **k: report)
     monkeypatch.setattr(R, "get_video_info", lambda path: {"total_frames": n})
     monkeypatch.setattr(R, "sample_fps", lambda path, **kw: (two_frames, two_records))
 
-    rec = _video_reconstructor(tmp_path / "v", {"frame_selection": "fps", "fps": 1.0, "min_frames": None})
+    rec = _video_reconstructor(
+        tmp_path / "v", {"frame_selection": "fps", "fps": 1.0, "min_frames": None}
+    )
     rec.preproc()
 
     out = rec.images_dir.parent
@@ -1912,8 +2177,15 @@ def test_preproc_writes_video_quality_pngs(tmp_path, monkeypatch):
     assert list(rec.images_dir.parent.glob("*.png")) == []
 
 
-def test_undistort_rewrites_frames_at_the_undistorted_camera_dims(tmp_path, monkeypatch):
-    camera = pycolmap.Camera(model="OPENCV", width=64, height=48, params=[60.0, 60.0, 32.0, 24.0, -0.2, 0.0, 0.0, 0.0])
+def test_undistort_rewrites_frames_at_the_undistorted_camera_dims(
+    tmp_path, monkeypatch
+):
+    camera = pycolmap.Camera(
+        model="OPENCV",
+        width=64,
+        height=48,
+        params=[60.0, 60.0, 32.0, 24.0, -0.2, 0.0, 0.0, 0.0],
+    )
 
     # Autospec so a wrong call site fails: calibrate_camera takes the images directory
     stub = create_autospec(calibrate_camera, return_value=camera)
@@ -1922,13 +2194,22 @@ def test_undistort_rewrites_frames_at_the_undistorted_camera_dims(tmp_path, monk
     img_dir = tmp_path / "imgs"
     img_dir.mkdir()
     for i in range(3):
-        cv2.imwrite(str(img_dir / f"frame_{i:06d}.png"), np.zeros((48, 64, 3), np.uint8))
+        cv2.imwrite(
+            str(img_dir / f"frame_{i:06d}.png"), np.zeros((48, 64, 3), np.uint8)
+        )
 
-    rec = Reconstructor(_make_config(tmp_path, {"input_path": str(img_dir), "preproc": {"undistort": True}}))
+    rec = Reconstructor(
+        _make_config(
+            tmp_path, {"input_path": str(img_dir), "preproc": {"undistort": True}}
+        )
+    )
     rec.preproc()
 
     stub.assert_called_once_with(rec.images_dir)
 
     # Same calibration, recomputed here, names the framing the stage must have written
     _, undistorted_camera = undistort_frames(np.zeros((1, 48, 64, 3), np.uint8), camera)
-    assert fr.read_frames(rec.images_dir).shape[1:3] == (undistorted_camera.height, undistorted_camera.width)
+    assert fr.read_frames(rec.images_dir).shape[1:3] == (
+        undistorted_camera.height,
+        undistorted_camera.width,
+    )

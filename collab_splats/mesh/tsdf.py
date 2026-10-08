@@ -59,13 +59,16 @@ def create_tsdf_mesh(
         ValueError: sdf_trunc is narrower than voxel_size.
     """
     rgbs, c2w, K, depths = validate_views(rgbs, c2w, K, depths)
+    assert depths is not None
 
     if sdf_trunc is None:
         sdf_trunc = 4 * voxel_size
 
     # A band narrower than a voxel punctures the surface between voxels
     if sdf_trunc < voxel_size:
-        raise ValueError(f"create_tsdf_mesh: sdf_trunc {sdf_trunc} is narrower than voxel_size {voxel_size}")
+        raise ValueError(
+            f"create_tsdf_mesh: sdf_trunc {sdf_trunc} is narrower than voxel_size {voxel_size}"
+        )
 
     # CUDA:0 when Open3D was built with it, else the CPU
     on_cuda = o3c.cuda.is_available()
@@ -85,7 +88,9 @@ def create_tsdf_mesh(
     # Convert once: Open3D wants contiguous float32 depth, float64 world-to-camera poses, float scalars
     n = len(depths)
     trunc_mult = float(sdf_trunc / voxel_size)
-    depth_trunc = float(depths.max()) + voxel_size if depth_trunc is None else float(depth_trunc)
+    depth_trunc = (
+        float(depths.max()) + voxel_size if depth_trunc is None else float(depth_trunc)
+    )
     depths = np.ascontiguousarray(depths, dtype=np.float32)
     rgbs = np.ascontiguousarray(rgbs)
     K = K.astype(np.float64)
@@ -101,8 +106,20 @@ def create_tsdf_mesh(
         color = o3d.t.geometry.Image(color)
         intrinsic = o3c.Tensor(K[i])
         extrinsic = o3c.Tensor(w2c[i])
-        blocks = grid.compute_unique_block_coordinates(depth, intrinsic, extrinsic, 1.0, depth_trunc, trunc_mult)
-        grid.integrate(blocks, depth, color, intrinsic, intrinsic, extrinsic, 1.0, depth_trunc, trunc_mult)
+        blocks = grid.compute_unique_block_coordinates(
+            depth, intrinsic, extrinsic, 1.0, depth_trunc, trunc_mult
+        )
+        grid.integrate(
+            blocks,
+            depth,
+            color,
+            intrinsic,
+            intrinsic,
+            extrinsic,
+            1.0,
+            depth_trunc,
+            trunc_mult,
+        )
 
     # Extract; averaged colors can overshoot 1.0 by float error, so clip before the PLY writer clamps noisily
     tmesh = grid.extract_triangle_mesh(weight_threshold=0.0)

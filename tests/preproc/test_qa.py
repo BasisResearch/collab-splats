@@ -65,7 +65,10 @@ def test_analysis_gray_downscales_to_width_and_never_upscales(clipped_bgr):
 def test_compute_blur_moves_in_opposite_directions(noise_gray):
     # blur is Crete-Roffet (high = blurrier); laplacian is variance (high = sharper).
     # Progressive Gaussian blur must raise one and lower the other, monotonically.
-    ladder = [compute_blur(cv2.GaussianBlur(noise_gray, (0, 0), s) if s else noise_gray) for s in (0, 1, 3, 6)]
+    ladder = [
+        compute_blur(cv2.GaussianBlur(noise_gray, (0, 0), s) if s else noise_gray)
+        for s in (0, 1, 3, 6)
+    ]
     blur = [r["blur"] for r in ladder]
     laplacian = [r["laplacian"] for r in ladder]
     assert blur == sorted(blur), blur
@@ -85,7 +88,9 @@ def test_compute_blur_measured_values(noise_gray):
 
 def test_compute_blur_laplacian_is_the_variance_of_the_laplacian(noise_gray):
     # The laplacian column is exactly cv2's Laplacian variance, nothing rescaled
-    assert compute_blur(noise_gray)["laplacian"] == float(cv2.Laplacian(noise_gray, cv2.CV_64F).var())
+    assert compute_blur(noise_gray)["laplacian"] == float(
+        cv2.Laplacian(noise_gray, cv2.CV_64F).var()
+    )
 
 
 def test_compute_blur_saturates_on_sparse_detail(noise_gray):
@@ -117,7 +122,10 @@ def test_compute_blur_h_size_is_tunable(noise_gray):
     narrow = compute_blur(noise_gray, h_size=3)["blur"]
     assert narrow > wide
     # laplacian does not depend on h_size at all
-    assert compute_blur(noise_gray, h_size=3)["laplacian"] == compute_blur(noise_gray)["laplacian"]
+    assert (
+        compute_blur(noise_gray, h_size=3)["laplacian"]
+        == compute_blur(noise_gray)["laplacian"]
+    )
 
 
 def test_compute_exposure_keys():
@@ -145,8 +153,13 @@ def test_compute_exposure_clipping_rises_only_at_saturation():
     # Scale a uniform mid-bright frame up and down: the mean tracks the scale,
     # but the clipping fractions stay 0 until pixels actually reach 255 or 0.
     base = np.full((10, 10), 200, np.uint8)
-    brighter = [compute_exposure(np.clip(base * f, 0, 255).astype(np.uint8)) for f in (1.0, 1.2, 1.3)]
-    assert [r["exposure_mean"] for r in brighter] == pytest.approx([200.0, 240.0, 255.0])
+    brighter = [
+        compute_exposure(np.clip(base * f, 0, 255).astype(np.uint8))
+        for f in (1.0, 1.2, 1.3)
+    ]
+    assert [r["exposure_mean"] for r in brighter] == pytest.approx(
+        [200.0, 240.0, 255.0]
+    )
     assert [r["clipped_high_frac"] for r in brighter] == [0.0, 0.0, 1.0]
     darker = [compute_exposure((base * f).astype(np.uint8)) for f in (0.1, 0.0)]
     assert [r["exposure_mean"] for r in darker] == pytest.approx([20.0, 0.0])
@@ -210,7 +223,10 @@ def test_compute_frame_quality_forwards_its_tuning(clipped_bgr):
     assert tuned["blur"] == pytest.approx(expected["blur"])
     assert tuned["laplacian"] == pytest.approx(expected["laplacian"])
     # Exposure is native-resolution, so no tuning can move it
-    assert tuned["clipped_high_frac"] == compute_frame_quality(clipped_bgr)["clipped_high_frac"]
+    assert (
+        tuned["clipped_high_frac"]
+        == compute_frame_quality(clipped_bgr)["clipped_high_frac"]
+    )
 
 
 ########################################################################
@@ -237,14 +253,20 @@ def test_compute_pair_motion_returns_all_three_measures():
 
 def test_compute_pair_motion_respects_n_features(noise_gray):
     shifted = np.roll(noise_gray, 5, axis=1)
-    few = compute_pair_motion(detect_orb(noise_gray, n_features=50), detect_orb(shifted, n_features=50))
-    many = compute_pair_motion(detect_orb(noise_gray, n_features=1000), detect_orb(shifted, n_features=1000))
+    few = compute_pair_motion(
+        detect_orb(noise_gray, n_features=50), detect_orb(shifted, n_features=50)
+    )
+    many = compute_pair_motion(
+        detect_orb(noise_gray, n_features=1000), detect_orb(shifted, n_features=1000)
+    )
     assert few["n_matches"] < many["n_matches"]
 
 
 def test_compute_pair_motion_recovers_known_shift(noise_gray):
     # Roll the image 17 px right; the median match displacement must be 17 px
-    row = compute_pair_motion(detect_orb(noise_gray), detect_orb(np.roll(noise_gray, 17, axis=1)))
+    row = compute_pair_motion(
+        detect_orb(noise_gray), detect_orb(np.roll(noise_gray, 17, axis=1))
+    )
     assert row["translation_px"] == pytest.approx(17.0, abs=1.0)
 
 
@@ -277,8 +299,13 @@ def _project(points_3d):
 def synthetic_scenes():
     """A depth-varying point cloud and a planar one, both 300 points."""
     rng = np.random.default_rng(3)
-    volume = np.stack([rng.uniform(-3, 3, 300), rng.uniform(-3, 3, 300), rng.uniform(4, 12, 300)], axis=1)
-    plane = np.stack([rng.uniform(-3, 3, 300), rng.uniform(-3, 3, 300), np.full(300, 8.0)], axis=1)
+    volume = np.stack(
+        [rng.uniform(-3, 3, 300), rng.uniform(-3, 3, 300), rng.uniform(4, 12, 300)],
+        axis=1,
+    )
+    plane = np.stack(
+        [rng.uniform(-3, 3, 300), rng.uniform(-3, 3, 300), np.full(300, 8.0)], axis=1
+    )
     return volume, plane
 
 
@@ -294,7 +321,13 @@ def test_parallax_zero_for_rotation_only(synthetic_scenes):
     # A pure rotation is exactly a homography no matter how much depth exists
     volume, _ = synthetic_scenes
     theta = np.deg2rad(5.0)
-    rot = np.array([[np.cos(theta), 0, np.sin(theta)], [0, 1, 0], [-np.sin(theta), 0, np.cos(theta)]])
+    rot = np.array(
+        [
+            [np.cos(theta), 0, np.sin(theta)],
+            [0, 1, 0],
+            [-np.sin(theta), 0, np.cos(theta)],
+        ]
+    )
     row = _pair_motion(_project(volume), _project(volume @ rot.T))
     assert row["parallax"] < 0.1
     # ...and the image content really did move, so translation alone cannot tell
@@ -348,7 +381,10 @@ def test_parallax_falls_as_the_ransac_threshold_loosens(synthetic_scenes):
     # 0.7033 / 0.0333 at 1 / 3 / 5 / 50 px, with zero spread across MAGSAC draws.
     volume, _ = synthetic_scenes
     pts_a, pts_b = _project(volume), _project(volume - np.array([0.8, 0.0, 0.0]))
-    ladder = [_pair_motion(pts_a, pts_b, ransac_thresh_px=t)["parallax"] for t in (1.0, 3.0, 5.0, 50.0)]
+    ladder = [
+        _pair_motion(pts_a, pts_b, ransac_thresh_px=t)["parallax"]
+        for t in (1.0, 3.0, 5.0, 50.0)
+    ]
     assert ladder == sorted(ladder, reverse=True), ladder
     assert ladder[0] > 0.9 and ladder[-1] < 0.1
     # The default is 3.0, so the keyword-free call sits on the second rung
@@ -367,7 +403,15 @@ def test_compute_video_quality_top_level_keys(tiny_video):
 
 def test_compute_video_quality_video_block(tiny_video):
     video = compute_video_quality(tiny_video)["video"]
-    assert set(video) == {"path", "mtime", "total_frames", "fps", "duration_s", "width", "height"}
+    assert set(video) == {
+        "path",
+        "mtime",
+        "total_frames",
+        "fps",
+        "duration_s",
+        "width",
+        "height",
+    }
     assert video["total_frames"] == 60
     assert (video["width"], video["height"]) == (320, 240)
 
@@ -392,7 +436,13 @@ def test_compute_video_quality_frame_columns_are_equal_length(tiny_video):
 def test_compute_video_quality_pairs_use_the_default_stride(tiny_video):
     report = compute_video_quality(tiny_video)
     pairs = report["pairs"]
-    assert set(pairs) == {"frame_idx_a", "frame_idx_b", "translation_px", "parallax", "n_matches"}
+    assert set(pairs) == {
+        "frame_idx_a",
+        "frame_idx_b",
+        "translation_px",
+        "parallax",
+        "n_matches",
+    }
     # 30 fps rounds to a stride of 30; tiled pairs on 60 frames leave only (0, 30)
     assert report["params"] == {
         "motion_stride": 30,
@@ -429,7 +479,9 @@ def test_compute_video_quality_serializes_unmatched_pairs_as_null(tmp_path):
     # so every pair has 0 matches and nan translation/parallax. nan is not valid
     # JSON, and it is also the interesting measurement — it must survive as null.
     path = tmp_path / "flat.mp4"
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (320, 240))
+    writer = cv2.VideoWriter(
+        str(path), cv2.VideoWriter_fourcc(*"mp4v"), 30.0, (320, 240)
+    )
     for _ in range(20):
         writer.write(np.zeros((240, 320, 3), np.uint8))
     writer.release()
@@ -458,11 +510,15 @@ def test_compute_video_quality_raises_when_nothing_decodes(tiny_video, monkeypat
         compute_video_quality(tiny_video)
 
 
-def test_compute_video_quality_decodes_each_range_on_one_thread(tiny_video, monkeypatch):
+def test_compute_video_quality_decodes_each_range_on_one_thread(
+    tiny_video, monkeypatch
+):
     # Each worker process decoding on every core oversubscribes the machine
     calls = []
     real = qa.iter_frames
-    monkeypatch.setattr(qa, "iter_frames", lambda *a, **k: calls.append(k) or real(*a, **k))
+    monkeypatch.setattr(
+        qa, "iter_frames", lambda *a, **k: calls.append(k) or real(*a, **k)
+    )
     compute_video_quality(tiny_video)
     assert calls and all(k["threads"] == 1 for k in calls)
 
@@ -474,10 +530,14 @@ def test_compute_video_quality_logs_before_and_after_the_decode(tiny_video, capl
         compute_video_quality(tiny_video, motion_stride=5)
     messages = [r.getMessage() for r in caplog.records]
     assert any("60 frames @" in m for m in messages), "no line logged before the decode"
-    assert any("frames/s" in m for m in messages), "no elapsed/throughput line logged after"
+    assert any("frames/s" in m for m in messages), (
+        "no elapsed/throughput line logged after"
+    )
 
 
-def test_compute_video_quality_survives_a_pair_opencv_cannot_fit(tiny_video, monkeypatch):
+def test_compute_video_quality_survives_a_pair_opencv_cannot_fit(
+    tiny_video, monkeypatch
+):
     # The end-to-end half of the same failure: before the guard, an unfittable pair
     # raised cv2.error and lost all 60 frames of photometry along with the other 57
     # pairs. The first two pairs are made unfittable here; tiny_video met two of them
@@ -614,7 +674,11 @@ def test_measure_photometry_and_motion_emits_only_the_frames_it_owns(tiny_video)
     # A range owning frames 20-59, decoding from 18 so the pair straddling the
     # boundary has a partner: start=18, count=42, emit_from=20, stride=2.
     frames, pairs = _measure_photometry_and_motion(
-        (tiny_video, 18, 42, 20, 2), analysis_width=480, blur_h_size=11, n_features=1000, ransac_thresh_px=3.0
+        (tiny_video, 18, 42, 20, 2),
+        analysis_width=480,
+        blur_h_size=11,
+        n_features=1000,
+        ransac_thresh_px=3.0,
     )
 
     # The two lead-in frames produce no photometry row
@@ -666,7 +730,9 @@ def test_video_quality_refuses_non_contiguous_ranges(tiny_video, monkeypatch):
         ({"ransac_thresh_px": 0.5}, "pairs", "parallax"),
     ],
 )
-def test_compute_video_quality_threads_each_tuning_kwarg_to_its_column(tiny_video, tuning, section, column):
+def test_compute_video_quality_threads_each_tuning_kwarg_to_its_column(
+    tiny_video, tuning, section, column
+):
     default = compute_video_quality(tiny_video, motion_stride=5)
     tuned = compute_video_quality(tiny_video, motion_stride=5, **tuning)
     assert tuned[section][column] != default[section][column]
@@ -675,7 +741,12 @@ def test_compute_video_quality_threads_each_tuning_kwarg_to_its_column(tiny_vide
 
 def test_ranges_tile_the_video_once_with_a_lead_in():
     assert qa._ranges(100, workers=1, stride=5) == [(0, None, 0)]
-    assert qa._ranges(100, workers=4, stride=5) == [(0, 25, 0), (20, 30, 25), (45, 30, 50), (70, 30, 75)]
+    assert qa._ranges(100, workers=4, stride=5) == [
+        (0, 25, 0),
+        (20, 30, 25),
+        (45, 30, 50),
+        (70, 30, 75),
+    ]
     assert qa._ranges(8, workers=4, stride=5) == [(0, None, 0)]
 
 

@@ -65,7 +65,17 @@ def main() -> None:
     # Verify the display matrix actually landed — -metadata rotate= is silently
     # ignored by some muxers, in which case the fixture tests nothing
     probe = subprocess.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-select_streams", "v:0", "-show_streams", str(OUT)],
+        [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-select_streams",
+            "v:0",
+            "-show_streams",
+            str(OUT),
+        ],
         capture_output=True,
         text=True,
         check=True,
@@ -80,7 +90,9 @@ def main() -> None:
     # would exercise nothing downstream
     stream = json.loads(probe.stdout)["streams"][0]
     if (stream["width"], stream["height"]) != (320, 180):
-        raise SystemExit(f"{OUT} is stored {stream['width']}x{stream['height']}, expected 320x180")
+        raise SystemExit(
+            f"{OUT} is stored {stream['width']}x{stream['height']}, expected 320x180"
+        )
 
     print(f"wrote {OUT} ({OUT.stat().st_size} bytes)")
 

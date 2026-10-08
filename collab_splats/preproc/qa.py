@@ -14,6 +14,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from pathlib import Path
+from typing import Any, Callable
 
 import cv2
 import numpy as np
@@ -44,7 +45,9 @@ def analysis_gray(frame_bgr: np.ndarray, *, width: int = 480) -> np.ndarray:
         (h, w) uint8 grayscale, aspect ratio preserved, w <= width.
     """
     scale = min(1.0, width / frame_bgr.shape[1])
-    small = cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame_bgr
+    small = (
+        cv2.resize(frame_bgr, (0, 0), fx=scale, fy=scale) if scale < 1.0 else frame_bgr
+    )
 
     return cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
@@ -80,7 +83,9 @@ def compute_blur(gray: np.ndarray, *, h_size: int = 11) -> dict:
     # - cv2.Laplacian returns a perfectly plausible number anyway
     # - so the row would read as a failed capture
     if gray.ndim != 2:
-        raise ValueError(f"compute_blur expects a 2-D single-channel frame, got shape {gray.shape}")
+        raise ValueError(
+            f"compute_blur expects a 2-D single-channel frame, got shape {gray.shape}"
+        )
 
     # Crete-Roffet re-blurs the image and measures how little changes. A frame
     # that is already blurred barely moves, so its score rises toward 1.
@@ -88,7 +93,10 @@ def compute_blur(gray: np.ndarray, *, h_size: int = 11) -> dict:
 
     # Laplacian variance: unbounded, higher = sharper. Runs in the opposite
     # direction to `blur` on purpose — see the docstring.
-    return {"blur": perceptual, "laplacian": float(cv2.Laplacian(gray, cv2.CV_64F).var())}
+    return {
+        "blur": perceptual,
+        "laplacian": float(cv2.Laplacian(gray, cv2.CV_64F).var()),
+    }
 
 
 def compute_exposure(gray: np.ndarray) -> dict:
@@ -119,7 +127,11 @@ def compute_exposure(gray: np.ndarray) -> dict:
     # - np.median averages the two central values; searchsorted alone gives the lower
     k_lo, k_hi = (int(n) - 1) // 2, int(n) // 2
     exposure_median = float(
-        (np.searchsorted(cumulative, k_lo, side="right") + np.searchsorted(cumulative, k_hi, side="right")) / 2
+        (
+            np.searchsorted(cumulative, k_lo, side="right")
+            + np.searchsorted(cumulative, k_hi, side="right")
+        )
+        / 2
     )
 
     # Contrast. A low std is a flat, textureless frame regardless of brightness.
@@ -139,7 +151,9 @@ def compute_exposure(gray: np.ndarray) -> dict:
     }
 
 
-def compute_frame_quality(bgr: np.ndarray, *, analysis_width: int = 480, blur_h_size: int = 11) -> dict:
+def compute_frame_quality(
+    bgr: np.ndarray, *, analysis_width: int = 480, blur_h_size: int = 11
+) -> dict:
     """
     Photometry for one BGR frame: blur and exposure together.
 
@@ -171,7 +185,9 @@ def compute_frame_quality(bgr: np.ndarray, *, analysis_width: int = 480, blur_h_
 ########################################################################
 
 
-def detect_orb(gray: np.ndarray, *, n_features: int = 1000) -> tuple[tuple, np.ndarray | None]:
+def detect_orb(
+    gray: np.ndarray, *, n_features: int = 1000
+) -> tuple[tuple, np.ndarray | None]:
     """
     ORB keypoints and descriptors for one grayscale frame.
 
@@ -185,10 +201,12 @@ def detect_orb(gray: np.ndarray, *, n_features: int = 1000) -> tuple[tuple, np.n
         (keypoints, descriptors). descriptors is None on a frame with no detectable
         features — a fact about the frame, not an error.
     """
-    return cv2.ORB_create(nfeatures=n_features).detectAndCompute(gray, None)
+    return cv2.ORB_create(nfeatures=n_features).detectAndCompute(gray, None)  # type: ignore[attr-defined]
 
 
-def compute_pair_motion(feat_a: tuple, feat_b: tuple, *, ransac_thresh_px: float = 3.0) -> dict:
+def compute_pair_motion(
+    feat_a: tuple, feat_b: tuple, *, ransac_thresh_px: float = 3.0
+) -> dict:
     """
     Match two frames' ORB features and measure the motion between them.
 
@@ -212,7 +230,11 @@ def compute_pair_motion(feat_a: tuple, feat_b: tuple, *, ransac_thresh_px: float
 
     # A featureless frame yields no descriptors at all. Report zero matches rather
     # than raise: an unmatchable pair is a fact about the video, not an error.
-    unmeasured = {"n_matches": 0, "translation_px": float("nan"), "parallax": float("nan")}
+    unmeasured = {
+        "n_matches": 0,
+        "translation_px": float("nan"),
+        "parallax": float("nan"),
+    }
     if desc_a is None or desc_b is None or len(desc_a) == 0 or len(desc_b) == 0:
         return unmeasured
 
@@ -242,8 +264,12 @@ def compute_pair_motion(feat_a: tuple, feat_b: tuple, *, ransac_thresh_px: float
     # - F can additionally explain translation through depth
     # - so the gap between their inlier counts IS the depth information in the pair
     try:
-        _, h_inliers = cv2.findHomography(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
-        _, f_inliers = cv2.findFundamentalMat(pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px)
+        _, h_inliers = cv2.findHomography(
+            pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px
+        )
+        _, f_inliers = cv2.findFundamentalMat(
+            pts_a, pts_b, cv2.USAC_MAGSAC, ransac_thresh_px
+        )
     except cv2.error:
         return row
 
@@ -312,7 +338,12 @@ def _measure_photometry_and_motion(
         # - so skip the photometry rather than compute a row and drop it
         if idx >= emit_from:
             frame_rows.append(
-                {"frame_idx": idx, **compute_frame_quality(bgr, analysis_width=analysis_width, blur_h_size=blur_h_size)}
+                {
+                    "frame_idx": idx,
+                    **compute_frame_quality(
+                        bgr, analysis_width=analysis_width, blur_h_size=blur_h_size
+                    ),
+                }
             )
 
         # Off-grid frames take no part in motion
@@ -329,7 +360,11 @@ def _measure_photometry_and_motion(
                 {
                     "frame_idx_a": partner,
                     "frame_idx_b": idx,
-                    **compute_pair_motion(pending[partner], pending[idx], ransac_thresh_px=ransac_thresh_px),
+                    **compute_pair_motion(
+                        pending[partner],
+                        pending[idx],
+                        ransac_thresh_px=ransac_thresh_px,
+                    ),
                 }
             )
 
@@ -338,7 +373,9 @@ def _measure_photometry_and_motion(
     return frame_rows, pair_rows
 
 
-def _ranges(total: int, *, workers: int, stride: int) -> list[tuple[int, int | None, int]]:
+def _ranges(
+    total: int, *, workers: int, stride: int
+) -> list[tuple[int, int | None, int]]:
     """
     (start, count, emit_from) per worker; each range decodes a stride-frame lead-in.
 
@@ -355,7 +392,7 @@ def _ranges(total: int, *, workers: int, stride: int) -> list[tuple[int, int | N
         return [(0, None, 0)]
 
     per = total // workers
-    out = []
+    out: list[tuple[int, int | None, int]] = []
     for k in range(workers):
         emit_from = k * per
         start = max(emit_from - stride, 0)
@@ -408,7 +445,9 @@ def compute_video_quality(
 
     video_path = Path(video_path)
     info = get_video_info(str(video_path))
-    stride = int(motion_stride) if motion_stride is not None else max(1, round(info["fps"]))
+    stride = (
+        int(motion_stride) if motion_stride is not None else max(1, round(info["fps"]))
+    )
 
     # Announce the work before the first decode
     # - a multi-minute silent run is indistinguishable from a hung one
@@ -432,13 +471,15 @@ def compute_video_quality(
     ]
 
     # Bind the tuning once; partial of a module-level function still pickles
-    tuning = {
+    tuning: dict[str, Any] = {
         "analysis_width": analysis_width,
         "blur_h_size": blur_h_size,
         "n_features": n_features,
         "ransac_thresh_px": ransac_thresh_px,
     }
-    measure = partial(_measure_photometry_and_motion, **tuning)
+    measure: Callable[[tuple], tuple[list[dict], list[dict]]] = partial(
+        _measure_photometry_and_motion, **tuning
+    )
 
     started = time.perf_counter()
 
@@ -483,12 +524,22 @@ def compute_video_quality(
     # Pair columns; translation_px and parallax are nan for an unmatched pair
     # - to_json_safe nulls them here, so the returned dict equals the written file
     # - np.nan_to_num is not the fix: its 0.0 fill reads as "no motion"
-    pair_keys = ("frame_idx_a", "frame_idx_b", "n_matches", "translation_px", "parallax")
+    pair_keys = (
+        "frame_idx_a",
+        "frame_idx_b",
+        "n_matches",
+        "translation_px",
+        "parallax",
+    )
     pairs = {k: [r[k] for r in pair_rows] for k in pair_keys}
 
     report = to_json_safe(
         {
-            "video": {"path": str(video_path), "mtime": video_path.stat().st_mtime, **info},
+            "video": {
+                "path": str(video_path),
+                "mtime": video_path.stat().st_mtime,
+                **info,
+            },
             "params": {"motion_stride": stride, **tuning},
             "frames": frames,
             "pairs": pairs,
@@ -543,13 +594,21 @@ def load_video_quality(
         report = json.loads(report_path.read_text())
 
         if "frames" not in report:
-            raise ValueError(f"{report_path} is a stale video-quality report (no 'frames'); delete it and re-run")
+            raise ValueError(
+                f"{report_path} is a stale video-quality report (no 'frames'); delete it and re-run"
+            )
         return report
 
-    report = compute_video_quality(video_path, motion_stride=motion_stride, workers=workers)
+    report = compute_video_quality(
+        video_path, motion_stride=motion_stride, workers=workers
+    )
 
     # Atomic write: an interrupted run leaves no partial report
     report_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(report_path, report)
-    logger.info("video quality: wrote %s (%.1f kB)", report_path, report_path.stat().st_size / 1000)
+    logger.info(
+        "video quality: wrote %s (%.1f kB)",
+        report_path,
+        report_path.stat().st_size / 1000,
+    )
     return report

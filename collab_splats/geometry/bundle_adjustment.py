@@ -13,7 +13,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import torch
@@ -141,11 +141,15 @@ class BundleAdjustmentConfig:
 
             # Reject a value outside its allowed set
             if value not in allowed:
-                raise ValueError(f"BundleAdjustmentConfig.{name} must be one of {allowed}, got {value!r}")
+                raise ValueError(
+                    f"BundleAdjustmentConfig.{name} must be one of {allowed}, got {value!r}"
+                )
 
         # Photometric reads images, which the incremental solve does not carry
         if self.use_photometric and self.increment_size > 0:
-            raise ValueError("BundleAdjustmentConfig: use_photometric needs increment_size 0 (global solve)")
+            raise ValueError(
+                "BundleAdjustmentConfig: use_photometric needs increment_size 0 (global solve)"
+            )
 
         # Schur splits cameras and points only; a refined shared focal is a third block
         if self.solver == "schur" and self.refine_focal and self.shared_camera:
@@ -233,7 +237,9 @@ class BundleAdjustment:
             intrinsics=intrinsics,
             **cfg.track_kwargs,
         )
-        logger.info("Tracks ready: %d observations, %d points", len(frame), len(pts3d_tracks))
+        logger.info(
+            "Tracks ready: %d observations, %d points", len(frame), len(pts3d_tracks)
+        )
 
         # Numpy copies for the depth and photometric terms; tracks above take the tensors as given
         images = to_numpy(images)
@@ -312,7 +318,7 @@ class BundleAdjustment:
         frame_k, track_k = frame[keep], track[keep]
         active_frames = np.unique(frame_k)
         active_pts = np.unique(track_k)
-        frame_idx = np.searchsorted(active_frames, frame_k)
+        frame_idx = cast(np.ndarray, np.searchsorted(active_frames, frame_k))
         pt_idx = np.searchsorted(active_pts, track_k)
         obs_2d = xy[keep].astype(np.float64)
 
@@ -353,7 +359,9 @@ class BundleAdjustment:
             obs_depth = depth[frame_k, row, col].astype(np.float64)
             obs_conf = confidence[frame_k, row, col] / np.median(confidence)
             valid = obs_depth > 0
-            weight_z[valid] = np.sqrt(obs_conf[valid]) / (obs_depth[valid] * cfg.depth_sigma)
+            weight_z[valid] = np.sqrt(obs_conf[valid]) / (
+                obs_depth[valid] * cfg.depth_sigma
+            )
             target_z = obs_depth
 
         # Build SE3 camera tensor from (K, 3, 4) extrinsics; pad to (K, 4, 4) for mat2SE3
@@ -366,10 +374,18 @@ class BundleAdjustment:
         cameras_se3 = pp.mat2SE3(ext_t)
 
         # SIMPLE_PINHOLE: average fx/fy as single focal length per camera
-        focal = (intrinsics[active_frames, 0, 0] + intrinsics[active_frames, 1, 1]) / 2.0
-        focal_tensor = torch.tensor(focal[:, None], dtype=dtype, device=device)  # (K, 1)
-        principal_points = torch.tensor(intrinsics[active_frames, :2, 2], dtype=dtype, device=device)  # (K, 2)
-        pts3d_tensor = torch.tensor(pts3d[active_pts], dtype=dtype, device=device)  # (L, 3)
+        focal = (
+            intrinsics[active_frames, 0, 0] + intrinsics[active_frames, 1, 1]
+        ) / 2.0
+        focal_tensor = torch.tensor(
+            focal[:, None], dtype=dtype, device=device
+        )  # (K, 1)
+        principal_points = torch.tensor(
+            intrinsics[active_frames, :2, 2], dtype=dtype, device=device
+        )  # (K, 2)
+        pts3d_tensor = torch.tensor(
+            pts3d[active_pts], dtype=dtype, device=device
+        )  # (L, 3)
 
         # Concatenate focal length into camera params tensor for per-camera case
         if cfg.shared_camera or not cfg.refine_focal:
@@ -402,7 +418,9 @@ class BundleAdjustment:
         if cfg.use_photometric:
             rgb = torch.tensor(images[active_frames], dtype=dtype, device=device)
             gray = rgb.mean(1, keepdim=True)
-            depth_t = torch.tensor(depth[active_frames], dtype=dtype, device=device)[:, None]
+            depth_t = torch.tensor(depth[active_frames], dtype=dtype, device=device)[
+                :, None
+            ]
             valid_t = (depth_t > 0).to(dtype)
             full_hw = np.array(gray.shape[-2:])
 
@@ -410,7 +428,9 @@ class BundleAdjustment:
             for factor, n_relin in ((4, 3), (2, 2), (1, 1)):
                 gray_l = F.avg_pool2d(gray, factor)[:, 0]
                 valid_l = F.avg_pool2d(valid_t, factor)[:, 0]
-                depth_l = F.avg_pool2d(depth_t * valid_t, factor)[:, 0] / valid_l.clamp(min=1e-6)
+                depth_l = F.avg_pool2d(depth_t * valid_t, factor)[:, 0] / valid_l.clamp(
+                    min=1e-6
+                )
 
                 # Pooled pixel j covers full pixels [f j, f j + f): pixel-center K scales via the corner convention
                 level_hw = full_hw / factor
@@ -422,7 +442,9 @@ class BundleAdjustment:
 
         # 4. Solver over the stacked residual
         with torch.enable_grad():
-            model = _BAModel(cam_params, pts3d_tensor, shared_focal, refine_focal=cfg.refine_focal)
+            model = _BAModel(
+                cam_params, pts3d_tensor, shared_focal, refine_focal=cfg.refine_focal
+            )
 
             # bae TrustRegion: non-positive predicted drop counts as rejected (pypose's does not)
             strategy = TrustRegion(up=2.0, down=0.5**4, max=1e6)
@@ -437,10 +459,18 @@ class BundleAdjustment:
                 optimizer_cls, solver = LM, lambda A, b: pcg(A, b).view(-1, 1)
 
             # Optimizer over the model; up to 10 rejected steps per step call
-            optimizer = optimizer_cls(model, strategy=strategy, solver=solver, reject=10, matrix_free_normal=True)
+            optimizer = optimizer_cls(
+                model,
+                strategy=strategy,
+                solver=solver,
+                reject=10,
+                matrix_free_normal=True,
+            )
 
             # Pin target=None: pypose>=0.7 RobustModel.forward needs it; LM passes none, Schur passes it positionally
-            forward = functools.partial(type(optimizer.model).forward, optimizer.model, target=None)
+            forward = functools.partial(
+                type(optimizer.model).forward, optimizer.model, target=None
+            )
             optimizer.model.forward = lambda input, target=None: forward(input)
 
             # 5. LM / IRLS loop, manual: pypose StopOnPlateau stops on any rejected step
@@ -470,12 +500,17 @@ class BundleAdjustment:
 
                         # One seed per re-sample, so every draw picks fresh pixels yet repeats run to run
                         with torch.no_grad():
-                            samples = photometric_samples(w2c, gray_l, depth_l, K_cur, seed=n_draws)
+                            samples = photometric_samples(
+                                w2c, gray_l, depth_l, K_cur, seed=n_draws
+                            )
 
                         n_draws += 1
 
                         if samples is None:
-                            logger.warning("BA: too few photometric samples at %s, scale skipped", gray_l.shape)
+                            logger.warning(
+                                "BA: too few photometric samples at %s, scale skipped",
+                                gray_l.shape,
+                            )
                             break
 
                         input_dict["photometric"] = samples
@@ -489,11 +524,18 @@ class BundleAdjustment:
                     for _ in range(n_steps):
                         # IRLS Huber on the photometric samples: delta = 1.5 x median normalized residual
                         if gray_l is not None:
+                            assert samples is not None
+
                             with torch.no_grad():
                                 samples["weight"] = base_weight
-                                r = model(**input_dict)[len(obs_2d) :, 0].tensor().abs() / base_weight
+                                r = (
+                                    model(**input_dict)[len(obs_2d) :, 0].tensor().abs()
+                                    / base_weight
+                                )
                                 delta = 1.5 * r.median().clamp(min=1e-9)
-                                samples["weight"] = base_weight * (delta / r.clamp(min=delta)).sqrt()
+                                samples["weight"] = (
+                                    base_weight * (delta / r.clamp(min=delta)).sqrt()
+                                )
 
                             # Loss at the current parameters, under the new weights
                             optimizer.loss = optimizer.model.loss(input_dict, None)
@@ -511,14 +553,20 @@ class BundleAdjustment:
                             optimizer.loss = optimizer.last
                             loss = float(optimizer.last)
                             logger.warning(
-                                "BA: LM step raised the loss after %d rejects, undone", optimizer.reject_count
+                                "BA: LM step raised the loss after %d rejects, undone",
+                                optimizer.reject_count,
                             )
 
                         # Relative drop against the loss before the step; zero when there is no prior loss
                         last = float(optimizer.last)
                         drop = (last - loss) / last if last > 0 else 0.0
                         loss_hist.append(loss)
-                        logger.info("LM step %d: loss=%.6e drop=%.2e", len(loss_hist), loss, drop)
+                        logger.info(
+                            "LM step %d: loss=%.6e drop=%.2e",
+                            len(loss_hist),
+                            loss,
+                            drop,
+                        )
 
                         # Stalled steps in a row end the solve, or this re-sample (the next one still runs)
                         stalled = stalled + 1 if drop < cfg.lm_tol else 0
@@ -528,7 +576,9 @@ class BundleAdjustment:
 
             # No LM step ran (lm_steps 0, or no photometric scale had samples): only the alignment below applies
             if not loss_hist:
-                logger.warning("BA: no LM step ran; refine is a no-op apart from the alignment to input poses")
+                logger.warning(
+                    "BA: no LM step ran; refine is a no-op apart from the alignment to input poses"
+                )
 
             # Keep this solve's per-step losses
             self.loss_history.append(loss_hist)
@@ -592,7 +642,10 @@ class BundleAdjustment:
 
 @map_transform
 def _reproject(
-    pts: torch.Tensor, cam_params: torch.Tensor, principal_point: torch.Tensor, *shared_focal: torch.Tensor
+    pts: torch.Tensor,
+    cam_params: torch.Tensor,
+    principal_point: torch.Tensor,
+    *shared_focal: torch.Tensor,
 ) -> torch.Tensor:
     """
     Pinhole projection plus camera z; returns [u, v, z].
@@ -669,7 +722,11 @@ class _BAModel(nn.Module):
         ctr = principal_points[camera_indices]
 
         # Shared focal indexed per observation; per-frame focal rides in the pose
-        shared_focal = () if self.shared_intr is None else (self.shared_intr[torch.zeros_like(camera_indices)],)
+        shared_focal = (
+            ()
+            if self.shared_intr is None
+            else (self.shared_intr[torch.zeros_like(camera_indices)],)
+        )
         pred = _reproject(pts, cam, ctr, *shared_focal)
 
         # Weighted track residual block
@@ -679,7 +736,9 @@ class _BAModel(nn.Module):
         if photometric is not None:
             pose_i = self.pose[photometric["i_idx"]]
             pose_j = self.pose[photometric["j_idx"]]
-            residual = photometric_residual(pose_i, pose_j, *(photometric[k] for k in KEYS))
+            residual = photometric_residual(
+                pose_i, pose_j, *(photometric[k] for k in KEYS)
+            )
             blocks.append(residual)
 
         return torch.cat(blocks)
@@ -782,7 +841,11 @@ def _align_to_input_poses(
     ref_dev = (ctr_ref - ctr_ref.mean(0)) @ R_g.T
     inp_dev = ctr_inp - ctr_inp.mean(0)
     spread = float((ref_dev**2).sum())
-    s = 1.0 if fix_scale or spread < 1e-12 else float((ref_dev * inp_dev).sum() / spread)
+    s = (
+        1.0
+        if fix_scale or spread < 1e-12
+        else float((ref_dev * inp_dev).sum() / spread)
+    )
     t_g = ctr_inp.mean(0) - s * R_g @ ctr_ref.mean(0)
 
     # Move the world by X' = s R_g X + t_g: [R|t] -> [R R_g^T | s t - R R_g^T t_g]

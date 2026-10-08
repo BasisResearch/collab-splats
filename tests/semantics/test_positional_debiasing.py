@@ -21,6 +21,7 @@ from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
 # Fake extractor: minimal concrete implementation for testing base-class logic
 # ---------------------------------------------------------------------------
 
+
 class _FakeExtractor(BaseFeatureExtractor):
     """Returns deterministic features based on pixel mean so image content affects output.
 
@@ -31,10 +32,12 @@ class _FakeExtractor(BaseFeatureExtractor):
     patch_size = 14
 
     def __init__(self, feature_dim: int = 16, h_p: int = 4, w_p: int = 4, **kwargs):
-        super().__init__("max_size", 512, **kwargs)  # resize/resolution unused: forward is synthetic
+        super().__init__(
+            "max_size", 512, **kwargs
+        )  # resize/resolution unused: forward is synthetic
         self._feature_dim = feature_dim  # D: output patch feature dimensionality
-        self._h_p = h_p                  # H_p: fixed patch grid height (regardless of input size)
-        self._w_p = w_p                  # W_p: fixed patch grid width
+        self._h_p = h_p  # H_p: fixed patch grid height (regardless of input size)
+        self._w_p = w_p  # W_p: fixed patch grid width
 
     @property
     def device(self) -> torch.device:
@@ -46,22 +49,26 @@ class _FakeExtractor(BaseFeatureExtractor):
             arr = np.array(img)
             # Seed from pixel mean: zero-pixel image (mean=0) gives different features than
             # content images (mean>0), which is required for debiasing tests to be meaningful.
-            seed = int(arr.mean() * 1000) % (2 ** 31)
+            seed = int(arr.mean() * 1000) % (2**31)
             gen = torch.Generator()
             gen.manual_seed(seed)
             feat = torch.randn(self._feature_dim, self._h_p, self._w_p, generator=gen)
-            results.append(F.normalize(feat, p=2, dim=0))  # unit-norm patches, matches real extractor contract
+            results.append(
+                F.normalize(feat, p=2, dim=0)
+            )  # unit-norm patches, matches real extractor contract
         return results
 
 
 class _UnvalidatedExtractor(_FakeExtractor):
     """Subclass of _FakeExtractor left at `debias_validated = False` — used to test warning path."""
+
     pass
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_rgb_image(h: int = 64, w: int = 64, value: int = 100) -> Image.Image:
     """Create a solid-color PIL image for use as test input."""
@@ -72,6 +79,7 @@ def _make_rgb_image(h: int = 64, w: int = 64, value: int = 100) -> Image.Image:
 # ---------------------------------------------------------------------------
 # Task 1: smoke test — base class state is initialized
 # ---------------------------------------------------------------------------
+
 
 def test_base_state_initialized():
     """BaseFeatureExtractor.__init__ must set svd_components, _pos_basis_cache, _zero_feats_cache."""
@@ -94,6 +102,7 @@ def test_forward_unchanged():
 # Task 2: debias() — SVD projection, shape, caching, warning
 # ---------------------------------------------------------------------------
 
+
 def test_debias_returns_list_of_tensors_same_shape():
     """debias() must return list[Tensor] with same shape as input features."""
     extractor = _FakeExtractor(feature_dim=16, h_p=4, w_p=4, svd_components=4)
@@ -107,7 +116,9 @@ def test_debias_returns_list_of_tensors_same_shape():
 def test_debias_output_differs_from_input():
     """debias() must produce different features than the raw forward() output."""
     extractor = _FakeExtractor(feature_dim=16, h_p=4, w_p=4, svd_components=4)
-    img = _make_rgb_image(value=128)  # non-zero pixel value → differs from zero-image basis
+    img = _make_rgb_image(
+        value=128
+    )  # non-zero pixel value → differs from zero-image basis
     features = extractor.forward([img])
     debiased = extractor.debias(features)
     # Debiasing subtracts a structured positional component — outputs must differ.
@@ -119,7 +130,9 @@ def test_debias_output_is_unit_norm():
     extractor = _FakeExtractor(feature_dim=16, h_p=4, w_p=4, svd_components=4)
     img = _make_rgb_image(value=128)
     debiased = extractor.debias(extractor.forward([img]))
-    norms = debiased[0].norm(dim=0)  # (H_p, W_p) — norm of each patch vector along feature dim
+    norms = debiased[0].norm(
+        dim=0
+    )  # (H_p, W_p) — norm of each patch vector along feature dim
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-5)
 
 
@@ -136,7 +149,9 @@ def test_positional_basis_cached_after_first_debias_call():
     # Monkey-patch to detect if _build_positional_basis is called a second time.
     calls = []
     original = extractor._build_positional_basis
-    extractor._build_positional_basis = lambda *a, **kw: calls.append(1) or original(*a, **kw)
+    extractor._build_positional_basis = lambda *a, **kw: (
+        calls.append(1) or original(*a, **kw)
+    )
 
     extractor.debias(features)  # second call at same resolution
     assert len(calls) == 0  # basis must NOT be rebuilt — must reuse from cache
@@ -151,12 +166,15 @@ def test_unvalidated_extractor_warns_on_debias(caplog):
     with caplog.at_level(logging.WARNING, logger="collab_splats.semantics.features"):
         debiased = extractor.debias(features)  # must not raise
     assert any("not yet validated" in r.message for r in caplog.records)
-    assert debiased[0].shape == features[0].shape  # still returns correct output despite warning
+    assert (
+        debiased[0].shape == features[0].shape
+    )  # still returns correct output despite warning
 
 
 # ---------------------------------------------------------------------------
 # Task 3: get_bias_visualization
 # ---------------------------------------------------------------------------
+
 
 def test_get_bias_visualization_correct_shape_and_dtype():
     """get_bias_visualization must return (H_p, W_p, 3) uint8 after a debias() call."""
@@ -188,6 +206,7 @@ def test_get_bias_visualization_values_in_range():
 
 def test_missing_patch_size_raises():
     """_build_positional_basis must raise AttributeError if patch_size is not set on the extractor."""
+
     class _NoPatchSizeExtractor(BaseFeatureExtractor):
         # patch_size intentionally absent — simulates a subclass that forgot to set it
         def forward(self, images: list) -> list:

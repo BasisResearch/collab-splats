@@ -43,7 +43,9 @@ def test_decompose_camera_keeps_a_reflection_like_upstream():
     det<0 input returns det<0 R: upstream has no snap and no reflection fix.
     """
     K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float64)
-    refl = ScipyR.from_euler("y", 15, degrees=True).as_matrix() @ np.diag([1.0, 1.0, -1.0])
+    refl = ScipyR.from_euler("y", 15, degrees=True).as_matrix() @ np.diag(
+        [1.0, 1.0, -1.0]
+    )
     P34 = K @ np.hstack([refl, np.zeros((3, 1))])
     _, R_out, _, _ = decompose_camera(P34)
     assert np.linalg.det(R_out) < 0
@@ -160,21 +162,28 @@ def _make_real_submap(submap_id: int, k: int = 4, frame_start: int = 0) -> Subma
     )
 
 
-def _set_overlap_points(submap: Submap, points: np.ndarray, conf: np.ndarray, conf_threshold: float = 25.0) -> None:
+def _set_overlap_points(
+    submap: Submap, points: np.ndarray, conf: np.ndarray, conf_threshold: float = 25.0
+) -> None:
     """
     Give every frame of submap the same (N, 3) points and (N,) conf as a (1, N) dense grid.
 
     - conf_threshold is set raw, so the confidence tiers below read 50 / 1 / 0 against 25
     """
     k = submap.poses.shape[0]
-    submap.points = np.tile(points.reshape(1, 1, -1, 3), (k, 1, 1, 1)).astype(np.float32)
+    submap.points = np.tile(points.reshape(1, 1, -1, 3), (k, 1, 1, 1)).astype(
+        np.float32
+    )
     submap.conf = np.tile(conf.reshape(1, 1, -1), (k, 1, 1)).astype(np.float32)
     submap.conf_threshold = conf_threshold
 
 
 def test_incremental_pose_graph_returns_correct_shape():
     k = 4
-    submaps = [_make_real_submap(0, k=k, frame_start=0), _make_real_submap(1, k=k, frame_start=k)]
+    submaps = [
+        _make_real_submap(0, k=k, frame_start=0),
+        _make_real_submap(1, k=k, frame_start=k),
+    ]
     result = drive_pose_graph(
         submaps,
         lc_submaps=[],
@@ -212,7 +221,9 @@ def test_optimize_keeps_initial_values_on_gtsam_runtime_error(monkeypatch):
         "gtsam",
         SimpleNamespace(
             LevenbergMarquardtParams=lambda: None,
-            LevenbergMarquardtOptimizer=_optimizer_raising(RuntimeError("indeterminant system")),
+            LevenbergMarquardtOptimizer=_optimizer_raising(
+                RuntimeError("indeterminant system")
+            ),
         ),
     )
     pg.optimize()
@@ -258,8 +269,12 @@ def _conf_group_points() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray
     curr = prior / scale[:, None]
 
     # Joint confidence on A only; prior confidence on A+B; C passes only a `> 0` test
-    curr_conf = np.concatenate([np.full(N_A, 50.0), np.zeros(N_B), np.ones(N_C)]).astype(np.float32)
-    prior_conf = np.concatenate([np.full(N_A + N_B, 50.0), np.ones(N_C)]).astype(np.float32)
+    curr_conf = np.concatenate(
+        [np.full(N_A, 50.0), np.zeros(N_B), np.ones(N_C)]
+    ).astype(np.float32)
+    prior_conf = np.concatenate([np.full(N_A + N_B, 50.0), np.ones(N_C)]).astype(
+        np.float32
+    )
     return curr, prior, curr_conf, prior_conf
 
 
@@ -316,8 +331,12 @@ def test_sequential_edge_last_tier_drops_zero_confidence_points():
     prior = rng.standard_normal((n_a + n_c + n_z, 3)) + np.array([0, 0, 5.0])
     scale = np.concatenate([np.full(n_a, 2.0), np.full(n_c, 4.0), np.full(n_z, 8.0)])
     curr = prior / scale[:, None]
-    prior_conf = np.concatenate([np.full(n_a, 50.0), np.ones(n_c), np.zeros(n_z)]).astype(np.float32)
-    curr_conf = np.concatenate([np.full(n_a, 50.0), np.ones(n_c + n_z)]).astype(np.float32)
+    prior_conf = np.concatenate(
+        [np.full(n_a, 50.0), np.ones(n_c), np.zeros(n_z)]
+    ).astype(np.float32)
+    curr_conf = np.concatenate([np.full(n_a, 50.0), np.ones(n_c + n_z)]).astype(
+        np.float32
+    )
 
     # Two identity-pose submaps sharing one overlap frame
     k = 2
@@ -430,7 +449,11 @@ def test_sequential_edge_gates_by_the_prior_submaps_conf_percentile():
     s1.poses = np.tile(np.eye(4, dtype=np.float32), (k, 1, 1))
     for sm, pts in ((s0, prior), (s1, curr)):
         grid = np.tile(pts.reshape(1, 1, -1, 3), (k, 1, 1, 1)).astype(np.float32)
-        sm.set_dense_points(grid, np.zeros(grid.shape, dtype=np.uint8), np.tile(conf.reshape(1, 1, -1), (k, 1, 1)))
+        sm.set_dense_points(
+            grid,
+            np.zeros(grid.shape, dtype=np.uint8),
+            np.tile(conf.reshape(1, 1, -1), (k, 1, 1)),
+        )
 
     assert s0.conf_threshold == pytest.approx(0.2 + 1e-6)
     assert _sequential_scale(s0, s1) == pytest.approx(2.0, rel=1e-5)
@@ -444,10 +467,14 @@ def test_sequential_edge_without_dense_points_warns_and_uses_scale_1(caplog):
     s0.poses = np.tile(np.eye(4, dtype=np.float32), (k, 1, 1))
     s1.poses = np.tile(np.eye(4, dtype=np.float32), (k, 1, 1))
     s1.points = None
-    with caplog.at_level(logging.WARNING, logger="collab_splats.geometry.loop_closure.graph"):
+    with caplog.at_level(
+        logging.WARNING, logger="collab_splats.geometry.loop_closure.graph"
+    ):
         s = _sequential_scale(s0, s1)
     assert s == pytest.approx(1.0, rel=1e-6)
-    assert sum("no usable overlap points" in r.getMessage() for r in caplog.records) == 1
+    assert (
+        sum("no usable overlap points" in r.getMessage() for r in caplog.records) == 1
+    )
 
 
 def _single_frame_submap(sid: int, points: np.ndarray, conf: np.ndarray) -> Submap:
@@ -465,8 +492,12 @@ def _single_frame_submap(sid: int, points: np.ndarray, conf: np.ndarray) -> Subm
     )
 
 
-@pytest.mark.parametrize("min_conf_points, expected", [(100, 8.0), (30, 4.0), (10, 2.0)])
-def testcalculate_pairwise_frame_scale_confidence_floor_picks_the_mask(min_conf_points, expected):
+@pytest.mark.parametrize(
+    "min_conf_points, expected", [(100, 8.0), (30, 4.0), (10, 2.0)]
+)
+def testcalculate_pairwise_frame_scale_confidence_floor_picks_the_mask(
+    min_conf_points, expected
+):
     """100: prior > 0 fallback (all); 30: prior-only mask (A+B); 10: joint mask (A)."""
     curr, prior, curr_conf, prior_conf = _conf_group_points()
     lc = _single_frame_submap(9, curr, curr_conf)
@@ -496,4 +527,6 @@ def testcalculate_pairwise_frame_scale_gates_by_the_prior_submaps_conf_percentil
         sm.conf_threshold = None
         sm.__post_init__()
     assert reg.conf_threshold == pytest.approx(0.2 + 1e-6)
-    assert graph_mod.calculate_pairwise_frame_scale(lc, 0, reg, 0, 100) == pytest.approx(2.0, rel=1e-5)
+    assert graph_mod.calculate_pairwise_frame_scale(
+        lc, 0, reg, 0, 100
+    ) == pytest.approx(2.0, rel=1e-5)

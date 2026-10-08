@@ -13,7 +13,9 @@ import pytest
 from evals.datasets import get_dataset, load_gt_depth
 
 
-def _make_seq(tmp_path: Path, n_frames: int, poses: list[np.ndarray] | None = None) -> Path:
+def _make_seq(
+    tmp_path: Path, n_frames: int, poses: list[np.ndarray] | None = None
+) -> Path:
     """Create a minimal synthetic 7-Scenes sequence directory (flat layout)."""
     for i in range(n_frames):
         (tmp_path / f"frame-{i:06d}.color.png").touch()
@@ -26,7 +28,9 @@ def _make_seq(tmp_path: Path, n_frames: int, poses: list[np.ndarray] | None = No
 def _make_tum_seq(
     tmp_path: Path,
     rgb_entries: list[tuple[float, str]],
-    gt_entries: list[tuple[float, tuple[float, float, float], tuple[float, float, float, float]]],
+    gt_entries: list[
+        tuple[float, tuple[float, float, float], tuple[float, float, float, float]]
+    ],
 ) -> Path:
     """Create a minimal synthetic TUM RGB-D sequence directory.
 
@@ -96,14 +100,18 @@ def test_load_7scenes_dtype(tmp_path):
 def test_load_7scenes_depth_paths(tmp_path):
     _make_seq(tmp_path, n_frames=3)
     dataset = get_dataset("7scenes")(tmp_path)
-    assert [p.name for p in dataset.depth_paths] == [f"frame-{i:06d}.depth.png" for i in range(3)]
+    assert [p.name for p in dataset.depth_paths] == [
+        f"frame-{i:06d}.depth.png" for i in range(3)
+    ]
     assert all(p.exists() for p in dataset.depth_paths)
 
 
 def test_load_gt_depth_meters_and_invalid(tmp_path):
     raw = np.array([[1000, 65535], [0, 2500]], dtype=np.uint16)
     cv2.imwrite(str(tmp_path / "d.png"), raw)
-    np.testing.assert_allclose(load_gt_depth(tmp_path / "d.png"), [[1.0, 0.0], [0.0, 2.5]])
+    np.testing.assert_allclose(
+        load_gt_depth(tmp_path / "d.png"), [[1.0, 0.0], [0.0, 2.5]]
+    )
 
 
 def test_load_7scenes_works_for_any_scene_name(tmp_path):
@@ -139,7 +147,9 @@ def test_load_tum_pose_inverted(tmp_path):
     gt = [(0.0, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))]
     _make_tum_seq(tmp_path, rgb, gt)
     dataset = get_dataset("tum")(tmp_path, max_frames=1)
-    np.testing.assert_allclose(dataset.gt_poses[0, :3, 3], np.array([-1.0, 0.0, 0.0]), atol=1e-5)
+    np.testing.assert_allclose(
+        dataset.gt_poses[0, :3, 3], np.array([-1.0, 0.0, 0.0]), atol=1e-5
+    )
 
 
 def test_load_tum_max_frames(tmp_path):
@@ -170,7 +180,9 @@ def test_load_tum_associates_rgb_to_nearest_gt(tmp_path):
     _make_tum_seq(tmp_path, rgb, gt)
     dataset = get_dataset("tum")(tmp_path, max_frames=1)
     # w2c translation = -c2w translation for identity rotation
-    np.testing.assert_allclose(dataset.gt_poses[0, :3, 3], np.array([-7.0, 0.0, 0.0]), atol=1e-5)
+    np.testing.assert_allclose(
+        dataset.gt_poses[0, :3, 3], np.array([-7.0, 0.0, 0.0]), atol=1e-5
+    )
 
 
 # ----------------------------- CO3Dv2 tests ----------------------------- #
@@ -187,7 +199,10 @@ def _make_co3dv2_seq(tmp_path: Path, n_frames: int = 4, seq_name: str = "seq1") 
         annotations.append(
             {
                 "sequence_name": seq_name,
-                "image": {"path": f"apple/{seq_name}/images/{fname}", "size": [480, 640]},
+                "image": {
+                    "path": f"apple/{seq_name}/images/{fname}",
+                    "size": [480, 640],
+                },
                 "viewpoint": {
                     "R": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
                     "T": [i * 0.1, 0.0, 1.0],
@@ -196,7 +211,9 @@ def _make_co3dv2_seq(tmp_path: Path, n_frames: int = 4, seq_name: str = "seq1") 
                 },
             }
         )
-    with gzip.open(seq_dir.parent / "frame_annotations.jgz", "wt", encoding="utf-8") as f:
+    with gzip.open(
+        seq_dir.parent / "frame_annotations.jgz", "wt", encoding="utf-8"
+    ) as f:
         json.dump(annotations, f)
     return seq_dir
 
@@ -208,12 +225,16 @@ def test_load_co3dv2_count_and_intrinsics(tmp_path):
     assert ds.intrinsics.shape == (3, 3, 3) and ds.intrinsics.dtype == np.float32
 
     # NDC focal 1.2 in units of min(H, W) / 2 = 240 px; principal point at image center
-    np.testing.assert_allclose(ds.intrinsics[0], [[288.0, 0.0, 320.0], [0.0, 288.0, 240.0], [0.0, 0.0, 1.0]])
+    np.testing.assert_allclose(
+        ds.intrinsics[0], [[288.0, 0.0, 320.0], [0.0, 288.0, 240.0], [0.0, 0.0, 1.0]]
+    )
 
 
 def test_load_co3dv2_pytorch3d_to_opencv(tmp_path):
     ds = get_dataset("co3dv2")(_make_co3dv2_seq(tmp_path, n_frames=2), max_frames=2)
-    np.testing.assert_allclose(ds.gt_poses[0, :3, :3], np.diag([-1.0, -1.0, 1.0]), atol=1e-6)
+    np.testing.assert_allclose(
+        ds.gt_poses[0, :3, :3], np.diag([-1.0, -1.0, 1.0]), atol=1e-6
+    )
     np.testing.assert_allclose(ds.gt_poses[1, :3, 3], [-0.2, 0.0, 1.0], atol=1e-6)
 
 

@@ -77,7 +77,11 @@ def frame_paths(dir: Path | str, idxs: Sequence[int] | None = None) -> list[Path
         KeyError: when idxs names a frame_idx the directory does not hold.
     """
     dir = Path(dir)
-    paths = sorted(p for p in dir.iterdir() if p.suffix.lower() in IMAGE_EXTS) if dir.is_dir() else []
+    paths = (
+        sorted(p for p in dir.iterdir() if p.suffix.lower() in IMAGE_EXTS)
+        if dir.is_dir()
+        else []
+    )
 
     if idxs is None:
         return paths
@@ -122,7 +126,9 @@ def write_frames(
     dir = Path(dir)
 
     if len(frames) != len(idxs):
-        raise ValueError(f"write_frames: {len(frames)} frames against {len(idxs)} indices")
+        raise ValueError(
+            f"write_frames: {len(frames)} frames against {len(idxs)} indices"
+        )
 
     if not len(idxs):
         raise ValueError("write_frames: no frames selected")
@@ -140,7 +146,9 @@ def write_frames(
         Encode frame i to its path; the store is RGB at the boundary, cv2 writes BGR.
         """
         bgr = cv2.cvtColor(frames[i], cv2.COLOR_RGB2BGR)
-        ok = cv2.imwrite(str(paths[i]), bgr, [cv2.IMWRITE_PNG_COMPRESSION, png_compression])
+        ok = cv2.imwrite(
+            str(paths[i]), bgr, [cv2.IMWRITE_PNG_COMPRESSION, png_compression]
+        )
 
         if not ok:
             raise OSError(f"write_frames: cv2 failed to write {paths[i]}")
@@ -153,7 +161,9 @@ def write_frames(
     return paths
 
 
-def read_frames(dir: Path | str, idxs: Sequence[int] | None = None, *, workers: int = 8) -> np.ndarray:
+def read_frames(
+    dir: Path | str, idxs: Sequence[int] | None = None, *, workers: int = 8
+) -> np.ndarray:
     """
     Read frames from an images directory as one RGB stack.
 
@@ -195,7 +205,9 @@ def read_frames(dir: Path | str, idxs: Sequence[int] | None = None, *, workers: 
     return stack
 
 
-def read_frames_chunked(dir: Path | str, idxs: Sequence[int], batch_size: int = 32) -> Iterator[np.ndarray]:
+def read_frames_chunked(
+    dir: Path | str, idxs: Sequence[int], batch_size: int = 32
+) -> Iterator[np.ndarray]:
     """
     Frames drawn lazily one at a time, decoded batch_size per read_frames call.
 

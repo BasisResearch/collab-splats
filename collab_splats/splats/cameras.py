@@ -55,7 +55,13 @@ class CameraOpt(torch.nn.Module):
     - zero-initialized, so a fresh module changes nothing
     """
 
-    def __init__(self, n_views: int, *, optimize_pose: bool = True, optimize_appearance: bool = False):
+    def __init__(
+        self,
+        n_views: int,
+        *,
+        optimize_pose: bool = True,
+        optimize_appearance: bool = False,
+    ):
         """
         Allocate the selected halves for `n_views` cameras.
 
@@ -73,8 +79,8 @@ class CameraOpt(torch.nn.Module):
         self.has_appearance = optimize_appearance
 
         # Pose delta per camera: translation (3) + 6D rotation (6), separate lrs
-        self.translation = None
-        self.rotation = None
+        self.translation: torch.nn.Embedding | None = None
+        self.rotation: torch.nn.Embedding | None = None
 
         if optimize_pose:
             self.translation = torch.nn.Embedding(n_views, 3)
@@ -83,10 +89,12 @@ class CameraOpt(torch.nn.Module):
             torch.nn.init.zeros_(self.rotation.weight)
 
             # Identity rotation in 6D form; the learned delta is added to it
-            self.register_buffer("identity", torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]))
+            self.register_buffer(
+                "identity", torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+            )
 
         # Color per image: 3 gain deltas + 3 biases, zero = identity
-        self.appearance = None
+        self.appearance: torch.nn.Embedding | None = None
 
         if optimize_appearance:
             self.appearance = torch.nn.Embedding(n_views, 6)
@@ -133,8 +141,14 @@ class CameraOpt(torch.nn.Module):
         if module.has_pose:
             optimizer = torch.optim.Adam(
                 [
-                    {"params": module.rotation.parameters(), "lr": cfg.pose_lr * world_extent},
-                    {"params": module.translation.parameters(), "lr": cfg.pose_lr * scene_scale},
+                    {
+                        "params": module.rotation.parameters(),
+                        "lr": cfg.pose_lr * world_extent,
+                    },
+                    {
+                        "params": module.translation.parameters(),
+                        "lr": cfg.pose_lr * scene_scale,
+                    },
                 ],
                 weight_decay=weight_decay,
             )
@@ -143,7 +157,9 @@ class CameraOpt(torch.nn.Module):
 
         # Appearance: one embedding, one lr
         if module.has_appearance:
-            optimizer = torch.optim.Adam(module.appearance.parameters(), lr=cfg.appearance_lr)
+            optimizer = torch.optim.Adam(
+                module.appearance.parameters(), lr=cfg.appearance_lr
+            )
             module.optimizers.append(optimizer)
             module.schedulers.append(ExponentialLR(optimizer, gamma=lr_gamma))
 
@@ -163,10 +179,11 @@ class CameraOpt(torch.nn.Module):
         if not self.has_pose:
             return cam_to_world
 
-        assert (
-            cam_to_world.shape[:-2] == camera_ids.shape
-        ), f"cam_to_world batch {cam_to_world.shape[:-2]} != camera_ids {camera_ids.shape}"
+        assert cam_to_world.shape[:-2] == camera_ids.shape, (
+            f"cam_to_world batch {cam_to_world.shape[:-2]} != camera_ids {camera_ids.shape}"
+        )
         batch_shape = cam_to_world.shape[:-2]
+        assert self.translation is not None and self.rotation is not None
 
         # Look up each camera's translation and rotation deltas
         translation_delta = self.translation(camera_ids)
@@ -175,9 +192,9 @@ class CameraOpt(torch.nn.Module):
         rotation = rotation_6d_to_matrix(rotation_delta + identity_6d)
 
         # Build the 4x4 delta and compose it onto the input pose
-        delta_transform = torch.eye(4, device=translation_delta.device, dtype=translation_delta.dtype).repeat(
-            (*batch_shape, 1, 1)
-        )
+        delta_transform = torch.eye(
+            4, device=translation_delta.device, dtype=translation_delta.dtype
+        ).repeat((*batch_shape, 1, 1))
         delta_transform[..., :3, :3] = rotation
         delta_transform[..., :3, 3] = translation_delta
         return torch.matmul(cam_to_world, delta_transform)
@@ -196,6 +213,7 @@ class CameraOpt(torch.nn.Module):
         if not self.has_appearance:
             return rgb
 
+        assert self.appearance is not None
         params = self.appearance(camera_ids)
         gain = 1.0 + params[:, None, None, :3]
         bias = params[:, None, None, 3:]
@@ -211,7 +229,7 @@ class CameraOpt(torch.nn.Module):
         Returns:
             (B, 6) gain deltas then biases; None when appearance is off.
         """
-        return self.appearance(camera_ids) if self.has_appearance else None
+        return self.appearance(camera_ids) if self.appearance is not None else None
 
     def denormalize(self, scale: float) -> None:
         """
@@ -224,6 +242,8 @@ class CameraOpt(torch.nn.Module):
         """
         if not self.has_pose:
             return
+
+        assert self.translation is not None
 
         with torch.no_grad():
             self.translation.weight /= scale

@@ -54,10 +54,14 @@ def calibrate_camera(
     """
     paths = frame_paths(images_dir)
     if len(paths) < min_images:
-        raise ValueError(f"calibrate_camera needs at least {min_images} images, found {len(paths)} in {images_dir}")
+        raise ValueError(
+            f"calibrate_camera needs at least {min_images} images, found {len(paths)} in {images_dir}"
+        )
 
     # Evenly spaced subset: calibration wants baseline, not every frame
-    idxs = np.unique(np.linspace(0, len(paths) - 1, min(max_frames, len(paths))).round().astype(int))
+    idxs = np.unique(
+        np.linspace(0, len(paths) - 1, min(max_frames, len(paths))).round().astype(int)
+    )
     names = [paths[int(i)].name for i in idxs]
 
     # GPU SIFT only when pycolmap has CUDA and a device exists; the CUDA wheel errors on auto otherwise
@@ -79,7 +83,9 @@ def calibrate_camera(
             image_names=names,
             camera_mode=pycolmap.CameraMode.SINGLE,
             reader_options=pycolmap.ImageReaderOptions(camera_model="OPENCV"),
-            extraction_options=pycolmap.FeatureExtractionOptions(num_threads=num_threads),
+            extraction_options=pycolmap.FeatureExtractionOptions(
+                num_threads=num_threads
+            ),
             device=device,
         )
         pycolmap.match_exhaustive(
@@ -121,7 +127,9 @@ def calibrate_camera(
 ########################################
 
 
-def undistort_frames(frames_in: np.ndarray, camera: pycolmap.Camera) -> tuple[np.ndarray, pycolmap.Camera]:
+def undistort_frames(
+    frames_in: np.ndarray | list[np.ndarray], camera: pycolmap.Camera
+) -> tuple[np.ndarray, pycolmap.Camera]:
     """
     Undistort a stack of frames onto COLMAP's undistorted framing.
 
@@ -155,7 +163,9 @@ def undistort_frames(frames_in: np.ndarray, camera: pycolmap.Camera) -> tuple[np
         (new_camera.width, new_camera.height),
         cv2.CV_32FC1,
     )
-    out = np.stack([cv2.remap(frame, map1, map2, cv2.INTER_LINEAR) for frame in frames_in])
+    out = np.stack(
+        [cv2.remap(frame, map1, map2, cv2.INTER_LINEAR) for frame in frames_in]
+    )
 
     logger.info(
         "undistorted %d frames: %dx%d -> %dx%d, f=%.1f preserved",

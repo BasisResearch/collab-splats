@@ -23,7 +23,13 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="gsplat needs CU
 
 # The interface, in one place: what `trainer.py`, `rendering.py` and `checkpoint.py` read off a model
 # - `from_checkpoint` is absent: a classmethod, read off the class, pinned by the round-trip test
-INTERFACE_ATTRIBUTES = ["params", "optimizers", "schedulers", "n_primitives", "primitive_unit"]
+INTERFACE_ATTRIBUTES = [
+    "params",
+    "optimizers",
+    "schedulers",
+    "n_primitives",
+    "primitive_unit",
+]
 INTERFACE_METHODS = [
     "render",
     "pre_backward",
@@ -47,14 +53,20 @@ def _model(model_class, device="cpu"):
 
     - CPU by default; the render test passes `device="cuda"` — gsplat's kernels are CUDA-only.
     """
-    return model_class(_config(model_class), *_seed_cloud(), scene_scale=1.0, n_views=4, device=device)
+    return model_class(
+        _config(model_class), *_seed_cloud(), scene_scale=1.0, n_views=4, device=device
+    )
 
 
 def _config(model_class):
     """
     The smallest config that selects the given representation.
     """
-    overrides = {"representation": "scaffold", "scaffold": {}} if model_class is Scaffold else {}
+    overrides = (
+        {"representation": "scaffold", "scaffold": {}}
+        if model_class is Scaffold
+        else {}
+    )
     return SplatsConfig.from_dict({"max_steps": 100, **overrides})
 
 
@@ -76,7 +88,9 @@ def _members_read_off_the_model(path):
     return {
         node.attr
         for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "model"
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "model"
     }
 
 
@@ -93,10 +107,15 @@ def _classes_declaring(attribute):
 
             # Both `x = ...` and the annotated `x: str = ...` form declare a class attribute
             for statement in node.body:
-                targets = [statement.target] if isinstance(statement, ast.AnnAssign) else []
+                targets = (
+                    [statement.target] if isinstance(statement, ast.AnnAssign) else []
+                )
                 targets += getattr(statement, "targets", [])
 
-                if any(isinstance(target, ast.Name) and target.id == attribute for target in targets):
+                if any(
+                    isinstance(target, ast.Name) and target.id == attribute
+                    for target in targets
+                ):
                     found.add(node.name)
 
     return found
@@ -141,7 +160,9 @@ def test_model_exposes_interface_attribute(model_class, attribute):
 def test_model_exposes_interface_method(model_class, method):
     model = _model(model_class)
 
-    assert callable(getattr(model, method, None)), f"{model_class.__name__}.{method} is not callable"
+    assert callable(getattr(model, method, None)), (
+        f"{model_class.__name__}.{method} is not callable"
+    )
 
 
 ########################################
@@ -182,11 +203,15 @@ def test_model_render_returns_a_render_dict_and_an_info_dict(model_class):
     model = _model(model_class, device="cuda")
     cam_to_world = torch.eye(4)[None].cuda()
     cam_to_world[:, 2, 3] = -4.0
-    intrinsics = torch.tensor([[[40.0, 0.0, 20.0], [0.0, 40.0, 12.0], [0.0, 0.0, 1.0]]]).cuda()
+    intrinsics = torch.tensor(
+        [[[40.0, 0.0, 20.0], [0.0, 40.0, 12.0], [0.0, 0.0, 1.0]]]
+    ).cuda()
 
     # render(..., width, height, ...) — width FIRST; 40x24 rather than a square is what fails on
     # a swap, and rgb comes back (1, H, W, 3)
-    render, info = model.render(cam_to_world, intrinsics, 40, 24, torch.tensor([0]).cuda(), step=0)
+    render, info = model.render(
+        cam_to_world, intrinsics, 40, 24, torch.tensor([0]).cuda(), step=0
+    )
 
     assert set(render) >= {"rgb", "depth", "alpha"}
     assert render["rgb"].shape == (1, 24, 40, 3)

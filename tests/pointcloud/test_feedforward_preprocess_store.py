@@ -21,7 +21,10 @@ class _EchoCreator(BaseFeedforwardCreator):
 
     def _preprocess(self, paths: list[Path]) -> Any:
         frames = [np.asarray(Image.open(p).convert("RGB")) for p in paths]
-        coords = np.array([[0, 0, f.shape[1], f.shape[0], f.shape[1], f.shape[0]] for f in frames], dtype=np.float32)
+        coords = np.array(
+            [[0, 0, f.shape[1], f.shape[0], f.shape[1], f.shape[0]] for f in frames],
+            dtype=np.float32,
+        )
         return frames, coords
 
     def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
@@ -50,7 +53,9 @@ def test_setup_inference_labels_are_file_stems(tmp_path):
     creator.setup_inference(fr.frame_paths(_make_images_dir(tmp_path)))
 
     # Labels are the filename stems — never the row position, which would misjoin poses to frames
-    assert [p.name for p in creator.image_paths] == [f"frame_{i:06d}" for i in _FRAME_IDXS]
+    assert [p.name for p in creator.image_paths] == [
+        f"frame_{i:06d}" for i in _FRAME_IDXS
+    ]
     assert [f.shape for f in creator.views] == [(32, 48, 3)] * 4
     assert creator.original_coords.shape == (4, 6)
 

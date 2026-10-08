@@ -73,7 +73,11 @@ def _full_grid() -> np.ndarray:
     """(H*W, 3) camera-local synthetic depth grid, row-major over (v, u)."""
     vv, uu = np.meshgrid(np.arange(H_IMG), np.arange(W_IMG), indexing="ij")
     return np.stack(
-        [(uu.ravel() - W_IMG / 2) / 20.0, (vv.ravel() - H_IMG / 2) / 20.0, 2.0 + 0.01 * (uu.ravel() + vv.ravel())],
+        [
+            (uu.ravel() - W_IMG / 2) / 20.0,
+            (vv.ravel() - H_IMG / 2) / 20.0,
+            2.0 + 0.01 * (uu.ravel() + vv.ravel()),
+        ],
         axis=1,
     )
 
@@ -146,8 +150,13 @@ def _make_lc_submap(
         submap_id=99,
         poses=np.stack([P0, P1]).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (2, 1, 1)).astype(np.float32),
-        image_paths=[Path(f"frame_{q_global:04d}.png"), Path(f"frame_{d_global:04d}.png")],
-        points=None if no_points else np.stack([wp0, wp1]).reshape(2, H_IMG, W_IMG, 3).astype(np.float32),
+        image_paths=[
+            Path(f"frame_{q_global:04d}.png"),
+            Path(f"frame_{d_global:04d}.png"),
+        ],
+        points=None
+        if no_points
+        else np.stack([wp0, wp1]).reshape(2, H_IMG, W_IMG, 3).astype(np.float32),
         conf=None if no_points else conf,
     )
 
@@ -194,7 +203,10 @@ def consistent_submaps(gt):
     ]
 
 
-Q_GLOBAL, D_GLOBAL = 5, 1  # query frame (submap 1) loops back to detected frame (submap 0)
+Q_GLOBAL, D_GLOBAL = (
+    5,
+    1,
+)  # query frame (submap 1) loops back to detected frame (submap 0)
 
 
 ########################################
@@ -217,7 +229,10 @@ def test_anchor_scale_none_when_grids_differ(gt, consistent_submaps):
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, scale=2.0)
     lc.points = lc.points[:, ::2, ::2]
     lc.conf = None
-    assert calculate_pairwise_frame_scale(lc, 0, consistent_submaps[1], Q_GLOBAL - 3, 100) is None
+    assert (
+        calculate_pairwise_frame_scale(lc, 0, consistent_submaps[1], Q_GLOBAL - 3, 100)
+        is None
+    )
 
 
 def test_anchor_scale_reads_both_frames_in_their_own_camera(gt):
@@ -236,7 +251,9 @@ def test_anchor_scale_reads_both_frames_in_their_own_camera(gt):
     shift = np.eye(4)
     shift[:3, 3] = [0.0, 0.0, -1.0]
     sub.poses[1] = (shift @ sub.poses[1]).astype(np.float32)
-    sub.points[1] = _apply(np.linalg.inv(sub.poses[1].astype(np.float64)), grid).reshape(H_IMG, W_IMG, 3)
+    sub.points[1] = _apply(
+        np.linalg.inv(sub.poses[1].astype(np.float64)), grid
+    ).reshape(H_IMG, W_IMG, 3)
 
     # Curr: LC frame 0 translated the other way, same grid in its own camera
     lc = _make_lc_submap(gt, 1, 0)
@@ -252,7 +269,9 @@ def test_anchor_scale_reads_both_frames_in_their_own_camera(gt):
     assert abs(np.median(prior_n / np.linalg.norm(grid, axis=1)) - 1.0) > 0.1
     assert abs(np.median(np.linalg.norm(grid, axis=1) / curr_n) - 1.0) > 0.1
 
-    assert calculate_pairwise_frame_scale(lc, 0, sub, 1, 100) == pytest.approx(1.0, rel=1e-5)
+    assert calculate_pairwise_frame_scale(lc, 0, sub, 1, 100) == pytest.approx(
+        1.0, rel=1e-5
+    )
 
 
 def test_anchor_scale_with_conf_joint_mask(gt):
@@ -268,7 +287,9 @@ def test_anchor_scale_with_conf_joint_mask(gt):
 
 def test_anchor_scale_none_when_lc_points_missing(gt, consistent_submaps):
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, no_points=True)
-    s_a = calculate_pairwise_frame_scale(lc, 0, consistent_submaps[1], Q_GLOBAL - 3, 100)
+    s_a = calculate_pairwise_frame_scale(
+        lc, 0, consistent_submaps[1], Q_GLOBAL - 3, 100
+    )
     assert s_a is None
 
 
@@ -298,7 +319,9 @@ def test_consistent_loop_keeps_gt_trajectory(gt, consistent_submaps, monkeypatch
     """
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL)
     out, pre_errors = _run_recording_graph_errors(monkeypatch, consistent_submaps, [lc])
-    assert pre_errors[-1] < 1e-6  # graph incl. 3-edge loop chain is consistent pre-optimization
+    assert (
+        pre_errors[-1] < 1e-6
+    )  # graph incl. 3-edge loop chain is consistent pre-optimization
     np.testing.assert_allclose(out, gt.astype(np.float32), atol=1e-3)
 
 
@@ -336,10 +359,14 @@ def test_lc_nodes_excluded_from_output(gt, consistent_submaps):
     np.testing.assert_allclose(out[:, 3, :], np.tile([0, 0, 0, 1.0], (7, 1)), atol=1e-6)
 
 
-def test_missing_lc_points_falls_back_scale1_with_one_warning(gt, consistent_submaps, caplog):
+def test_missing_lc_points_falls_back_scale1_with_one_warning(
+    gt, consistent_submaps, caplog
+):
     """poses-only LC (vggtx/omega): direction fix still applies; warn once per loop."""
     lc = _make_lc_submap(gt, Q_GLOBAL, D_GLOBAL, no_points=True)
-    with caplog.at_level(logging.WARNING, logger="collab_splats.geometry.loop_closure.graph"):
+    with caplog.at_level(
+        logging.WARNING, logger="collab_splats.geometry.loop_closure.graph"
+    ):
         out = _run(consistent_submaps, [lc])
     np.testing.assert_allclose(out, gt.astype(np.float32), atol=1e-3)
     warnings = [r for r in caplog.records if "scale" in r.getMessage().lower()]

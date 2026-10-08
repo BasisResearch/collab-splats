@@ -172,7 +172,9 @@ def test_cached_target_matches_the_per_step_build(factor):
 
     for view in range(len(images)):
         cached = cached_target(cache, images, depths, view, factor, "cpu")
-        expected = prepare_target(downscale_image(images[view], factor), depths[view], "cpu")
+        expected = prepare_target(
+            downscale_image(images[view], factor), depths[view], "cpu"
+        )
 
         assert torch.equal(cached["rgb"], expected["rgb"])
         assert torch.equal(cached["depth"], expected["depth"])
@@ -218,7 +220,9 @@ def test_view_order_visits_every_view_once_per_epoch():
 
 
 def test_view_order_seed_is_a_keyword_argument():
-    assert list(islice(view_order(4, seed=7), 4)) != list(islice(view_order(4, seed=42), 4))
+    assert list(islice(view_order(4, seed=7), 4)) != list(
+        islice(view_order(4, seed=42), 4)
+    )
 
     # Keyword-ONLY: a positional seed must not bind, or the name is not pinned
     # - the count string is pinned, so no unrelated TypeError can pass this
@@ -232,6 +236,8 @@ def test_knn_spacing_is_the_rms_distance_to_the_k_nearest_neighbors():
     spacing = knn_spacing(points, 3)
 
     # Brute force: sorted pairwise distances, self (0) excluded
-    dists = np.sort(np.linalg.norm(points[:, None] - points[None], axis=-1), axis=1)[:, 1:4]
+    dists = np.sort(np.linalg.norm(points[:, None] - points[None], axis=-1), axis=1)[
+        :, 1:4
+    ]
     assert spacing.shape == (50,)
     assert np.allclose(spacing, np.sqrt((dists**2).mean(-1)))

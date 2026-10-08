@@ -44,7 +44,12 @@ def _make_config(tmp_path, video_path):
             "loop_closure": False,
             "clean": {"enabled": False},
         },
-        "semantics": {"enabled": False, "extractor": "dinov2", "n_components": 64, "resolution": 512},
+        "semantics": {
+            "enabled": False,
+            "extractor": "dinov2",
+            "n_components": 64,
+            "resolution": 512,
+        },
         "mesh": {"enabled": False},
         "localization": {"enabled": False},
     }
@@ -73,13 +78,19 @@ def test_preprocess_writes_images_dir_for_image_dir(tmp_path):
     img_dir = tmp_path / "images_in"
     img_dir.mkdir()
     for i in range(3):
-        cv2.imwrite(str(img_dir / f"src_{i}.jpg"), np.full((16, 16, 3), i * 10, dtype=np.uint8))
+        cv2.imwrite(
+            str(img_dir / f"src_{i}.jpg"), np.full((16, 16, 3), i * 10, dtype=np.uint8)
+        )
 
     cfg = _make_config(tmp_path, img_dir)
     rec = Reconstructor(cfg)
     rec.preproc()
 
-    assert [fr.frame_idx_from_path(p) for p in fr.frame_paths(rec.images_dir)] == [0, 1, 2]
+    assert [fr.frame_idx_from_path(p) for p in fr.frame_paths(rec.images_dir)] == [
+        0,
+        1,
+        2,
+    ]
 
 
 def test_preprocess_writes_a_quality_report_beside_the_images_dir(tmp_path, tiny_video):
@@ -103,7 +114,9 @@ def test_preprocess_image_dir_writes_no_quality_report(tmp_path):
     img_dir = tmp_path / "images_in"
     img_dir.mkdir()
     for i in range(3):
-        cv2.imwrite(str(img_dir / f"src_{i}.jpg"), np.full((16, 16, 3), i * 10, dtype=np.uint8))
+        cv2.imwrite(
+            str(img_dir / f"src_{i}.jpg"), np.full((16, 16, 3), i * 10, dtype=np.uint8)
+        )
 
     cfg = _make_config(tmp_path, img_dir)
     rec = Reconstructor(cfg)
@@ -120,7 +133,9 @@ def test_preprocess_image_dir_renames_to_frame_store(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
     for i in range(3):
-        cv2.imwrite(str(src / f"img_{i}.png"), np.full((8, 12, 3), i * 40 + 5, np.uint8))
+        cv2.imwrite(
+            str(src / f"img_{i}.png"), np.full((8, 12, 3), i * 40 + 5, np.uint8)
+        )
 
     cfg = _make_config(tmp_path, src)
     rec = Reconstructor(cfg)

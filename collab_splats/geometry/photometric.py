@@ -132,7 +132,9 @@ def photometric_samples(
     facing_away = forward @ forward.T <= np.cos(max_view_angle)
     dist = torch.cdist(centers, centers).fill_diagonal_(float("inf"))
     dist = dist.masked_fill(facing_away, float("inf"))
-    near_dist, near_idx = torch.topk(dist, min(n_neighbors, N - 1), dim=1, largest=False)
+    near_dist, near_idx = torch.topk(
+        dist, min(n_neighbors, N - 1), dim=1, largest=False
+    )
     near_ok = torch.isfinite(near_dist)
     near_ok, near_idx = to_numpy(near_ok), to_numpy(near_idx)
 
@@ -154,11 +156,15 @@ def photometric_samples(
 
     # Per-frame pixel pool drawn by image slope over valid depth, seeded; pixel-center K, so uv = index
     grad_mag = 0.5 * (gx.abs() + gy.abs())
-    draw_weight = torch.where(depth > min_depth, grad_mag, 0.0).reshape(N, -1).clamp(min=1e-6)
+    draw_weight = (
+        torch.where(depth > min_depth, grad_mag, 0.0).reshape(N, -1).clamp(min=1e-6)
+    )
     n_pool = min(n_samples, H * W)
     generator = torch.Generator(device=draw_weight.device)
     generator.manual_seed(seed)
-    pool = torch.multinomial(draw_weight, n_pool, replacement=False, generator=generator)
+    pool = torch.multinomial(
+        draw_weight, n_pool, replacement=False, generator=generator
+    )
     uv_pool = torch.stack([pool % W, pool // W], dim=-1).to(dtype)
     depth_pool = torch.gather(depth.reshape(N, -1), 1, pool)
 
@@ -180,8 +186,15 @@ def photometric_samples(
     # Keep warps in front of camera j and inside its image
     z_j = x_j[:, 2]
     keep = (d_i > min_depth) & (z_j > min_depth)
-    keep &= (uv_j[:, 0] >= -0.5) & (uv_j[:, 0] < W - 0.5) & (uv_j[:, 1] >= -0.5) & (uv_j[:, 1] < H - 0.5)
-    i_idx, j_idx, x_i, uv_i, uv_j, z_j = (t[keep] for t in (i_idx, j_idx, x_i, uv_i, uv_j, z_j))
+    keep &= (
+        (uv_j[:, 0] >= -0.5)
+        & (uv_j[:, 0] < W - 0.5)
+        & (uv_j[:, 1] >= -0.5)
+        & (uv_j[:, 1] < H - 0.5)
+    )
+    i_idx, j_idx, x_i, uv_i, uv_j, z_j = (
+        t[keep] for t in (i_idx, j_idx, x_i, uv_i, uv_j, z_j)
+    )
 
     # Bilinear samples per view: intensity at uv_i; intensity, gradients and depth at uv_j
     I_i = torch.empty(len(i_idx), dtype=dtype, device=device)
@@ -195,10 +208,14 @@ def photometric_samples(
         maps = torch.stack([gray[view], gx[view], gy[view], depth[view]])[None]
 
         if src.any():
-            I_i[src] = sample(maps[:, :1], (uv_i[src] / size * 2 - 1)[None, None])[0, 0, 0]
+            I_i[src] = sample(maps[:, :1], (uv_i[src] / size * 2 - 1)[None, None])[
+                0, 0, 0
+            ]
 
         if dst.any():
-            target[dst] = sample(maps, (uv_j[dst] / size * 2 - 1)[None, None])[0, :, 0].T
+            target[dst] = sample(maps, (uv_j[dst] / size * 2 - 1)[None, None])[
+                0, :, 0
+            ].T
 
     # Split target samples into intensity, slopes and depth
     I_j, gx_j, gy_j, D_j = target.unbind(1)
@@ -210,7 +227,10 @@ def photometric_samples(
         return None
 
     # Consecutive pairs weigh more; sigma puts intensity on the pixel scale
-    weight = torch.where((j_idx - i_idx).abs() == 1, consecutive_weight, 1.0).to(dtype) / sigma
+    weight = (
+        torch.where((j_idx - i_idx).abs() == 1, consecutive_weight, 1.0).to(dtype)
+        / sigma
+    )
 
     # Keep visible samples, keyed for photometric_residual
     samples = {

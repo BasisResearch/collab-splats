@@ -17,13 +17,28 @@ def _make_localizer(tmp_path, stub_matcher, n_frames=2):
     ids = [f"{i:05d}.jpg" for i in range(n_frames)]
     wp = np.random.default_rng(0).normal(size=(n_frames, 48, 64, 3)).astype(np.float32)
     extr = np.tile(np.eye(4, dtype=np.float32), (n_frames, 1, 1))
-    return CameraLocalizer(wp, extr, images=images, ids=ids, extractor=stub_matcher(_eight_keypoints)), wp, extr
+    return (
+        CameraLocalizer(
+            wp, extr, images=images, ids=ids, extractor=stub_matcher(_eight_keypoints)
+        ),
+        wp,
+        extr,
+    )
 
 
 def test_save_index_writes_build_attrs(tmp_path, stub_matcher):
     loc, *_ = _make_localizer(tmp_path, stub_matcher)
     zp = tmp_path / "pointcloud.zarr"
-    loc.save_index(zp, "disk", attrs={"backbone": "vggtx", "ba": True, "lc": False, "built_at": "2026-07-14T00:00:00"})
+    loc.save_index(
+        zp,
+        "disk",
+        attrs={
+            "backbone": "vggtx",
+            "ba": True,
+            "lc": False,
+            "built_at": "2026-07-14T00:00:00",
+        },
+    )
     group = zarr.open(str(zp), mode="r")["local_features/disk"]
     assert group.attrs["backbone"] == "vggtx"
     assert group.attrs["ba"] is True
@@ -61,7 +76,13 @@ def test_add_localized_frame_records_provenance(tmp_path, stub_matcher):
         "scene": "2024_02_06-office-cam_01",
         "frame_idx": 42,
     }
-    loc.add_localized_frame(tmp_path / "query.jpg", pose, zarr_path=zp, extractor_name="disk", provenance=prov)
+    loc.add_localized_frame(
+        tmp_path / "query.jpg",
+        pose,
+        zarr_path=zp,
+        extractor_name="disk",
+        provenance=prov,
+    )
 
     lg = zarr.open(str(zp), mode="r")["local_features/disk/localized"]
     assert lg.attrs["provenance"][0]["frame_idx"] == 42

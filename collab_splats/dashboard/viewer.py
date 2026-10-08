@@ -62,8 +62,12 @@ def apply_viridis(sims: np.ndarray) -> np.ndarray:
         RGB colors, (P, 3) uint8.
     """
     finite = np.isfinite(sims)
-    s_min, s_max = (sims[finite].min(), sims[finite].max()) if finite.any() else (0.0, 0.0)
-    normalized = (sims - s_min) / (s_max - s_min) if s_max > s_min else np.zeros_like(sims)
+    s_min, s_max = (
+        (sims[finite].min(), sims[finite].max()) if finite.any() else (0.0, 0.0)
+    )
+    normalized = (
+        (sims - s_min) / (s_max - s_min) if s_max > s_min else np.zeros_like(sims)
+    )
     rgba = matplotlib.colormaps["viridis"](normalized)
     rgb = (rgba[:, :3] * 255).astype(np.uint8)
     rgb[~finite] = 128
@@ -116,10 +120,14 @@ def compute_view_transform(
         mean_up = -E[:, 1, :3].mean(axis=0)
 
         if np.linalg.norm(mean_up) > 1e-6:
-            rotation, _ = Rotation.align_vectors(np.asarray(up_axis, dtype=np.float64)[None], mean_up[None])
+            rotation, _ = Rotation.align_vectors(
+                np.asarray(up_axis, dtype=np.float64)[None], mean_up[None]
+            )
             R = rotation.as_matrix()
         else:
-            logger.warning("view transform: degenerate mean camera up-vector; skipping rotation")
+            logger.warning(
+                "view transform: degenerate mean camera up-vector; skipping rotation"
+            )
 
     # Scale: percentile radius about center -> target_radius (robust to flyer points)
     radii = np.linalg.norm(pts - center, axis=1)
@@ -157,17 +165,25 @@ class SplitViewer:
         self._op_log = op_log
         self._left = pv.Plotter(off_screen=off_screen)
         self._right = pv.Plotter(off_screen=off_screen)
-        self._left_pane = pn.pane.VTK(self._left.ren_win, sizing_mode="stretch_both", min_height=500)
-        self._right_pane = pn.pane.VTK(self._right.ren_win, sizing_mode="stretch_both", min_height=500)
-        self.layout = pn.Row(self._left_pane, self._right_pane, sizing_mode="stretch_both")
+        self._left_pane = pn.pane.VTK(
+            self._left.ren_win, sizing_mode="stretch_both", min_height=500
+        )
+        self._right_pane = pn.pane.VTK(
+            self._right.ren_win, sizing_mode="stretch_both", min_height=500
+        )
+        self.layout = pn.Row(
+            self._left_pane, self._right_pane, sizing_mode="stretch_both"
+        )
 
         # Browser-side bidirectional camera sync between the two VTK panes
         if not off_screen:
-            self._left_pane.jslink(self._right_pane, camera="camera", bidirectional=True)
+            self._left_pane.jslink(
+                self._right_pane, camera="camera", bidirectional=True
+            )
 
         # Scene state
         self.mode = "pointcloud"
-        self._result = None
+        self._result: PointcloudResult | None = None
         self._mesh_path: Path | None = None
         self._mesh_polydata: pv.PolyData | None = None
         self._mesh_vertex_features: np.ndarray | None = None
@@ -182,7 +198,10 @@ class SplitViewer:
 
         # Active query and per-mode similarity colors, kept across pointcloud/mesh switches
         self._last_query: tuple | None = None
-        self._query_colors: dict[str, np.ndarray | None] = {"pointcloud": None, "mesh": None}
+        self._query_colors: dict[str, np.ndarray | None] = {
+            "pointcloud": None,
+            "mesh": None,
+        }
 
         # Display-only normalization (orientation + scale); see compute_view_transform
         self._normalize_view = True
@@ -285,7 +304,10 @@ class SplitViewer:
         - normalize off -> None (raw world space)
         """
         if self._normalize_view and self._fit_T is None:
-            self._fit_T = compute_view_transform(self._result.points, extrinsics=self._result.extrinsics)
+            assert self._result is not None
+            self._fit_T = compute_view_transform(
+                self._result.points, extrinsics=self._result.extrinsics
+            )
 
         self._view_T = self._fit_T if self._normalize_view else None
         self._cloud_view = None
@@ -296,8 +318,11 @@ class SplitViewer:
         Decimated RGB cloud in view space, built once per load / toggle.
         """
         if self._cloud_view is None:
+            assert self._result is not None
             idx = self._display_idx
-            self._cloud_view = pointcloud_to_polydata(self._result.points[idx], RGB=self._result.colors[idx])
+            self._cloud_view = pointcloud_to_polydata(
+                self._result.points[idx], RGB=self._result.colors[idx]
+            )
 
             # Fresh geometry, so transform it in place
             if self._view_T is not None:
@@ -310,10 +335,13 @@ class SplitViewer:
         Mesh in view space, built once per mesh / toggle; the cached raw mesh is never touched.
         """
         if self._mesh_view is None:
+            assert self._mesh_polydata is not None
             if self._view_T is None:
                 self._mesh_view = self._mesh_polydata.copy(deep=False)
             else:
-                self._mesh_view = self._mesh_polydata.transform(self._view_T, inplace=False)
+                self._mesh_view = self._mesh_polydata.transform(
+                    self._view_T, inplace=False
+                )
 
         return self._mesh_view
 
@@ -354,7 +382,11 @@ class SplitViewer:
         - without it pyvista auto-frames to data bounds, so one flyer shrinks the scene to a speck
         - idempotent: view_angle is set absolutely and lights cleared, since Zoom and add_light accumulate
         """
-        plotter.camera_position = [VIZ_KWARGS["position"], VIZ_KWARGS["focal_point"], VIZ_KWARGS["view_up"]]
+        plotter.camera_position = [
+            VIZ_KWARGS["position"],
+            VIZ_KWARGS["focal_point"],
+            VIZ_KWARGS["view_up"],
+        ]
         plotter.camera.azimuth = VIZ_KWARGS["azimuth"]
         plotter.camera.elevation = VIZ_KWARGS["elevation"]
         plotter.camera.view_angle = 30.0 / VIZ_KWARGS["zoom"]
@@ -375,7 +407,9 @@ class SplitViewer:
         else:
             if self.mode == "mesh":
                 self._op_log.append_line("mesh not found — showing pointcloud")
-                logger.warning("mesh not found; falling back to pointcloud for left pane")
+                logger.warning(
+                    "mesh not found; falling back to pointcloud for left pane"
+                )
 
             self._left.add_mesh(self._cloud_in_view().copy(deep=False), **PCD_KWARGS)
 
@@ -456,7 +490,9 @@ class SplitViewer:
 
         self._op_log.append_line("query: loading stored vertex features")
         self._mesh_observed = np.asarray(store["vertex_features"]).any(axis=1)
-        self._mesh_vertex_features = read_point_features(self._lifted_store, name="vertex_features")
+        self._mesh_vertex_features = read_point_features(
+            self._lifted_store, name="vertex_features"
+        )
 
     def active_query(self) -> tuple | None:
         """
@@ -536,14 +572,20 @@ class SplitViewer:
         # Nothing to score: plain RGB, with the fix in the op log
         if feature_array is None:
             if on_mesh and self._lifted_store is not None:
-                self._op_log.append_line("mesh query needs vertex_features — re-run the semantics stage with overwrite")
+                self._op_log.append_line(
+                    "mesh query needs vertex_features — re-run the semantics stage with overwrite"
+                )
             else:
-                self._op_log.append_line("query: no lifted features for this backend — run the semantics stage")
+                self._op_log.append_line(
+                    "query: no lifted features for this backend — run the semantics stage"
+                )
 
             return self._result.colors
 
         # Encode the query terms and score every element
-        self._op_log.append_line(f"query: encoding {len(positive)} positive / {len(negative)} negative")
+        self._op_log.append_line(
+            f"query: encoding {len(positive)} positive / {len(negative)} negative"
+        )
         extractor = self._get_extractor(extractor_name)
         features = torch.from_numpy(feature_array)
 
@@ -553,6 +595,7 @@ class SplitViewer:
 
         # Unobserved vertices score NaN, drawn grey
         if on_mesh:
+            assert self._mesh_observed is not None
             sims[~self._mesh_observed] = np.nan
 
         colors = apply_viridis(sims)
@@ -576,7 +619,9 @@ class SplitViewer:
         # Length guard: a stale or wrong-space result would index out of bounds, so show plain RGB
         if self.mode != "mesh" and colors is not None and self._result is not None:
             if len(colors) != len(self._result.points):
-                self._op_log.append_line("query colors don't match the displayed scene — showing plain RGB")
+                self._op_log.append_line(
+                    "query colors don't match the displayed scene — showing plain RGB"
+                )
                 logger.warning(
                     "render_query: %d colors vs %d points (stale result?)",
                     len(colors),

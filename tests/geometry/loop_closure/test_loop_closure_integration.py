@@ -21,7 +21,9 @@ def _make_submap(submap_id, k, vec_dim=128):
         frames=torch.zeros(k, 3, 64, 64),
         poses=np.tile(np.eye(4), (k, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
-        retrieval_vectors=torch.nn.functional.normalize(torch.randn(k, vec_dim), p=2, dim=1),
+        retrieval_vectors=torch.nn.functional.normalize(
+            torch.randn(k, vec_dim), p=2, dim=1
+        ),
         image_paths=[Path(f"s{submap_id}_f{i}.jpg") for i in range(k)],
     )
 
@@ -36,7 +38,9 @@ def test_pose_graph_two_nodes_no_loop():
 
 
 def test_loop_closure_config_passed_through():
-    cfg = LoopClosureConfig(submap_size=10, submap_overlap=2, lc_retrieval_threshold=0.8)
+    cfg = LoopClosureConfig(
+        submap_size=10, submap_overlap=2, lc_retrieval_threshold=0.8
+    )
     assert cfg.submap_size == 10
     assert cfg.submap_overlap == 2
     assert 0 < cfg.lc_retrieval_threshold < 1.0
@@ -60,9 +64,11 @@ def test_image_retrieval_detects_identical_submaps():
         poses=np.tile(np.eye(4), (3, 1, 1)).astype(np.float32),
         intrinsics=np.tile(np.eye(3), (3, 1, 1)).astype(np.float32),
         retrieval_vectors=base_vecs.clone(),  # identical → distance ≈ 0
-        image_paths=[Path(f"f{i+3}.jpg") for i in range(3)],
+        image_paths=[Path(f"f{i + 3}.jpg") for i in range(3)],
     )
-    matches = find_loop_closures(s1, [s0], lc_threshold=0.01, max_loops=1, nms_frame_distance=0)
+    matches = find_loop_closures(
+        s1, [s0], lc_threshold=0.01, max_loops=1, nms_frame_distance=0
+    )
     assert len(matches) == 1
     assert matches[0].detected_submap_id == 0
     assert matches[0].similarity_score < 1e-5
@@ -84,9 +90,14 @@ def test_verify_loop_candidate_returns_tuple():
     q[:, :, :10, 0] = 10.0
     k[:, :, 10:, 1] = 10.0  # frame2 tokens align to dim 1 (orthogonal → low ratio)
     q[:, :, 10:, 1] = 10.0
-    creator.extract_intermediate_features = lambda frames, layer_index, **kw: {"q": q, "k": k}
+    creator.extract_intermediate_features = lambda frames, layer_index, **kw: {
+        "q": q,
+        "k": k,
+    }
 
-    result = creator._verify_loop_candidate(torch.zeros(3, 64, 64), torch.zeros(3, 64, 64), verify_match_ratio=1.46)
+    result = creator._verify_loop_candidate(
+        torch.zeros(3, 64, 64), torch.zeros(3, 64, 64), verify_match_ratio=1.46
+    )
     assert isinstance(result, tuple) and len(result) == 2
     accepted, lc_poses = result
     assert accepted is False

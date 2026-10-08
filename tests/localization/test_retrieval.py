@@ -54,7 +54,11 @@ def test_dino_salad_tensor_input_matches_pil_input():
     torch.nn.Module.__init__(extractor)
     extractor._device = "cpu"
     extractor._transform = T.Compose(
-        [T.Resize((224, 224)), T.ToTensor(), T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)]
+        [
+            T.Resize((224, 224)),
+            T.ToTensor(),
+            T.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
     )
     seen = []
     extractor.backbone = lambda x: seen.append(x) or x

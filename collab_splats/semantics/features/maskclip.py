@@ -1,6 +1,7 @@
 """
 MaskCLIP patch-feature backend ("maskclip"), with CLIP's text tower for queries.
 """
+
 import os
 from typing import List, Optional
 
@@ -42,9 +43,15 @@ class MaskCLIPExtractor(BaseQueryableExtractor):
             device = get_device()
 
         # Read $TORCH_HOME at call time, not at import
-        cache_dir = cache_dir or os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache/torch"))
+        cache_dir = cache_dir or os.environ.get(
+            "TORCH_HOME", os.path.expanduser("~/.cache/torch")
+        )
 
-        super().__init__(resize_mode=resize_mode, image_resolution=image_resolution, svd_components=svd_components)
+        super().__init__(
+            resize_mode=resize_mode,
+            image_resolution=image_resolution,
+            svd_components=svd_components,
+        )
 
         # Imported here: needs setuptools<70 (pkg_resources.packaging) at import
         try:

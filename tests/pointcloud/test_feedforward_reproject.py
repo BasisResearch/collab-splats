@@ -1,4 +1,5 @@
 """Unit tests for PointcloudResult.reproject()."""
+
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +18,9 @@ def _make_result(*, depth=None, pixel_indices=None) -> PointcloudResult:
         intrinsics=None,
         model_intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
         image_paths=[Path(f"img_{i}.png") for i in range(N)],
-        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (N, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (N, 1)
+        ),  # full-frame box
         model_width=W,
         model_height=H,
         depth=depth,
@@ -32,7 +35,9 @@ def test_reproject_unprojects_source_pixels_under_current_poses():
     depth = (rng.random((N, H, W)) + 1.0).astype(np.float32)
     pixel_indices = np.array([[0, 1, 3], [1, 2, 0], [0, 3, 4]], dtype=np.int32)
     result = _make_result(depth=depth, pixel_indices=pixel_indices)
-    result.model_intrinsics[:] = np.array([[50.0, 0, 1.5], [0, 60.0, 2.25], [0, 0, 1]], dtype=np.float32)
+    result.model_intrinsics[:] = np.array(
+        [[50.0, 0, 1.5], [0, 60.0, 2.25], [0, 0, 1]], dtype=np.float32
+    )
     for i in range(N):
         q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
         result.extrinsics[i, :3, :3] = q * np.sign(np.linalg.det(q))
@@ -45,14 +50,19 @@ def test_reproject_unprojects_source_pixels_under_current_poses():
     for (f, r, c), point in zip(pixel_indices, reprojected.points):
         d = float(depth[f, r, c])
         cam = np.array([(c - K[0, 2]) / K[0, 0] * d, (r - K[1, 2]) / K[1, 1] * d, d])
-        R, t = result.extrinsics[f, :3, :3].astype(np.float64), result.extrinsics[f, :3, 3].astype(np.float64)
+        R, t = (
+            result.extrinsics[f, :3, :3].astype(np.float64),
+            result.extrinsics[f, :3, 3].astype(np.float64),
+        )
         np.testing.assert_allclose(point, R.T @ (cam - t), rtol=1e-5, atol=1e-5)
     assert reprojected.points.dtype == np.float32
 
     # world_points is the full per-pixel grid the points were sampled from
     assert reprojected.world_points.shape == (N, H, W, 3)
     frame, row, col = pixel_indices.T
-    np.testing.assert_array_equal(reprojected.world_points[frame, row, col], reprojected.points)
+    np.testing.assert_array_equal(
+        reprojected.world_points[frame, row, col], reprojected.points
+    )
 
 
 def test_reproject_preserves_colors_and_extrinsics():
@@ -70,7 +80,10 @@ def test_reproject_preserves_colors_and_extrinsics():
 
 
 def test_reproject_rejects_4d_depth():
-    result = _make_result(depth=np.ones((2, 4, 4, 1), np.float32), pixel_indices=np.zeros((1, 3), np.int32))
+    result = _make_result(
+        depth=np.ones((2, 4, 4, 1), np.float32),
+        pixel_indices=np.zeros((1, 3), np.int32),
+    )
     with pytest.raises(ValueError, match="depth"):
         result.reproject()
 

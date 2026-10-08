@@ -13,7 +13,9 @@ def _tiny_result():
         intrinsics=None,
         model_intrinsics=np.tile(np.eye(3, dtype=np.float32), (n, 1, 1)),
         image_paths=[f"frame_{i:06d}.jpg" for i in range(n)],
-        original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+        ),  # full-frame box
         model_width=w,
         model_height=h,
     )
@@ -21,7 +23,9 @@ def _tiny_result():
 
 def test_save_zarr_writes_extra_attrs(tmp_path):
     out = tmp_path / "pointcloud.zarr"
-    _tiny_result().save_zarr(out, extra_attrs={"method": "sfm", "backend": "instantsfm", "total_frames": 4})
+    _tiny_result().save_zarr(
+        out, extra_attrs={"method": "sfm", "backend": "instantsfm", "total_frames": 4}
+    )
     store = zarr.open(str(out), mode="r")
     assert store.attrs["method"] == "sfm"
     assert store.attrs["backend"] == "instantsfm"

@@ -49,7 +49,9 @@ def _make_omega_creator(N: int = 2) -> VGGTOmegaCreator:
     creator.max_points = 500_000
     creator.image_paths = [MagicMock() for _ in range(N)]
     # VGGTOmega-style original_coords: full image, no crop (AR in supported range)
-    creator.original_coords = np.array([[0, 0, 1080, 1920, 1080, 1920]] * N, dtype=np.float32)
+    creator.original_coords = np.array(
+        [[0, 0, 1080, 1920, 1080, 1920]] * N, dtype=np.float32
+    )
     return creator
 
 
@@ -101,7 +103,9 @@ def test_reproject_uses_intrinsics_directly_no_scaling():
 
     depth = np.ones((N, H, W), dtype=np.float32)
     # One point per frame, both at the principal point (col=cx, row=cy)
-    pixel_indices = np.array([[0, int(cy), int(cx)], [1, int(cy), int(cx)]], dtype=np.int32)
+    pixel_indices = np.array(
+        [[0, int(cy), int(cx)], [1, int(cy), int(cx)]], dtype=np.int32
+    )
 
     intrinsics = np.eye(3, dtype=np.float32)[None].repeat(N, axis=0)
     intrinsics[:, 0, 0] = fx
@@ -130,7 +134,9 @@ def test_reproject_uses_intrinsics_directly_no_scaling():
     )
     reprojected = result.reproject()
 
-    assert np.all(np.isfinite(reprojected.points)), "reproject() returned non-finite points"
+    assert np.all(np.isfinite(reprojected.points)), (
+        "reproject() returned non-finite points"
+    )
     # Principal-point pixel + identity W2C → world x ≈ 0, y ≈ 0
     # Broken scaling gives fx_eff ≈ 0.37, x ≈ (4 - 0.030)/0.37 * 1.0 ≈ 10.7
     x_vals = reprojected.points[:, 0]
@@ -177,7 +183,9 @@ def test_vggtx_crop_coords_cr_x_gt_target_size():
 # ── LoGeR PINHOLE round-trip tests (added in Task 11) ──────────────────────────
 
 
-def _full_res_k(model_intrinsics: np.ndarray, boxes: np.ndarray, model_wh: tuple[int, int]) -> np.ndarray:
+def _full_res_k(
+    model_intrinsics: np.ndarray, boxes: np.ndarray, model_wh: tuple[int, int]
+) -> np.ndarray:
     """
     The full-res K PointcloudResult.__post_init__ derives from a model-grid K and crop boxes.
     """
@@ -250,7 +258,9 @@ def test_full_res_k_applies_the_crop_origin():
     K = np.array([[[10.0, 0.0, 6.0], [0.0, 10.0, 4.0], [0.0, 0.0, 1.0]]])
     coords = np.array([[11, 7, 59, 47, 70, 50]], dtype=np.float32)
     out = _full_res_k(K, coords, (12, 8))[0]
-    np.testing.assert_allclose([out[0, 0], out[1, 1], out[0, 2], out[1, 2]], [40, 50, 35, 27])
+    np.testing.assert_allclose(
+        [out[0, 0], out[1, 1], out[0, 2], out[1, 2]], [40, 50, 35, 27]
+    )
 
 
 def test_full_res_k_uses_each_images_own_crop_box():
@@ -258,17 +268,29 @@ def test_full_res_k_uses_each_images_own_crop_box():
     Two images with different crop boxes each rescale by their OWN box, not image 1's.
     """
     s1, s2 = 518 / 1000, 518 / 1080
-    params = [[1000 * s1, 1000 * s1, 500 * s1, 500 * s1], [900 * s2, 880 * s2, 470 * s2, 590 * s2]]
-    K = np.array([[[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]] for fx, fy, cx, cy in params])
-    boxes = np.array([[0, 0, 1000, 1000, 1000, 1000], [0, 420, 1080, 1500, 1080, 1920]], dtype=np.float32)
+    params = [
+        [1000 * s1, 1000 * s1, 500 * s1, 500 * s1],
+        [900 * s2, 880 * s2, 470 * s2, 590 * s2],
+    ]
+    K = np.array(
+        [[[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]] for fx, fy, cx, cy in params]
+    )
+    boxes = np.array(
+        [[0, 0, 1000, 1000, 1000, 1000], [0, 420, 1080, 1500, 1080, 1920]],
+        dtype=np.float32,
+    )
 
     out = _full_res_k(K, boxes, (518, 518))
 
     np.testing.assert_allclose(
-        [out[0, 0, 0], out[0, 1, 1], out[0, 0, 2], out[0, 1, 2]], [1000, 1000, 500, 500], rtol=1e-5
+        [out[0, 0, 0], out[0, 1, 1], out[0, 0, 2], out[0, 1, 2]],
+        [1000, 1000, 500, 500],
+        rtol=1e-5,
     )
     np.testing.assert_allclose(
-        [out[1, 0, 0], out[1, 1, 1], out[1, 0, 2], out[1, 1, 2]], [900, 880, 470, 1010], rtol=1e-5
+        [out[1, 0, 0], out[1, 1, 1], out[1, 0, 2], out[1, 1, 2]],
+        [900, 880, 470, 1010],
+        rtol=1e-5,
     )
 
 
@@ -291,7 +313,10 @@ def _upstream_crop_grid(orig_w: int, orig_h: int) -> tuple[float, float, int, in
     "orig_wh",
     [
         (1080, 1920),  # portrait: new_h 924, y scale 924/1920, not 518/1080
-        (1000, 1040),  # near-square portrait, still cropped: new_h rounds 538.7 down to 532 > 518
+        (
+            1000,
+            1040,
+        ),  # near-square portrait, still cropped: new_h rounds 538.7 down to 532 > 518
         (1920, 1080),  # landscape: no crop, height resized to 294
         (1000, 1000),  # square: no crop
     ],
@@ -305,9 +330,15 @@ def test_vggtx_crop_box_round_trips_the_model_k(orig_wh):
 
     # Model K from the true upstream transform: per-axis scale, then the crop shifts cy
     sx, sy, start_y, model_h = _upstream_crop_grid(orig_w, orig_h)
-    K = np.array([[1000.0, 0.0, orig_w / 2], [0.0, 1000.0, orig_h / 2], [0.0, 0.0, 1.0]])
+    K = np.array(
+        [[1000.0, 0.0, orig_w / 2], [0.0, 1000.0, orig_h / 2], [0.0, 0.0, 1.0]]
+    )
     K_model = np.array(
-        [[1000.0 * sx, 0.0, orig_w / 2 * sx], [0.0, 1000.0 * sy, orig_h / 2 * sy - start_y], [0.0, 0.0, 1.0]]
+        [
+            [1000.0 * sx, 0.0, orig_w / 2 * sx],
+            [0.0, 1000.0 * sy, orig_h / 2 * sy - start_y],
+            [0.0, 0.0, 1.0],
+        ]
     )
 
     crop_hw = (box[3] - box[1], box[2] - box[0])
@@ -321,7 +352,10 @@ def test_vggtx_crop_box_round_trips_the_model_k(orig_wh):
     [
         (100, 104),  # near-square portrait, cropped: new_h 532; old box off 1.61 levels
         (108, 192),  # 9:16 portrait, cropped: new_h 924; old box off 0.49 levels
-        (100, 101),  # near-square portrait, no crop: new_h 518, full-frame box under both formulas
+        (
+            100,
+            101,
+        ),  # near-square portrait, no crop: new_h 518, full-frame box under both formulas
         (192, 108),  # landscape: new_h 294, no crop
         (100, 100),  # square: new_h 518, no crop
     ],

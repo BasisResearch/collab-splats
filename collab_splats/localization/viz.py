@@ -40,14 +40,21 @@ def correspondences_for_ref(
     Returns:
         (query_px, ref_px, inlier_mask) for that frame; the mask is None when loc has none.
     """
+    assert loc.pts2d is not None and loc.pts2d_ref is not None
     sel = loc.ref_frame_indices == ref_idx
     mask = loc.inlier_mask[sel] if loc.inlier_mask is not None else None
     ref_px = loc.pts2d_ref[sel]
     ref_hw = loc.ref_hw
 
     # Rescale ref pixels from the result's native space to the display image's space
-    if ref_image_hw is not None and ref_hw is not None and tuple(ref_image_hw) != tuple(ref_hw):
-        scale = np.array([ref_image_hw[1] / ref_hw[1], ref_image_hw[0] / ref_hw[0]], dtype=np.float32)
+    if (
+        ref_image_hw is not None
+        and ref_hw is not None
+        and tuple(ref_image_hw) != tuple(ref_hw)
+    ):
+        scale = np.array(
+            [ref_image_hw[1] / ref_hw[1], ref_image_hw[0] / ref_hw[0]], dtype=np.float32
+        )
         ref_px = ref_px * scale
 
     return loc.pts2d[sel], ref_px, mask
@@ -58,7 +65,9 @@ def correspondences_for_ref(
 ########################################################################
 
 
-def _draw_quad(image: np.ndarray, corners: np.ndarray, color: tuple[int, int, int]) -> None:
+def _draw_quad(
+    image: np.ndarray, corners: np.ndarray, color: tuple[int, int, int]
+) -> None:
     """
     Draw a closed 4-corner polygon on an RGB image in place.
     """
@@ -73,7 +82,9 @@ def _image_corners(image: np.ndarray) -> np.ndarray:
     The four pixel-center corners of an image, as cv2.perspectiveTransform input (4, 1, 2).
     """
     h, w = image.shape[:2]
-    corners = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+    corners = np.array(
+        [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32
+    )
     return corners.reshape(-1, 1, 2)
 
 
@@ -114,7 +125,11 @@ def plot_correspondences(
         logger.warning("plot_correspondences: no correspondences to plot")
         return None
 
-    inliers = np.ones(len(kpts0), dtype=bool) if inlier_mask is None else np.asarray(inlier_mask, dtype=bool)
+    inliers = (
+        np.ones(len(kpts0), dtype=bool)
+        if inlier_mask is None
+        else np.asarray(inlier_mask, dtype=bool)
+    )
     H = None
 
     # Homography from all inliers before subsampling; a subsampled set degrades H
@@ -133,9 +148,14 @@ def plot_correspondences(
             )
 
             if H is None:
-                logger.debug("plot_correspondences: homography degenerate — skipping corner warp")
+                logger.debug(
+                    "plot_correspondences: homography degenerate — skipping corner warp"
+                )
         else:
-            logger.debug("plot_correspondences: only %d inliers — need ≥4 for corner warp", len(inlier_kpts0))
+            logger.debug(
+                "plot_correspondences: only %d inliers — need ≥4 for corner warp",
+                len(inlier_kpts0),
+            )
 
     # Random subsample beyond max_pairs
     if len(kpts0) > max_pairs:
@@ -171,10 +191,23 @@ def plot_correspondences(
     # Lines per pair, then keypoint dots on both sides
     for (x0, y0), (x1, y1), ok in zip(kpts0, kpts1, inliers):
         color = "lime" if ok else "red"
-        ax.plot([x0, x1 * ref_scale + W], [y0, y1 * ref_scale], color=color, linewidth=0.8, alpha=0.6)
+        ax.plot(
+            [x0, x1 * ref_scale + W],
+            [y0, y1 * ref_scale],
+            color=color,
+            linewidth=0.8,
+            alpha=0.6,
+        )
 
     ax.scatter(kpts0[:, 0], kpts0[:, 1], s=8, c="white", zorder=3, linewidths=0)
-    ax.scatter(kpts1[:, 0] * ref_scale + W, kpts1[:, 1] * ref_scale, s=8, c="white", zorder=3, linewidths=0)
+    ax.scatter(
+        kpts1[:, 0] * ref_scale + W,
+        kpts1[:, 1] * ref_scale,
+        s=8,
+        c="white",
+        zorder=3,
+        linewidths=0,
+    )
     ax.axvline(W, color="white", linewidth=1, alpha=0.5)
     ax.axis("off")
     ax.set_title(f"query ↔ reference — {inliers.sum()}/{len(inliers)} inliers shown")
@@ -226,7 +259,11 @@ def plot_inlier_distribution(
     stops = np.linspace(0, 1, max(n, 2))
     colors = cmap(stops)[:n]
     edge = [
-        "red" if frame_sources is not None and i < len(frame_sources) and frame_sources[i] == "localized" else "none"
+        "red"
+        if frame_sources is not None
+        and i < len(frame_sources)
+        and frame_sources[i] == "localized"
+        else "none"
         for i in range(n)
     ]
 

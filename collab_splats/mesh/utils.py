@@ -37,7 +37,9 @@ def to_meshlib(mesh: o3d.geometry.TriangleMesh) -> mm.Mesh:
     )
 
 
-def from_meshlib(mmesh: mm.Mesh, source: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
+def from_meshlib(
+    mmesh: mm.Mesh, source: o3d.geometry.TriangleMesh
+) -> o3d.geometry.TriangleMesh:
     """
     Open3D mesh from a meshlib one; vertex colors from source's nearest vertex.
 
@@ -59,8 +61,12 @@ def from_meshlib(mmesh: mm.Mesh, source: o3d.geometry.TriangleMesh) -> o3d.geome
 
     # Colors: each new vertex takes its nearest source vertex's
     if source.has_vertex_colors():
-        _, nearest = cKDTree(np.asarray(source.vertices)).query(np.asarray(out.vertices), k=1, workers=-1)
-        out.vertex_colors = o3d.utility.Vector3dVector(np.asarray(source.vertex_colors)[nearest])
+        _, nearest = cKDTree(np.asarray(source.vertices)).query(
+            np.asarray(out.vertices), k=1, workers=-1
+        )
+        out.vertex_colors = o3d.utility.Vector3dVector(
+            np.asarray(source.vertex_colors)[nearest]
+        )
 
     return out
 
@@ -119,7 +125,9 @@ def adjacent_face_pairs(faces: np.ndarray, n_verts: int) -> np.ndarray:
     return np.stack([face[:-1][same], face[1:][same]], 1)
 
 
-def face_components(verts: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def face_components(
+    verts: np.ndarray, faces: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Edge-connected components of a face array, as Open3D's cluster_connected_triangles returns them.
 
@@ -138,7 +146,10 @@ def face_components(verts: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, n
     # Face adjacency graph; its connected components are the pieces
     n_faces = len(faces)
     pairs = adjacent_face_pairs(faces, len(verts))
-    graph = coo_matrix((np.ones(len(pairs), np.int8), (pairs[:, 0], pairs[:, 1])), shape=(n_faces, n_faces))
+    graph = coo_matrix(
+        (np.ones(len(pairs), np.int8), (pairs[:, 0], pairs[:, 1])),
+        shape=(n_faces, n_faces),
+    )
     ids = connected_components(graph, directed=False)[1]
 
     # Face count and summed area per component
@@ -202,13 +213,17 @@ def validate_views(
     n, h, w = rgbs.shape[:3]
 
     if rgbs.shape != (n, h, w, 3) or c2w.shape != (n, 4, 4) or K.shape != (n, 3, 3):
-        raise ValueError(f"views disagree: rgbs {rgbs.shape}, c2w {c2w.shape}, K {K.shape}")
+        raise ValueError(
+            f"views disagree: rgbs {rgbs.shape}, c2w {c2w.shape}, K {K.shape}"
+        )
 
     if depths is not None:
         depths = np.asarray(depths)
 
         if depths.shape != (n, h, w):
-            raise ValueError(f"views disagree: depths {depths.shape}, rgbs {rgbs.shape}")
+            raise ValueError(
+                f"views disagree: depths {depths.shape}, rgbs {rgbs.shape}"
+            )
 
     # Principal point inside the image: K and rgbs share one resolution
     cx, cy = K[:, 0, 2], K[:, 1, 2]

@@ -24,7 +24,12 @@ def test_warm_flips_ready_and_streams_progress():
     state = ServerState()
     op_log = OperationLog()
     # Stand-in modules + finalize keep the test light (no torch import, no Xvfb)
-    warm(state, op_log, modules=(("json", "json"), ("math", "math")), finalize=lambda s: None)
+    warm(
+        state,
+        op_log,
+        modules=(("json", "json"), ("math", "math")),
+        finalize=lambda s: None,
+    )
     assert state.ready
     joined = "\n".join(op_log.log_lines)
     assert "import json…" in joined
@@ -35,7 +40,9 @@ def test_warm_flips_ready_and_streams_progress():
 def test_warm_import_failure_stops_startup():
     state = ServerState()
     op_log = OperationLog()
-    warm(state, op_log, modules=(("no.such.module", "missing"),), finalize=lambda s: None)
+    warm(
+        state, op_log, modules=(("no.such.module", "missing"),), finalize=lambda s: None
+    )
     assert not state.ready
     assert op_log.log_lines[-1].startswith("ERROR")
 

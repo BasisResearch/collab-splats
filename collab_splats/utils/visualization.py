@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 import cv2
 import matplotlib.pyplot as plt
@@ -28,7 +28,7 @@ PCD_KWARGS.update(
 )
 
 
-VIZ_KWARGS = {
+VIZ_KWARGS: dict[str, Any] = {
     "position": (2, 2, 1),
     "focal_point": (0, 0, 0),
     "view_up": (0, 0, 1),
@@ -256,7 +256,9 @@ def visualize_splat(
 
         for i in range(0, len(aligned_cameras), n_poses):
             pose = aligned_cameras[i]
-            frustum = create_camera_frustum_pyvista(pose, scale=scale, aspect_ratio=aspect_ratio, fov=fov)
+            frustum = create_camera_frustum_pyvista(
+                pose, scale=scale, aspect_ratio=aspect_ratio, fov=fov
+            )
 
             # Per-frustum color (copy cam_kw so color override doesn't leak between iterations)
             kw = dict(cam_kw)
@@ -274,8 +276,12 @@ def visualize_splat(
     ]
 
     # Rotate camera
-    plotter.camera.azimuth = viz_kwargs.get("azimuth", 235)  # Rotate 45° horizontally around focal point
-    plotter.camera.elevation = viz_kwargs.get("elevation", 15)  # Rotate 30° vertically around focal point
+    plotter.camera.azimuth = viz_kwargs.get(
+        "azimuth", 235
+    )  # Rotate 45° horizontally around focal point
+    plotter.camera.elevation = viz_kwargs.get(
+        "elevation", 15
+    )  # Rotate 30° vertically around focal point
 
     # Adjust zoom (zoom > 1 zooms in, < 1 zooms out)
     plotter.camera.Zoom(viz_kwargs.get("zoom", 0.9))  # 1.5x zoom in
@@ -432,7 +438,6 @@ def render_points(
 
     for du in range(-radius, radius + 1):
         for dv in range(-radius, radius + 1):
-
             # Shifted footprint pixels inside the image
             uu = u + du
             vv = v + dv
@@ -497,7 +502,9 @@ def plot_reprojection(
     K_scaled = rescale_intrinsics(K, (h, w), (out_h, out_w))
 
     # Render and blend
-    rgb, depth = render_points(points, colors, w2c, K_scaled, (out_h, out_w), radius=radius)
+    rgb, depth = render_points(
+        points, colors, w2c, K_scaled, (out_h, out_w), radius=radius
+    )
     coverage = np.isfinite(depth).mean()
     blend = 0.5 * photo + 0.5 * rgb
 

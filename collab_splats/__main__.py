@@ -58,7 +58,9 @@ def _parse_overrides(pairs: list[str]) -> dict:
 
             # A parent already set to a scalar cannot take a sub-key
             if not isinstance(node, dict):
-                raise ValueError(f"--set {key}: '{part}' is already set to a value, not a section")
+                raise ValueError(
+                    f"--set {key}: '{part}' is already set to a value, not a section"
+                )
 
         node[leaf] = yaml.safe_load(value)
 
@@ -141,10 +143,15 @@ def _is_rerun(stages: list[str] | None) -> bool:
     """
     True when every stage is a leaf, so processed outputs are enough to run them.
     """
-    return bool(stages) and set(stages) <= LEAF_STAGES
+    if not stages:
+        return False
+
+    return set(stages) <= LEAF_STAGES
 
 
-def _prepare_scene(source: SceneSource, scene: str, scene_dir: Path, args: argparse.Namespace) -> dict:
+def _prepare_scene(
+    source: SceneSource, scene: str, scene_dir: Path, args: argparse.Namespace
+) -> dict:
     """
     Fetch a scene's inputs and return its config.
 
@@ -163,7 +170,9 @@ def _prepare_scene(source: SceneSource, scene: str, scene_dir: Path, args: argpa
 
     # Leaf re-run: pull the processed scene, every member included
     if not source.has_processed(scene):
-        raise FileNotFoundError(f"{scene} has no processed outputs; run the full pipeline first")
+        raise FileNotFoundError(
+            f"{scene} has no processed outputs; run the full pipeline first"
+        )
 
     source.pull_processed(scene, scene_dir, on_line=logger.info)
 
@@ -172,10 +181,16 @@ def _prepare_scene(source: SceneSource, scene: str, scene_dir: Path, args: argpa
 
     if backend is None:
         dirs = [d.name for d in scene_dir.iterdir()]
-        recorded = sorted(name for name in dirs if Reconstructor.run_config_path(scene_dir, name).exists())
+        recorded = sorted(
+            name
+            for name in dirs
+            if Reconstructor.run_config_path(scene_dir, name).exists()
+        )
 
         if len(recorded) != 1:
-            raise ValueError(f"{scene}: recorded backends {recorded}; pick one with --set pointcloud.backend=<name>")
+            raise ValueError(
+                f"{scene}: recorded backends {recorded}; pick one with --set pointcloud.backend=<name>"
+            )
 
         backend = recorded[0]
 
@@ -183,7 +198,9 @@ def _prepare_scene(source: SceneSource, scene: str, scene_dir: Path, args: argpa
     run_cfg = Reconstructor.run_config_path(scene_dir, backend)
 
     if not run_cfg.exists():
-        raise FileNotFoundError(f"{scene}: pulled scene has no {run_cfg.relative_to(scene_dir)}")
+        raise FileNotFoundError(
+            f"{scene}: pulled scene has no {run_cfg.relative_to(scene_dir)}"
+        )
 
     pulled = yaml.safe_load(run_cfg.read_text()) or {}
 
@@ -222,7 +239,9 @@ def _list_scenes(source: SceneSource, args: argparse.Namespace) -> list[str]:
     return source.list_scenes()
 
 
-def _run_remote(source: SceneSource, scenes: list[str], args: argparse.Namespace) -> int:
+def _run_remote(
+    source: SceneSource, scenes: list[str], args: argparse.Namespace
+) -> int:
     """
     Fetch, run, push, verify and delete each scene; abort when rclone dies.
 
@@ -279,7 +298,10 @@ def _run_remote(source: SceneSource, scenes: list[str], args: argparse.Namespace
         if not source.check_available():
             aborted = True
             logger.error("rclone is not working; aborting the batch after %s", scene)
-            results.extend((s, "SKIPPED", "not attempted; rclone unreachable") for s in scenes[i + 1 :])
+            results.extend(
+                (s, "SKIPPED", "not attempted; rclone unreachable")
+                for s in scenes[i + 1 :]
+            )
             break
 
     # Summarize the batch and what the push left out
@@ -305,31 +327,67 @@ def _parser() -> argparse.ArgumentParser:
     """
     # Options every command takes
     shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("--output-root", type=Path, required=True, help="each scene writes to <output-root>/<name>")
-    shared.add_argument("--config", type=Path, help="override YAML merged over base.yaml")
-    shared.add_argument("--base-config", type=Path, help="base.yaml to merge over; default configs/base.yaml")
-    shared.add_argument("--stages", help="comma-separated stages; default: every enabled stage")
-    shared.add_argument("--overwrite", action="store_true", help="rebuild stages whose output exists")
     shared.add_argument(
-        "--set", action="append", default=[], dest="sets", metavar="KEY=VALUE", help="dotted config override"
+        "--output-root",
+        type=Path,
+        required=True,
+        help="each scene writes to <output-root>/<name>",
+    )
+    shared.add_argument(
+        "--config", type=Path, help="override YAML merged over base.yaml"
+    )
+    shared.add_argument(
+        "--base-config",
+        type=Path,
+        help="base.yaml to merge over; default configs/base.yaml",
+    )
+    shared.add_argument(
+        "--stages", help="comma-separated stages; default: every enabled stage"
+    )
+    shared.add_argument(
+        "--overwrite", action="store_true", help="rebuild stages whose output exists"
+    )
+    shared.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        dest="sets",
+        metavar="KEY=VALUE",
+        help="dotted config override",
     )
 
     # Top-level parser with one subcommand per mode
     parser = argparse.ArgumentParser(
-        prog="reconstruct", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        prog="reconstruct",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     # local: video files or frame directories
-    local = sub.add_parser("local", parents=[shared], help="run on video files or frame directories")
-    local.add_argument("inputs", nargs="+", type=Path, metavar="VIDEO|DIR", help="video files or frame directories")
-    local.add_argument("--keep-viewer", action="store_true", help="keep the last viser viewer alive")
+    local = sub.add_parser(
+        "local", parents=[shared], help="run on video files or frame directories"
+    )
+    local.add_argument(
+        "inputs",
+        nargs="+",
+        type=Path,
+        metavar="VIDEO|DIR",
+        help="video files or frame directories",
+    )
+    local.add_argument(
+        "--keep-viewer", action="store_true", help="keep the last viser viewer alive"
+    )
 
     # remote: curated scene ids
     remote = sub.add_parser("remote", parents=[shared], help="run on curated scene ids")
-    remote.add_argument("scenes", nargs="*", metavar="SCENE", help="curated scene ids; omit with --all")
+    remote.add_argument(
+        "scenes", nargs="*", metavar="SCENE", help="curated scene ids; omit with --all"
+    )
     remote.add_argument("--all", action="store_true", help="every scene in the bucket")
-    remote.add_argument("--keep-local", action="store_true", help="skip the post-push delete")
+    remote.add_argument(
+        "--keep-local", action="store_true", help="skip the post-push delete"
+    )
 
     return parser
 
@@ -345,7 +403,9 @@ def main(argv: list[str] | None = None) -> int:
         Process exit code.
     """
     # Configure logging and parse the command line
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
     parser = _parser()
     args = parser.parse_args(argv)
 
@@ -411,7 +471,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if bad:
         listed = ", ".join(bad)
-        parser.error(f"not safe scene ids (one path segment, no leading '.' or '-'): {listed}")
+        parser.error(
+            f"not safe scene ids (one path segment, no leading '.' or '-'): {listed}"
+        )
 
     # Run the remote batch
     source = SceneSource()

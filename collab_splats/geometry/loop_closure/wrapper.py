@@ -108,7 +108,10 @@ class LoopClosure:
     """
 
     def __init__(
-        self, base: Any, config: LoopClosureConfig | None = None, ba: BundleAdjustmentConfig | None = None
+        self,
+        base: Any,
+        config: LoopClosureConfig | None = None,
+        ba: BundleAdjustmentConfig | None = None,
     ) -> None:
         """
         Wrap a creator, resolving the config against its per-model defaults.
@@ -125,16 +128,20 @@ class LoopClosure:
         # None resolves to the creator's per-model calibration
         if self.config.verify_match_ratio is None:
             if base.default_verify_match_ratio is None:
-                raise NotImplementedError(f"{type(base).__name__} sets no default_verify_match_ratio; LC unsupported")
+                raise NotImplementedError(
+                    f"{type(base).__name__} sets no default_verify_match_ratio; LC unsupported"
+                )
 
-            self.config = dataclasses.replace(self.config, verify_match_ratio=base.default_verify_match_ratio)
+            self.config = dataclasses.replace(
+                self.config, verify_match_ratio=base.default_verify_match_ratio
+            )
 
         # Scene state (VGGT-SLAM Solver structure): the submap collection + the pose graph
         self.map = GraphMap()
         self.graph = PoseGraph()
 
         # Optional live Viewer, set by the driver; None makes every viewer hook a no-op
-        self.viz = None
+        self.viz: Any = None
 
         # Result _run_lc_loop assembles; _reconstruct returns it as is, so base._postprocess cannot overwrite it
         self.outputs: PointcloudResult | None = None
@@ -213,7 +220,11 @@ class LoopClosure:
                 retrieval_cls = BaseRetrievalExtractor.get(cfg.retrieval)
                 retrieval_extractor = retrieval_cls(device=device)
             except (ImportError, OSError, RuntimeError) as e:
-                logger.warning("Retrieval %s failed to load (%s) — skipping loop closure", cfg.retrieval, e)
+                logger.warning(
+                    "Retrieval %s failed to load (%s) — skipping loop closure",
+                    cfg.retrieval,
+                    e,
+                )
                 run_lc = False
 
         # LC loop, else the whole-scene fallback below
@@ -266,7 +277,9 @@ class LoopClosure:
         pose0 = poses_4x4[0]
 
         if not np.allclose(pose0, np.eye(4), atol=0.1):
-            raise ValueError(f"Window poses not normalized to frame 0: expected poses[0] ≈ eye(4), got\n{pose0}")
+            raise ValueError(
+                f"Window poses not normalized to frame 0: expected poses[0] ≈ eye(4), got\n{pose0}"
+            )
 
         intrinsics = raw["intrinsics"]
 
@@ -281,7 +294,11 @@ class LoopClosure:
 
         # Retrieval descriptors on [0, 1] RGB, then the window's Submap; None when retrieval is off
         retrieval_frames = torch.from_numpy(rgb01)
-        ret_vecs = retrieval_extractor(retrieval_frames) if retrieval_extractor is not None else None  # (k, D)
+        ret_vecs = (
+            retrieval_extractor(retrieval_frames)
+            if retrieval_extractor is not None
+            else None
+        )  # (k, D)
         submap = Submap(
             submap_id=wi,
             frames=frames_cpu,
@@ -317,13 +334,18 @@ class LoopClosure:
             pair = f"submap {match.query_submap_id} → {match.detected_submap_id}"
             q_frame = frames_cpu[match.query_frame_idx]
             d_submap = submaps[match.detected_submap_id]
+            assert d_submap.frames is not None
             d_frame = d_submap.frames[match.detected_frame_idx]
             verify_ok, lc_data = self.base._verify_loop_candidate(
                 q_frame, d_frame, verify_match_ratio=cfg.verify_match_ratio
             )
 
             if not verify_ok:
-                logger.info("Loop rejected (verify ratio): %s dist=%.3f", pair, match.similarity_score)
+                logger.info(
+                    "Loop rejected (verify ratio): %s dist=%.3f",
+                    pair,
+                    match.similarity_score,
+                )
                 continue
 
             # Reject a loop whose relative pose is not finite
@@ -346,7 +368,9 @@ class LoopClosure:
                 Submap(
                     submap_id=len(submaps) + len(lc_submaps) + len(window_lc_submaps),
                     poses=lc_poses,
-                    intrinsics=np.stack([submap.intrinsics[q_i], d_submap.intrinsics[d_i]]),
+                    intrinsics=np.stack(
+                        [submap.intrinsics[q_i], d_submap.intrinsics[d_i]]
+                    ),
                     image_paths=[submap.image_paths[q_i], d_submap.image_paths[d_i]],
                     points=np.asarray(lc_data["world_points"], dtype=np.float32),
                     conf=np.asarray(lc_data["conf"], dtype=np.float32),
@@ -411,7 +435,9 @@ class LoopClosure:
 
             # A matcher track source without frames is a config error, not a failed window
             if cfg.track_source != "vggsfm" and not self.frame_paths:
-                raise ValueError(f"window BA: track_source {cfg.track_source!r} needs frame_paths")
+                raise ValueError(
+                    f"window BA: track_source {cfg.track_source!r} needs frame_paths"
+                )
 
             # Solve; a ValueError keeps the feedforward poses
             ba = BundleAdjustment(cfg)
@@ -428,7 +454,11 @@ class LoopClosure:
                     frame_paths=self.frame_paths[start : start + k] or None,
                 )
             except ValueError as e:
-                logger.warning("Window BA at frame %d failed (%s); keeping feedforward poses", start, e)
+                logger.warning(
+                    "Window BA at frame %d failed (%s); keeping feedforward poses",
+                    start,
+                    e,
+                )
                 ok = False
 
             # Back to frame 0's camera, as run_predictions expects
@@ -449,14 +479,22 @@ class LoopClosure:
                 "n_frames": k,
                 "ok": ok,
                 "alignment_scale": ba.alignment_scale,
-                "loss_final": ba.loss_history[-1][-1] if ba.loss_history and ba.loss_history[-1] else None,
+                "loss_final": ba.loss_history[-1][-1]
+                if ba.loss_history and ba.loss_history[-1]
+                else None,
                 "focal": float(raw["intrinsics"][0, 0, 0]),
                 "seconds": time.perf_counter() - t0,
-                "gpu_max_mib": torch.cuda.max_memory_allocated() >> 20 if torch.cuda.is_available() else None,
+                "gpu_max_mib": torch.cuda.max_memory_allocated() >> 20
+                if torch.cuda.is_available()
+                else None,
             }
             self.window_ba.append(record)
             logger.info(
-                "Window BA at frame %d: ok %s, focal %.1f, %.0f s", start, ok, record["focal"], record["seconds"]
+                "Window BA at frame %d: ok %s, focal %.1f, %.0f s",
+                start,
+                ok,
+                record["focal"],
+                record["seconds"],
             )
             return raw, rgb01
 
@@ -480,6 +518,7 @@ class LoopClosure:
 
             # Graph-corrected world points and colors past the overlap, masked by confidence
             grid = submap.get_world_grid(self.graph)[skip:]
+            assert submap.conf is not None and submap.colors is not None
             mask = submap.conf[skip:] > submap.conf_threshold
             world_pts = grid[mask]
             cols = submap.colors[skip:][mask]
@@ -491,15 +530,21 @@ class LoopClosure:
             # Subsampled point cloud
             all_points = np.ones(len(world_pts), dtype=bool)
             keep = subsample_points(all_points, self.config.viz_max_points)
-            self.viz.add_points(f"submap_{submap.submap_id}", world_pts[keep], cols[keep])
+            self.viz.add_points(
+                f"submap_{submap.submap_id}", world_pts[keep], cols[keep]
+            )
 
             # Per-frame frusta at the corrected world-to-cam poses (overlap frames skipped)
             poses = submap.get_all_poses_world(self.graph)
 
             for i in range(skip, poses.shape[0]):
-                self.viz.add_frustum(f"submap_{submap.submap_id}/cam_{i}", poses[i], submap.intrinsics[i])
+                self.viz.add_frustum(
+                    f"submap_{submap.submap_id}/cam_{i}", poses[i], submap.intrinsics[i]
+                )
         except (ValueError, ZeroDivisionError, RuntimeError, OSError) as e:
-            logger.warning("viewer submap push failed (submap %s): %s", submap.submap_id, e)
+            logger.warning(
+                "viewer submap push failed (submap %s): %s", submap.submap_id, e
+            )
 
     def _viz_reupload_all(self) -> None:
         """
@@ -514,7 +559,9 @@ class LoopClosure:
         for s in self.map.ordered_submaps_by_key():
             self._viz_push_submap(s)
 
-    def _run_lc_loop(self, retrieval_extractor: Callable[[torch.Tensor], torch.Tensor] | None) -> None:
+    def _run_lc_loop(
+        self, retrieval_extractor: Callable[[torch.Tensor], torch.Tensor] | None
+    ) -> None:
         """
         Slide windows over the frames, close loops, then assemble outputs.
 
@@ -528,7 +575,7 @@ class LoopClosure:
 
         # Window geometry: stride = submap_size, matching VGGT-SLAM main.py:109-130 (not K-O)
         cfg = self.config
-        K, O = cfg.submap_size, cfg.submap_overlap
+        K, overlap = cfg.submap_size, cfg.submap_overlap
         views = self.base.views
         N = len(views)
 
@@ -536,11 +583,11 @@ class LoopClosure:
         submaps: list[Submap] = []
         lc_submaps: list[Submap] = []
 
-        # Window bounds: K+O frames each, as VGGT-SLAM main.py:109; overlap: see LoopClosureConfig
+        # Window bounds: K+overlap frames each, as VGGT-SLAM main.py:109; overlap: see LoopClosureConfig
         bounds = []
 
         for start in range(0, N, K):
-            end = min(start + K + O, N)
+            end = min(start + K + overlap, N)
             bounds.append((start, end))
 
             if end >= N:
@@ -548,26 +595,46 @@ class LoopClosure:
 
         # Submap count for the log and the bar
         n_submaps = len(bounds)
-        logger.info("Loop closure: %d frames → %d submaps (size=%d, overlap=%d)", N, n_submaps, K, O)
+        logger.info(
+            "Loop closure: %d frames → %d submaps (size=%d, overlap=%d)",
+            N,
+            n_submaps,
+            K,
+            overlap,
+        )
 
         # Slice each window once; the forward submits and the loop share it
         windows = [views[s:e] for s, e in bounds]
 
         # Window k+1's forward runs on one worker while window k's CPU post runs here
-        with ThreadPoolExecutor(1) as pool, tqdm(total=n_submaps, desc="Loop closure", unit="submap") as pbar:
+        with (
+            ThreadPoolExecutor(1) as pool,
+            tqdm(total=n_submaps, desc="Loop closure", unit="submap") as pbar,
+        ):
             pending = pool.submit(self._forward_window, windows[0], bounds[0][0])
 
             for wi, ((start, _), window) in enumerate(zip(bounds, windows)):
                 raw, rgb01 = pending.result()
 
                 # GPU post before launch: unproject takes the precision lock the next forward holds
-                submap, window_lc_submaps, loop_matches, dense_points = self.run_predictions(
-                    window, raw, rgb01, wi, start, submaps, lc_submaps, retrieval_extractor
+                submap, window_lc_submaps, loop_matches, dense_points = (
+                    self.run_predictions(
+                        window,
+                        raw,
+                        rgb01,
+                        wi,
+                        start,
+                        submaps,
+                        lc_submaps,
+                        retrieval_extractor,
+                    )
                 )
 
                 # Launch the next window's forward, then the CPU post overlaps it
                 if wi + 1 < len(windows):
-                    pending = pool.submit(self._forward_window, windows[wi + 1], bounds[wi + 1][0])
+                    pending = pool.submit(
+                        self._forward_window, windows[wi + 1], bounds[wi + 1][0]
+                    )
 
                 # Dense uint8 colors: VGGT-SLAM scales [0, 1] frames by 255; some backends already give [0, 255]
                 frames_hw3 = rgb01.transpose(0, 2, 3, 1)
@@ -577,7 +644,9 @@ class LoopClosure:
                 else:
                     dense_colors = (frames_hw3 * 255.0).astype(np.uint8)
 
-                submap.set_dense_points(dense_points, dense_colors, raw["depth_conf"].astype(np.float32))
+                submap.set_dense_points(
+                    dense_points, dense_colors, raw["depth_conf"].astype(np.float32)
+                )
 
                 # Record the submaps, add the sequential edges and optimize; loop edges land per loop_edge_timing
                 submaps.append(submap)
@@ -610,12 +679,18 @@ class LoopClosure:
                         if not m.accepted:
                             continue
 
-                        q_pose = submaps[m.query_submap_id].get_all_poses_world(self.graph)[m.query_frame_idx]
-                        d_pose = submaps[m.detected_submap_id].get_all_poses_world(self.graph)[m.detected_frame_idx]
+                        q_pose = submaps[m.query_submap_id].get_all_poses_world(
+                            self.graph
+                        )[m.query_frame_idx]
+                        d_pose = submaps[m.detected_submap_id].get_all_poses_world(
+                            self.graph
+                        )[m.detected_frame_idx]
                         q_center = invert_poses(q_pose)[:3, 3]
                         d_center = invert_poses(d_pose)[:3, 3]
                         segment = np.stack([q_center, d_center])[None]  # (1, 2, 3)
-                        self.viz.add_lines(f"loop_{m.query_submap_id}_{m.detected_submap_id}", segment)
+                        self.viz.add_lines(
+                            f"loop_{m.query_submap_id}_{m.detected_submap_id}", segment
+                        )
                 except (ValueError, ZeroDivisionError, RuntimeError, OSError) as e:
                     logger.warning("viewer loop-line failed: %s", e)
 
@@ -656,6 +731,7 @@ class LoopClosure:
         # Confidence-kept pixels of each window submap, as _viz_push_submap masks them
         for s in self.map.ordered_submaps_by_key():
             skip = overlap if s.frame_start > 0 else 0
+            assert s.conf is not None
             mask = s.conf[skip:] > s.conf_threshold
             kept[s.submap_id] = (skip, mask, int(mask.sum()))
 
@@ -685,6 +761,7 @@ class LoopClosure:
             # Lift each submap once; keep only its share of the capped draw
             skip, mask, sub_keep = share[s.submap_id]
             grid = s.get_world_grid(self.graph)
+            assert s.points is not None and s.colors is not None and s.conf is not None
 
             # Flat pixel index of each kept point: one gather, not a mask copy then a subsample copy
             idx = np.flatnonzero(mask)[sub_keep]
@@ -695,9 +772,18 @@ class LoopClosure:
 
             # Size the per-pixel arrays from the first grid
             if model_height is None:
-                model_height, model_width = int(s.points.shape[1]), int(s.points.shape[2])
-                depth = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
-                confidence = np.zeros((n_frames, model_height, model_width), dtype=np.float32)
+                model_height, model_width = (
+                    int(s.points.shape[1]),
+                    int(s.points.shape[2]),
+                )
+                depth = np.zeros(
+                    (n_frames, model_height, model_width), dtype=np.float32
+                )
+                confidence = np.zeros(
+                    (n_frames, model_height, model_width), dtype=np.float32
+                )
+
+            assert depth is not None and confidence is not None
 
             # First submap to cover a frame wins: the overlap frame keeps the earlier submap's pose, as evo
             poses_world = s.get_all_poses_world(self.graph)
@@ -717,11 +803,21 @@ class LoopClosure:
                 confidence[g] = s.conf[local_i]
 
         # Stack the kept points; an empty map gives empty arrays
-        points = np.vstack(pts_chunks) if pts_chunks else np.zeros((0, 3), dtype=np.float32)
-        colors = np.vstack(col_chunks) if col_chunks else np.zeros((0, 3), dtype=np.uint8)
+        points = (
+            np.vstack(pts_chunks) if pts_chunks else np.zeros((0, 3), dtype=np.float32)
+        )
+        colors = (
+            np.vstack(col_chunks) if col_chunks else np.zeros((0, 3), dtype=np.uint8)
+        )
 
         # Fail fast on an empty cloud or zero model dims, before PointcloudResult's K rescale fails less clearly
-        if model_height is None or points.shape[0] == 0 or model_width == 0 or model_height == 0:
+        if (
+            model_height is None
+            or model_width is None
+            or points.shape[0] == 0
+            or model_width == 0
+            or model_height == 0
+        ):
             raise ValueError(
                 "LC produced an empty point cloud — every pixel was confidence-masked out "
                 "(no geometry to assemble a result from)."

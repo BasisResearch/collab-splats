@@ -1,6 +1,7 @@
 """
 DINOv2 patch-feature backend ("dinov2"), via HuggingFace transformers.
 """
+
 from typing import Optional
 
 import torch
@@ -14,6 +15,7 @@ from collab_splats.utils.torch_utils import get_device
 ########################################################################
 ########## Extractor ###################################################
 ########################################################################
+
 
 @BaseFeatureExtractor.register("dinov2")
 class DINOFeatureExtractor(BaseFeatureExtractor):

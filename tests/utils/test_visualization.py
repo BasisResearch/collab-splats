@@ -48,7 +48,9 @@ def test_nearer_point_wins_in_either_order():
     green = [0.0, 1.0, 0.0]
 
     for points, colors in [([near, far], [red, green]), ([far, near], [green, red])]:
-        rgb, depth = render_points(np.array(points), np.array(colors), IDENTITY, K, HW, radius=1)
+        rgb, depth = render_points(
+            np.array(points), np.array(colors), IDENTITY, K, HW, radius=1
+        )
 
         np.testing.assert_allclose(rgb[24, 32], red)
         assert depth[24, 32] == 1.0
@@ -84,7 +86,9 @@ def test_plot_reprojection_three_panels_downscaled():
     points = rng.uniform([-1, -1, 2], [1, 1, 4], size=(500, 3))
     colors = rng.integers(0, 256, size=(500, 3), dtype=np.uint8)
 
-    fig = plot_reprojection(image, points, colors, IDENTITY, K_full, max_width=320, title="check")
+    fig = plot_reprojection(
+        image, points, colors, IDENTITY, K_full, max_width=320, title="check"
+    )
 
     assert isinstance(fig, Figure)
     assert len(fig.axes) == 3

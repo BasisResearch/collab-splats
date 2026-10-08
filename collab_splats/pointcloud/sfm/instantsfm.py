@@ -62,14 +62,22 @@ class InstantSfMCreator(BaseSfmCreator):
         # Seed must be None or an int in np.random.seed's [0, 2**32)
         seed = self.random_seed
 
-        if seed is not None and (isinstance(seed, bool) or not (isinstance(seed, int) and 0 <= seed < 2**32)):
-            raise ValueError(f"random_seed must be None or an int in [0, 2**32), got {seed!r}")
+        if seed is not None and (
+            isinstance(seed, bool) or not (isinstance(seed, int) and 0 <= seed < 2**32)
+        ):
+            raise ValueError(
+                f"random_seed must be None or an int in [0, 2**32), got {seed!r}"
+            )
 
         # A track needs two views to triangulate
         views = self.min_num_view_per_track
 
-        if views is not None and (isinstance(views, bool) or not (isinstance(views, int) and views >= 2)):
-            raise ValueError(f"min_num_view_per_track must be None or an int >= 2, got {views!r}")
+        if views is not None and (
+            isinstance(views, bool) or not (isinstance(views, int) and views >= 2)
+        ):
+            raise ValueError(
+                f"min_num_view_per_track must be None or an int >= 2, got {views!r}"
+            )
 
     def _build_config(self) -> Config:
         """
@@ -94,12 +102,18 @@ class InstantSfMCreator(BaseSfmCreator):
 
         # Drop tracks seen in too few views, which lowers bundle adjustment memory
         if self.min_num_view_per_track is not None:
-            config.TRACK_ESTABLISHMENT_OPTIONS = dict(config.TRACK_ESTABLISHMENT_OPTIONS)
-            config.TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] = self.min_num_view_per_track
+            config.TRACK_ESTABLISHMENT_OPTIONS = dict(
+                config.TRACK_ESTABLISHMENT_OPTIONS
+            )
+            config.TRACK_ESTABLISHMENT_OPTIONS["min_num_view_per_track"] = (
+                self.min_num_view_per_track
+            )
 
         return config
 
-    def _map(self, images_dir: Path, out_dir: Path, names: list[str]) -> pycolmap.Reconstruction:
+    def _map(
+        self, images_dir: Path, out_dir: Path, names: list[str]
+    ) -> pycolmap.Reconstruction:
         """
         InstantSfM over the keyframes; returns the model in memory.
 
@@ -123,7 +137,9 @@ class InstantSfMCreator(BaseSfmCreator):
         path_info = ReadData(str(out_dir))
 
         if not path_info.depth_path:
-            raise RuntimeError(f"no depth_vda/ under {out_dir} — estimate_depth must run first")
+            raise RuntimeError(
+                f"no depth_vda/ under {out_dir} — estimate_depth must run first"
+            )
 
         colmap_dir = out_dir / "colmap"
         colmap_dir.mkdir(parents=True, exist_ok=True)
@@ -142,7 +158,9 @@ class InstantSfMCreator(BaseSfmCreator):
         )
 
         # Load the database into InstantSfM's own data types
-        view_graph, cameras, images, _feature_name, _rig = ReadColmapDatabase(str(db_path))
+        view_graph, cameras, images, _feature_name, _rig = ReadColmapDatabase(
+            str(db_path)
+        )
 
         if view_graph is None or cameras is None or images is None:
             raise RuntimeError(f"InstantSfM could not read {db_path}")
@@ -154,13 +172,17 @@ class InstantSfMCreator(BaseSfmCreator):
 
         for idx in range(len(images)):
             camera = cameras[images[idx].cam_id]
-            images.features[idx] = _nudge_edge_keypoints(images.features[idx], camera.width, camera.height)
+            images.features[idx] = _nudge_edge_keypoints(
+                images.features[idx], camera.width, camera.height
+            )
 
         ReadDepthsIntoFeatures(path_info.depth_path, cameras, images)
 
         # Run global mapping, turning its unhelpful IndexError into a clear error
         try:
-            cameras, images, tracks = SolveGlobalMapper(view_graph, cameras, images, config, visualizer=None)
+            cameras, images, tracks = SolveGlobalMapper(
+                view_graph, cameras, images, config, visualizer=None
+            )
         except IndexError as err:
             logger.exception("InstantSfM SolveGlobalMapper raised IndexError")
             raise RuntimeError(
@@ -170,7 +192,9 @@ class InstantSfMCreator(BaseSfmCreator):
             ) from err
 
         if not tracks:
-            raise RuntimeError("InstantSfM produced zero tracks — reconstruction is empty")
+            raise RuntimeError(
+                "InstantSfM produced zero tracks — reconstruction is empty"
+            )
 
         # Convert to a pycolmap model in memory
         return _to_pycolmap(cameras, images, tracks, images_dir)
@@ -223,7 +247,7 @@ def _patch_instantsfm_track_ids() -> None:
 
         return upstream_find_tracks(self, renumbered, TRACK_ESTABLISHMENT_OPTIONS)
 
-    find_tracks_renumbered._collab_splats_renumber = True
+    find_tracks_renumbered._collab_splats_renumber = True  # type: ignore[attr-defined]
     TrackEngine.FindTracksForProblem = find_tracks_renumbered
 
 
@@ -248,7 +272,7 @@ def _patch_pypose_robustmodel_target() -> None:
     def forward_default_target(self, input, target=None):
         return upstream_forward(self, input, target)
 
-    forward_default_target._collab_splats_default_target = True
+    forward_default_target._collab_splats_default_target = True  # type: ignore[attr-defined]
     RobustModel.forward = forward_default_target
 
 
@@ -278,7 +302,7 @@ def _patch_bae_pcg_column_shape() -> None:
 
         return res
 
-    forward_keep_column._collab_splats_column_shape = True
+    forward_keep_column._collab_splats_column_shape = True  # type: ignore[attr-defined]
     PCG.forward = forward_keep_column
 
 
@@ -287,7 +311,9 @@ def _patch_bae_pcg_column_shape() -> None:
 ########################################################################
 
 
-def _to_pycolmap(cameras: Cameras, images: Images, tracks: Tracks, image_dir: Path) -> pycolmap.Reconstruction:
+def _to_pycolmap(
+    cameras: Cameras, images: Images, tracks: Tracks, image_dir: Path
+) -> pycolmap.Reconstruction:
     """
     InstantSfM solve as an in-memory pycolmap model, matching upstream's sparse/0 export.
 
@@ -311,9 +337,14 @@ def _to_pycolmap(cameras: Cameras, images: Images, tracks: Tracks, image_dir: Pa
 
     if len(clusters) > 1:
         if 0 not in clusters:
-            raise RuntimeError(f"InstantSfM has no cluster 0 among {clusters}: use more frames or overlap")
+            raise RuntimeError(
+                f"InstantSfM has no cluster 0 among {clusters}: use more frames or overlap"
+            )
 
-        logger.warning("InstantSfM split the scene into clusters %s — keeping cluster 0 only", clusters)
+        logger.warning(
+            "InstantSfM split the scene into clusters %s — keeping cluster 0 only",
+            clusters,
+        )
         keep &= images.cluster_ids == 0
 
     # Let InstantSfM compute point ids and colors for the kept images
@@ -326,7 +357,13 @@ def _to_pycolmap(cameras: Cameras, images: Images, tracks: Tracks, image_dir: Pa
     recon = pycolmap.Reconstruction()
 
     for i, cam in enumerate(cameras):
-        camera = pycolmap.Camera(camera_id=i, model=cam.model, width=cam.width, height=cam.height, params=cam.params)
+        camera = pycolmap.Camera(
+            camera_id=i,
+            model=cam.model,
+            width=cam.width,
+            height=cam.height,
+            params=cam.params,
+        )
         recon.add_camera_with_trivial_rig(camera)
 
     # Add each kept image with its pose and keypoints
@@ -336,7 +373,9 @@ def _to_pycolmap(cameras: Cameras, images: Images, tracks: Tracks, image_dir: Pa
         name = images.filenames[idx]
         keypoints = images.features[idx]
         cam_id = int(images.cam_ids[idx])
-        image = pycolmap.Image(name=name, keypoints=keypoints, camera_id=cam_id, image_id=idx)
+        image = pycolmap.Image(
+            name=name, keypoints=keypoints, camera_id=cam_id, image_id=idx
+        )
         recon.add_image_with_trivial_frame(image, cam_from_world)
 
     # Add each track as a 3D point, keeping only observations that point back to it
@@ -349,7 +388,12 @@ def _to_pycolmap(cameras: Cameras, images: Images, tracks: Tracks, image_dir: Pa
             if ids is not None and feat_idx < len(ids) and ids[feat_idx] == track_id:
                 track.add_element(image_id, feat_idx)
 
-        point = pycolmap.Point3D(xyz=tracks.xyzs[track_id], color=tracks.colors[track_id], error=0.0, track=track)
+        point = pycolmap.Point3D(
+            xyz=tracks.xyzs[track_id],
+            color=tracks.colors[track_id],
+            error=0.0,
+            track=track,
+        )
         recon.add_point3D_with_id(track_id, point)
 
     return recon

@@ -15,6 +15,7 @@ SfM backends
 ``configs/README.md`` for the config blocks.
 
 .. automodule:: collab_splats.pointcloud.sfm
+   :no-members:
 
 .. autodata:: collab_splats.pointcloud.sfm.SFM_CREATORS
    :no-value:
@@ -49,6 +50,10 @@ Depth and feedforward
    :show-inheritance:
 
 .. automodule:: collab_splats.pointcloud.feedforward.vggtx
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.pointcloud.feedforward.vggt_omega
    :members:
    :show-inheritance:
 

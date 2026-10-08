@@ -3,6 +3,7 @@ INSID3 in-context segmentation backend ("insid3").
 
 - training-free: frozen DINOv2 features, one reference image and mask per category
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -84,7 +85,9 @@ def _downsample_mask(mask: torch.Tensor, h: int, w: int) -> torch.Tensor:
     """
     m = mask.float().unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
     # Bilinear downsample — works for masks covering multiple patches
-    down = F.interpolate(m, size=(h, w), mode="bilinear", align_corners=False)[0, 0] > 0.5
+    down = (
+        F.interpolate(m, size=(h, w), mode="bilinear", align_corners=False)[0, 0] > 0.5
+    )
     if down.sum() == 0:
         # Nearest fallback for masks smaller than one patch
         down = F.interpolate(m, size=(h, w), mode="nearest")[0, 0] > 0.5
@@ -92,7 +95,9 @@ def _downsample_mask(mask: torch.Tensor, h: int, w: int) -> torch.Tensor:
         # Centroid fallback for masks both interpolations miss; an empty mask stays empty
         if mask.any():
             center = torch.argwhere(mask).float().mean(dim=0)
-            scale = torch.tensor([h / mask.shape[0], w / mask.shape[1]], device=mask.device)
+            scale = torch.tensor(
+                [h / mask.shape[0], w / mask.shape[1]], device=mask.device
+            )
             cy, cx = (center * scale).long()
             cy = cy.clamp(0, h - 1)
             cx = cx.clamp(0, w - 1)
@@ -115,12 +120,15 @@ def _upsample_mask(mask: torch.Tensor, H: int, W: int) -> torch.Tensor:
     Returns:
         (H, W) bool, thresholded at 0.5.
     """
-    return F.interpolate(
-        mask.float().unsqueeze(0).unsqueeze(0),
-        size=(H, W),
-        mode="bilinear",
-        align_corners=False,
-    )[0, 0] > 0.5
+    return (
+        F.interpolate(
+            mask.float().unsqueeze(0).unsqueeze(0),
+            size=(H, W),
+            mode="bilinear",
+            align_corners=False,
+        )[0, 0]
+        > 0.5
+    )
 
 
 def _tensor_to_pil(t: torch.Tensor) -> Image.Image:
@@ -177,10 +185,10 @@ def _locate_candidates(
         forward_mask = sim_fwd > thresh
 
     # Backward: for each target patch, find its nearest ref patch; check if inside mask
-    tgt_flat = tgt_feat_deb.reshape(D, -1).T          # (Ht*Wt, D)
-    ref_flat = ref_feat_deb.reshape(D, -1).T           # (Hr*Wr, D)
-    sim_t_to_r = tgt_flat @ ref_flat.T                 # (Ht*Wt, Hr*Wr)
-    best_idx = sim_t_to_r.argmax(dim=1)                # (Ht*Wt,)
+    tgt_flat = tgt_feat_deb.reshape(D, -1).T  # (Ht*Wt, D)
+    ref_flat = ref_feat_deb.reshape(D, -1).T  # (Hr*Wr, D)
+    sim_t_to_r = tgt_flat @ ref_flat.T  # (Ht*Wt, Hr*Wr)
+    best_idx = sim_t_to_r.argmax(dim=1)  # (Ht*Wt,)
     rows = (best_idx // Wr).clamp(0, Hr - 1)
     cols = (best_idx % Wr).clamp(0, Wr - 1)
     backward_mask = ref_mask_down[rows, cols].reshape(Ht, Wt)
@@ -234,7 +242,7 @@ def _seed_and_aggregate(
     area_weights[matched_ids] = n_pixels.float() / all_areas[matched_ids].clamp(min=1)
 
     # Cluster prototypes in debiased space for cross-image similarity
-    tgt_deb_flat = tgt_feat_deb.reshape(D, -1).T   # (N, D)
+    tgt_deb_flat = tgt_feat_deb.reshape(D, -1).T  # (N, D)
     deb_protos = _cluster_prototypes(tgt_deb_flat, cluster_labels.view(-1), K)  # (K, D)
 
     # Seed: matched cluster with highest cross-image similarity to ref prototype
@@ -243,9 +251,9 @@ def _seed_and_aggregate(
     seed_id = int(matched_ids[seed_idx].item())
 
     # Raw cluster prototypes for intra-image similarity to seed
-    tgt_flat = tgt_feat.reshape(D, -1).T           # (N, D)
+    tgt_flat = tgt_feat.reshape(D, -1).T  # (N, D)
     raw_protos = _cluster_prototypes(tgt_flat, cluster_labels.view(-1), K)  # (K, D)
-    intra_sim = raw_protos @ raw_protos[seed_id]   # (K,)
+    intra_sim = raw_protos @ raw_protos[seed_id]  # (K,)
 
     # Per-patch cross-image similarity map
     fg_sim = torch.einsum("dhw,d->hw", tgt_feat_deb, prototype)  # (H_p, W_p)
@@ -291,7 +299,9 @@ class INSID3Segmentation(BaseSegmentation):
         fallback_quantile: float = 0.9,
         device: str | None = None,
     ) -> None:
-        self._extractor = DINOFeatureExtractor(svd_components=svd_components, device=device)
+        self._extractor = DINOFeatureExtractor(
+            svd_components=svd_components, device=device
+        )
         self._tau = tau
         self._merge_threshold = merge_threshold
         self._fallback_quantile = fallback_quantile
@@ -328,7 +338,9 @@ class INSID3Segmentation(BaseSegmentation):
             raise ValueError("set_context: ref_mask has no True pixel")
 
         # Extract and debias ref features
-        [feat] = self._extractor.forward([ref_image])  # (D, H_p, W_p), unit-norm per patch
+        [feat] = self._extractor.forward(
+            [ref_image]
+        )  # (D, H_p, W_p), unit-norm per patch
         [feat_deb] = self._extractor.debias([feat])  # (D, H_p, W_p)
         H_p, W_p = feat_deb.shape[1:]
 
@@ -336,7 +348,7 @@ class INSID3Segmentation(BaseSegmentation):
         mask_down = _downsample_mask(ref_mask.to(feat_deb.device), H_p, W_p)
 
         # Prototype: L2-normalized mean of debiased features inside the masked region
-        fg = feat_deb[:, mask_down]              # (D, N_fg)
+        fg = feat_deb[:, mask_down]  # (D, N_fg)
         prototype = F.normalize(fg.mean(dim=1), p=2, dim=0)  # (D,)
 
         self._prototype = prototype
@@ -365,7 +377,11 @@ class INSID3Segmentation(BaseSegmentation):
         Raises:
             RuntimeError: when no context is set — call set_context() first.
         """
-        if self._prototype is None or self._ref_feat_deb is None or self._ref_mask_down is None:
+        if (
+            self._prototype is None
+            or self._ref_feat_deb is None
+            or self._ref_mask_down is None
+        ):
             raise RuntimeError(
                 "No context set. Call set_context(ref_image, ref_mask) before segment()."
             )
@@ -378,13 +394,16 @@ class INSID3Segmentation(BaseSegmentation):
             orig_H, orig_W = image.height, image.width
 
         # Extract and debias target features
-        [feat] = self._extractor.forward([image])   # (D, H_p, W_p), unit-norm per patch
+        [feat] = self._extractor.forward([image])  # (D, H_p, W_p), unit-norm per patch
         D, H_p, W_p = feat.shape
-        [feat_deb] = self._extractor.debias([feat])   # (D, H_p, W_p)
+        [feat_deb] = self._extractor.debias([feat])  # (D, H_p, W_p)
 
         # Candidate localization: forward similarity + backward NN matching
         candidate_mask = _locate_candidates(
-            feat_deb, self._ref_feat_deb, self._ref_mask_down, self._prototype,
+            feat_deb,
+            self._ref_feat_deb,
+            self._ref_mask_down,
+            self._prototype,
             fallback_quantile=self._fallback_quantile,
         )  # (H_p, W_p) bool
 
@@ -398,15 +417,20 @@ class INSID3Segmentation(BaseSegmentation):
             }
 
         # Agglomerative clustering on raw (non-debiased) L2-normalized target features
-        feat_flat = feat.reshape(D, -1).T   # (H_p*W_p, D)
+        feat_flat = feat.reshape(D, -1).T  # (H_p*W_p, D)
         cluster_labels = _agglomerative_clustering(feat_flat, self._tau)  # (H_p*W_p,)
         K = int(cluster_labels.max().item()) + 1
         cluster_labels_2d = cluster_labels.reshape(H_p, W_p)
 
         # Seed cluster selection and cluster aggregation
         pred_mask = _seed_and_aggregate(
-            candidate_mask, feat, feat_deb, self._prototype,
-            cluster_labels_2d, K, self._merge_threshold,
+            candidate_mask,
+            feat,
+            feat_deb,
+            self._prototype,
+            cluster_labels_2d,
+            K,
+            self._merge_threshold,
         )  # (H_p, W_p) bool
 
         pred_mask_up = _upsample_mask(pred_mask, orig_H, orig_W)

@@ -156,16 +156,26 @@ def test_fill_missing_pixels_single_channel_and_nothing_known():
     assert not fill_missing_pixels(heights, np.zeros_like(known)).any()
 
 
-def _oracle_guided_filter(guide: np.ndarray, src: np.ndarray, radius: int, eps: float) -> np.ndarray:
+def _oracle_guided_filter(
+    guide: np.ndarray, src: np.ndarray, radius: int, eps: float
+) -> np.ndarray:
     """
     He et al. gray-guide guided filter on cv2 box means, BORDER_REFLECT_101 like torch reflect.
     """
 
     def box(x: np.ndarray) -> np.ndarray:
-        return cv2.boxFilter(x, -1, (2 * radius + 1,) * 2, normalize=True, borderType=cv2.BORDER_REFLECT_101)
+        return cv2.boxFilter(
+            x,
+            -1,
+            (2 * radius + 1,) * 2,
+            normalize=True,
+            borderType=cv2.BORDER_REFLECT_101,
+        )
 
     mean_g, mean_s = box(guide), box(src)
-    a = (box(guide * src) - mean_g * mean_s) / (box(guide * guide) - mean_g * mean_g + eps)
+    a = (box(guide * src) - mean_g * mean_s) / (
+        box(guide * guide) - mean_g * mean_g + eps
+    )
     b = mean_s - a * mean_g
     return box(a) * guide + box(b)
 
@@ -179,7 +189,11 @@ def test_upsample_depths_matches_a_cv2_guided_filter_oracle():
     rng = np.random.default_rng(0)
     H, W, h, w = 48, 64, 12, 16
     rgb = rng.integers(0, 256, (1, H, W, 3), dtype=np.uint8)
-    depth = np.where(np.arange(w)[None, :] < w // 2, 3.0, 5.0).astype(np.float32)[None].repeat(h, 1)
+    depth = (
+        np.where(np.arange(w)[None, :] < w // 2, 3.0, 5.0)
+        .astype(np.float32)[None]
+        .repeat(h, 1)
+    )
     depth[0, 2:4, 2:5] = 0.0
     box = np.array([[0, 0, W, H]])
 

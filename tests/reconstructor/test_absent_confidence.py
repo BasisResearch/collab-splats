@@ -27,19 +27,35 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
     """
     result = minimal_feedforward_result()
     fused = {}
-    mesh_cfg = {"enabled": True, "mask_sky": False, "texture": False, "conf_percentile": 20}
-    rec = Reconstructor({"input_path": str(tmp_path / "v.mp4"), "output_path": str(tmp_path), "mesh": mesh_cfg})
+    mesh_cfg = {
+        "enabled": True,
+        "mask_sky": False,
+        "texture": False,
+        "conf_percentile": 20,
+    }
+    rec = Reconstructor(
+        {
+            "input_path": str(tmp_path / "v.mp4"),
+            "output_path": str(tmp_path),
+            "mesh": mesh_cfg,
+        }
+    )
 
     def spy_fuse(depths, rgbs, c2w, K, **kwargs):
         fused["depths"] = depths
 
     with (
-        patch.object(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)),
+        patch.object(
+            PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)
+        ),
         patch(
             "collab_splats.reconstructor.frames.read_frames",
             return_value=np.zeros((2, 8, 8, 3), np.uint8),
         ),
-        patch("collab_splats.pointcloud.utils.upsample_depths", side_effect=lambda d, r, b: d),
+        patch(
+            "collab_splats.pointcloud.utils.upsample_depths",
+            side_effect=lambda d, r, b: d,
+        ),
         patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
         stub_mesh_cleanup(),
@@ -62,7 +78,9 @@ def test_lift_features_uniform_weights_when_confidence_absent():
     samples at that pixel, not a confidence-weighted average.
     """
     result = minimal_feedforward_result()
-    result.points = np.array([[0, 0, 1], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], dtype=np.float32)
+    result.points = np.array(
+        [[0, 0, 1], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], dtype=np.float32
+    )
     result.pixel_indices = np.zeros((5, 3), dtype=np.int32)
 
     # Distinguishable, per-frame values at pixel (row=4, col=4); the other 4 points
@@ -90,10 +108,16 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
         "pointcloud": {"method": "feedforward", "backend": "vggtx"},
         "mesh": {"conf_percentile": 20},
         "semantics": {"extractor": "dinov2"},
-        "splats": {"enabled": True, "max_steps": 1, "losses": {"depth": {"weight": 0.1}}},
+        "splats": {
+            "enabled": True,
+            "max_steps": 1,
+            "losses": {"depth": {"weight": 0.1}},
+        },
     }
     # The scene's images/ directory sits directly under output_path, which is tmp_path here
-    frames = np.stack([np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)])
+    frames = np.stack(
+        [np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)]
+    )
     fr.write_frames(tmp_path / "images", frames, list(range(n_views)))
     image_paths = [Path(f"frame_{view:06d}.jpg") for view in range(n_views)]
     recon._result = SimpleNamespace(
@@ -113,13 +137,18 @@ def test_splats_depth_targets_skip_masking_when_confidence_absent(tmp_path, capl
         image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(2)],
         depth=np.ones((2, 4, 4), dtype=np.float32),
         confidence=None,
-        original_coords=np.tile(np.array([0, 0, 4, 4, 4, 4], np.float32), (2, 1)),  # full-frame box
+        original_coords=np.tile(
+            np.array([0, 0, 4, 4, 4, 4], np.float32), (2, 1)
+        ),  # full-frame box
     )
     (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
 
     with (
         patch("collab_splats.splats.trainer.train") as train,
-        patch("collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=feedforward),
+        patch(
+            "collab_splats.pointcloud.base.PointcloudResult.load_zarr",
+            return_value=feedforward,
+        ),
         caplog.at_level("INFO"),
     ):
         recon.splats()

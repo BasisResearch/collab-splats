@@ -1,5 +1,6 @@
 """LoGeR reaches the vendored tree at _load_model time, not import time — the guard
 that keeps the registry importable in a bare checkout with no third_party/LoGeR."""
+
 import ast
 import inspect
 

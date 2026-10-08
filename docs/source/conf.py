@@ -1,6 +1,8 @@
 import os
 import sys
 
+from sphinx.ext.autodoc.mock import _MockObject
+
 sys.path.insert(0, os.path.abspath("../.."))
 
 project = "collab-splats"
@@ -47,6 +49,8 @@ autodoc_mock_imports = [
     "roma",
     "trimesh",
     "sklearn",
+    "skimage",
+    "kornia",
     "scipy",
     "PIL",
     "tqdm",
@@ -57,7 +61,6 @@ autodoc_mock_imports = [
     "bae",
     "pypose",
     "mapanything",
-    "numpy",
     "pycolmap",
     "hloc",
     "dataclasses_json",
@@ -69,12 +72,18 @@ autodoc_mock_imports = [
     "gtsam",
     "huggingface_hub",
     "mergedeep",
-    "pypose",
     "transformers",
     "safetensors",
-    "zarr",
-    "numcodecs",
+    "vismatch",
+    "meshlib",
+    "vggt_omega",
+    "nltk",
+    "segmentation_models_pytorch",
 ]
+
+# Mocked types must support `X | None` annotations (PEP 604), which the stock mock rejects
+_MockObject.__or__ = lambda self, other: self
+_MockObject.__ror__ = lambda self, other: self
 
 autodoc_default_options = {
     "members": True,
@@ -84,6 +93,8 @@ autodoc_default_options = {
 
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
+# Attributes: sections render as ivars, not duplicate attribute entries next to autodoc members
+napoleon_use_ivar = True
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

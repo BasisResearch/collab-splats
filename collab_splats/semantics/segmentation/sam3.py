@@ -1,6 +1,7 @@
 """
 SAM3 text-prompted segmentation backend ("sam3"); facebook/sam3 is a gated model.
 """
+
 from __future__ import annotations
 
 import logging

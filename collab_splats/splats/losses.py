@@ -62,22 +62,36 @@ def validate_schedule(losses: dict[str, dict], primitive: str) -> None:
     """
     for name, spec in losses.items():
         if name not in OPTIONAL_LOSSES:
-            raise ValueError(f"splats.losses: unknown loss '{name}'; allowed {sorted(OPTIONAL_LOSSES)}")
+            raise ValueError(
+                f"splats.losses: unknown loss '{name}'; allowed {sorted(OPTIONAL_LOSSES)}"
+            )
 
         # Allowed keys: the schedule keys plus this loss's own
-        allowed_spec_keys = {"weight", "start", "end", "end_weight"} | LOSS_SPEC_KEYS.get(name, set())
+        allowed_spec_keys = {
+            "weight",
+            "start",
+            "end",
+            "end_weight",
+        } | LOSS_SPEC_KEYS.get(name, set())
         unknown_spec_keys = set(spec) - allowed_spec_keys
 
         if unknown_spec_keys or "weight" not in spec:
             # Report the keys this loss allows
             optional_keys = ", ".join(sorted(allowed_spec_keys - {"weight"}))
-            raise ValueError(f"splats.losses.{name}: expected {{weight[, {optional_keys}]}}, got {sorted(spec)}")
+            raise ValueError(
+                f"splats.losses.{name}: expected {{weight[, {optional_keys}]}}, got {sorted(spec)}"
+            )
 
         # Decay needs positive weights at both ends and end > start
         if "end" in spec:
             end_weight = spec.get("end_weight")
 
-            if end_weight is None or spec["weight"] <= 0 or end_weight <= 0 or spec["end"] <= spec.get("start", 0):
+            if (
+                end_weight is None
+                or spec["weight"] <= 0
+                or end_weight <= 0
+                or spec["end"] <= spec.get("start", 0)
+            ):
                 raise ValueError(
                     f"splats.losses.{name}: decay needs weight > 0, end_weight > 0 and end > start, got {spec}"
                 )
@@ -86,12 +100,16 @@ def validate_schedule(losses: dict[str, dict], primitive: str) -> None:
     distortion_weight = losses.get("distortion", {}).get("weight", 0.0)
 
     if primitive == "3dgs" and distortion_weight > 0:
-        raise ValueError("splats.losses.distortion is 2dgs-only; set its weight to 0 or use primitive: 2dgs")
+        raise ValueError(
+            "splats.losses.distortion is 2dgs-only; set its weight to 0 or use primitive: 2dgs"
+        )
 
     # depth_ratio must be a real number; yaml booleans are refused
     raw_depth_ratio = losses.get("normal_consistency", {}).get("depth_ratio", 0.0)
 
-    if isinstance(raw_depth_ratio, bool) or not isinstance(raw_depth_ratio, (int, float)):
+    if isinstance(raw_depth_ratio, bool) or not isinstance(
+        raw_depth_ratio, (int, float)
+    ):
         raise ValueError(
             f"splats.losses.normal_consistency.depth_ratio must be a number in [0, 1], got {raw_depth_ratio!r}"
         )
@@ -100,7 +118,9 @@ def validate_schedule(losses: dict[str, dict], primitive: str) -> None:
     depth_ratio = float(raw_depth_ratio)
 
     if not 0.0 <= depth_ratio <= 1.0:
-        raise ValueError(f"splats.losses.normal_consistency.depth_ratio must be in [0, 1], got {depth_ratio}")
+        raise ValueError(
+            f"splats.losses.normal_consistency.depth_ratio must be in [0, 1], got {depth_ratio}"
+        )
 
     # A non-zero depth_ratio needs median depth, which only 2dgs renders
     if depth_ratio > 0 and primitive != "2dgs":
@@ -129,7 +149,9 @@ def loss_weight(step: int, spec: dict | None) -> float:
     # Refuse yaml booleans as weights
     for key in ("weight", "end_weight"):
         if isinstance(spec.get(key), bool):
-            raise TypeError(f"loss {key} must be a number, got {spec[key]!r} — yaml booleans are not weights")
+            raise TypeError(
+                f"loss {key} must be a number, got {spec[key]!r} — yaml booleans are not weights"
+            )
 
     weight = spec["weight"]
     end = spec.get("end")
@@ -256,7 +278,11 @@ def compute_losses(
 
 
 def depth_loss(
-    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+    render: dict,
+    target: dict,
+    gaussians: torch.nn.ParameterDict,
+    scene_scale: float,
+    spec: dict,
 ) -> Tensor | None:
     """
     Disparity L1 against the target depth, where it exists.
@@ -278,7 +304,10 @@ def depth_loss(
 
     # Only pixels with a target contribute
     rendered_depth = render["depth"]
-    assert rendered_depth.shape == target_depth.shape, (rendered_depth.shape, target_depth.shape)
+    assert rendered_depth.shape == target_depth.shape, (
+        rendered_depth.shape,
+        target_depth.shape,
+    )
     has_target = target_depth > 0
     rendered_depth = rendered_depth[has_target]
     target_depth = target_depth[has_target]
@@ -286,7 +315,11 @@ def depth_loss(
 
 
 def normal_consistency_loss(
-    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+    render: dict,
+    target: dict,
+    gaussians: torch.nn.ParameterDict,
+    scene_scale: float,
+    spec: dict,
 ) -> Tensor | None:
     """
     Cosine distance between rendered normals and normals from rendered depth.
@@ -311,12 +344,16 @@ def normal_consistency_loss(
     depth_normal = render.get("depth_normal")
 
     if rendered_normal is None or depth_normal is None:
-        raise ValueError("normal_consistency is active but the render has no normals; render with render_normals=True")
+        raise ValueError(
+            "normal_consistency is active but the render has no normals; render with render_normals=True"
+        )
 
     # Weight depth normals by detached alpha, as gsplat's simple_trainer_2dgs.py
     # - not unit-norm, so GSPLAT_ENFORCE_CONTRACTS=1 asserts here
     alpha = render["alpha"].detach()
-    expected_term = gsplat_losses.normal_cosine_loss(rendered_normal, depth_normal * alpha).mean()
+    expected_term = gsplat_losses.normal_cosine_loss(
+        rendered_normal, depth_normal * alpha
+    ).mean()
 
     # No blend: expected-depth term only
     ratio = float(spec.get("depth_ratio", 0.0))
@@ -333,12 +370,18 @@ def normal_consistency_loss(
             "(2dgs only — median depth is a rasterization_2dgs output)"
         )
 
-    median_term = gsplat_losses.normal_cosine_loss(rendered_normal, median_normal * alpha).mean()
+    median_term = gsplat_losses.normal_cosine_loss(
+        rendered_normal, median_normal * alpha
+    ).mean()
     return (1.0 - ratio) * expected_term + ratio * median_term
 
 
 def distortion_loss(
-    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+    render: dict,
+    target: dict,
+    gaussians: torch.nn.ParameterDict,
+    scene_scale: float,
+    spec: dict,
 ) -> Tensor | None:
     """
     Mean of the 2DGS distortion map.
@@ -362,7 +405,11 @@ def distortion_loss(
 
 
 def opacity_reg_loss(
-    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+    render: dict,
+    target: dict,
+    gaussians: torch.nn.ParameterDict,
+    scene_scale: float,
+    spec: dict,
 ) -> Tensor:
     """
     Mean opacity penalty (gsplat MCMC).
@@ -388,7 +435,11 @@ def opacity_reg_loss(
 
 
 def scale_reg_loss(
-    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+    render: dict,
+    target: dict,
+    gaussians: torch.nn.ParameterDict,
+    scene_scale: float,
+    spec: dict,
 ) -> Tensor:
     """
     Scale penalty: mean scale for Gaussians, mean volume for Scaffold.
@@ -414,7 +465,11 @@ def scale_reg_loss(
 
 
 def appearance_reg_loss(
-    render: dict, target: dict, gaussians: torch.nn.ParameterDict, scene_scale: float, spec: dict
+    render: dict,
+    target: dict,
+    gaussians: torch.nn.ParameterDict,
+    scene_scale: float,
+    spec: dict,
 ) -> Tensor | None:
     """
     Pull the view's appearance correction towards identity.

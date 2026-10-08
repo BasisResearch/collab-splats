@@ -99,10 +99,14 @@ class OCRLensExtractor(BaseFeatureExtractor):
 
         # Default to the packaged scores; load a path to a tensor
         if head_scores is None:
-            head_scores = Path(__file__).parent / "assets" / "llava16_vicuna7b_ocr_head_scores.pt"
+            head_scores = (
+                Path(__file__).parent / "assets" / "llava16_vicuna7b_ocr_head_scores.pt"
+            )
 
         if not isinstance(head_scores, torch.Tensor):
             head_scores = torch.load(head_scores, weights_only=True)
+
+        assert isinstance(head_scores, torch.Tensor)
 
         # Validate against the config before the (7B) weights load
         config = AutoConfig.from_pretrained(model_id)
@@ -114,10 +118,14 @@ class OCRLensExtractor(BaseFeatureExtractor):
             raise ValueError(f"layer must be in [0, {n_layers}), got {layer}")
 
         if tuple(head_scores.shape) != (n_layers, n_query):
-            raise ValueError(f"head_scores must be {(n_layers, n_query)}, got {tuple(head_scores.shape)}")
+            raise ValueError(
+                f"head_scores must be {(n_layers, n_query)}, got {tuple(head_scores.shape)}"
+            )
 
         if not 1 <= n_heads <= n_layers * n_query:
-            raise ValueError(f"n_heads must be in [1, {n_layers * n_query}], got {n_heads}")
+            raise ValueError(
+                f"n_heads must be in [1, {n_layers * n_query}], got {n_heads}"
+            )
 
         self.layer = layer
 
@@ -137,9 +145,18 @@ class OCRLensExtractor(BaseFeatureExtractor):
         self.decoder = nn.Sequential(lm.norm, self.model.lm_head)
 
         # Chat template with the image and an empty text turn, as upstream; same for every image
-        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": ""}]}]
-        self._prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        self._image_id = self.processor.tokenizer.convert_tokens_to_ids(self.processor.image_token)
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": ""}],
+            }
+        ]
+        self._prompt = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        self._image_id = self.processor.tokenizer.convert_tokens_to_ids(
+            self.processor.image_token
+        )
 
         # The last kept layer's output lands here on every forward
         self._hidden: Optional[torch.Tensor] = None
@@ -157,11 +174,14 @@ class OCRLensExtractor(BaseFeatureExtractor):
         One image's (D, rows, cols) unit-RMS lens states, float32 on CPU.
         """
         # Prompt built in __init__; one image per forward
-        inputs = self.processor(text=[self._prompt], images=[image], return_tensors="pt")
+        inputs = self.processor(
+            text=[self._prompt], images=[image], return_tensors="pt"
+        )
         inputs = inputs.to(self._device)
 
         # Truncated forward; the hook keeps the layer output, logits only for the last token
         self.model(**inputs, use_cache=False, logits_to_keep=1)
+        assert self._hidden is not None
         states = self._hidden[0, inputs["input_ids"][0] == self._image_id]
         self._hidden = None
 
@@ -216,7 +236,9 @@ def _lemma(word: str) -> Optional[str]:
     - was -> be, has -> have, trees -> tree; ties go to the shorter form
     - drops fragments ("gry", "les") and function words ("the")
     """
-    forms = {form for pos in (wn.NOUN, wn.VERB, wn.ADJ) if (form := wn.morphy(word, pos))}
+    forms = {
+        form for pos in (wn.NOUN, wn.VERB, wn.ADJ) if (form := wn.morphy(word, pos))
+    }
 
     if not forms:
         return None
@@ -236,7 +258,9 @@ def _lemma(word: str) -> Optional[str]:
     return best
 
 
-def word_vocabulary(tokenizer: PreTrainedTokenizerBase, words: Optional[list[str]] = None) -> WordVocab:
+def word_vocabulary(
+    tokenizer: PreTrainedTokenizerBase, words: Optional[list[str]] = None
+) -> WordVocab:
     """
     Decode vocabulary over the tokenizer's word-initial (`▁`) ASCII-letter tokens.
 
@@ -258,7 +282,9 @@ def word_vocabulary(tokenizer: PreTrainedTokenizerBase, words: Optional[list[str
     try:
         wn.ensure_loaded()
     except LookupError as e:
-        raise LookupError("WordNet corpus missing: python -m nltk.downloader wordnet") from e
+        raise LookupError(
+            "WordNet corpus missing: python -m nltk.downloader wordnet"
+        ) from e
 
     # Word-initial ASCII tokens with their lemma and lowercase text
     pattern = re.compile(r"^▁([A-Za-z]{2,})$")
@@ -312,7 +338,9 @@ def word_vocabulary(tokenizer: PreTrainedTokenizerBase, words: Optional[list[str
         missing = [word for word in words if word not in found]
 
         if missing:
-            logger.warning("word_vocabulary: no single-token form for %s, dropped", missing)
+            logger.warning(
+                "word_vocabulary: no single-token form for %s, dropped", missing
+            )
 
         labels = [word for word in words if word in found]
 
@@ -441,7 +469,9 @@ def verbalize(
     return words, np.concatenate(probs), np.concatenate(mass)
 
 
-def load_decoder(model_id: str = "llava-hf/llava-v1.6-vicuna-7b-hf", dtype: str = "float16") -> nn.Sequential:
+def load_decoder(
+    model_id: str = "llava-hf/llava-v1.6-vicuna-7b-hf", dtype: str = "float16"
+) -> nn.Sequential:
     """
     Final norm + lm_head of a LLaVA-1.6 checkpoint, without loading the rest of the model.
 
@@ -464,7 +494,11 @@ def load_decoder(model_id: str = "llava-hf/llava-v1.6-vicuna-7b-hf", dtype: str 
     lm_head = nn.Linear(text.hidden_size, text.vocab_size, bias=False)
 
     # Key -> shard file, from the sharded index or a single model.safetensors
-    index_path = cached_file(model_id, "model.safetensors.index.json", _raise_exceptions_for_missing_entries=False)
+    index_path = cached_file(
+        model_id,
+        "model.safetensors.index.json",
+        _raise_exceptions_for_missing_entries=False,
+    )
 
     if index_path is not None:
         index_text = Path(index_path).read_text()
@@ -485,7 +519,9 @@ def load_decoder(model_id: str = "llava-hf/llava-v1.6-vicuna-7b-hf", dtype: str 
         key = next(matches, None)
 
         if key is None:
-            raise KeyError(f"load_decoder: no checkpoint key matches {pattern!r} in {model_id}")
+            raise KeyError(
+                f"load_decoder: no checkpoint key matches {pattern!r} in {model_id}"
+            )
 
         keys.append(key)
 
@@ -533,11 +569,15 @@ def _load_model(model_id: str, dtype: str) -> LlavaNextForConditionalGeneration:
     Full LLaVA-1.6 model in `dtype`, still on the CPU.
     """
     torch_dtype = getattr(torch, dtype)
-    return LlavaNextForConditionalGeneration.from_pretrained(model_id, dtype=torch_dtype)
+    return LlavaNextForConditionalGeneration.from_pretrained(
+        model_id, dtype=torch_dtype
+    )
 
 
 @torch.no_grad()
-def _build_lens(model: LlavaNextForConditionalGeneration, head_scores: torch.Tensor, n_heads: int) -> torch.Tensor:
+def _build_lens(
+    model: LlavaNextForConditionalGeneration, head_scores: torch.Tensor, n_heads: int
+) -> torch.Tensor:
     """
     Sum of W_O W_V over the top-scoring heads: the (D, D) verbalization lens, float32 on CPU.
 
@@ -568,7 +608,9 @@ def _build_lens(model: LlavaNextForConditionalGeneration, head_scores: torch.Ten
     return lens
 
 
-def _anyres_grid(processor: LlavaNextProcessor, inputs: dict[str, torch.Tensor]) -> tuple[int, int]:
+def _anyres_grid(
+    processor: LlavaNextProcessor, inputs: dict[str, torch.Tensor]
+) -> tuple[int, int]:
     """
     (rows, cols) of LLaVA-1.6's unpadded high-res token grid for one processed image.
 
@@ -600,7 +642,9 @@ def _load_backgrounds() -> list[Image.Image]:
     """
     One mini-imagenet train shard as decoded images (upstream's word-image backgrounds).
     """
-    path = hf_hub_download("timm/mini-imagenet", "data/train-00000-of-00013.parquet", repo_type="dataset")
+    path = hf_hub_download(
+        "timm/mini-imagenet", "data/train-00000-of-00013.parquet", repo_type="dataset"
+    )
     table = pq.read_table(path, columns=["image"])
     rows = table.column("image").to_pylist()
     images = []
@@ -632,7 +676,11 @@ def _contrasting_color(patch: Image.Image, rng: random.Random) -> tuple[int, int
 
 
 def _word_image(
-    text: str, backgrounds: list[Image.Image], font: str, rng: random.Random, size: int = 512
+    text: str,
+    backgrounds: list[Image.Image],
+    font: str,
+    rng: random.Random,
+    size: int = 512,
 ) -> Image.Image:
     """
     The word drawn at a random size and position on a random center-cropped background.
@@ -642,7 +690,9 @@ def _word_image(
     image = image.convert("RGB")
     w, h = image.size
     side = min(w, h)
-    image = image.crop(((w - side) // 2, (h - side) // 2, (w + side) // 2, (h + side) // 2))
+    image = image.crop(
+        ((w - side) // 2, (h - side) // 2, (w + side) // 2, (h + side) // 2)
+    )
     image = image.resize((size, size), Image.LANCZOS)
 
     # Random font size and in-bounds position
@@ -656,7 +706,12 @@ def _word_image(
     y = rng.randint(margin - top, max(margin - top, size - th - margin - top))
 
     # Color contrasting with the region under the text
-    box = (max(0, x + left), max(0, y + top), min(size, x + left + tw), min(size, y + top + th))
+    box = (
+        max(0, x + left),
+        max(0, y + top),
+        min(size, x + left + tw),
+        min(size, y + top + th),
+    )
     region = image.crop(box)
     fill = _contrasting_color(region, rng)
     draw.text((x, y), text, fill=fill, font=face)
@@ -689,7 +744,9 @@ def _head_probs(
     # Capture every layer's o_proj input at the last position
     captured = []
     hooks = [
-        layer.self_attn.o_proj.register_forward_pre_hook(lambda module, args: captured.append(args[0][:, -1].clone()))
+        layer.self_attn.o_proj.register_forward_pre_hook(
+            lambda module, args: captured.append(args[0][:, -1].clone())
+        )
         for layer in lm.layers
     ]
 
@@ -781,12 +838,16 @@ def score_ocr_heads(
     # Transcription prompt with the answer prefilled; same text for every batch
     request = {"type": "text", "text": "Transcribe the word in this image."}
     messages = [{"role": "user", "content": [{"type": "image"}, request]}]
-    prompt = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt = processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     prompt = prompt + "Word:"
 
     # Accumulate per-head P(word) over batches
     cfg = model.config.text_config
-    total = torch.zeros(cfg.num_hidden_layers, cfg.num_attention_heads, device=model.device)
+    total = torch.zeros(
+        cfg.num_hidden_layers, cfg.num_attention_heads, device=model.device
+    )
     starts = range(0, n, batch_size)
 
     try:

@@ -32,7 +32,12 @@ def test_plot_correspondences_handles_resolution_mismatch():
     query = np.zeros((120, 160, 3), dtype=np.uint8)
     ref_image = np.zeros((40, 60, 3), dtype=np.uint8)
     fig = plot_correspondences(
-        query, ref_image, *correspondences_for_ref(_fake_result(), 0), max_pairs=10, show=False, warp_corners=False
+        query,
+        ref_image,
+        *correspondences_for_ref(_fake_result(), 0),
+        max_pairs=10,
+        show=False,
+        warp_corners=False,
     )
     assert fig is not None
     plt.close(fig)
@@ -45,7 +50,9 @@ def test_plot_correspondences_plain_arrays():
     r = rng.integers(0, 255, (60, 80, 3), dtype=np.uint8)
     q_px = rng.uniform(0, 79, (10, 2)).astype(np.float32)
     r_px = rng.uniform(0, 79, (10, 2)).astype(np.float32)
-    fig = plot_correspondences(q, r, q_px, r_px, inlier_mask=np.arange(10) % 2 == 0, show=False)
+    fig = plot_correspondences(
+        q, r, q_px, r_px, inlier_mask=np.arange(10) % 2 == 0, show=False
+    )
     assert fig is not None
 
 
@@ -89,7 +96,12 @@ def test_plot_correspondences_same_resolution_still_works():
     query = np.zeros((40, 60, 3), dtype=np.uint8)
     ref_image = np.zeros((40, 60, 3), dtype=np.uint8)
     fig = plot_correspondences(
-        query, ref_image, *correspondences_for_ref(_fake_result(), 0), max_pairs=10, show=False, warp_corners=False
+        query,
+        ref_image,
+        *correspondences_for_ref(_fake_result(), 0),
+        max_pairs=10,
+        show=False,
+        warp_corners=False,
     )
     assert fig is not None
     plt.close(fig)

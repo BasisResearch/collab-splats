@@ -71,9 +71,13 @@ def _scene(n=4, centers=None, tilt=TILT):
     the controls below rely on: depth is a function of the pixel's x ray-component alone, and
     the surface is invariant under camera translation along world Y.
     """
-    K = np.array([[FOCAL, 0, HW / 2], [0, FOCAL, HW / 2], [0, 0, 1.0]], dtype=np.float32)
+    K = np.array(
+        [[FOCAL, 0, HW / 2], [0, FOCAL, HW / 2], [0, 0, 1.0]], dtype=np.float32
+    )
     if centers is None:
-        centers = [(BASELINE * k, 0.0, 0.0) for k in range(n)]  # camera k strafing sideways
+        centers = [
+            (BASELINE * k, 0.0, 0.0) for k in range(n)
+        ]  # camera k strafing sideways
 
     # World-to-camera: identity rotation, so t = -C.
     extr = np.stack([np.eye(4, dtype=np.float32) for _ in range(n)])
@@ -84,7 +88,9 @@ def _scene(n=4, centers=None, tilt=TILT):
     a = (np.arange(HW) - HW / 2) / FOCAL
     depth = np.stack(
         [
-            np.tile(((Z0 + tilt * cx - cz) / (1.0 - tilt * a))[None, :], (HW, 1)).astype(np.float32)
+            np.tile(
+                ((Z0 + tilt * cx - cz) / (1.0 - tilt * a))[None, :], (HW, 1)
+            ).astype(np.float32)
             for cx, _, cz in centers
         ]
     )
@@ -116,7 +122,9 @@ def _texture(n):
     rng = np.random.default_rng(0)
     yy, xx = np.meshgrid(np.arange(HW), np.arange(HW), indexing="ij")
     base = 120 + 60 * np.sin(xx / 7.0) * np.cos(yy / 9.0)
-    imgs = np.stack([np.stack([base + 10 * c for c in range(3)], -1)] * n).astype(np.float32)
+    imgs = np.stack([np.stack([base + 10 * c for c in range(3)], -1)] * n).astype(
+        np.float32
+    )
     return imgs + rng.normal(0, 2.0, imgs.shape)
 
 
@@ -135,7 +143,9 @@ def _parallax_truth_deg(depth, K, extr, i, j):
     c2w = np.linalg.inv(extr)
     pts_world = (c2w[i] @ np.concatenate([pts_cam, np.ones((H * W, 1))], -1).T).T[:, :3]
     v_i, v_j = pts_world - c2w[i][:3, 3], pts_world - c2w[j][:3, 3]
-    cos_a = (v_i * v_j).sum(-1) / (np.linalg.norm(v_i, axis=-1) * np.linalg.norm(v_j, axis=-1))
+    cos_a = (v_i * v_j).sum(-1) / (
+        np.linalg.norm(v_i, axis=-1) * np.linalg.norm(v_j, axis=-1)
+    )
     return float(np.median(np.rad2deg(np.arccos(np.clip(cos_a, -1.0, 1.0)))))
 
 
@@ -152,7 +162,9 @@ def _reprojection_shift_px(depth, K, extr_true, extr_faulty, i, j):
     pix = np.stack([xx.ravel(), yy.ravel(), np.ones(H * W)], axis=-1)
     ones = np.ones((H * W, 1))
     pts_cam_i = (np.linalg.inv(K[i]) @ pix.T).T * depth[i].reshape(-1, 1)
-    pts_world = (np.linalg.inv(extr_true[i]) @ np.concatenate([pts_cam_i, ones], -1).T).T[:, :3]
+    pts_world = (
+        np.linalg.inv(extr_true[i]) @ np.concatenate([pts_cam_i, ones], -1).T
+    ).T[:, :3]
     pts_world_h = np.concatenate([pts_world, ones], -1)
 
     def project(E):
@@ -163,7 +175,9 @@ def _reprojection_shift_px(depth, K, extr_true, extr_faulty, i, j):
     uv_true, z_true = project(extr_true)
     uv_bad, _ = project(extr_faulty)
     in_front = z_true > 0
-    return float(np.median(np.linalg.norm(uv_true[in_front] - uv_bad[in_front], axis=1)))
+    return float(
+        np.median(np.linalg.norm(uv_true[in_front] - uv_bad[in_front], axis=1))
+    )
 
 
 ########################################
@@ -355,7 +369,9 @@ def test_control_depth_measurement_never_sees_appearance():
         "target_batch",
         "bytes_per_point",
     }
-    assert not [p for p in params if any(w in p for w in ("image", "rgb", "color", "colour"))]
+    assert not [
+        p for p in params if any(w in p for w in ("image", "rgb", "color", "colour"))
+    ]
 
 
 def test_control_exposure_shift_is_invisible_to_photometric_too():
@@ -375,7 +391,9 @@ def test_control_exposure_shift_is_invisible_to_photometric_too():
     shifted[1] = shifted[1] * 1.6 + 30.0
     after = compute_photometric_ncc(shifted, depth, K, extr, separations=(1, 2))
     assert after["idx1"] == clean["idx1"]  # else the zip below misaligns and truncates
-    exposure_delta = max(abs(a - b) for a, b in zip(ncc_clean, after["photometric_ncc"]))
+    exposure_delta = max(
+        abs(a - b) for a, b in zip(ncc_clean, after["photometric_ncc"])
+    )
     assert exposure_delta < 1e-9  # measured 3.3e-16
 
     # Without this, a constant NCC passes everything above; a comparable geometric fault must move it
@@ -404,13 +422,17 @@ def test_control_forward_motion_is_the_direction_that_falls_under_the_floor():
     satisfiable. Measured at step 0.1: forward best 0.428 px, strafe best 1.433 px, 3.3x apart
     with the floor sitting between them.
     """
-    fwd_depth, fwd_K, fwd_extr = _scene(n=3, centers=[(0.0, 0.0, FLOOR_STEP * k) for k in range(3)])
+    fwd_depth, fwd_K, fwd_extr = _scene(
+        n=3, centers=[(0.0, 0.0, FLOOR_STEP * k) for k in range(3)]
+    )
     fwd = _pairs(fwd_depth, fwd_K, fwd_extr)
     assert len(fwd) == 6
     fwd_best = max(fwd.values(), key=lambda q: q.median_parallax_deg)
     fwd_px = np.deg2rad(fwd_best.median_parallax_deg) * FOCAL
 
-    strafe_depth, strafe_K, strafe_extr = _scene(n=3, centers=[(FLOOR_STEP * k, 0.0, 0.0) for k in range(3)])
+    strafe_depth, strafe_K, strafe_extr = _scene(
+        n=3, centers=[(FLOOR_STEP * k, 0.0, 0.0) for k in range(3)]
+    )
     strafe = _pairs(strafe_depth, strafe_K, strafe_extr)
     assert len(strafe) == 6
     strafe_best = max(strafe.values(), key=lambda q: q.median_parallax_deg)
@@ -428,7 +450,9 @@ def test_control_separation_axis_has_teeth():
     """
     depth, K, extr = _scene(n=6)
     for k in range(6):
-        depth[k] *= 1.0 + 0.02 * k  # drift: each frame slightly more scaled than the last
+        depth[k] *= (
+            1.0 + 0.02 * k
+        )  # drift: each frame slightly more scaled than the last
     # Faults injected, so CONTROL_REL_THRESH: the default drops the widest-gap, most-drifted pairs
     p = _pairs(depth, K, extr, rel_thresh=CONTROL_REL_THRESH)
     assert len(p) == 30

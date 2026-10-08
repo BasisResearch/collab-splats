@@ -117,19 +117,29 @@ class ScaffoldConfig:
 
         # Reject sizes that would break the decode later
         if cfg.n_offsets < 1:
-            raise ValueError(f"splats.scaffold.n_offsets must be >= 1, got {cfg.n_offsets}")
+            raise ValueError(
+                f"splats.scaffold.n_offsets must be >= 1, got {cfg.n_offsets}"
+            )
 
         if cfg.feat_dim < 1:
-            raise ValueError(f"splats.scaffold.feat_dim must be >= 1, got {cfg.feat_dim}")
+            raise ValueError(
+                f"splats.scaffold.feat_dim must be >= 1, got {cfg.feat_dim}"
+            )
 
         if cfg.voxel_size is not None and cfg.voxel_size <= 0:
-            raise ValueError(f"splats.scaffold.voxel_size must be > 0 when set, got {cfg.voxel_size}")
+            raise ValueError(
+                f"splats.scaffold.voxel_size must be > 0 when set, got {cfg.voxel_size}"
+            )
 
         if cfg.lr_max_steps < 1:
-            raise ValueError(f"splats.scaffold.lr_max_steps must be >= 1, got {cfg.lr_max_steps}")
+            raise ValueError(
+                f"splats.scaffold.lr_max_steps must be >= 1, got {cfg.lr_max_steps}"
+            )
 
         if cfg.voxel_multiplier <= 0:
-            raise ValueError(f"splats.scaffold.voxel_multiplier must be > 0, got {cfg.voxel_multiplier}")
+            raise ValueError(
+                f"splats.scaffold.voxel_multiplier must be > 0, got {cfg.voxel_multiplier}"
+            )
 
         return cfg
 
@@ -182,7 +192,9 @@ class ScaffoldMLPs(torch.nn.Module):
 
         if cfg.appearance_dim > 0:
             if n_views < 1:
-                raise ValueError("scaffold.appearance_dim > 0 needs n_views >= 1 to size the embedding")
+                raise ValueError(
+                    "scaffold.appearance_dim > 0 needs n_views >= 1 to size the embedding"
+                )
 
             self.embedding_appearance = torch.nn.Embedding(n_views, cfg.appearance_dim)
             color_dim += cfg.appearance_dim
@@ -194,7 +206,9 @@ class ScaffoldMLPs(torch.nn.Module):
             torch.nn.Sigmoid(),
         )
 
-    def forward(self, features: Tensor, camera_id: Tensor | None) -> tuple[Tensor, Tensor, Tensor]:
+    def forward(
+        self, features: Tensor, camera_id: Tensor | None
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """
         Opacity, covariance and color for each anchor.
 
@@ -206,7 +220,9 @@ class ScaffoldMLPs(torch.nn.Module):
             (opacity (A, K), covariance (A, 7K), color (A, 3K)), K = n_offsets.
         """
         # Optional bf16 autocast; float32 (a no-op cast when off) for everything downstream
-        with torch.autocast(device_type=features.device.type, dtype=torch.bfloat16, enabled=self.bf16):
+        with torch.autocast(
+            device_type=features.device.type, dtype=torch.bfloat16, enabled=self.bf16
+        ):
             opacity = self.mlp_opacity(features)
             cov = self.mlp_cov(features)
 
@@ -215,9 +231,13 @@ class ScaffoldMLPs(torch.nn.Module):
 
             if self.embedding_appearance is not None:
                 if camera_id is None:
-                    raise ValueError("scaffold.appearance_dim > 0 requires camera_id at decode time")
+                    raise ValueError(
+                        "scaffold.appearance_dim > 0 requires camera_id at decode time"
+                    )
 
-                embedding = self.embedding_appearance(camera_id[:1]).expand(len(features), -1)
+                embedding = self.embedding_appearance(camera_id[:1]).expand(
+                    len(features), -1
+                )
                 color_input = torch.cat([features, embedding], dim=-1)
 
             color = self.mlp_color(color_input)
@@ -298,7 +318,13 @@ def _offsets_to_gaussians(
     opacities = flat_opacity[kept]
     colors = color.reshape(-1, 3)[kept]
 
-    gaussians = {"means": means, "scales": scales, "quats": quats, "opacities": opacities, "colors": colors}
+    gaussians = {
+        "means": means,
+        "scales": scales,
+        "quats": quats,
+        "opacities": opacities,
+        "colors": colors,
+    }
     return kept, gaussians
 
 
@@ -358,7 +384,10 @@ class Scaffold:
         anchors = voxelize(points_t, self.voxel_size).to(device)
         n_anchors = len(anchors)
         logger.info(
-            "scaffold: %d seed points -> %d anchors at voxel_size %.6g", len(points_t), n_anchors, self.voxel_size
+            "scaffold: %d seed points -> %d anchors at voxel_size %.6g",
+            len(points_t),
+            n_anchors,
+            self.voxel_size,
         )
 
         # Anchor tensors; scaling = log offset extent (3) + log Gaussian extent (3)
@@ -366,10 +395,20 @@ class Scaffold:
         self.params = torch.nn.ParameterDict(
             {
                 "anchors": torch.nn.Parameter(anchors),
-                "offsets": torch.nn.Parameter(torch.zeros(n_anchors, cfg_scaffold.n_offsets, 3, device=device)),
-                "anchor_feat": torch.nn.Parameter(torch.zeros(n_anchors, cfg_scaffold.feat_dim, device=device)),
-                "scaling": torch.nn.Parameter(torch.full((n_anchors, 6), log_voxel, device=device)),
-                "rotation": torch.nn.Parameter(torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(n_anchors, 1)),
+                "offsets": torch.nn.Parameter(
+                    torch.zeros(n_anchors, cfg_scaffold.n_offsets, 3, device=device)
+                ),
+                "anchor_feat": torch.nn.Parameter(
+                    torch.zeros(n_anchors, cfg_scaffold.feat_dim, device=device)
+                ),
+                "scaling": torch.nn.Parameter(
+                    torch.full((n_anchors, 6), log_voxel, device=device)
+                ),
+                "rotation": torch.nn.Parameter(
+                    torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(
+                        n_anchors, 1
+                    )
+                ),
             }
         )
 
@@ -384,14 +423,28 @@ class Scaffold:
             "rotation": cfg_scaffold.rotation_lr,
         }
         self.param_optimizers = {
-            name: torch.optim.Adam([{"params": self.params[name], "lr": lr, "name": name}], eps=adam_eps)
+            name: torch.optim.Adam(
+                [{"params": self.params[name], "lr": lr, "name": name}], eps=adam_eps
+            )
             for name, lr in learning_rates.items()
         }
         # One param group per head, each with its own lr
         mlp_groups = [
-            {"params": self.mlps.mlp_opacity.parameters(), "lr": cfg_scaffold.mlp_opacity_lr, "name": "mlp_opacity"},
-            {"params": self.mlps.mlp_cov.parameters(), "lr": cfg_scaffold.mlp_cov_lr, "name": "mlp_cov"},
-            {"params": self.mlps.mlp_color.parameters(), "lr": cfg_scaffold.mlp_color_lr, "name": "mlp_color"},
+            {
+                "params": self.mlps.mlp_opacity.parameters(),
+                "lr": cfg_scaffold.mlp_opacity_lr,
+                "name": "mlp_opacity",
+            },
+            {
+                "params": self.mlps.mlp_cov.parameters(),
+                "lr": cfg_scaffold.mlp_cov_lr,
+                "name": "mlp_cov",
+            },
+            {
+                "params": self.mlps.mlp_color.parameters(),
+                "lr": cfg_scaffold.mlp_color_lr,
+                "name": "mlp_color",
+            },
         ]
 
         if self.mlps.embedding_appearance is not None:
@@ -410,22 +463,32 @@ class Scaffold:
         self.optimizers = [*self.param_optimizers.values(), self.mlp_optimizer]
 
         # Anchor lr decays over the run
-        self.anchor_scheduler = ExponentialLR(self.param_optimizers["anchors"], gamma=lr_decay ** (1.0 / cfg.max_steps))
+        self.anchor_scheduler = ExponentialLR(
+            self.param_optimizers["anchors"], gamma=lr_decay ** (1.0 / cfg.max_steps)
+        )
 
         # Offsets and heads decay over lr_max_steps, not the run length
         offset_lr = cfg_scaffold.offset_lr * scene_scale
         offset_lr_final = cfg_scaffold.offset_lr_final * scene_scale
         self.offset_scheduler = LambdaLR(
             self.param_optimizers["offsets"],
-            lr_lambda=_decay_lambda(offset_lr, offset_lr_final, cfg_scaffold.lr_max_steps),
+            lr_lambda=_decay_lambda(
+                offset_lr, offset_lr_final, cfg_scaffold.lr_max_steps
+            ),
         )
 
         # (init, final) lr per head; mlp_cov is constant
         mlp_endpoints = {
-            "mlp_opacity": (cfg_scaffold.mlp_opacity_lr, cfg_scaffold.mlp_opacity_lr_final),
+            "mlp_opacity": (
+                cfg_scaffold.mlp_opacity_lr,
+                cfg_scaffold.mlp_opacity_lr_final,
+            ),
             "mlp_cov": (cfg_scaffold.mlp_cov_lr, cfg_scaffold.mlp_cov_lr),
             "mlp_color": (cfg_scaffold.mlp_color_lr, cfg_scaffold.mlp_color_lr_final),
-            "embedding_appearance": (cfg_scaffold.appearance_lr, cfg_scaffold.appearance_lr_final),
+            "embedding_appearance": (
+                cfg_scaffold.appearance_lr,
+                cfg_scaffold.appearance_lr_final,
+            ),
         }
         self.mlp_scheduler = LambdaLR(
             self.mlp_optimizer,
@@ -434,13 +497,25 @@ class Scaffold:
                 for group in self.mlp_optimizer.param_groups
             ],
         )
-        self.schedulers = [self.anchor_scheduler, self.offset_scheduler, self.mlp_scheduler]
+        self.schedulers = [
+            self.anchor_scheduler,
+            self.offset_scheduler,
+            self.mlp_scheduler,
+        ]
 
         # Anchor densification
-        self.strategy = AnchorStrategy(self.cfg, self.primitive, self.voxel_size, len(self.params["anchors"]), device)
+        self.strategy = AnchorStrategy(
+            self.cfg,
+            self.primitive,
+            self.voxel_size,
+            len(self.params["anchors"]),
+            device,
+        )
 
     @torch.no_grad()
-    def visible_anchors(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> Tensor:
+    def visible_anchors(
+        self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int
+    ) -> Tensor:
         """
         Mask of the anchors visible in this view.
 
@@ -473,20 +548,26 @@ class Scaffold:
         )
         return radii.reshape(len(anchors), -1).amax(dim=-1) > 0
 
-    def _frustum_anchors(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> Tensor:
+    def _frustum_anchors(
+        self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int
+    ) -> Tensor:
         """
         CPU visibility test: anchors in front of the camera and near the frame.
 
         - half-frame margin on each side
         """
         world_to_cam = torch.linalg.inv(cam_to_world)[0]
-        anchors_cam = self.params["anchors"] @ world_to_cam[:3, :3].T + world_to_cam[:3, 3]
+        anchors_cam = (
+            self.params["anchors"] @ world_to_cam[:3, :3].T + world_to_cam[:3, 3]
+        )
         depth = anchors_cam[:, 2]
         in_front = depth > 1e-3
 
         # Project to pixels; the margin keeps anchors just outside the frame
         safe_depth = depth.clamp_min(1e-3)
-        projected = (anchors_cam[:, :2] / safe_depth[:, None]) @ intrinsics[0, :2, :2].T + intrinsics[0, :2, 2]
+        projected = (anchors_cam[:, :2] / safe_depth[:, None]) @ intrinsics[
+            0, :2, :2
+        ].T + intrinsics[0, :2, 2]
         margin_x, margin_y = width * 0.5, height * 0.5
         in_frame = (
             (projected[:, 0] > -margin_x)
@@ -528,7 +609,9 @@ class Scaffold:
 
         # Nothing visible: decode every anchor, since an empty decode crashes gsplat
         if len(anchor_ids) == 0:
-            anchor_ids = torch.arange(len(self.params["anchors"]), device=self.params["anchors"].device)
+            anchor_ids = torch.arange(
+                len(self.params["anchors"]), device=self.params["anchors"].device
+            )
 
         anchors = self.params["anchors"][anchor_ids]
         feat = self.params["anchor_feat"][anchor_ids]
@@ -545,7 +628,9 @@ class Scaffold:
         neural_opacity, cov, color = self.mlps(features, camera_id)
 
         # Keep open offsets and record which slot each came from
-        kept, gaussians = _offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, n_offsets)
+        kept, gaussians = _offsets_to_gaussians(
+            anchors, scaling, offsets, neural_opacity, cov, color, n_offsets
+        )
         slot_offsets = torch.arange(n_offsets, device=anchors.device)
         slot_index = anchor_ids[:, None] * n_offsets + slot_offsets
         slot_index = slot_index.reshape(-1)
@@ -555,7 +640,9 @@ class Scaffold:
         # 2DGS uses two scales; zero the third
         if primitive == "2dgs":
             zeros = torch.zeros_like(scales[:, :1])
-            log_scales = torch.cat([torch.log(scales[:, :2].clamp_min(1e-12)), zeros], dim=-1)
+            log_scales = torch.cat(
+                [torch.log(scales[:, :2].clamp_min(1e-12)), zeros], dim=-1
+            )
             scales = torch.cat([scales[:, :2], zeros], dim=-1)
         else:
             log_scales = torch.log(scales.clamp_min(1e-12))
@@ -607,7 +694,9 @@ class Scaffold:
             (render, info): gsplat outputs plus the decoded Gaussians' fields the losses and
             densification read.
         """
-        decoded, decode_index = self.decode(self.primitive, cam_to_world, intrinsics, width, height, camera_id)
+        decoded, decode_index = self.decode(
+            self.primitive, cam_to_world, intrinsics, width, height, camera_id
+        )
         render, info = render_gaussians(
             self.primitive,
             decoded,
@@ -670,14 +759,18 @@ class Scaffold:
             center: (3,) center returned by `scene_normalization`.
             scale: scale returned by `scene_normalization`.
         """
-        center_t = torch.as_tensor(center, dtype=torch.float32, device=self.params["anchors"].device)
+        center_t = torch.as_tensor(
+            center, dtype=torch.float32, device=self.params["anchors"].device
+        )
 
         with torch.no_grad():
             self.params["anchors"].data = self.params["anchors"].data / scale + center_t
             self.params["scaling"].data = self.params["scaling"].data - math.log(scale)
 
     @torch.no_grad()
-    def export_gaussians(self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int) -> dict[str, Tensor]:
+    def export_gaussians(
+        self, cam_to_world: Tensor, intrinsics: Tensor, width: int, height: int
+    ) -> dict[str, Tensor]:
         """
         Static Gaussians for a ply: each anchor decoded at its mean view direction.
 
@@ -701,7 +794,12 @@ class Scaffold:
         seen_count = torch.zeros(len(anchors), device=device)
 
         for view in range(len(cam_to_world)):
-            visible = self.visible_anchors(cam_to_world[view : view + 1], intrinsics[view : view + 1], width, height)
+            visible = self.visible_anchors(
+                cam_to_world[view : view + 1],
+                intrinsics[view : view + 1],
+                width,
+                height,
+            )
             to_camera = anchors - cam_to_world[view, :3, 3]
             unit = to_camera / to_camera.norm(dim=-1, keepdim=True).clamp_min(1e-8)
             direction_sum[visible] += unit[visible]
@@ -714,14 +812,20 @@ class Scaffold:
             camera_centers = cam_to_world[:, :3, 3]
             nearest = torch.cdist(anchors[unseen], camera_centers).argmin(dim=1)
             to_nearest = anchors[unseen] - camera_centers[nearest]
-            direction_sum[unseen] = to_nearest / to_nearest.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+            direction_sum[unseen] = to_nearest / to_nearest.norm(
+                dim=-1, keepdim=True
+            ).clamp_min(1e-8)
             seen_count[unseen] = 1
 
         mean_direction = direction_sum / seen_count[:, None]
-        mean_direction = mean_direction / mean_direction.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        mean_direction = mean_direction / mean_direction.norm(
+            dim=-1, keepdim=True
+        ).clamp_min(1e-8)
 
         # Decode every anchor at its mean direction
-        features = torch.cat([self.params["anchor_feat"].detach(), mean_direction], dim=-1)
+        features = torch.cat(
+            [self.params["anchor_feat"].detach(), mean_direction], dim=-1
+        )
         camera_id = torch.zeros(1, dtype=torch.long, device=device)
         neural_opacity, cov, color = self.mlps(features, camera_id)
 
@@ -730,7 +834,9 @@ class Scaffold:
         offsets = self.params["offsets"].detach()
 
         # Same slot-to-Gaussian step as a render
-        _, gaussians = _offsets_to_gaussians(anchors, scaling, offsets, neural_opacity, cov, color, n_offsets)
+        _, gaussians = _offsets_to_gaussians(
+            anchors, scaling, offsets, neural_opacity, cov, color, n_offsets
+        )
         means = gaussians["means"]
         scales = gaussians["scales"]
         quats = gaussians["quats"]
@@ -754,7 +860,11 @@ class Scaffold:
         Returns:
             {"splats", "mlps", "voxel_size"}; the trainer adds the rest.
         """
-        return {"splats": self.params, "mlps": self.mlps.state_dict(), "voxel_size": self.voxel_size}
+        return {
+            "splats": self.params,
+            "mlps": self.mlps.state_dict(),
+            "voxel_size": self.voxel_size,
+        }
 
     @classmethod
     def from_checkpoint(cls, ckpt: dict, device: str) -> "Scaffold":
@@ -777,7 +887,10 @@ class Scaffold:
         model.device = device
         model.voxel_size = ckpt["voxel_size"]
         model.params = torch.nn.ParameterDict(
-            {name: torch.nn.Parameter(tensor) for name, tensor in dict(ckpt["splats"]).items()}
+            {
+                name: torch.nn.Parameter(tensor)
+                for name, tensor in dict(ckpt["splats"]).items()
+            }
         ).to(device)
 
         # n_views from the saved appearance embedding, if any
@@ -793,7 +906,7 @@ class Scaffold:
         model.offset_scheduler = None
         model.mlp_scheduler = None
         model.schedulers = []
-        model.strategy = None
+        model.strategy = None  # type: ignore[assignment]
         return model
 
 
@@ -809,7 +922,14 @@ class AnchorStrategy:
     - statistics are per (anchor, offset) slot for growing, per anchor for pruning
     """
 
-    def __init__(self, cfg: ScaffoldConfig, primitive: str, voxel_size: float, n_anchors: int, device: str):
+    def __init__(
+        self,
+        cfg: ScaffoldConfig,
+        primitive: str,
+        voxel_size: float,
+        n_anchors: int,
+        device: str,
+    ):
         """
         Allocate the densification statistics.
 
@@ -863,15 +983,23 @@ class AnchorStrategy:
         index = info["decode_index"].to(self.device)
 
         # Gradient sums per slot, rendered Gaussians only; slots are unique, so unrendered ones add exactly 0
-        rendered = (info["radii"].reshape(len(grad_norm), -1).amax(dim=-1) > 0).to(self.device)
-        self.offset_gradient_accum.index_add_(0, index, torch.where(rendered, grad_norm.to(self.device), 0.0))
+        rendered = (info["radii"].reshape(len(grad_norm), -1).amax(dim=-1) > 0).to(
+            self.device
+        )
+        self.offset_gradient_accum.index_add_(
+            0, index, torch.where(rendered, grad_norm.to(self.device), 0.0)
+        )
         self.offset_denom.index_add_(0, index, rendered.to(self.offset_denom.dtype))
 
         # Opacity sums per anchor, divided later by visits
         anchor_index = torch.div(index, self.cfg.n_offsets, rounding_mode="floor")
-        self.opacity_accum.index_add_(0, anchor_index, info["decoded_opacities"].detach().to(self.device))
+        self.opacity_accum.index_add_(
+            0, anchor_index, info["decoded_opacities"].detach().to(self.device)
+        )
         visible = info["visible_ids"].to(self.device)
-        self.anchor_denom.index_add_(0, visible, torch.ones_like(visible, dtype=self.anchor_denom.dtype))
+        self.anchor_denom.index_add_(
+            0, visible, torch.ones_like(visible, dtype=self.anchor_denom.dtype)
+        )
 
     def grow(self, scaffold: "Scaffold") -> int:
         """
@@ -890,7 +1018,9 @@ class AnchorStrategy:
         mean_grads = self.offset_gradient_accum / self.offset_denom.clamp_min(1.0)
 
         # Slots seen often enough in this window
-        seen = self.offset_denom > self.cfg.refine_every * self.cfg.success_threshold * 0.5
+        seen = (
+            self.offset_denom > self.cfg.refine_every * self.cfg.success_threshold * 0.5
+        )
 
         added_total = 0
 
@@ -899,8 +1029,14 @@ class AnchorStrategy:
             if level > 0 and added_total == 0:
                 break
 
-            threshold = self.cfg.grad_threshold * ((self.cfg.update_hierarchy_factor // 2) ** level)
-            size_factor = max(self.cfg.update_init_factor // (self.cfg.update_hierarchy_factor**level), 1)
+            threshold = self.cfg.grad_threshold * (
+                (self.cfg.update_hierarchy_factor // 2) ** level
+            )
+            size_factor = max(
+                self.cfg.update_init_factor
+                // (self.cfg.update_hierarchy_factor**level),
+                1,
+            )
             level_voxel = self.voxel_size * size_factor
             selected = seen & (mean_grads >= threshold)
 
@@ -913,30 +1049,43 @@ class AnchorStrategy:
             # Candidate positions: the slots' decoded means
             anchors = scaffold.params["anchors"].detach()
             offset_extent = torch.exp(scaffold.params["scaling"].detach()[:, :3])
-            candidates = anchors[:, None, :] + scaffold.params["offsets"].detach() * offset_extent[:, None, :]
+            candidates = (
+                anchors[:, None, :]
+                + scaffold.params["offsets"].detach() * offset_extent[:, None, :]
+            )
             candidates = candidates.reshape(-1, 3)[selected]
 
             # Feature of each candidate's source anchor
             slot_ids = torch.nonzero(selected, as_tuple=False).squeeze(-1)
-            source_feat = scaffold.params["anchor_feat"].detach()[torch.div(slot_ids, n_offsets, rounding_mode="floor")]
+            source_feat = scaffold.params["anchor_feat"].detach()[
+                torch.div(slot_ids, n_offsets, rounding_mode="floor")
+            ]
 
             # Snap to this level's grid; drop cells already holding an anchor
             candidate_cells, cell_of_candidate = torch.unique(
                 torch.round(candidates / level_voxel), dim=0, return_inverse=True
             )
-            cell_feat = torch.zeros(len(candidate_cells), self.cfg.feat_dim, device=source_feat.device)
-            cell_feat.index_reduce_(0, cell_of_candidate, source_feat, "amax", include_self=False)
+            cell_feat = torch.zeros(
+                len(candidate_cells), self.cfg.feat_dim, device=source_feat.device
+            )
+            cell_feat.index_reduce_(
+                0, cell_of_candidate, source_feat, "amax", include_self=False
+            )
 
             occupied_cells = torch.round(anchors / level_voxel)
             combined = torch.cat([occupied_cells, candidate_cells], dim=0)
-            _, inverse, counts = torch.unique(combined, dim=0, return_inverse=True, return_counts=True)
+            _, inverse, counts = torch.unique(
+                combined, dim=0, return_inverse=True, return_counts=True
+            )
             free = counts[inverse[len(occupied_cells) :]] == 1
             new_cells = candidate_cells[free]
 
             if len(new_cells) == 0:
                 continue
 
-            self._append_anchors(scaffold, new_cells * level_voxel, level_voxel, cell_feat[free])
+            self._append_anchors(
+                scaffold, new_cells * level_voxel, level_voxel, cell_feat[free]
+            )
             added_total += len(new_cells)
 
             # Pad per-slot stats for the new anchors; new slots are unseen
@@ -949,11 +1098,21 @@ class AnchorStrategy:
         self.offset_denom[seen] = 0.0
 
         if added_total:
-            logger.debug("scaffold: grew %d anchors -> %d", added_total, len(scaffold.params["anchors"]))
+            logger.debug(
+                "scaffold: grew %d anchors -> %d",
+                added_total,
+                len(scaffold.params["anchors"]),
+            )
 
         return added_total
 
-    def _append_anchors(self, scaffold: "Scaffold", new_anchors: Tensor, level_voxel: float, new_feat: Tensor) -> None:
+    def _append_anchors(
+        self,
+        scaffold: "Scaffold",
+        new_anchors: Tensor,
+        level_voxel: float,
+        new_feat: Tensor,
+    ) -> None:
         """
         Append anchors to params, Adam state and statistics together.
 
@@ -967,22 +1126,33 @@ class AnchorStrategy:
             "offsets": torch.zeros(n_new, self.cfg.n_offsets, 3, device=device),
             "anchor_feat": new_feat.to(device),
             "scaling": torch.full((n_new, 6), log_voxel, device=device),
-            "rotation": torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(n_new, 1),
+            "rotation": torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).repeat(
+                n_new, 1
+            ),
         }
 
         # Extend each parameter and its Adam state; new rows start at zero
         def param_fn(name: str, param: torch.Tensor) -> torch.Tensor:
-            return torch.nn.Parameter(torch.cat([param.detach(), additions[name]], dim=0))
+            return torch.nn.Parameter(
+                torch.cat([param.detach(), additions[name]], dim=0)
+            )
 
         def optimizer_fn(key: str, value: torch.Tensor) -> torch.Tensor:
-            return torch.cat([value, torch.zeros((n_new, *value.shape[1:]), device=value.device)], dim=0)
+            return torch.cat(
+                [value, torch.zeros((n_new, *value.shape[1:]), device=value.device)],
+                dim=0,
+            )
 
-        _update_param_with_optimizer(param_fn, optimizer_fn, scaffold.params, scaffold.param_optimizers)
+        _update_param_with_optimizer(
+            param_fn, optimizer_fn, scaffold.params, scaffold.param_optimizers
+        )
 
         # Pad the statistics: per slot and per anchor
         slot_padding = torch.zeros(n_new * self.cfg.n_offsets, device=self.device)
         anchor_padding = torch.zeros(n_new, device=self.device)
-        self.offset_gradient_accum = torch.cat([self.offset_gradient_accum, slot_padding])
+        self.offset_gradient_accum = torch.cat(
+            [self.offset_gradient_accum, slot_padding]
+        )
         self.offset_denom = torch.cat([self.offset_denom, slot_padding.clone()])
         self.opacity_accum = torch.cat([self.opacity_accum, anchor_padding])
         self.anchor_denom = torch.cat([self.anchor_denom, anchor_padding.clone()])
@@ -1022,7 +1192,8 @@ class AnchorStrategy:
         if bool(drop.all()):
             drop[mean_opacity.argmax()] = False
             logger.warning(
-                "scaffold: every anchor fell below min_opacity %.4g; kept the most opaque one", self.cfg.min_opacity
+                "scaffold: every anchor fell below min_opacity %.4g; kept the most opaque one",
+                self.cfg.min_opacity,
             )
 
         keep = ~drop
@@ -1035,7 +1206,9 @@ class AnchorStrategy:
         def optimizer_fn(key: str, value: torch.Tensor) -> torch.Tensor:
             return value[keep]
 
-        _update_param_with_optimizer(param_fn, optimizer_fn, scaffold.params, scaffold.param_optimizers)
+        _update_param_with_optimizer(
+            param_fn, optimizer_fn, scaffold.params, scaffold.param_optimizers
+        )
 
         self.offset_gradient_accum = self.offset_gradient_accum[keep_slots]
         self.offset_denom = self.offset_denom[keep_slots]
@@ -1043,7 +1216,11 @@ class AnchorStrategy:
         self.anchor_denom = self.anchor_denom[keep]
 
         n_dropped = int(drop.sum())
-        logger.debug("scaffold: pruned %d anchors -> %d", n_dropped, len(scaffold.params["anchors"]))
+        logger.debug(
+            "scaffold: pruned %d anchors -> %d",
+            n_dropped,
+            len(scaffold.params["anchors"]),
+        )
         return n_dropped
 
     def refine(self, scaffold: "Scaffold", step: int) -> None:

@@ -32,7 +32,9 @@ class _MockCreator(BaseFeedforwardCreator):
             intrinsics=None,
             model_intrinsics=np.tile(np.eye(3), (2, 1, 1)),
             image_paths=[Path("a.jpg"), Path("b.jpg")],
-            original_coords=np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1)),  # full-frame box
+            original_coords=np.tile(
+                np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1)
+            ),  # full-frame box
             model_width=100,
             model_height=100,
         )
@@ -92,7 +94,9 @@ def test_mapanything_forward_logs_minibatch_info(caplog):
 
     creator = MapAnythingCreator(minibatch_size=3)
     creator.model = mock_model
-    creator.original_coords = np.tile(np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (6, 1))  # full-frame box
+    creator.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (6, 1)
+    )  # full-frame box
     creator.image_paths = [Path(f"{i}.jpg") for i in range(6)]
 
     # _forward takes the full-sequence branch only when `views is self.views`

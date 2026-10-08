@@ -57,7 +57,7 @@ Upstream reads both frames' points in their own submap's frame-0 camera; ours mo
 - upstream: `t1` / `t2` are `get_frame_pointcloud(...)` as stored (`vggt_slam/solver.py:141-142`), i.e. unprojected in frame 0 (`:222`)
 - ours: each frame's points go through that frame's world-to-cam pose (`graph.py` `calculate_pairwise_frame_scale`, via `transforms.transform_points`), both frames, sequential edge and loop anchors alike
 - why: in frame 0 the two norms share no origin, so the ratio is `|R p + t| / |p|`, biased by the camera's translation inside the submap
-- upstream's default `--submap_size 16` (`main.py:28`) keeps that translation small; ours run 20 (`LoopClosureConfig`), 64 (`configs/loop_closure.yaml`) and 50 (the chess eval below)
+- upstream's default `--submap_size 16` (`main.py:28`) keeps that translation small; ours run 20 (`LoopClosureConfig`) and 50 (the chess eval below)
 - history: the back-transform predates 2026-09-26; commit `65d2def3` removed it to match upstream, the next commit restored it after the ATE below
 
 7-Scenes chess seq-01, 500 frames, `submap_size=50`, ATE (m, Sim3-aligned RMSE), `baseline` / `lc`:

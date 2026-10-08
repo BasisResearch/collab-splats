@@ -8,7 +8,11 @@ import torch
 from matplotlib.figure import Figure
 
 from collab_splats.geometry.projection import project
-from collab_splats.geometry.transforms import rescale_intrinsics, transform_points
+from collab_splats.geometry.transforms import (
+    invert_poses,
+    rescale_intrinsics,
+    transform_points,
+)
 
 # Main visualization code - adaptation of your original
 MESH_KWARGS = {
@@ -358,7 +362,7 @@ def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
     frustum = pv.PolyData(vertices, lines=lines)
 
     # Transform camera-space vertices to world space via c2w = inv(w2c)
-    c2w = np.linalg.inv(pose)
+    c2w = invert_poses(pose)
     frustum.points = transform_points(frustum.points, c2w)
 
     return frustum

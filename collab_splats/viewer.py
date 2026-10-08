@@ -30,6 +30,7 @@ import viser.transforms as viser_tf
 import zarr
 from PIL import Image
 
+from collab_splats.geometry.transforms import invert_poses
 from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.semantics.store import read_point_features
 from collab_splats.utils.torch_utils import pytorch_gc
@@ -163,7 +164,7 @@ class Viewer:
 
         # Repo poses are world-to-camera; viser frames are camera-to-world
         pose64 = np.asarray(pose, dtype=np.float64)
-        cam_to_world = np.linalg.inv(pose64)
+        cam_to_world = invert_poses(pose64)
         transform = viser_tf.SE3.from_matrix(cam_to_world)
         handle = self.server.scene.add_camera_frustum(
             name,

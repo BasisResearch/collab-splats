@@ -684,7 +684,8 @@ def test_viewer_module_never_imports_the_reconstructor():
     out = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
-    assert out.stdout.strip() == "False"
+    # Last line only: importing geometry lets warp print its init banner to stdout
+    assert out.stdout.strip().splitlines()[-1] == "False"
 
 
 def test_main_runs_as_a_module():

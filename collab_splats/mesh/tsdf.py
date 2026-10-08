@@ -42,7 +42,7 @@ def create_tsdf_mesh(
 
     - runs on CUDA:0 when Open3D has CUDA, else on the CPU; same grid, same mesh
     - the block hashmap starts at 10k blocks and grows on its own
-    - Open3D floors projected u, v (pixel-corner), so K shifts +0.5 once here (ADR 025)
+    - Open3D floors projected u, v (pixel-corner), so K shifts +0.5 once here (ADR 026)
 
     Args:
         depths: (N, H, W) depth in world units, 0 = no observation.

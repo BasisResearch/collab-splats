@@ -1,4 +1,4 @@
-# 025 — Open3D TSDF reads K as pixel-corner
+# 026 — Open3D TSDF reads K as pixel-corner
 
 Date: 2026-10-08 · Status: accepted · Branch: `audit/mesh` · Amends: 024
 

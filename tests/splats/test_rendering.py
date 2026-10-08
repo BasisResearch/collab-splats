@@ -437,7 +437,7 @@ def test_checkpoint_is_self_contained(tmp_path):
     # - the mesh stage re-renders from this key: a scaled or transposed K ships a wrong mesh
     # - a writer-side scale a reader undoes is invisible to any read-back comparison
     # - literals are make_scene's own: focal 60, principal point at the 40x24 center
-    # - stored as gsplat's pixel-corner K: the center K shifted +0.5 (ADR 024, 025)
+    # - stored as gsplat's pixel-corner K: the center K shifted +0.5 (ADR 024, 026)
     expected_k = torch.tensor([[60.0, 0.0, 20.5], [0.0, 60.0, 12.5], [0.0, 0.0, 1.0]])
     assert torch.allclose(ckpt["intrinsics"][0], expected_k)
     assert torch.equal(ckpt["intrinsics"][0], ckpt["intrinsics"][-1])

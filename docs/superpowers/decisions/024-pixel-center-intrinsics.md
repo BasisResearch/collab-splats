@@ -2,7 +2,7 @@
 
 Date: 2026-10-08 · Status: accepted · Branch: `feat/rgbd-ba-cf`
 
-> Correction: Open3D TSDF is pixel-corner, not center; see [025](025-open3d-tsdf-corner-convention.md).
+> Correction: Open3D TSDF is pixel-corner, not center; see [026](026-open3d-tsdf-corner-convention.md).
 
 ## Context
 

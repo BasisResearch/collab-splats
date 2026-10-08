@@ -6,9 +6,11 @@ import numpy as np
 import open3d as o3d
 import pytest
 import torch
+import zarr
 from PIL import Image
 
 from collab_splats.geometry import LoopClosure
+from collab_splats.geometry.projection import project, unproject
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
 from collab_splats.pointcloud.utils import clean_pointcloud
@@ -391,3 +393,385 @@ def test_load_zarr_load_images_flag(tmp_path: Path):
     np.testing.assert_allclose(
         loaded_with_images.images.numpy(), images.numpy(), atol=1e-5
     )
+
+
+########################################################################
+########## save_zarr extra attrs #######################################
+########################################################################
+
+
+def test_save_zarr_writes_extra_attrs(tmp_path):
+    out = tmp_path / "pointcloud.zarr"
+    _tiny_result().save_zarr(
+        out, extra_attrs={"method": "sfm", "backend": "instantsfm", "total_frames": 4}
+    )
+    store = zarr.open(str(out), mode="r")
+    assert store.attrs["method"] == "sfm"
+    assert store.attrs["backend"] == "instantsfm"
+    assert store.attrs["total_frames"] == 4
+
+
+def test_save_zarr_no_extra_attrs_unchanged(tmp_path):
+    out = tmp_path / "pointcloud.zarr"
+    _tiny_result().save_zarr(out)
+    store = zarr.open(str(out), mode="r")
+    assert "method" not in store.attrs
+    assert store.attrs["model_width"] == 64
+
+
+########################################################################
+########## load_zarr lean flags ########################################
+########################################################################
+
+
+def _tiny_result_with_dense(tmp_path):
+    """Minimal PointcloudResult with required members + a dense depth array; save_zarr it."""
+    n, p, h, w = 2, 5, 4, 4
+    result = PointcloudResult(
+        points=np.zeros((p, 3), dtype=np.float32),
+        colors=np.zeros((p, 3), dtype=np.uint8),
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n, 1, 1)),
+        intrinsics=None,
+        model_intrinsics=np.tile(np.eye(3, dtype=np.float32), (n, 1, 1)),
+        image_paths=[tmp_path / f"{i:05d}.jpg" for i in range(n)],
+        original_coords=np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n, 1)
+        ),  # full-frame box
+        model_width=w,
+        model_height=h,
+        depth=np.ones((n, h, w), dtype=np.float32),
+    )
+    store = tmp_path / "pointcloud.zarr"
+    result.save_zarr(store)
+    return store
+
+
+def test_load_zarr_can_skip_depth(tmp_path):
+    store = _tiny_result_with_dense(tmp_path)
+    lean = PointcloudResult.load_zarr(store, load_depth=False)
+    assert lean.depth is None  # skipped, not decoded
+    full = PointcloudResult.load_zarr(store)
+    assert full.depth is not None  # default unchanged (back-compat)
+    assert full.points.shape == (5, 3)
+
+
+def test_load_zarr_lean_flags_skip_all_dense(tmp_path):
+    store = _tiny_result_with_dense(tmp_path)
+    lean = PointcloudResult.load_zarr(
+        store,
+        load_depth=False,
+        load_world_points=False,
+        load_confidence=False,
+        load_pixel_indices=False,
+    )
+    # Required members always decoded; every dense optional skipped.
+    assert lean.points.shape == (5, 3)
+    assert lean.extrinsics.shape == (2, 4, 4)
+    for field in ("depth", "world_points", "confidence", "pixel_indices"):
+        assert getattr(lean, field) is None
+    # The source path is kept so consumers can reload dense members on demand.
+    assert lean._zarr_path == store
+
+
+########################################################################
+########## zarr round trip #############################################
+########################################################################
+
+
+def _make_result(
+    n_frames: int = 3,
+    n_pts: int = 100,
+    h: int = 8,
+    w: int = 8,
+    *,
+    with_world_points: bool = False,
+    with_images: bool = False,
+    with_pixel_indices: bool = False,
+) -> PointcloudResult:
+    """Build a minimal PointcloudResult for testing."""
+    rng = np.random.default_rng(42)
+    return PointcloudResult(
+        points=rng.random((n_pts, 3), dtype=np.float32),
+        colors=rng.integers(0, 256, (n_pts, 3), dtype=np.uint8),
+        extrinsics=np.eye(4, dtype=np.float32)[None].repeat(n_frames, axis=0),
+        intrinsics=None,
+        model_intrinsics=np.eye(3, dtype=np.float32)[None].repeat(n_frames, axis=0),
+        image_paths=[Path(f"/tmp/frame_{i:04d}.png") for i in range(n_frames)],
+        original_coords=np.tile(
+            np.array([0, 60, 640, 420, 640, 480], dtype=np.float32), (n_frames, 1)
+        ),
+        model_width=w,
+        model_height=h,
+        world_points=rng.random((n_frames, h, w, 3), dtype=np.float32)
+        if with_world_points
+        else None,
+        pixel_indices=rng.integers(0, n_frames, (n_pts, 3), dtype=np.int32)
+        if with_pixel_indices
+        else None,
+    )
+
+
+def test_zarr_roundtrip_core_fields(tmp_path):
+    """Core required arrays and metadata survive a save/load roundtrip."""
+    result = _make_result(n_frames=3, n_pts=50)
+    store_path = tmp_path / "result.zarr"
+
+    result.save_zarr(store_path)
+    loaded = PointcloudResult.load_zarr(store_path)
+
+    np.testing.assert_array_equal(loaded.points, result.points)
+    np.testing.assert_array_equal(loaded.colors, result.colors)
+    np.testing.assert_array_equal(loaded.extrinsics, result.extrinsics)
+    np.testing.assert_array_equal(loaded.intrinsics, result.intrinsics)
+    np.testing.assert_array_equal(loaded.original_coords, result.original_coords)
+
+    assert loaded.model_width == result.model_width
+    assert loaded.model_height == result.model_height
+    assert loaded.image_paths == result.image_paths
+
+
+def _posed_result_with_depth(
+    n_frames: int = 3, h: int = 12, w: int = 16
+) -> PointcloudResult:
+    """Result with random depth, distinct w2c poses and a pinhole model-grid K."""
+    rng = np.random.default_rng(0)
+    result = _make_result(n_frames=n_frames, h=h, w=w, with_world_points=True)
+    extrinsics = np.tile(np.eye(4, dtype=np.float32), (n_frames, 1, 1))
+    extrinsics[:, :3, 3] = rng.normal(size=(n_frames, 3))
+    angle = np.linspace(0.0, 0.5, n_frames)
+    extrinsics[:, 0, 0] = extrinsics[:, 2, 2] = np.cos(angle)
+    extrinsics[:, 0, 2] = np.sin(angle)
+    extrinsics[:, 2, 0] = -np.sin(angle)
+    K = np.array([[20.0, 0, w / 2], [0, 20.0, h / 2], [0, 0, 1]], dtype=np.float32)
+    result.extrinsics = extrinsics
+    result.model_intrinsics = np.tile(K, (n_frames, 1, 1))
+    result.depth = rng.uniform(1.0, 5.0, (n_frames, h, w)).astype(np.float32)
+    return result
+
+
+def test_zarr_does_not_write_world_points(tmp_path):
+    """save_zarr leaves world_points out of the store even when the result holds them."""
+    result = _posed_result_with_depth()
+    store_path = tmp_path / "result.zarr"
+
+    result.save_zarr(store_path)
+
+    assert "world_points" not in zarr.open(str(store_path), mode="r")
+
+
+def test_zarr_world_points_unprojected_from_depth(tmp_path):
+    """Loaded world_points equal depth unprojected under the stored extrinsics and model-grid K."""
+    result = _posed_result_with_depth()
+    store_path = tmp_path / "result.zarr"
+    result.save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path)
+    expected = unproject(
+        torch.from_numpy(result.depth),
+        torch.from_numpy(result.extrinsics),
+        torch.from_numpy(result.model_intrinsics),
+    )
+
+    np.testing.assert_allclose(loaded.world_points, expected.numpy(), atol=1e-4)
+
+
+def test_zarr_world_points_reproject_to_their_pixels(tmp_path):
+    """Each loaded world point projects back onto its own pixel in its own camera."""
+    result = _posed_result_with_depth(n_frames=2, h=6, w=8)
+    store_path = tmp_path / "result.zarr"
+    result.save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path)
+    grid_v, grid_u = np.meshgrid(np.arange(6), np.arange(8), indexing="ij")
+
+    for i in range(2):
+        pixels, _ = project(
+            torch.from_numpy(loaded.world_points[i]),
+            torch.from_numpy(loaded.extrinsics[i]),
+            torch.from_numpy(loaded.model_intrinsics[i]),
+        )
+        np.testing.assert_allclose(pixels[..., 0].numpy(), grid_u, atol=1e-3)
+        np.testing.assert_allclose(pixels[..., 1].numpy(), grid_v, atol=1e-3)
+
+
+def test_zarr_world_points_without_depth(tmp_path):
+    """load_depth=False still unprojects world_points but returns no depth."""
+    result = _posed_result_with_depth()
+    store_path = tmp_path / "result.zarr"
+    result.save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path, load_depth=False)
+
+    assert loaded.depth is None
+    assert loaded.world_points.shape == (*result.depth.shape, 3)
+
+
+def test_zarr_missing_optional_fields_load_as_none(tmp_path):
+    """Optional fields absent from the store load as None."""
+    result = _make_result(n_frames=2, with_world_points=False, with_pixel_indices=False)
+    store_path = tmp_path / "result_minimal.zarr"
+
+    result.save_zarr(store_path)
+    loaded = PointcloudResult.load_zarr(store_path)
+
+    assert loaded.world_points is None
+    assert loaded.pixel_indices is None
+    # images always None on load
+    assert loaded.images is None
+    assert loaded.confidence is None
+
+
+def test_zarr_optional_fields_roundtrip(tmp_path):
+    """pixel_indices survives a roundtrip when present."""
+    result = _make_result(n_pts=80, with_pixel_indices=True)
+    store_path = tmp_path / "result.zarr"
+
+    result.save_zarr(store_path)
+    loaded = PointcloudResult.load_zarr(store_path)
+
+    assert loaded.pixel_indices is not None
+    np.testing.assert_array_equal(loaded.pixel_indices, result.pixel_indices)
+
+
+def _fail_on_second_array(monkeypatch):
+    """
+    Patch zarr's create_array to raise on its second call, like a kill mid-write.
+    """
+    create_array = zarr.Group.create_array
+    calls = []
+
+    def flaky(self, *args, **kwargs):
+        calls.append(args)
+        if len(calls) == 2:
+            raise OSError("interrupted")
+        return create_array(self, *args, **kwargs)
+
+    monkeypatch.setattr(zarr.Group, "create_array", flaky)
+
+
+def test_interrupted_save_leaves_no_store(tmp_path, monkeypatch):
+    """A write killed mid-way leaves nothing at the path, so done() cannot trust it."""
+    store_path = tmp_path / "pointcloud.zarr"
+    _fail_on_second_array(monkeypatch)
+
+    with pytest.raises(OSError, match="interrupted"):
+        _make_result().save_zarr(store_path)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+def test_interrupted_overwrite_keeps_the_old_store(tmp_path, monkeypatch):
+    """A re-save killed mid-way leaves the previous store whole and loadable."""
+    store_path = tmp_path / "pointcloud.zarr"
+    old = _make_result(n_frames=2)
+    old.save_zarr(store_path, extra_attrs={"backend": "old"})
+    _fail_on_second_array(monkeypatch)
+
+    with pytest.raises(OSError, match="interrupted"):
+        _make_result(n_frames=3).save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path)
+    assert len(loaded.extrinsics) == 2
+    assert zarr.open_group(str(store_path), mode="r").attrs["backend"] == "old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["pointcloud.zarr"]
+
+
+########################################################################
+########## reproject ###################################################
+########################################################################
+
+
+def _reproject_result(*, depth=None, pixel_indices=None) -> PointcloudResult:
+    """Minimal PointcloudResult with configurable depth and pixel_indices."""
+    N, H, W, P = 2, 4, 4, 3
+    return PointcloudResult(
+        points=np.zeros((P, 3), dtype=np.float32),
+        colors=np.zeros((P, 3), dtype=np.uint8),
+        extrinsics=np.tile(np.eye(4), (N, 1, 1)).astype(np.float32),
+        intrinsics=None,
+        model_intrinsics=np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
+        image_paths=[Path(f"img_{i}.png") for i in range(N)],
+        original_coords=np.tile(
+            np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (N, 1)
+        ),  # full-frame box
+        model_width=W,
+        model_height=H,
+        depth=depth,
+        pixel_indices=pixel_indices,
+    )
+
+
+def test_reproject_unprojects_source_pixels_under_current_poses():
+    # Non-identity poses and an off-center K, so R vs R.T and u vs v are both visible
+    N, H, W = 2, 4, 5
+    rng = np.random.default_rng(0)
+    depth = (rng.random((N, H, W)) + 1.0).astype(np.float32)
+    pixel_indices = np.array([[0, 1, 3], [1, 2, 0], [0, 3, 4]], dtype=np.int32)
+    result = _reproject_result(depth=depth, pixel_indices=pixel_indices)
+    result.model_intrinsics[:] = np.array(
+        [[50.0, 0, 1.5], [0, 60.0, 2.25], [0, 0, 1]], dtype=np.float32
+    )
+    for i in range(N):
+        q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+        result.extrinsics[i, :3, :3] = q * np.sign(np.linalg.det(q))
+        result.extrinsics[i, :3, 3] = rng.normal(size=3)
+
+    reprojected = result.reproject()
+
+    # Pinhole ray at each source pixel, scaled by its depth, taken camera -> world
+    K = result.model_intrinsics[0].astype(np.float64)
+    for (f, r, c), point in zip(pixel_indices, reprojected.points):
+        d = float(depth[f, r, c])
+        cam = np.array([(c - K[0, 2]) / K[0, 0] * d, (r - K[1, 2]) / K[1, 1] * d, d])
+        R, t = (
+            result.extrinsics[f, :3, :3].astype(np.float64),
+            result.extrinsics[f, :3, 3].astype(np.float64),
+        )
+        np.testing.assert_allclose(point, R.T @ (cam - t), rtol=1e-5, atol=1e-5)
+    assert reprojected.points.dtype == np.float32
+
+    # world_points is the full per-pixel grid the points were sampled from
+    assert reprojected.world_points.shape == (N, H, W, 3)
+    frame, row, col = pixel_indices.T
+    np.testing.assert_array_equal(
+        reprojected.world_points[frame, row, col], reprojected.points
+    )
+
+
+def test_reproject_preserves_colors_and_extrinsics():
+    N, H, W, P = 2, 4, 4, 3
+    depth = np.ones((N, H, W), dtype=np.float32)
+    pixel_indices = np.zeros((P, 3), dtype=np.int32)
+    result = _reproject_result(depth=depth, pixel_indices=pixel_indices)
+
+    reprojected = result.reproject()
+
+    # World positions updated; source-pixel-derived fields unchanged
+    np.testing.assert_array_equal(reprojected.colors, result.colors)
+    np.testing.assert_array_equal(reprojected.extrinsics, result.extrinsics)
+    assert reprojected is not result
+
+
+def test_reproject_rejects_4d_depth():
+    result = _reproject_result(
+        depth=np.ones((2, 4, 4, 1), np.float32),
+        pixel_indices=np.zeros((1, 3), np.int32),
+    )
+    with pytest.raises(ValueError, match="depth"):
+        result.reproject()
+
+
+def test_reproject_raises_without_depth():
+    P = 3
+    pixel_indices = np.zeros((P, 3), dtype=np.int32)
+    result = _reproject_result(depth=None, pixel_indices=pixel_indices)
+    with pytest.raises(ValueError, match="reproject\\(\\) requires depth"):
+        result.reproject()
+
+
+def test_reproject_raises_without_pixel_indices():
+    N, H, W = 2, 4, 4
+    depth = np.ones((N, H, W), dtype=np.float32)
+    result = _reproject_result(depth=depth, pixel_indices=None)
+    with pytest.raises(ValueError, match="pixel_indices"):
+        result.reproject()

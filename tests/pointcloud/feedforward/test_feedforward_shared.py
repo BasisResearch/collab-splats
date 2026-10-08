@@ -1,13 +1,24 @@
-import dataclasses
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 
 from collab_splats.geometry import LoopClosure
-from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
+from collab_splats.pointcloud import get_creator
+from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
+from collab_splats.pointcloud.feedforward import (
+    BaseFeedforwardCreator,
+    LoGeRCreator,
+    MapAnythingCreator,
+    VGGTXCreator,
+)
+from collab_splats.preproc import frames as fr
+from tests.pointcloud._stubs import vggt_raw_outputs
 
 
 def _make_result(n=3, p=50, colors=None):
@@ -38,17 +49,6 @@ def test_camera_image_point_counts():
     assert len(recon.cameras) == 3
     assert len(recon.images) == 3
     assert len(recon.points3D) == 50
-
-
-def test_loop_closure_stripped_from_base():
-    """After refactor, BaseFeedforwardCreator must NOT have enable_loop_closure or loop_closure_config."""
-    import dataclasses
-
-    from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
-
-    field_names = {f.name for f in dataclasses.fields(BaseFeedforwardCreator)}
-    assert "enable_loop_closure" not in field_names
-    assert "loop_closure_config" not in field_names
 
 
 def test_to_colmap_rejects_float_colors():
@@ -210,12 +210,6 @@ def test_extract_intermediate_features_base_raises():
         )
 
 
-def test_base_creator_no_extractor_name():
-    """extractor_name field removed; creators no longer own lifting."""
-    fields = {f.name for f in dataclasses.fields(BaseFeedforwardCreator)}
-    assert "extractor_name" not in fields
-
-
 ########################################################
 ########## _postprocess pixel bookkeeping ##############
 ########################################################
@@ -277,3 +271,183 @@ def test_pixel_indices_align_with_colors():
     images_np = (images.permute(0, 2, 3, 1).numpy() * 255).astype(np.uint8)
     fi, ri, ci = out.pixel_indices.T
     np.testing.assert_array_equal(out.colors, images_np[fi, ri, ci])
+
+
+########################################################################
+########## Creator registry ############################################
+########################################################################
+
+
+def test_get_creator_mapanything():
+    assert get_creator("mapanything") is MapAnythingCreator
+
+
+def test_get_creator_vggtx():
+    assert get_creator("vggtx") is VGGTXCreator
+
+
+def test_get_creator_loger():
+    # Not guarded on third_party/LoGeR: the vendored import is deferred into _load_model
+    assert get_creator("loger") is LoGeRCreator
+
+
+def test_get_creator_unknown_raises():
+    with pytest.raises(ValueError, match="Unknown 'nonexistent'"):
+        get_creator("nonexistent")
+
+
+def test_all_creators_are_instantiable():
+    for name in ("mapanything", "vggtx"):
+        cls = get_creator(name)
+        instance = cls()
+        assert isinstance(instance, BasePointcloudCreator)
+
+
+def test_registry_holds_exactly_the_feedforward_backends():
+    assert set(BaseFeedforwardCreator._registry) == {
+        "loger",
+        "mapanything",
+        "vggt_omega",
+        "vggtx",
+    }
+
+
+########################################################################
+########## Multiview confidence wiring #################################
+########################################################################
+
+
+def _run(creator: VGGTXCreator, raw: dict | None = None) -> int:
+    """
+    Point count after _postprocess over the stub raw dict.
+    """
+    raw = vggt_raw_outputs(n=3, h=8, w=10) if raw is None else raw
+    creator.image_paths = [f"frame_{i:06d}" for i in range(3)]
+    creator.original_coords = np.tile(
+        np.array([0, 0, 10, 8, 10, 8], np.float32), (3, 1)
+    )
+    return len(creator._postprocess(raw).points)
+
+
+def test_min_views_zero_is_off():
+    with patch(
+        "collab_splats.pointcloud.feedforward.base.multiview_depth_confidence"
+    ) as mock_mv:
+        _run(VGGTXCreator(min_views=0))
+    mock_mv.assert_not_called()
+
+
+def test_min_views_filters_on_disagreement():
+    assert _run(VGGTXCreator(min_views=1, mv_rel_thresh=1e-9)) < _run(
+        VGGTXCreator(min_views=0)
+    )
+
+
+def _disjoint_views() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Two frames whose cameras sit 1000 units apart, so neither sees the other's pixels.
+    """
+    depth = np.ones((2, 8, 10), np.float32)
+    intrinsics = np.tile(
+        np.array([[10, 0, 5], [0, 10, 4], [0, 0, 1]], np.float32), (2, 1, 1)
+    )
+    extrinsics = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+    extrinsics[1, 0, 3] = 1000.0
+    return depth, intrinsics, extrinsics
+
+
+def test_unseen_pixels_are_kept():
+    depth, intrinsics, extrinsics = _disjoint_views()
+    on = VGGTXCreator(min_views=2)._multiview_mask(depth, intrinsics, extrinsics)
+    off = VGGTXCreator(min_views=0)._multiview_mask(depth, intrinsics, extrinsics)
+    assert on.sum() == off.sum() == depth.size
+
+
+def test_zero_depth_is_dropped_with_the_filter_off():
+    raw = vggt_raw_outputs(n=3, h=8, w=10)
+    raw["depth"][0, 0, 0] = 0.0
+    assert _run(VGGTXCreator(min_views=0), raw) == 3 * 8 * 10 - 1
+
+
+########################################################################
+########## Preprocess store ############################################
+########################################################################
+
+
+@dataclass
+class _EchoCreator(BaseFeedforwardCreator):
+    """Minimal creator whose _preprocess decodes the files and echoes their dims."""
+
+    def _load_model(self, device: str) -> Any:
+        return object()
+
+    def _preprocess(self, paths: list[Path]) -> Any:
+        frames = [np.asarray(Image.open(p).convert("RGB")) for p in paths]
+        coords = np.array(
+            [[0, 0, f.shape[1], f.shape[0], f.shape[1], f.shape[0]] for f in frames],
+            dtype=np.float32,
+        )
+        return frames, coords
+
+    def _forward(self, model: Any, views: Any, **kwargs: Any) -> dict:
+        return {}
+
+    def _postprocess(self, raw_outputs: Any, **kwargs: Any) -> PointcloudResult:
+        raise NotImplementedError
+
+
+# Gappy source indices: a quality filter drops frames, so row position and frame_idx
+# diverge and a label taken from the wrong one is visible here.
+_FRAME_IDXS = [0, 3, 7, 9]
+
+
+def _make_images_dir(tmp_path) -> Path:
+    """Write a scene images/ directory whose frame indices are non-contiguous."""
+    frames = [np.full((32, 48, 3), idx, dtype=np.uint8) for idx in _FRAME_IDXS]
+    images_dir = tmp_path / "images"
+    fr.write_frames(images_dir, frames, _FRAME_IDXS)
+    return images_dir
+
+
+def test_setup_inference_labels_are_file_stems(tmp_path):
+    creator = _EchoCreator()
+
+    creator.setup_inference(fr.frame_paths(_make_images_dir(tmp_path)))
+
+    # Labels are the filename stems — never the row position, which would misjoin poses to frames
+    assert [p.name for p in creator.image_paths] == [
+        f"frame_{i:06d}" for i in _FRAME_IDXS
+    ]
+    assert [f.shape for f in creator.views] == [(32, 48, 3)] * 4
+    assert creator.original_coords.shape == (4, 6)
+
+
+def test_setup_inference_reads_pixels_in_filename_order(tmp_path):
+    """Frame N's pixels land at row N — a reorder would shift every pose against its frame."""
+    creator = _EchoCreator()
+
+    creator.setup_inference(fr.frame_paths(_make_images_dir(tmp_path)))
+
+    # _make_images_dir paints each frame with its own source index
+    assert [int(f[0, 0, 0]) for f in creator.views] == _FRAME_IDXS
+
+
+def test_colmap_image_names_stable_extensionless(tmp_path):
+    """Extension-less frame_{idx:06d} labels are valid, stable COLMAP image names."""
+    names = [f"frame_{i:06d}" for i in (0, 1)]
+    result = PointcloudResult(
+        points=np.zeros((1, 3), dtype=np.float32),
+        colors=np.zeros((1, 3), dtype=np.uint8),
+        extrinsics=np.stack([np.eye(4, dtype=np.float32)] * 2),
+        intrinsics=np.stack([np.eye(3, dtype=np.float32)] * 2),
+        model_intrinsics=np.stack([np.eye(3, dtype=np.float32)] * 2),
+        image_paths=[tmp_path / name for name in names],
+        original_coords=np.array([[0, 0, 64, 64, 64, 64]] * 2, dtype=np.float32),
+        model_width=64,
+        model_height=64,
+    )
+
+    recon = result.to_colmap()
+
+    got = sorted(recon.images[i].name for i in recon.images)
+    assert got == names

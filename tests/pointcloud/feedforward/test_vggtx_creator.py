@@ -1,5 +1,9 @@
+import dataclasses
+import os
+import subprocess
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -7,7 +11,12 @@ import torch
 import torch.nn as nn
 
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator, VGGTXCreator
+from collab_splats.pointcloud.feedforward import (
+    BaseFeedforwardCreator,
+    MapAnythingCreator,
+    VGGTXCreator,
+)
+from tests.pointcloud.conftest import _frame_files, _frames
 
 
 def test_vggtx_defaults():
@@ -171,15 +180,6 @@ def test_vggtx_extract_intermediate_features_layer_index():
     assert hooked_blocks == [1]
 
 
-def test_patch_vggtx_compute_similarity_deleted():
-    """_patch_vggtx_compute_similarity must not exist after refactor."""
-    import collab_splats.pointcloud.feedforward.vggtx as vggtx_mod
-
-    assert not hasattr(vggtx_mod, "_patch_vggtx_compute_similarity"), (
-        "_patch_vggtx_compute_similarity still exists — delete it and its _load_model call"
-    )
-
-
 def _postprocessed_outputs():
     """
     VGGTXCreator._postprocess on a seeded scene with a rotated, translated camera.
@@ -229,7 +229,7 @@ def test_vggtx_postprocess_populates_ba_fields():
     """VGGTXCreator._postprocess() must populate images/confidence/world_points."""
 
     creator = VGGTXCreator.__new__(VGGTXCreator)
-    creator.conf_threshold = 1.0
+    creator.conf_percentile = 1.0
     creator.image_paths = [Path("a.jpg"), Path("b.jpg")]
     creator.original_coords = np.tile(
         np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1)
@@ -251,3 +251,140 @@ def test_vggtx_postprocess_populates_ba_fields():
     assert result.world_points is not None
     assert result.images.shape[0] == N
     assert result.confidence.shape == (N, H, W)
+
+
+########################################################################
+########## CUDA guard ##################################################
+########################################################################
+
+
+REPO = str(Path(__file__).resolve().parents[3])
+
+
+def _run_without_gpu(code):
+    """Run `code` in a fresh interpreter with every GPU hidden; return the finished process."""
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "", "PYTHONPATH": REPO}
+    return subprocess.run(
+        [sys.executable, "-c", code], env=env, cwd=REPO, capture_output=True, text=True
+    )
+
+
+def test_pipeline_imports_without_gpu():
+    """No GPU: pointcloud, the reconstructor and mesh import; VGGT-X's CUDA warmup is not reached."""
+    proc = _run_without_gpu(
+        "import collab_splats.pointcloud, collab_splats.reconstructor, collab_splats.mesh"
+    )
+
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_vggtx_load_without_gpu_names_the_requirement():
+    """No GPU: loading the VGGT-X model raises our clear error, not VGGT-X's warmup traceback."""
+    proc = _run_without_gpu(
+        "from collab_splats.pointcloud import VGGTXCreator; VGGTXCreator()._load_model('cpu')"
+    )
+
+    assert proc.returncode != 0
+    assert "RuntimeError: the vggtx backend needs a CUDA GPU" in proc.stderr
+    assert "warmup_gelu_fused" not in proc.stderr
+
+
+########################################################################
+########## Preprocessing ###############################################
+########################################################################
+
+
+def _make_frames(tmp_path, n=2, width=1080, height=1920):
+    """Black frame files for preprocess tests."""
+    return _frame_files(_frames([(width, height)] * n), tmp_path)
+
+
+def test_preprocess_calls_crop_mode(tmp_path):
+    """_preprocess must call load_and_preprocess_images with mode='crop'."""
+    paths = _make_frames(tmp_path, n=2)
+    c = VGGTXCreator()
+    fake_images = torch.zeros(2, 3, 518, 518)
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images",
+        return_value=fake_images,
+    ) as m:
+        images, coords = c._preprocess(paths)
+        assert m.called
+        _, kwargs = m.call_args
+        assert kwargs.get("mode") == "crop", (
+            f"expected mode='crop', got {kwargs.get('mode')!r}"
+        )
+
+
+def test_preprocess_original_coords_shape(tmp_path):
+    """_preprocess returns original_coords with shape (N, 6)."""
+    paths = _make_frames(tmp_path, n=3)
+    c = VGGTXCreator()
+    fake_images = torch.zeros(3, 3, 518, 518)
+    with patch(
+        "collab_splats.pointcloud.feedforward.vggtx.load_and_preprocess_images",
+        return_value=fake_images,
+    ):
+        _, coords = c._preprocess(paths)
+    assert coords.shape == (3, 6), f"expected (3, 6), got {coords.shape}"
+    assert coords.dtype == np.float32
+
+
+########################################################################
+########## in-memory frame handoff #####################################
+########################################################################
+
+
+@pytest.mark.parametrize(
+    "sizes",
+    [
+        [(96, 48)] * 9,
+        [(96, 48)] * 4 + [(48, 96)] * 3,
+        [(200, 50)] * 3,
+        [(64, 300)] * 2,
+        [(518, 280), (300, 301)],
+        [(1920, 1080), (1080, 1920), (1920, 1080)],
+    ],
+)
+def test_preprocess_frames_match_files(tmp_path, sizes):
+    """
+    Handed-off arrays preprocess bit-exact to the same frames read back from PNG.
+    """
+    rng = np.random.default_rng(0)
+    frames = [rng.integers(0, 256, (h, w, 3), dtype=np.uint8) for w, h in sizes]
+    paths = _frame_files(frames, tmp_path)
+
+    views_f, coords_f = VGGTXCreator()._preprocess(paths)
+
+    from_arrays = VGGTXCreator()
+    from_arrays.frames = {p.name: f for p, f in zip(paths, frames, strict=True)}
+    views_a, coords_a = from_arrays._preprocess(paths)
+
+    assert torch.equal(views_a, views_f)
+    np.testing.assert_array_equal(coords_a, coords_f)
+
+
+########################################################################
+########## Density defaults ############################################
+########################################################################
+
+
+def test_base_has_max_points_field():
+    fields = {f.name: f for f in dataclasses.fields(BaseFeedforwardCreator)}
+    assert "max_points" in fields
+    assert fields["max_points"].default == 500_000
+
+
+def test_vggtx_conf_percentile_default():
+    fields = {f.name: f for f in dataclasses.fields(VGGTXCreator)}
+    assert fields["conf_percentile"].default == 35.0
+
+
+def test_vggtx_inherits_max_points():
+    fields = {f.name: f for f in dataclasses.fields(VGGTXCreator)}
+    assert fields["max_points"].default == 500_000
+
+
+def test_mapanything_inherits_max_points():
+    fields = {f.name: f for f in dataclasses.fields(MapAnythingCreator)}
+    assert fields["max_points"].default == 500_000

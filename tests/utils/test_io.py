@@ -2,6 +2,7 @@
 Torch-free IO helpers: JSON reports, images, zarr stores.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from PIL import Image
 
 from collab_splats.utils.io import (
     LZ4,
+    file_sha256,
     open_valid,
     read_image,
     to_json_safe,
@@ -77,6 +79,12 @@ def test_write_json_matches_json_dumps_bytes_and_leaves_no_tmp(tmp_path):
     assert path.read_text() == json.dumps(payload, indent=2)
     assert not (tmp_path / "r.json.tmp").exists()
     assert "NaN" not in write_json(tmp_path / "n.json", {"x": float("nan")}).read_text()
+
+
+def test_file_sha256_is_the_hex_digest_of_the_whole_file(tmp_path):
+    path = tmp_path / "blob.bin"
+    path.write_bytes(b"mesh bytes")
+    assert file_sha256(path) == hashlib.sha256(b"mesh bytes").hexdigest()
 
 
 ########################################################################

@@ -9,7 +9,6 @@ pycolmap SIFT database helpers shared by the sfm creators.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import sqlite3
@@ -20,6 +19,7 @@ from pathlib import Path
 
 import pycolmap
 
+from collab_splats.utils.io import file_sha256
 from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ def fetch_vocab_tree(cache_dir: Path | None = None) -> Path:
             ) from err
 
     # Check the file hash, and delete the file if it does not match
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = file_sha256(path)
 
     if digest != VOCAB_TREE_SHA256:
         path.unlink()

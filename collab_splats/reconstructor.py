@@ -8,7 +8,6 @@ Config-driven reconstruction pipeline, one output tree per scene.
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import itertools
 import logging
 import shutil
@@ -78,7 +77,7 @@ from collab_splats.semantics.store import (
     write_point_features,
 )
 from collab_splats.utils.colmap import write_colmap_reconstruction
-from collab_splats.utils.io import read_image, to_json_safe, write_json
+from collab_splats.utils.io import file_sha256, read_image, to_json_safe, write_json
 from collab_splats.utils.torch_utils import (
     batch_iterator,
     get_device,
@@ -552,11 +551,7 @@ class Reconstructor:
             Extractor name to lifted store path, in run order, fresh stores only.
         """
         mesh_path = self.outputs["mesh"]
-        mesh_sha = (
-            hashlib.sha256(mesh_path.read_bytes()).hexdigest()
-            if mesh_path.exists()
-            else None
-        )
+        mesh_sha = file_sha256(mesh_path) if mesh_path.exists() else None
         fresh = {}
 
         for name, path in self.lifted_stores.items():
@@ -1214,9 +1209,7 @@ class Reconstructor:
 
             # Record the mesh the vertex arrays index into
             if vertex_arrays:
-                attrs["mesh_sha256"] = hashlib.sha256(
-                    mesh_path.read_bytes()
-                ).hexdigest()
+                attrs["mesh_sha256"] = file_sha256(mesh_path)
 
         # Write points, vertex arrays and attrs together; the lifted store is the stage's done marker
         write_point_features(

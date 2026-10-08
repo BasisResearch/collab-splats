@@ -3,10 +3,12 @@ Torch-free IO helpers: images, JSON reports, zarr stores.
 
 - images: read_image decodes RGB; to_uint8_hwc turns [0, 1] floats into uint8 HWC
 - JSON: to_json_safe makes strict-JSON values; write_json writes them atomically
+- files: file_sha256 hashes a whole file
 - zarr: one LZ4 codec, the unreadable-store error set, open_valid for cache checks
 - meshes: write_textured_obj writes a UV-textured OBJ + MTL + albedo PNG
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -77,6 +79,24 @@ def write_json(path: str | Path, obj: Any, *, indent: int = 2) -> Path:
     tmp_path.write_text(json.dumps(to_json_safe(obj), indent=indent))
     os.replace(tmp_path, path)
     return path
+
+
+########################################################################
+# Files
+########################################################################
+
+
+def file_sha256(path: str | Path) -> str:
+    """
+    SHA-256 of a whole file's bytes.
+
+    Args:
+        path: file to hash.
+
+    Returns:
+        Hex digest.
+    """
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 ########################################################################

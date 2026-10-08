@@ -16,7 +16,6 @@ Usage:
 """
 
 import argparse
-import hashlib
 import logging
 import threading
 import zlib
@@ -35,6 +34,7 @@ from PIL import Image
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.semantics.store import read_point_features
+from collab_splats.utils.io import file_sha256
 from collab_splats.utils.torch_utils import pytorch_gc
 from collab_splats.utils.visualization import apply_viridis
 
@@ -565,7 +565,7 @@ def _find_stores(backend_dir: Path) -> dict[str, Path]:
     - listed: `<backend>/semantics/*_lifted.zarr` with `vertex_word_ids` or `vertex_features`
     - a store lifted onto another mesh.ply (`mesh_sha256` differs) is stale and skipped
     """
-    mesh_sha256 = hashlib.sha256((backend_dir / "mesh.ply").read_bytes()).hexdigest()
+    mesh_sha256 = file_sha256(backend_dir / "mesh.ply")
     stores = {}
 
     for path in sorted((backend_dir / "semantics").glob("*_lifted.zarr")):

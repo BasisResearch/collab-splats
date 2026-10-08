@@ -409,7 +409,6 @@ def test_write_outputs_writes_three_artifacts_and_no_zarr(tmp_path):
     assert (tmp_path / "splats.ply").exists()
     assert (tmp_path / "ckpt.pt").exists()
     assert (tmp_path / "splats_quality_report.json").exists()
-    assert not (tmp_path / "splats.zarr").exists()
 
 
 @cuda

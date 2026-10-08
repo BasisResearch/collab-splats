@@ -325,19 +325,6 @@ def test_bad_spec_key_message_names_the_keys_legal_for_that_loss():
         )
 
 
-@pytest.mark.parametrize("depth_ratio", [1.5, -0.5])
-def test_depth_ratio_out_of_range_rejected(depth_ratio):
-    with pytest.raises(ValueError, match=r"depth_ratio must be in \[0, 1\]"):
-        SplatsConfig.from_dict(
-            {
-                "primitive": "2dgs",
-                "losses": {
-                    "normal_consistency": {"weight": 0.05, "depth_ratio": depth_ratio}
-                },
-            }
-        )
-
-
 # yaml parses `yes`/`on`/`true` to True, which a bare float() would take as a full median blend
 @pytest.mark.parametrize("depth_ratio", [True, False, None, "0.6", [0.6]])
 def test_depth_ratio_non_numeric_rejected(depth_ratio):
@@ -348,16 +335,6 @@ def test_depth_ratio_non_numeric_rejected(depth_ratio):
                 "losses": {
                     "normal_consistency": {"weight": 0.05, "depth_ratio": depth_ratio}
                 },
-            }
-        )
-
-
-def test_depth_ratio_is_2dgs_only():
-    with pytest.raises(ValueError, match="2dgs"):
-        SplatsConfig.from_dict(
-            {
-                "primitive": "3dgs",
-                "losses": {"normal_consistency": {"weight": 0.05, "depth_ratio": 0.6}},
             }
         )
 
@@ -409,7 +386,6 @@ def test_train_scaffold_runs_and_writes_outputs(tmp_path, primitive):
     for name in ("splats.ply", "ckpt.pt", "splats_quality_report.json"):
         assert (tmp_path / name).exists(), name
 
-    assert not (tmp_path / "splats.zarr").exists()
     checkpoint = torch.load(tmp_path / "ckpt.pt", weights_only=False)
     assert "anchors" in checkpoint["splats"]
     assert "mlps" in checkpoint

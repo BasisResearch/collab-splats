@@ -698,8 +698,7 @@ class LoopClosure:
                 self._viz_reupload_all()
 
         # One cache release after the loop
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        pytorch_gc()
 
         # Add deferred loop edges (live mode added them in the loop), then the final solve
         if cfg.loop_edge_timing == "deferred":

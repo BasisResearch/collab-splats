@@ -44,6 +44,7 @@ from collab_splats.geometry.transforms import (
 from collab_splats.utils.torch_utils import (
     batch_iterator,
     get_device,
+    pytorch_gc,
     to_numpy,
 )
 
@@ -483,7 +484,7 @@ class BundleAdjustment:
             # Without photometric one pass of up to lm_steps; with it, per scale and re-sample 5 IRLS steps
             for gray_l, depth_l, K_l, n_relin in levels or [(None, None, None, 1)]:
                 # Hand torch's cached blocks back once per scale: warp allocates the Jacobian outside torch's pool
-                torch.cuda.empty_cache()
+                pytorch_gc()
 
                 # One pass per re-sample; lm_steps without photometric, 5 with it
                 for _ in range(n_relin):

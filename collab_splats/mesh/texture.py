@@ -29,6 +29,7 @@ from collab_splats.geometry.transforms import extract_intrinsics, invert_poses
 from collab_splats.mesh.utils import adjacent_face_pairs, validate_views
 from collab_splats.utils.image import fill_missing_pixels
 from collab_splats.utils.io import to_uint8_hwc, write_textured_obj
+from collab_splats.utils.torch_utils import pytorch_gc
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,7 @@ def unwrap_view_charts(
         _smooth_labels(labels, scores, pairs, alpha=alpha, rounds=rounds).cpu().numpy()
     )
     del scores
-    torch.cuda.empty_cache()
+    pytorch_gc()
 
     # Camera UVs: corner pixels in the label view
     fv = verts[faces]

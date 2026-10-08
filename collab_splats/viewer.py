@@ -901,7 +901,7 @@ def main() -> None:
         help="show texture/mesh.obj over the same surface",
     )
     parser.add_argument(
-        "--texture_size", type=int, default=4096, help="displayed texture edge, pixels"
+        "--texture-size", type=int, default=4096, help="displayed texture edge, pixels"
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)

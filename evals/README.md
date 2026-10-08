@@ -58,7 +58,7 @@ condition runs single-pass and needs a `max_frames` the backend fits in one go.
 ## Run
 
 ```bash
-/opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/cross_model_chess.yaml --dry_run
+/opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/cross_model_chess.yaml --dry-run
 /opt/venv/reconstruction/bin/python -m evals.eval --config evals/configs/cross_model_chess.yaml   # in tmux
 ```
 

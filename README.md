@@ -249,7 +249,7 @@ python scripts/preprocess_gdrive_videos.py --only GH010234   # one clip
 We benchmark against ground-truth datasets with `evals/eval.py`:
 
 ```bash
-python -m evals.eval --config evals/configs/7scenes.yaml --dry_run
+python -m evals.eval --config evals/configs/7scenes.yaml --dry-run
 ```
 
 Results land in `evals/results/`; datasets and grid configs are described in [evals/README.md](evals/README.md).

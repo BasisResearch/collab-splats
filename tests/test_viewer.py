@@ -701,7 +701,7 @@ def test_main_runs_as_a_module():
         text=True,
         check=True,
     )
-    assert "outputs root" in out.stdout and "--texture_size" in out.stdout
+    assert "outputs root" in out.stdout and "--texture-size" in out.stdout
 
 
 def test_find_backends_lists_meshed_scene_backends_by_label(tmp_path):

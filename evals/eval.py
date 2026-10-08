@@ -385,7 +385,7 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="grid YAML")
-    parser.add_argument("--dry_run", action="store_true", help="print each cell command, run nothing")
+    parser.add_argument("--dry-run", action="store_true", help="print each cell command, run nothing")
     parser.add_argument("--cell", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")

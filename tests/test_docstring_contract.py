@@ -25,7 +25,7 @@ PACKAGES = ("preproc", "semantics", "pointcloud", "geometry", "splats", "mesh", 
 MODULES = ("utils/io.py", "reconstructor.py", "remote.py", "__main__.py", "viewer.py")
 
 # Repo-root dirs outside collab_splats/ held to the contract; their top-level *.py only
-TOP_LEVEL = ("evals",)
+TOP_LEVEL = ("evals", "scripts")
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -209,7 +209,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 
 # Packages that finished their release cleanup; the rest xfail the release checks
 RELEASED: frozenset[str] = frozenset(
-    {"preproc", "semantics", "geometry", "splats", "mesh", "evals", "localization", "dashboard"}
+    {"preproc", "semantics", "geometry", "splats", "mesh", "evals", "localization", "dashboard", "scripts"}
 )
 
 # Module-level numbers that are facts, not tunables

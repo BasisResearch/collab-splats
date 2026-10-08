@@ -17,6 +17,9 @@ _spec = importlib.util.spec_from_file_location("preprocess_gdrive_videos", _SCRI
 preproc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(preproc)
 
+# solve_offset's default audio rate, Hz
+RATE = 8000
+
 
 ########
 # sanitize
@@ -111,12 +114,7 @@ def test_flat_dir_name_for_a_video_directly_in_the_source_root():
     ],
 )
 def test_flat_dir_name_reproduces_names_already_in_the_bucket(relative, expected):
-    """Pin real paths to the curated folder names already pushed to GCS.
-
-    These directories exist in the environments-curated bucket, and push_curated.sh runs
-    rclone copy rather than sync, so a rename uploads a duplicate and orphans the original.
-    A change to sanitize or to the join must fail here rather than silently at 12 GB.
-    """
+    """Pin real paths to bucket folder names; push uses rclone copy, so a rename duplicates data."""
     assert preproc.flat_dir_name(_ROOT / relative, _ROOT) == expected
 
 
@@ -132,8 +130,7 @@ def _touch(path):
 
 
 def test_find_videos_skips_dotfiles(tmp_path):
-    # "._C0104.MP4" is an AppleDouble sidecar of Finder metadata, not video, and it passes a
-    # suffix-only filter. ".DS_Store" is caught by the same condition.
+    # AppleDouble "._X" sidecars and .DS_Store pass a suffix filter, so dotfiles are skipped
     _touch(tmp_path / "C0104.MP4")
     _touch(tmp_path / "._C0104.MP4")
     _touch(tmp_path / ".DS_Store")
@@ -156,8 +153,7 @@ def tree(tmp_path):
     _touch(root / "2026-06-29" / "Phone pics and splat videos" / "src" / "IMG_4085.MOV")
     # A video directly in a date folder with no src/ anywhere: another original
     _touch(root / "2026-06-03" / "GH010218.MP4")
-    # An undated top-level folder: walked like any other, because the src/ rule is the
-    # only structural assumption made about the tree
+    # An undated top-level folder: walked like any other, since only the src/ rule is assumed
     _touch(root / "scratch" / "whatever.mp4")
     _touch(root / "scratch" / "src" / "whatever.MP4")
     # Noise that must never be picked up
@@ -208,7 +204,7 @@ def test_plan_videos_walks_undated_top_level_dirs(tree):
 
 
 def test_plan_videos_walks_videos_directly_in_a_date_folder(tmp_path):
-    # The old plan_copies never looked here, so 2026-06-03/GH010218-220.MP4 were invisible
+    # Videos sitting directly in a date folder are curated too
     root = tmp_path / "gdrive-src"
     _touch(root / "2026-06-03" / "GH010218.mp4")
     _touch(root / "2026-06-03" / "src" / "GH010218.MP4")
@@ -226,8 +222,7 @@ def test_plan_videos_walks_arbitrarily_deep_trees(tmp_path):
 
 
 def test_plan_videos_skips_a_video_orphaned_inside_src(tmp_path):
-    # A video inside src/ with nothing above it is never curated: its flat name would bake in
-    # "src", and where it really belongs is a judgement call
+    # An orphan inside src/ is never curated: its flat name would bake in "src"
     root = tmp_path / "gdrive-src"
     _touch(root / "2026-07-15" / "Goprosplat" / "src" / "GH010228.MP4")
     assert preproc.plan_videos(root) == []
@@ -253,8 +248,7 @@ def test_plan_videos_prunes_src_at_any_depth(tmp_path):
 
 
 def test_plan_videos_never_pairs_two_appledouble_files(tmp_path):
-    # macOS writes ._X.MP4 beside X.MP4 on SD cards. Both halves present, stems match, and
-    # without the dotfile filter two 4 KB metadata blobs are handed to ffmpeg as footage.
+    # Matching AppleDouble ._X.MP4 files in both places must not pair as footage
     root = tmp_path / "gdrive-src"
     folder = root / "2024-07-09" / "SplatsSD"
     _touch(folder / "._C0104.MP4")
@@ -344,8 +338,7 @@ def test_needs_copy_is_true_on_a_fresh_destination(tmp_path):
 
 
 def test_needs_copy_is_false_when_the_recorded_source_still_matches(tmp_path):
-    # The trap: injection grows the curated mp4 past its source size, so a destination-size
-    # check would re-copy forever. The gate keys off the fingerprint in the sidecar instead.
+    # Injection grows the curated mp4, so the gate keys off the sidecar fingerprint, not dest size
     src = tmp_path / "src" / "GH010228.MP4"
     edit = tmp_path / "GH010228.mp4"
     _touch(src)
@@ -478,23 +471,23 @@ def _rng():
 
 def test_solve_offset_recovers_a_known_trim():
     rng = _rng()
-    body = rng.standard_normal(preproc.AUDIO_RATE * 3).astype(np.float32)
-    head = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
-    tail = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    body = rng.standard_normal(RATE * 3).astype(np.float32)
+    head = rng.standard_normal(RATE).astype(np.float32)
+    tail = rng.standard_normal(RATE).astype(np.float32)
     source = np.concatenate([head, body, tail])
 
     result = preproc.solve_offset(body, source)
     assert result["ok"] is True
     assert result["r"] == pytest.approx(1.0, abs=1e-4)
     # Within one audio sample of the true 1.0 s offset
-    assert abs(result["offset_s"] - 1.0) <= 1.0 / preproc.AUDIO_RATE
+    assert abs(result["offset_s"] - 1.0) <= 1.0 / RATE
 
 
 def test_solve_offset_is_unaffected_by_a_gain_change():
     # Normalized correlation is scale-free, so a level difference must not lower r
     rng = _rng()
-    body = rng.standard_normal(preproc.AUDIO_RATE * 2).astype(np.float32)
-    source = np.concatenate([rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32), body])
+    body = rng.standard_normal(RATE * 2).astype(np.float32)
+    source = np.concatenate([rng.standard_normal(RATE).astype(np.float32), body])
 
     result = preproc.solve_offset(body * 0.25, source)
     assert result["ok"] is True
@@ -503,18 +496,18 @@ def test_solve_offset_is_unaffected_by_a_gain_change():
 
 def test_solve_offset_rejects_uncorrelated_audio():
     rng = _rng()
-    edit = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
-    source = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
+    edit = rng.standard_normal(RATE).astype(np.float32)
+    source = rng.standard_normal(RATE * 5).astype(np.float32)
 
     result = preproc.solve_offset(edit, source)
     assert result["ok"] is False
-    assert result["r"] < preproc.DEFAULT_ALIGN_MIN_R
+    assert result["r"] < 0.95
 
 
 def test_solve_offset_rejects_an_edit_longer_than_its_source():
     rng = _rng()
-    edit = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
-    source = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    edit = rng.standard_normal(RATE * 5).astype(np.float32)
+    source = rng.standard_normal(RATE).astype(np.float32)
 
     result = preproc.solve_offset(edit, source)
     assert result["ok"] is False
@@ -523,56 +516,52 @@ def test_solve_offset_rejects_an_edit_longer_than_its_source():
 
 def test_solve_offset_rejects_silence():
     # A constant signal has zero variance, so correlation is undefined rather than perfect
-    source = np.zeros(preproc.AUDIO_RATE * 3, dtype=np.float32)
-    result = preproc.solve_offset(np.zeros(preproc.AUDIO_RATE, dtype=np.float32), source)
+    source = np.zeros(RATE * 3, dtype=np.float32)
+    result = preproc.solve_offset(np.zeros(RATE, dtype=np.float32), source)
     assert result["ok"] is False
 
 
 def test_solve_offset_survives_a_silent_source_window():
-    # A source that opens with digital silence drives the denominator to zero at lag 0.
-    # The guard must yield 0 there rather than a nan, which would otherwise win the argmax
-    # and return a confidently wrong offset.
+    # A silent source window must score 0, not nan, so it cannot win the argmax
     rng = _rng()
-    body = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
-    source = np.concatenate([np.zeros(preproc.AUDIO_RATE, dtype=np.float32), body])
+    body = rng.standard_normal(RATE).astype(np.float32)
+    source = np.concatenate([np.zeros(RATE, dtype=np.float32), body])
 
     result = preproc.solve_offset(body, source)
     assert result["ok"] is True
-    assert abs(result["offset_s"] - 1.0) <= 1.0 / preproc.AUDIO_RATE
+    assert abs(result["offset_s"] - 1.0) <= 1.0 / RATE
     assert np.isfinite(result["r"])
 
 
 def test_solve_offset_threshold_is_overridable():
     rng = _rng()
-    edit = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
-    source = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
+    edit = rng.standard_normal(RATE).astype(np.float32)
+    source = rng.standard_normal(RATE * 5).astype(np.float32)
 
     assert preproc.solve_offset(edit, source, min_r=0.0)["ok"] is True
 
 
 def test_solve_offset_recovers_a_lag_that_overruns_the_source_end():
-    # The GH010218 regression: Resolve's AAC re-encode leaves the decoded edit longer than the
-    # region it was cut from, so the true lag sits just above len(source) - len(edit). Before
-    # the tolerance existed that lag was unreachable and the clip scored 0.09 instead of 1.0.
+    # AAC re-encode pads the edit, so the true lag sits just past len(source) - len(edit)
     rng = _rng()
-    body = rng.standard_normal(preproc.AUDIO_RATE * 3).astype(np.float32)
-    head = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    body = rng.standard_normal(RATE * 3).astype(np.float32)
+    head = rng.standard_normal(RATE).astype(np.float32)
     source = np.concatenate([head, body])
     # A short tail with no counterpart in the source, standing in for the encoder's padding
     edit = np.concatenate([body, rng.standard_normal(400).astype(np.float32)])
     # The true lag exceeds what a strictly-fitting search could reach
-    assert preproc.AUDIO_RATE > len(source) - len(edit)
+    assert RATE > len(source) - len(edit)
 
     result = preproc.solve_offset(edit, source)
     assert result["ok"] is True
-    assert abs(result["offset_s"] - 1.0) <= 1.0 / preproc.AUDIO_RATE
+    assert abs(result["offset_s"] - 1.0) <= 1.0 / RATE
 
 
 def test_solve_offset_rejects_an_edit_longer_than_the_source_plus_tolerance():
     # The tolerance widens the search; it must not become a way to accept nonsense
     rng = _rng()
-    edit = rng.standard_normal(preproc.AUDIO_RATE * 5).astype(np.float32)
-    source = rng.standard_normal(preproc.AUDIO_RATE).astype(np.float32)
+    edit = rng.standard_normal(RATE * 5).astype(np.float32)
+    source = rng.standard_normal(RATE).astype(np.float32)
 
     result = preproc.solve_offset(edit, source)
     assert result["ok"] is False
@@ -583,11 +572,7 @@ def test_solve_offset_rejects_an_edit_longer_than_the_source_plus_tolerance():
 # Metadata extraction
 ########
 
-# exiftool returns exactly ONE object for the whole file and encodes the embedded document in
-# each key's PREFIX, not in separate objects: `Main:` is the container, `DocN:` is one 1 Hz GPMF
-# chunk, and `DocN-M:` is an extra GPS fix inside chunk N that carries no time of its own. The key
-# structure below is copied from GH010218.MP4; only the values are shortened. Chunk 4 is the real
-# trailing device chunk, which repeats Model/SerialNumber over a zero-length window.
+# One exiftool object keyed Main:/DocN:/DocN-M:, shaped like GH010218.MP4 with shortened values
 _DUMP = [
     {
         "SourceFile": "/x/src/GH010218.MP4",
@@ -662,8 +647,7 @@ def test_iter_documents_orders_chunks_numerically_not_lexically():
 
 
 def test_exif_dump_asks_for_the_binary_payloads(monkeypatch):
-    # Without -b every wide IMU tag reads "(Binary data 10610 bytes, use -b option to extract)"
-    # instead of numbers, and the telemetry expansion dies on the first chunk
+    # Without -b, wide IMU tags come back as a binary placeholder string instead of numbers
     commands = []
 
     def fake_run(command, **kwargs):
@@ -685,24 +669,20 @@ def test_static_tags_reads_the_main_group():
 
 
 def test_static_tags_prefers_the_main_group_over_a_chunk_of_the_same_name():
-    # Bug A: with the whole file in one object, a dump-wide search let the LAST DocN group win.
-    # GPSAltitude is per-sample on every GPMF chunk, so the sidecar reported one sample's
-    # altitude as the container's.
+    # A per-chunk GPSAltitude must not override the container's own value
     dump = [{"Main:GPSAltitude": 5.2, "Doc1:SampleTime": 0.0, "Doc1:GPSAltitude": 15.445}]
     assert preproc.static_tags(dump)["GPSAltitude"] == 5.2
 
 
 def test_static_tags_omits_a_tag_only_the_chunks_carry():
-    # GH010218's container has no GPSAltitude and no SerialNumber at all; both live only on the
-    # GPMF chunks, so reading dump-wide invented whole-file values out of per-chunk ones
+    # Tags that live only on GPMF chunks must not be reported as whole-file values
     tags = preproc.static_tags(_DUMP)
     assert "GPSAltitude" not in tags
     assert "SerialNumber" not in tags
 
 
 def test_first_fix_skips_the_unlocked_zero_zero_sample():
-    # A GoPro emits 0,0 before satellite lock; treating that as a fix would put every early
-    # clip in the Gulf of Guinea
+    # A GoPro emits 0,0 before satellite lock, which is not a real fix
     fix = preproc.first_fix(_DUMP)
     assert fix["latitude"] == pytest.approx(42.3532)
     assert fix["longitude"] == pytest.approx(-71.0659)
@@ -710,8 +690,7 @@ def test_first_fix_skips_the_unlocked_zero_zero_sample():
 
 
 def test_first_fix_returns_the_first_chunk_not_the_last():
-    # Bug A on the metadata side: collapsing every DocN group onto one key left only the clip's
-    # LAST fix, so GH010218 reported 42.3526494 — the far end of the walk — as its location
+    # The first chunk's fix is the clip's location, not the last chunk's
     dump = [
         {
             "Doc1:SampleTime": 0.0,
@@ -734,7 +713,13 @@ def test_first_fix_returns_the_first_chunk_not_the_last():
 
 
 def test_first_fix_returns_none_when_nothing_locked():
-    assert preproc.first_fix([{"Doc1:SampleTime": 0.0, "Doc1:GPSLatitude": 0.0, "Doc1:GPSLongitude": 0.0}]) is None
+    dump = [{"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:GPSLatitude": 0.0, "Doc1:GPSLongitude": 0.0}]
+    assert preproc.first_fix(dump) is None
+
+
+def test_gps_fixes_requires_chunk_timing():
+    with pytest.raises(KeyError, match="SampleDuration"):
+        preproc.gps_fixes((1, {"SampleTime": 0.0, "GPSLatitude": 42.0, "GPSLongitude": -71.0}, []))
 
 
 def test_first_fix_reads_a_container_location_when_there_is_no_track():
@@ -746,8 +731,7 @@ def test_first_fix_reads_a_container_location_when_there_is_no_track():
 
 
 def test_first_fix_prefers_a_timed_chunk_fix_over_the_container_fix():
-    # _DUMP carries both; the container coordinate is rounded and has no time, so it is only
-    # ever the fallback for clips with no GPMF track
+    # The untimed, rounded container coordinate is only a fallback for clips with no GPMF track
     assert preproc.first_fix(_DUMP)["latitude"] == pytest.approx(42.3532)
 
 
@@ -757,8 +741,7 @@ def test_first_fix_honours_the_trim_window():
 
 
 def test_first_fix_reads_a_sub_sample_inside_the_chunk_window():
-    # The DocN-M fixes have no time of their own; they are spread across their parent chunk, so
-    # chunk 2's single sub-sample lands halfway through the 1.001 s window at 1.5015 s
+    # Untimed DocN-M fixes are spread across their chunk, so chunk 2's lands at 1.5015 s
     fix = preproc.first_fix(_DUMP, start_s=1.5)
     assert fix["latitude"] == pytest.approx(42.3533)
     assert fix["source_time"] == pytest.approx(1.5015)
@@ -779,17 +762,14 @@ def test_gps_payload_records_a_missing_fix_as_null():
 
 
 def test_gps_payload_marks_a_fix_inside_the_cut_as_exact():
-    # The cut starts at 0.5 s and _DUMP has a locked fix at 1.001 s, so the fix comes
-    # from inside the trim and must not be labelled source-anchored
+    # A fix at 1.001 s lies inside a cut starting at 0.5 s, so it is not source-anchored
     payload = preproc.gps_payload(_DUMP, {"offset_s": 0.5, "r": 0.997, "ok": True})
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is False
 
 
 def test_gps_payload_does_not_anchor_a_container_only_fix():
-    # A phone clip has one untimed whole-file coordinate reported at 0, so any non-zero offset
-    # skips it and falls through to the whole-source search. That is not a lost timed fix, and
-    # labelling it source-anchored stamped the flag on every phone clip in the tree.
+    # A phone clip's untimed container fix is not a lost timed fix, so it is not source-anchored
     dump = [{"Main:Model": "Pixel 9 Pro", "Main:GPSLatitude": 42.3532, "Main:GPSLongitude": -71.0659}]
     payload = preproc.gps_payload(dump, {"offset_s": 4.2, "r": 0.99, "ok": True})
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
@@ -797,8 +777,7 @@ def test_gps_payload_does_not_anchor_a_container_only_fix():
 
 
 def test_gps_payload_records_the_gpmd_chunk_residual():
-    # GPMF chunks are 1 Hz, so the injected track starts on the first boundary at or after the
-    # cut. The residual is what a consumer needs to line the injected track up with the Parquet.
+    # The injected 1 Hz track starts on the first chunk at or after the cut; record the residual
     payload = preproc.gps_payload(_DUMP, {"offset_s": 0.4, "r": 0.997, "ok": True})
     # _DUMP has chunks at 0.0 and 1.001; the first at or after 0.4 is 1.001
     assert payload["gpmd_first_chunk_s"] == pytest.approx(1.001)
@@ -812,16 +791,14 @@ def test_gps_payload_records_a_null_residual_without_a_gpmd_track():
 
 
 def test_gps_payload_marks_a_rejected_alignment_as_source_anchored():
-    # Alignment failed, so the trim window is unknown and the fix is taken from the
-    # whole source; the flag records that the value is approximate
+    # Failed alignment takes the fix from the whole source, so it is flagged approximate
     payload = preproc.gps_payload(_DUMP, {"offset_s": 0.0, "r": 0.21, "ok": False})
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is True
 
 
 def test_gps_payload_reads_an_original_at_its_own_start():
-    # An original is its own source: the identity alignment puts the whole file inside the
-    # "cut", so the first locked fix is exact rather than source-anchored
+    # An original's identity alignment puts the whole file in the cut, so its fix is exact
     payload = preproc.gps_payload(_DUMP, {"offset_s": 0.0, "r": 1.0, "ok": True})
     assert payload["gps"]["latitude"] == pytest.approx(42.3532)
     assert payload["gps_source_anchored"] is False
@@ -831,9 +808,7 @@ def test_gps_payload_reads_an_original_at_its_own_start():
 # Telemetry
 ########
 
-# Three 1 Hz chunks, each holding 3 accelerometer triplets, all inside the single object exiftool
-# really returns. The real chunks hold ~202 triplets over 1.001 s; the runs are shortened and the
-# duration rounded to 1.0 so the per-sample arithmetic below stays readable.
+# Three 1 s chunks of 3 IMU triplets each, a shortened stand-in for real ~202-triplet chunks
 _IMU_DUMP = [
     {
         "Main:Model": "GoPro Max",
@@ -864,8 +839,7 @@ def test_expand_gpmf_spreads_samples_across_the_chunk_duration():
 
 
 def test_expand_gpmf_yields_samples_from_every_chunk():
-    # Bug A: every DocN group lives in ONE object, so stripping the prefix collapsed all 381
-    # chunks onto one key and expand_gpmf saw a single chunk's worth of samples for the clip
+    # All DocN groups share one object, so every chunk must contribute its own samples
     times, values = preproc.expand_gpmf(_IMU_DUMP, "Accelerometer", 3)
     assert values[0] == (1.0, 2.0, 3.0)
     assert values[3] == (10.0, 11.0, 12.0)
@@ -887,10 +861,7 @@ def test_expand_gpmf_returns_empty_for_a_missing_key():
 
 
 def test_expand_gpmf_skips_a_binary_placeholder_chunk(caplog):
-    # Bug B: read without -b, every wide IMU tag comes back as the literal string
-    # "(Binary data 10610 bytes, use -b option to extract)" and float() raised ValueError on
-    # "(Binary", killing the whole clip. exif_dump passes -b now, but a payload that is not
-    # numbers must be logged and skipped the same way a ragged one is.
+    # A non-numeric binary placeholder payload is logged and skipped like a ragged one
     placeholder = "(Binary data 10610 bytes, use -b option to extract)"
     dump = [{"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:Accelerometer": placeholder}]
     with caplog.at_level("WARNING"):
@@ -900,9 +871,7 @@ def test_expand_gpmf_skips_a_binary_placeholder_chunk(caplog):
 
 
 def test_expand_gpmf_skips_a_ragged_chunk(caplog):
-    # A truncated payload cannot be split into whole triplets; dropping it beats guessing.
-    # The warning is the load-bearing half: a wrong tag name shows up here and nowhere else,
-    # so an empty return with no warning would look identical to a clip that has no IMU.
+    # A truncated payload is dropped with a warning, so a wrong tag name is never silent
     dump = [{"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:Accelerometer": "1 2 3 4"}]
     with caplog.at_level("WARNING"):
         assert preproc.expand_gpmf(dump, "Accelerometer", 3) == ([], [])
@@ -913,9 +882,7 @@ def test_expand_gpmf_skips_a_ragged_chunk(caplog):
 # expand_gpmf_parallel
 ########
 
-# exiftool emits the GPMF GPS stream as parallel single-value tags, not as one wide tag — the
-# shape the old 5-wide GPSTrack read could never match. The chunk carries one representative fix
-# and every further fix in the same second rides along as a DocN-M sub-group with no time at all.
+# GPMF GPS as parallel single-value tags: one chunk fix plus an untimed DocN-M sub-sample
 _GPS_DUMP = [
     {
         "Doc1:SampleTime": 0.0,
@@ -965,8 +932,7 @@ def test_expand_gpmf_parallel_zips_one_row_per_fix():
 
 
 def test_expand_gpmf_parallel_emits_every_sub_sample():
-    # The GPS stream runs at ~18 Hz inside a 1 Hz chunk; reading the chunk's own fix alone threw
-    # away 17 fixes in every 18
+    # The ~18 Hz GPS stream inside a 1 Hz chunk yields one row per sub-sample
     times, values = preproc.expand_gpmf_parallel(_GPS_SUBSAMPLE_DUMP, preproc._GPMF_GPS_TAGS)
     assert len(times) == 6
     assert times == sorted(times)
@@ -976,7 +942,9 @@ def test_expand_gpmf_parallel_emits_every_sub_sample():
 
 def test_expand_gpmf_parallel_tolerates_an_absent_component():
     # Firmware that omits GPSSpeed3D must still yield the other four, not an empty stream
-    dump = [{"Doc1:SampleTime": 0.0, "Doc1:GPSLatitude": 42.3532, "Doc1:GPSLongitude": -71.0659}]
+    dump = [
+        {"Doc1:SampleTime": 0.0, "Doc1:SampleDuration": 1.0, "Doc1:GPSLatitude": 42.3532, "Doc1:GPSLongitude": -71.0659}
+    ]
     times, values = preproc.expand_gpmf_parallel(dump, preproc._GPMF_GPS_TAGS)
     assert times == [0.0]
     assert values == [(42.3532, -71.0659, None, None, None)]
@@ -1019,8 +987,7 @@ def test_telemetry_table_is_none_without_imu():
 
 
 def test_telemetry_table_populates_the_gps_columns():
-    # The regression this guards: gps was read as one 5-wide "GPSTrack", which is exiftool's
-    # scalar heading, so every chunk was skipped as ragged and gps_* was always null
+    # GPS columns come from the parallel GPS tags and are populated per fix
     table = preproc.telemetry_table(_GPS_DUMP, 0.0, duration_s=1.0)
     assert {"gps_lat", "gps_lon", "gps_alt", "gps_speed2d", "gps_speed3d"} <= set(table.column_names)
     assert table.column("gps_lat").to_pylist() == [pytest.approx(42.3532), pytest.approx(42.3533)]
@@ -1028,8 +995,7 @@ def test_telemetry_table_populates_the_gps_columns():
 
 
 def test_telemetry_table_carries_more_gps_rows_than_chunks():
-    # Bug A on the telemetry side: one fix per chunk gave a 1 Hz GPS column out of a ~18 Hz
-    # stream. Two chunks holding three fixes each must produce six populated rows, not two.
+    # Two chunks of three fixes each must produce six populated GPS rows, not two
     table = preproc.telemetry_table(_GPS_SUBSAMPLE_DUMP, 0.0, duration_s=2.0)
     populated = [value for value in table.column("gps_lat").to_pylist() if value is not None]
     assert len(populated) == 6
@@ -1044,8 +1010,7 @@ def test_telemetry_table_never_reads_gps_as_a_ragged_wide_tag(caplog):
 
 
 def test_telemetry_table_logs_the_row_count_and_fill_ratio(caplog):
-    # The streams do not share a time axis, so the union is sparse; the log is how a reader
-    # learns that a half-null column is expected rather than a bug
+    # Streams share no time axis, so the log reports fill ratios on the sparse union
     with caplog.at_level("INFO"):
         preproc.telemetry_table(_IMU_DUMP, 0.5, duration_s=1.0)
     assert "rows on the union time axis" in caplog.text
@@ -1053,8 +1018,7 @@ def test_telemetry_table_logs_the_row_count_and_fill_ratio(caplog):
 
 
 def test_telemetry_table_columns_are_sparse_on_a_disjoint_axis():
-    # Two streams whose chunks hold different sample counts land on different instants, so
-    # the union carries both and each column is null wherever the other stream sampled
+    # Streams with different sample counts interleave, leaving each column null at the other's instants
     dump = [
         {
             "Doc1:SampleTime": 0.0,
@@ -1104,11 +1068,7 @@ def test_gpmd_command_copies_every_curated_stream_and_only_the_gpmd_track():
 
 
 def test_gpmd_command_excludes_the_curated_datas_streams_after_mapping_them():
-    # The curated export's tmcd stream reports codec_name=unknown, and the mp4 muxer has no
-    # tag for that: "-map 0" alone drags it in and the remux dies before writing a header
-    # ("Could not find tag for codec none in stream #2 ... Could not write header"), so every
-    # GoPro clip silently ends up with no gpmd track. "-map -0:d" drops input 0's data streams
-    # again after "-map 0" pulls them in, which is why it must appear strictly after it.
+    # "-map -0:d" must follow "-map 0" to drop the export's unmuxable tmcd data stream
     command = preproc.gpmd_command(
         Path("/out/GH010234.mp4"), Path("/src/GH010234.MP4"), 4.2, 131.4, 3, Path("/out/tmp.mp4")
     )
@@ -1132,16 +1092,14 @@ def test_tag_command_skips_empty_values():
 
 
 def test_tag_command_writes_raw_numeric_values():
-    # exif_dump reads with -n, so GPSCoordinates arrives already raw. Writing it back without
-    # -n runs PrintConvInv over a raw value: exiftool warns, drops the tag, and still exits 0
+    # Tags arrive raw from exif_dump, so they must be written back with -n or exiftool drops them
     command = preproc.tag_command(Path("/out/GH010234.mp4"), {"GPSCoordinates": "42.3532 -71.0659 5.2"})
     assert "-n" in command
     assert "-GPSCoordinates=42.3532 -71.0659 5.2" in command
 
 
 def test_tag_command_drops_tags_exiftool_cannot_write():
-    # exiftool answers "Sorry, <tag> is not writable" for these two. They stay in the JSON
-    # sidecar via static_tags, but passing them to exiftool only buys a warning.
+    # exiftool cannot write these two tags, so they are kept out of the call
     tags = {"Model": "GoPro Max", "LensProjection": "Fisheye", "ElectronicImageStabilization": 1}
     command = preproc.tag_command(Path("/out/GH010234.mp4"), tags)
     assert "-Model=GoPro Max" in command
@@ -1158,8 +1116,7 @@ def test_static_tags_still_carries_the_unwritable_tags():
 
 
 def test_inject_warns_on_an_exiftool_warning_despite_a_zero_exit(tmp_path, monkeypatch, caplog):
-    # The branch this replaces was dead: exiftool exits 0 whenever any tag in the call lands,
-    # so a dropped tag shows up only in stderr. Asserting on the returncode would prove nothing.
+    # exiftool exits 0 if any tag lands, so a dropped tag is detected from stderr warnings
     curated = tmp_path / "GH010234.mp4"
     curated.write_bytes(b"video")
     stderr = "Warning: Error converting value for ItemList:GPSCoordinates (PrintConvInv)\n"
@@ -1176,7 +1133,7 @@ def test_inject_warns_on_an_exiftool_warning_despite_a_zero_exit(tmp_path, monke
     assert "GH010234.mp4" in caplog.text
 
 
-def test_inject_logs_a_non_zero_exiftool_exit_as_an_error(tmp_path, monkeypatch, caplog):
+def test_inject_raises_on_a_non_zero_exiftool_exit(tmp_path, monkeypatch):
     curated = tmp_path / "GH010234.mp4"
     curated.write_bytes(b"video")
     monkeypatch.setattr(
@@ -1184,11 +1141,27 @@ def test_inject_logs_a_non_zero_exiftool_exit_as_an_error(tmp_path, monkeypatch,
         "run",
         lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "", "Error: nothing to write\n"),
     )
-    with caplog.at_level("WARNING"):
+    with pytest.raises(RuntimeError, match="static tags failed.*nothing to write"):
         preproc.inject(curated, tmp_path / "src.MP4", None, 1.0, {})
 
-    assert "static tags failed" in caplog.text
-    assert any(record.levelname == "ERROR" for record in caplog.records)
+
+def test_inject_raises_on_a_failed_remux_and_removes_the_temp(tmp_path, monkeypatch):
+    curated = tmp_path / "GH010234.mp4"
+    curated.write_bytes(b"video")
+    temp = tmp_path / "GH010234.inject.mp4"
+
+    # ffmpeg leaves a partial temp behind and exits 1
+    def fake_run(command, **kwargs):
+        temp.write_bytes(b"partial")
+        return subprocess.CompletedProcess(command, 1, "", "Invalid data found\n")
+
+    monkeypatch.setattr(preproc, "find_gpmd_index", lambda path: 3)
+    monkeypatch.setattr(preproc.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="gpmd injection failed.*Invalid data"):
+        preproc.inject(curated, tmp_path / "src.MP4", 0.0, 1.0, {})
+
+    assert not temp.exists()
+    assert curated.read_bytes() == b"video"
 
 
 ########
@@ -1199,7 +1172,7 @@ _HAS_MEDIA_TOOLS = all(shutil.which(name) for name in ("ffmpeg", "ffprobe", "exi
 
 
 def _synth_video(path, duration=1, extra_args=()):
-    """Render a one-second mp4 with colour bars and a tone via ffmpeg's lavfi sources."""
+    """Render a one-second mp4 with color bars and a tone via ffmpeg's lavfi sources."""
     subprocess.run(
         [
             "ffmpeg",
@@ -1231,12 +1204,7 @@ def _synth_video(path, duration=1, extra_args=()):
 
 
 def _synth_gpmd_source(path, duration=2):
-    """Render an mp4 carrying a data track tagged `gpmd`, the way a GoPro original does.
-
-    ffmpeg cannot author a bin_data stream from scratch, so a timecode track is rendered and
-    its four-character format code is patched from `tmcd` to `gpmd`. ffprobe then reports the
-    stream exactly as it reports a real GoPro's GPMF track, which is all find_gpmd_index reads.
-    """
+    """Render an mp4 whose timecode track is patched from `tmcd` to `gpmd`, mimicking a GoPro."""
     path.parent.mkdir(parents=True, exist_ok=True)
     staging = path.with_name("tmcd_" + path.name)
     _synth_video(staging, duration=duration, extra_args=("-timecode", "00:00:00:00"))
@@ -1259,16 +1227,7 @@ def _stream_tags(path):
 @pytest.mark.slow
 @pytest.mark.skipif(not _HAS_MEDIA_TOOLS, reason="needs ffmpeg, ffprobe and exiftool")
 def test_inject_really_grafts_a_gpmd_track_onto_the_curated_video(tmp_path):
-    # The four argv-shape tests above never ran ffmpeg, which is how a temp file named
-    # "GH010234.mp4.inject" survived: ffmpeg cannot infer a muxer from that suffix and exits 1
-    # with "Unable to find a suitable output format", so every GoPro clip took the failure path.
-    #
-    # The curated file also carries a timecode track (-timecode), matching a real DaVinci
-    # Resolve export: ffprobe reports its codec as "unknown", the mp4 muxer has no tag for
-    # that, and "-map 0" alone drags it into the remux and aborts it before a header is even
-    # written. This reproduces that failure for real: with the "-map -0:d" fix removed from
-    # gpmd_command, this test fails with the muxer's own "Could not find tag for codec none in
-    # stream #2 ... Could not write header" rather than the misleading assertion below.
+    # Run real ffmpeg on a curated file with a Resolve-style timecode track the muxer cannot map
     curated = _synth_video(tmp_path / "GH010234.mp4", extra_args=("-timecode", "00:00:00:00"))
     source = _synth_gpmd_source(tmp_path / "src" / "GH010234.MP4")
     before = curated.stat().st_size
@@ -1408,7 +1367,7 @@ def test_process_video_writes_video_sidecar_and_telemetry(tmp_path, stub_externa
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
 
-    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
     folder = out / NAME
     assert record["status"] == "processed"
@@ -1420,14 +1379,13 @@ def test_process_video_writes_video_sidecar_and_telemetry(tmp_path, stub_externa
 
 
 def test_process_video_skips_a_second_run_over_an_injected_file(tmp_path, stub_externals):
-    # The trap this pipeline exists to avoid: injection left the curated mp4 larger than
-    # its source, so a destination-size check would re-copy and re-inject forever
+    # Injection grows the curated mp4, so a rerun must skip rather than re-copy and re-inject
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
-    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, 0.95, force=False)
     after_first = (out / NAME / "GH010234.mp4").read_bytes()
 
-    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
     assert record == {"name": NAME, "status": "skipped"}
     assert stub_externals["inject"] == 1
@@ -1437,9 +1395,9 @@ def test_process_video_skips_a_second_run_over_an_injected_file(tmp_path, stub_e
 def test_process_video_reinjects_from_the_pristine_edit_under_force(tmp_path, stub_externals):
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
-    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
-    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=True)
+    record = preproc.process_video(video, source, NAME, out, 0.95, force=True)
 
     assert record["status"] == "processed"
     assert stub_externals["inject"] == 2
@@ -1451,7 +1409,7 @@ def test_process_video_records_a_rejected_alignment(tmp_path, stub_externals, mo
     monkeypatch.setattr(preproc, "align", lambda video, source, name, **kw: {"offset_s": 0.0, "r": 0.2, "ok": False})
     video, source = _edit(tmp_path)
 
-    record = preproc.process_video(video, source, NAME, tmp_path / "curated", preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, tmp_path / "curated", 0.95, force=False)
 
     assert record["aligned"] is False
 
@@ -1461,7 +1419,7 @@ def test_process_video_curates_an_original(tmp_path, stub_externals):
     video = _original(tmp_path)
     out = tmp_path / "curated"
 
-    record = preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, None, NAME, out, 0.95, force=False)
 
     folder = out / NAME
     assert record["status"] == "processed"
@@ -1471,11 +1429,10 @@ def test_process_video_curates_an_original(tmp_path, stub_externals):
 
 
 def test_process_video_never_aligns_or_injects_an_original(tmp_path, stub_externals):
-    # An original is its own source: there is no cut to locate and its gpmd track is already
-    # on the right time axis, so both external passes are skipped rather than run on identity
+    # An original has no cut to locate and a native gpmd track, so align and inject are skipped
     video = _original(tmp_path)
 
-    record = preproc.process_video(video, None, NAME, tmp_path / "curated", preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, None, NAME, tmp_path / "curated", 0.95, force=False)
 
     assert stub_externals["align"] == 0
     assert stub_externals["inject"] == 0
@@ -1486,18 +1443,17 @@ def test_process_video_leaves_an_originals_bytes_untouched(tmp_path, stub_extern
     video = _original(tmp_path)
     out = tmp_path / "curated"
 
-    preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, None, NAME, out, 0.95, force=False)
 
     assert (out / NAME / "GH010234.mp4").read_bytes() == b"camera original"
 
 
 def test_an_originals_sidecar_records_it_as_unedited_and_natively_timed(tmp_path, stub_externals):
-    # gpmd_injected alone would read as "no telemetry in this mp4", which is exactly wrong
-    # for an original: the track is there and was never touched
+    # gpmd_native marks an original's untouched track, which gpmd_injected alone would hide
     video = _original(tmp_path)
     out = tmp_path / "curated"
 
-    preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, None, NAME, out, 0.95, force=False)
 
     payload = json.loads((out / NAME / "GH010234_metadata.json").read_text())
     assert payload["edited"] is False
@@ -1511,7 +1467,7 @@ def test_an_edits_sidecar_records_it_as_edited_against_its_source(tmp_path, stub
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
 
-    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
     payload = json.loads((out / NAME / "GH010234_metadata.json").read_text())
     assert payload["edited"] is True
@@ -1521,28 +1477,25 @@ def test_an_edits_sidecar_records_it_as_edited_against_its_source(tmp_path, stub
 
 
 def test_process_video_writes_a_sidecar_the_csv_index_can_read(tmp_path, stub_externals, monkeypatch):
-    # The seam every index test skips by hand-building its sidecar: rename `latitude` in the
-    # payload and those tests all stay green while every GPS cell in the CSV goes blank
+    # End to end: the sidecar process_video writes must be readable by index_rows
     monkeypatch.setattr(preproc, "exif_dump", lambda path: _DUMP)
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
 
-    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
     assert preproc.index_rows(out) == [(NAME, "42 deg 21' 11.52\" N, 71 deg 3' 57.24\" W")]
 
 
 def test_process_video_refreshes_a_sidecar_whose_recorded_source_is_gone(tmp_path, stub_externals):
-    # The 16 duplicates: curated as pairs, then their src/ copy is pruned away. The video on
-    # disk never changes, so the fingerprint alone would call this up to date and leave the
-    # sidecar pointing at a file that no longer exists.
+    # A pruned src/ copy leaves the fingerprint unchanged, so the stale sidecar must be refreshed
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
-    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, 0.95, force=False)
     curated_bytes = (out / NAME / "GH010234.mp4").read_bytes()
     shutil.rmtree(source.parent)
 
-    record = preproc.process_video(video, None, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, None, NAME, out, 0.95, force=False)
 
     payload = json.loads((out / NAME / "GH010234_metadata.json").read_text())
     assert record["status"] == "refreshed"
@@ -1556,13 +1509,13 @@ def test_process_video_refreshes_a_sidecar_whose_recorded_source_is_gone(tmp_pat
 def test_process_video_refreshes_a_sidecar_written_before_the_edited_field(tmp_path, stub_externals):
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
-    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, 0.95, force=False)
     path = out / NAME / "GH010234_metadata.json"
     payload = json.loads(path.read_text())
     del payload["edited"]
     path.write_text(json.dumps(payload))
 
-    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
     assert record["status"] == "refreshed"
     assert json.loads(path.read_text())["edited"] is True
@@ -1571,9 +1524,9 @@ def test_process_video_refreshes_a_sidecar_written_before_the_edited_field(tmp_p
 def test_process_video_leaves_a_current_sidecar_alone(tmp_path, stub_externals):
     video, source = _edit(tmp_path)
     out = tmp_path / "curated"
-    preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
-    record = preproc.process_video(video, source, NAME, out, preproc.DEFAULT_ALIGN_MIN_R, force=False)
+    record = preproc.process_video(video, source, NAME, out, 0.95, force=False)
 
     assert record["status"] == "skipped"
 
@@ -1600,8 +1553,7 @@ def test_main_warns_about_every_unaligned_clip(tree, tmp_path, monkeypatch, capl
 
 
 def test_main_survives_a_clip_that_raises(tree, tmp_path, monkeypatch, caplog):
-    # A clip with no audio track makes ffmpeg exit 1 and decode_audio raise. Before this, the
-    # exception left main after gigabytes had already been copied: no index, no summary.
+    # A clip that raises (e.g. no audio track) must not stop the index and summary
     monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
 
     def explode_on_one(video, source, name, out, min_r, force):
@@ -1622,7 +1574,7 @@ def test_main_survives_a_clip_that_raises(tree, tmp_path, monkeypatch, caplog):
 
 
 def test_main_dry_run_forwards_the_flag_to_the_push_script(tree, tmp_path, monkeypatch):
-    # --dry-run --push used to return before the push block, so --push did nothing at all
+    # --dry-run --push still calls push, forwarding the dry-run flag
     monkeypatch.setattr(preproc.shutil, "which", lambda name: "/usr/bin/" + name)
     calls = []
     monkeypatch.setattr(preproc, "push", lambda root, dry_run=False: calls.append(dry_run))
@@ -1683,8 +1635,7 @@ def test_is_redundant_sees_a_byte_identical_copy(tmp_path):
 
 
 def test_is_redundant_rejects_a_same_size_re_encode(tmp_path):
-    # A full-length export with no trim is still a Resolve export: same duration, same byte
-    # count if you are unlucky, different bytes, and its metadata really was stripped
+    # An untrimmed re-encode can match in size but differ in bytes, so it is not redundant
     video, source = _duplicate(tmp_path / "gdrive-src")
     source.write_bytes(b"re-encoded byte")
     assert video.stat().st_size == source.stat().st_size
@@ -1761,8 +1712,7 @@ def test_prune_src_honours_only(tmp_path):
 
 
 def test_prune_src_reverifies_immediately_before_deleting(tmp_path, monkeypatch):
-    # The tree is Drive-synced: a file that matched during the scan may have been replaced by
-    # the time the unlink runs, and a stale match must never authorize a deletion
+    # The Drive-synced file may change after the scan, so it is re-checked before unlinking
     root = tmp_path / "gdrive-src"
     _, source = _duplicate(root)
     answers = iter([True, False])

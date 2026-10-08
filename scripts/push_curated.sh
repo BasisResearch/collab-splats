@@ -36,8 +36,7 @@ while [[ $# -gt 0 ]]; do
         --source)  SOURCE="$2"; shift 2 ;;
         --remote)  REMOTE="$2"; shift 2 ;;
         --bucket)  BUCKET="$2"; shift 2 ;;
-        # Print the header comment block (everything after the shebang up to the first
-        # non-comment line), stripped of its leading "# "
+        # Print the header comment block without its leading "# "
         -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -59,18 +58,13 @@ fi
 
 echo "Pushing ${SOURCE} -> ${REMOTE}:${BUCKET} ${DRY_RUN}"
 
-# Default is a single rolling summary line. --verbose swaps that for -v, which logs one line
-# per file as it transfers; the two fight over the same output, so they are exclusive rather
-# than additive. Stats slow to 5s under -v so the periodic totals do not bury the file list.
-# Neither affects what is transferred.
+# One rolling summary line by default; --verbose logs one line per file instead
 PROGRESS=(--stats 2s --stats-one-line)
 if [[ -n "$VERBOSE" ]]; then
     PROGRESS=(--stats 5s -v)
 fi
 
-# Transfer flags mirror SessionSource.push_outputs (collab_splats/dashboard/sources.py) so
-# uploads behave identically to the dashboard's. No --progress: it redraws with carriage
-# returns, which is unreadable once the output is piped or logged.
+# Transfer flags mirror SceneSource.push_outputs (collab_splats/remote.py)
 rclone copy "$SOURCE" "${REMOTE}:${BUCKET}" \
     --gcs-bucket-policy-only \
     --transfers 8 \

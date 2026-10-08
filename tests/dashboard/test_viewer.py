@@ -11,11 +11,11 @@ from collab_splats.dashboard.operation_log import OperationLog
 from collab_splats.dashboard.viewer import (
     SplitViewer,
     _decimate_indices,
-    apply_viridis,
     compute_view_transform,
 )
 from collab_splats.semantics.compression import FeatureAutoencoder
 from collab_splats.semantics.store import write_point_features
+from collab_splats.utils.visualization import apply_viridis
 
 ########
 # Helpers

@@ -20,7 +20,6 @@ import zlib
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-import matplotlib
 import numpy as np
 import open3d as o3d
 import torch
@@ -34,6 +33,7 @@ from collab_splats.geometry.transforms import invert_poses
 from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.semantics.store import read_point_features
 from collab_splats.utils.torch_utils import pytorch_gc
+from collab_splats.utils.visualization import apply_viridis
 
 logger = logging.getLogger(__name__)
 
@@ -324,14 +324,7 @@ class Viewer:
         sub_faces = inverse.reshape(-1, 3)
 
         # Viridis over the drawn scores
-        values = scores[used].astype(np.float64)
-        span = values.max() - values.min()
-        normalized = (
-            (values - values.min()) / span if span > 0 else np.zeros_like(values)
-        )
-        rgb = (matplotlib.colormaps["viridis"](normalized)[:, :3] * 255).astype(
-            np.uint8
-        )
+        rgb = apply_viridis(scores[used].astype(np.float64))
 
         # Whole-mesh lift direction, computed on the first overlay of this mesh
         if name not in self.heat_shifts:

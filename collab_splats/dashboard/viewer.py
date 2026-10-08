@@ -11,7 +11,6 @@ import json
 import logging
 from pathlib import Path
 
-import matplotlib
 import numpy as np
 import panel as pn
 import pyvista as pv
@@ -24,7 +23,11 @@ from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.semantics.features import BaseQueryableExtractor
 from collab_splats.semantics.store import read_point_features
 from collab_splats.utils.visualization import PCD_KWARGS as _BASE_PCD_KWARGS
-from collab_splats.utils.visualization import VIZ_KWARGS, pointcloud_to_polydata
+from collab_splats.utils.visualization import (
+    VIZ_KWARGS,
+    apply_viridis,
+    pointcloud_to_polydata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,31 +51,6 @@ def _decimate_indices(n: int, max_points: int) -> np.ndarray:
         return np.arange(n)
 
     return np.linspace(0, n - 1, num=max_points, dtype=np.int64)
-
-
-def apply_viridis(sims: np.ndarray) -> np.ndarray:
-    """
-    Similarity scores mapped to viridis RGB, min-max normalized.
-
-    - NaN scores (unobserved mesh vertices) are left out of the range and drawn grey
-
-    Args:
-        sims: per-element scores, (P,).
-
-    Returns:
-        RGB colors, (P, 3) uint8.
-    """
-    finite = np.isfinite(sims)
-    s_min, s_max = (
-        (sims[finite].min(), sims[finite].max()) if finite.any() else (0.0, 0.0)
-    )
-    normalized = (
-        (sims - s_min) / (s_max - s_min) if s_max > s_min else np.zeros_like(sims)
-    )
-    rgba = matplotlib.colormaps["viridis"](normalized)
-    rgb = (rgba[:, :3] * 255).astype(np.uint8)
-    rgb[~finite] = 128
-    return rgb
 
 
 def compute_view_transform(

@@ -1,6 +1,7 @@
 from typing import Any, List, Optional, Union
 
 import cv2
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pyvista as pv
@@ -58,6 +59,31 @@ CAMERA_KWARGS = {
 
 
 # ── Semantic Visualization ──────────────────────────────────────────────────
+
+
+def apply_viridis(sims: np.ndarray) -> np.ndarray:
+    """
+    Similarity scores mapped to viridis RGB, min-max normalized.
+
+    - NaN scores (unobserved mesh vertices) are left out of the range and drawn grey
+
+    Args:
+        sims: per-element scores, (P,).
+
+    Returns:
+        RGB colors, (P, 3) uint8.
+    """
+    finite = np.isfinite(sims)
+    s_min, s_max = (
+        (sims[finite].min(), sims[finite].max()) if finite.any() else (0.0, 0.0)
+    )
+    normalized = (
+        (sims - s_min) / (s_max - s_min) if s_max > s_min else np.zeros_like(sims)
+    )
+    rgba = matplotlib.colormaps["viridis"](normalized)
+    rgb = (rgba[:, :3] * 255).astype(np.uint8)
+    rgb[~finite] = 128
+    return rgb
 
 
 def compute_heatmap(

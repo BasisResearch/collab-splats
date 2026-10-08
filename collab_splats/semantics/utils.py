@@ -102,16 +102,14 @@ def cluster_points(
     )
     _, labels = connected_components(adjacency, directed=False)
 
-    # Map component labels back to original point indices; drop small clusters
-    clusters = []
+    # Group point indices by component label; a stable sort keeps each group ascending
+    order = np.argsort(labels, kind="stable")
+    counts = np.bincount(labels)
+    bounds = np.cumsum(counts)[:-1]
+    groups = np.split(valid[order], bounds)
 
-    for label in np.unique(labels):
-        members = valid[labels == label]
-
-        if len(members) >= min_cluster_size:
-            clusters.append(members)
-
-    return clusters
+    # Drop small clusters; label order is kept
+    return [members for members in groups if len(members) >= min_cluster_size]
 
 
 ########################################################################

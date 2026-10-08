@@ -157,23 +157,18 @@ def create_composite_mask(
         current_mask = masks[idx]
         mask_id[current_mask == 1] = i
 
-    mask_indices = np.unique(mask_id)
-    mask_indices = np.setdiff1d(mask_indices, [0])
-
-    composite_mask = np.zeros((H, W), dtype=np.uint16)
+    # Visible pixels per painted ID in one pass; present IDs are renumbered 1.. in ID order
+    visible = np.bincount(mask_id.ravel(), minlength=len(sorted_idxs) + 1)
+    mask_indices = np.flatnonzero(visible[1:]) + 1
+    lut = np.zeros(len(sorted_idxs) + 1, dtype=np.uint16)
 
     for i, idx in enumerate(mask_indices, start=1):
-        mask = mask_id == idx
-        logger.debug("Mask %d has %d pixels", i, mask.sum())
-
         # ID idx was painted from masks[sorted_idxs[idx - 1]], not masks[idx - 1]
-        if (
-            mask.sum() > 0
-            and (mask.sum() / masks[sorted_idxs[idx - 1]].sum()) > min_visible_frac
-        ):
-            composite_mask[mask] = i
+        if visible[idx] / masks[sorted_idxs[idx - 1]].sum() > min_visible_frac:
+            lut[idx] = i
 
-    return composite_mask
+    # Relabel every pixel through the lookup table; dropped IDs map to background
+    return lut[mask_id]
 
 
 def mask_id_to_binary_mask(composite_mask: np.ndarray) -> np.ndarray:
@@ -209,14 +204,13 @@ def convert_matched_mask(labels: torch.Tensor, masks: np.ndarray) -> np.ndarray:
     if labels.shape[0] != np.max(masks):
         raise ValueError(f"{labels.shape[0]} labels for {int(np.max(masks))} mask IDs")
 
-    matched_mask = np.zeros(masks.shape, dtype=np.uint16)
+    # Lookup table: ID 0 stays background, ID k becomes labels[k - 1] + 1
+    lut = np.zeros(labels.shape[0] + 1, dtype=np.uint16)
+    matched = labels.cpu().numpy() + 1
+    lut[1:] = matched
 
-    for label_idx in range(labels.shape[0]):
-        mask_id = label_idx + 1
-        matched_label = labels[label_idx].item() + 1
-        matched_mask[masks == mask_id] = matched_label
-
-    return matched_mask  # uint16 — preserves IDs > 255
+    # uint16 preserves IDs > 255
+    return lut[masks]
 
 
 def aggregate_masked_features(

@@ -68,6 +68,29 @@ def _stack_masks(results: list[dict], height: int, width: int) -> torch.Tensor:
     return torch.from_numpy(stacked)
 
 
+def _mask_stats(masks: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Pixel count and tight (x_min, y_min, x_max, y_max) box of each (N, H, W) bool mask.
+
+    - computed on the masks' device, one host copy each
+    - an empty mask has area 0 and a meaningless box
+    """
+    areas = masks.sum(dim=(1, 2))
+
+    # First and last occupied row and column per mask
+    rows = masks.any(dim=2)
+    rows = rows.int()
+    cols = masks.any(dim=1)
+    cols = cols.int()
+    y_min = rows.argmax(dim=1)
+    x_min = cols.argmax(dim=1)
+    y_max = rows.shape[1] - 1 - rows.flip(1).argmax(dim=1)
+    x_max = cols.shape[1] - 1 - cols.flip(1).argmax(dim=1)
+
+    boxes = torch.stack([x_min, y_min, x_max, y_max], dim=1)
+    return areas.cpu().numpy(), boxes.cpu().numpy()
+
+
 ########################################################
 ########## MobileSAMv2 backend #########################
 ########################################################
@@ -200,19 +223,21 @@ class MobileSAMSegmentation(BaseSegmentation):
                     self.predictor.original_size,
                 )
                 masks = masks > self.seg_model.mask_threshold
-                masks = masks.squeeze(1).cpu().numpy()
+                masks = masks.squeeze(1)
                 iou_preds = iou_preds.squeeze(1).cpu().numpy()
 
+            # Areas and tight xyxy boxes on the device, then one copy each to the host
+            areas, xyxy = _mask_stats(masks)
+            masks = masks.cpu().numpy()
+
             for i in range(B):
-                _mask = masks[i].astype(np.uint8)
-                area = int(_mask.sum())
+                area = int(areas[i])
+
                 if area == 0:
                     continue
 
-                y_indices, x_indices = np.where(_mask)
-                y_min, y_max = y_indices.min(), y_indices.max()
-                x_min, x_max = x_indices.min(), x_indices.max()
-                xywh = [x_min, y_min, x_max - x_min, y_max - y_min]
+                x0, y0, x1, y1 = xyxy[i]
+                xywh = [x0, y0, x1 - x0, y1 - y0]
 
                 results.append(
                     {

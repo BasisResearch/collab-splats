@@ -44,6 +44,20 @@ def _agglomerative_clustering(X: torch.Tensor, tau: float) -> torch.Tensor:
     return torch.from_numpy(labels).long().to(X.device)
 
 
+def _cluster_means(X: torch.Tensor, labels: torch.Tensor, K: int) -> torch.Tensor:
+    """
+    Mean row of X per cluster, one scatter-add instead of a loop over clusters.
+
+    - (N, C) X and (N,) labels in 0..K-1 give (K, C)
+    - an empty cluster is NaN, as a mean over nothing
+    """
+    sums = torch.zeros((K, X.shape[1]), dtype=X.dtype, device=X.device)
+    sums.index_add_(0, labels, X)
+    counts = torch.bincount(labels, minlength=K)
+    counts = counts.to(X.dtype)
+    return sums / counts.unsqueeze(1)
+
+
 def _cluster_prototypes(X: torch.Tensor, labels: torch.Tensor, K: int) -> torch.Tensor:
     """
     Compute an L2-normalized prototype (mean) for each cluster.
@@ -56,11 +70,9 @@ def _cluster_prototypes(X: torch.Tensor, labels: torch.Tensor, K: int) -> torch.
     Returns:
         (K, D) L2-normalized prototypes.
     """
-    protos = []
     # Unit-norm mean per cluster; every id 0..K-1 has members
-    for k in range(K):
-        protos.append(F.normalize(X[labels == k].mean(dim=0), p=2, dim=0).unsqueeze(0))
-    return torch.cat(protos, dim=0)
+    means = _cluster_means(X, labels, K)
+    return F.normalize(means, p=2, dim=1)
 
 
 ########################################################
@@ -257,9 +269,9 @@ def _seed_and_aggregate(
 
     # Per-patch cross-image similarity map
     fg_sim = torch.einsum("dhw,d->hw", tgt_feat_deb, prototype)  # (H_p, W_p)
-    cross_sim = torch.zeros(K, device=fg_sim.device)
-    for k in range(K):
-        cross_sim[k] = fg_sim[cluster_labels == k].mean()
+    fg_flat = fg_sim.reshape(-1, 1)
+    cross_sim = _cluster_means(fg_flat, cluster_labels.view(-1), K)
+    cross_sim = cross_sim.squeeze(1)
 
     # Combined score; the seed's area weight is 1, but it too must clear merge_threshold
     combined = cross_sim * intra_sim

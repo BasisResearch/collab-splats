@@ -1725,8 +1725,8 @@ def test_semantics_stores_each_vertex_top_64_words(tmp_path):
         rec.semantics()
 
     # The default checkpoint's lens; one decode per frame; one word lift over the vocabulary
-    processor.assert_called_once_with("llava-hf/llava-v1.6-vicuna-7b-hf")
-    decoder.assert_called_once_with("llava-hf/llava-v1.6-vicuna-7b-hf")
+    processor.assert_called_once_with()
+    decoder.assert_called_once_with()
     assert decode.call_count == 2
     assert calls[1][1] == 70
 

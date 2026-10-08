@@ -1151,9 +1151,9 @@ class Reconstructor:
 
             # ocr_lens: each frame's top-64 words per patch, lifted as indexed maps; each vertex keeps its top-64
             if name == "ocr_lens":
-                model_id = "llava-hf/llava-v1.6-vicuna-7b-hf"
-                vocab = word_vocabulary(load_processor(model_id).tokenizer)
-                decoder = load_decoder(model_id)
+                # The extractor runs with its defaults, so the lens loads the default checkpoint
+                vocab = word_vocabulary(load_processor().tokenizer)
+                decoder = load_decoder()
 
                 if ae is not None:
                     ae.to(get_device())

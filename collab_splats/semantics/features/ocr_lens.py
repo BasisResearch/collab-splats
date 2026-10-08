@@ -550,7 +550,9 @@ def load_decoder(
 ########################################################################
 
 
-def load_processor(model_id: str) -> LlavaNextProcessor:
+def load_processor(
+    model_id: str = "llava-hf/llava-v1.6-vicuna-7b-hf",
+) -> LlavaNextProcessor:
     """
     LLaVA-1.6 processor with the fast tokenizer.
 

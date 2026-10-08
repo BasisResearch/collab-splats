@@ -184,6 +184,21 @@ def _mobilesam_stub(strategy="object", box_batch_size=320):
         )
 
 
+def test_mobilesamv2_default_device_is_get_device():
+    """No device given: SAM loads on get_device(), like the other backends, not on cpu."""
+    with (
+        patch.object(mobile_sam, "get_device", return_value="cuda:7"),
+        patch.object(
+            mobile_sam,
+            "_load_mobile_sam",
+            return_value=(MagicMock(), MagicMock(), MagicMock()),
+        ) as load,
+    ):
+        mobile_sam.MobileSAMSegmentation()
+
+    load.assert_called_once_with("mobilesamv2_efficientvit_l2", "cuda:7")
+
+
 def test_mobilesamv2_bad_strategy_raises_at_init():
     with pytest.raises(ValueError, match="Strategy 'grid'"):
         _mobilesam_stub(strategy="grid")

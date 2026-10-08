@@ -16,7 +16,11 @@ import torch
 from mobile_sam import SamAutomaticMaskGenerator
 
 from collab_splats.semantics.segmentation.base import BaseSegmentation
-from collab_splats.utils.torch_utils import batch_iterator, load_torchhub_model
+from collab_splats.utils.torch_utils import (
+    batch_iterator,
+    get_device,
+    load_torchhub_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +30,7 @@ logger = logging.getLogger(__name__)
 ########################################################
 
 
-def _load_mobile_sam(
-    mobilesam_encoder_name: str = "mobilesamv2_efficientvit_l2", device: str = "cpu"
-) -> tuple[Any, Any, Any]:
+def _load_mobile_sam(mobilesam_encoder_name: str, device: str) -> tuple[Any, Any, Any]:
     """
     Load the MobileSAMV2 model trio from torchhub.
 
@@ -103,7 +105,7 @@ class MobileSAMSegmentation(BaseSegmentation):
 
     Args:
         strategy: "object" prompts SAM with YOLOv8 boxes; "auto" runs SAM's mask generator.
-        device: torch device string.
+        device: torch device string; None picks one with get_device.
         mobilesam_encoder_name: encoder variant to load from torchhub.
         box_batch_size: boxes per SAM decoder call ("object" only).
 
@@ -114,7 +116,7 @@ class MobileSAMSegmentation(BaseSegmentation):
     def __init__(
         self,
         strategy: str = "object",
-        device: str = "cpu",
+        device: str | None = None,
         mobilesam_encoder_name: str = "mobilesamv2_efficientvit_l2",
         box_batch_size: int = 320,
     ):
@@ -122,6 +124,9 @@ class MobileSAMSegmentation(BaseSegmentation):
             raise ValueError(
                 f"Strategy '{strategy}' not supported. Available: ['object', 'auto']"
             )
+
+        # Load SAM on the requested device, or the best available one
+        device = device or get_device()
         self.seg_model, self.object_model, self.predictor = _load_mobile_sam(
             mobilesam_encoder_name, device
         )

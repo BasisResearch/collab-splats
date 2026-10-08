@@ -297,6 +297,21 @@ def test_packaged_head_scores_are_mean_per_head():
     assert sorted(top.tolist()) == [670, 921, 941, 947, 1019]
 
 
+def test_extractor_honors_device_kwarg(tiny_llava):
+    """An explicit device places the model and lens there instead of get_device()."""
+    ext = OCRLensExtractor(
+        model_id=str(tiny_llava),
+        layer=1,
+        n_heads=3,
+        head_scores=TINY_SCORES,
+        dtype="float32",
+        device="cpu",
+    )
+
+    assert ext.lens.device.type == "cpu"
+    assert next(ext.model.parameters()).device.type == "cpu"
+
+
 def test_lens_sums_top_heads_w_o_w_v_before_truncation(tiny_llava, tiny_ext):
     full = LlavaNextForConditionalGeneration.from_pretrained(tiny_llava)
     attn = full.model.language_model.layers[3].self_attn

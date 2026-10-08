@@ -78,6 +78,7 @@ class OCRLensExtractor(BaseFeatureExtractor):
         n_heads: top-scoring OCR heads summed into the lens.
         head_scores: (layers, heads) scores, a path to saved ones, or None for the packaged 7B scores.
         dtype: torch dtype name for the model weights.
+        device: torch device; None picks one with get_device.
 
     Raises:
         ValueError: `layer`, `n_heads` or `head_scores` out of range for the model.
@@ -93,9 +94,10 @@ class OCRLensExtractor(BaseFeatureExtractor):
         n_heads: int = 102,
         head_scores: Union[torch.Tensor, str, Path, None] = None,
         dtype: str = "float16",
+        device: str | None = None,
     ) -> None:
         super().__init__(resize_mode="max_size", image_resolution=672)
-        self._device = get_device()
+        self._device = device or get_device()
 
         # Default to the packaged scores; load a path to a tensor
         if head_scores is None:

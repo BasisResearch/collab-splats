@@ -16,7 +16,7 @@ import open3d.core as o3c
 from tqdm.auto import tqdm
 
 from collab_splats.geometry.projection import unproject_frames
-from collab_splats.geometry.transforms import invert_poses
+from collab_splats.geometry.transforms import invert_poses, shift_intrinsics
 from collab_splats.mesh.utils import validate_views
 
 logger = logging.getLogger(__name__)
@@ -42,12 +42,13 @@ def create_tsdf_mesh(
 
     - runs on CUDA:0 when Open3D has CUDA, else on the CPU; same grid, same mesh
     - the block hashmap starts at 10k blocks and grows on its own
+    - Open3D floors projected u, v (pixel-corner), so K shifts +0.5 once here (ADR 025)
 
     Args:
         depths: (N, H, W) depth in world units, 0 = no observation.
         rgbs: (N, H, W, 3) uint8 RGB at the same resolution as depths.
         c2w: (N, 4, 4) camera-to-world poses.
-        K: (N, 3, 3) intrinsics at the depth resolution.
+        K: (N, 3, 3) pixel-center intrinsics at the depth resolution.
         voxel_size: TSDF voxel edge in world units.
         depth_trunc: depth beyond this (world units) is ignored; None keeps every depth.
         sdf_trunc: truncation band in world units; None = 4 × voxel_size.
@@ -93,7 +94,7 @@ def create_tsdf_mesh(
     )
     depths = np.ascontiguousarray(depths, dtype=np.float32)
     rgbs = np.ascontiguousarray(rgbs)
-    K = K.astype(np.float64)
+    K = shift_intrinsics(K, (0.5, 0.5))
     w2c = invert_poses(c2w)
     w2c = w2c.astype(np.float64)
 

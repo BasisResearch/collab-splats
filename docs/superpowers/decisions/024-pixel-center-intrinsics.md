@@ -2,6 +2,8 @@
 
 Date: 2026-10-08 · Status: accepted · Branch: `feat/rgbd-ba-cf`
 
+> Correction: Open3D TSDF is pixel-corner, not center; see [025](025-open3d-tsdf-corner-convention.md).
+
 ## Context
 
 - two conventions in the package: pixel-center (pixel i at coordinate i: VGGT, `projection.py`, Open3D, nvdiffrast texture) and pixel-corner (pixel i at i + 0.5: COLMAP, gsplat)

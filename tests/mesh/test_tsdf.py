@@ -141,3 +141,18 @@ def test_create_tsdf_mesh_without_depth_trunc_keeps_every_depth():
     depths, rgbs, c2w, K = _views()
     mesh = create_tsdf_mesh(5 * depths, rgbs, c2w, K, voxel_size=0.1)
     assert len(mesh.triangles) > 0
+
+
+def test_create_tsdf_mesh_reads_k_as_pixel_center(monkeypatch):
+    # Pixel 0's footprint starts at center-convention u = -0.5: x = y = -1.05 for c 10, f 10
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths = np.ones((1, 20, 20), np.float32)
+    rgbs = np.zeros((1, 20, 20, 3), np.uint8)
+    K = np.array([[[10.0, 0, 10.0], [0, 10.0, 10.0], [0, 0, 1]]])
+
+    mesh = create_tsdf_mesh(
+        depths, rgbs, np.eye(4)[None], K, voxel_size=0.01, depth_trunc=2.0
+    )
+
+    corner = np.asarray(mesh.vertices)[:, :2].min(axis=0)
+    assert corner == pytest.approx([-1.05, -1.05], abs=0.01)

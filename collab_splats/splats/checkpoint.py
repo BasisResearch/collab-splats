@@ -20,6 +20,7 @@ from torch import Tensor
 from gsplat.exporter import export_splats
 from gsplat.losses import ssim_loss
 
+from collab_splats.geometry.transforms import shift_intrinsics
 from collab_splats.preproc.frames import read_frames
 from collab_splats.splats.cameras import CameraOpt
 from collab_splats.splats.gaussian import Gaussians
@@ -227,6 +228,7 @@ def render_tsdf_inputs(
     Render depth (+ RGB) from a trained splat checkpoint at its training cameras.
 
     - image_ids follow the checkpoint's order, NOT the images/ directory's filename order
+    - K comes back pixel-center: the checkpoint's gsplat (corner) K shifted by -0.5
 
     Args:
         ckpt_path: splats/ckpt.pt written by the splats stage.
@@ -238,7 +240,7 @@ def render_tsdf_inputs(
 
     Returns:
         (depths, rgbs, c2w, K, image_ids): depths (N, H, W) float32 with 0 where alpha is 0,
-        rgbs (N, H, W, 3) uint8, c2w (N, 4, 4) float32, K (N, 3, 3) float32, and the source
+        rgbs (N, H, W, 3) uint8, c2w (N, 4, 4) float32, K (N, 3, 3) float32 pixel-center, and the source
         frame_idx per row.
     """
     if depth_source not in ("expected", "median"):
@@ -279,6 +281,10 @@ def render_tsdf_inputs(
     if rgbs is None:
         rgbs = np.stack(rendered)
 
+    # gsplat's corner K back to the pipeline's pixel-center convention
+    intrinsics_np = intrinsics.detach().cpu().numpy()
+    intrinsics_np = shift_intrinsics(intrinsics_np, (-0.5, -0.5))
+
     logger.info(
         "render_tsdf_inputs: %d views at %dx%d from %s",
         len(depths),
@@ -290,6 +296,6 @@ def render_tsdf_inputs(
         np.stack(depths),
         rgbs,
         cam_to_world.detach().cpu().numpy().astype(np.float32),
-        intrinsics.detach().cpu().numpy().astype(np.float32),
+        intrinsics_np.astype(np.float32),
         image_ids,
     )

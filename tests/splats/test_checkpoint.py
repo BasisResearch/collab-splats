@@ -61,6 +61,9 @@ def test_render_tsdf_inputs_stacks_views_and_zeroes_empty_pixels(tmp_path, monke
     assert c2w.shape == (2, 4, 4) and K.shape == (2, 3, 3)
     assert c2w.dtype == np.float32 and K.dtype == np.float32
 
+    # The checkpoint stores gsplat's corner K; the mesh stage gets pixel-center K
+    assert np.all(K[:, :2, 2] == -0.5) and np.all(K[:, 2, 2] == 1.0)
+
 
 def test_render_tsdf_inputs_defaults_to_the_expected_depth(tmp_path, monkeypatch):
     h, w = 4, 6

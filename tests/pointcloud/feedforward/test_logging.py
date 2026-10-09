@@ -1,4 +1,7 @@
-# tests/test_feedforward_logging.py
+"""
+Log lines of the feedforward base and MapAnything: model load, preprocess, inference, point count.
+"""
+
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -6,10 +9,13 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
+import torch
 
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.pointcloud.feedforward import BaseFeedforwardCreator
+from collab_splats.pointcloud.feedforward import (
+    BaseFeedforwardCreator,
+    MapAnythingCreator,
+)
 from tests.pointcloud.conftest import _frame_files, _frames
 
 
@@ -81,11 +87,6 @@ def test_create_pointcloud_logs_point_count(caplog, tmp_path):
 
 
 def test_mapanything_forward_logs_minibatch_info(caplog):
-    pytest.importorskip("mapanything")
-    import torch
-
-    from collab_splats.pointcloud.feedforward import MapAnythingCreator
-
     mock_model = MagicMock()
     mock_model.infer.return_value = []
     # Make next(model.parameters()).device return a real CPU device

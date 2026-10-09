@@ -8,7 +8,6 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pytest
 
 from collab_splats.localization.localizer import LocalizationResult
 from collab_splats.localization.viz import (
@@ -44,7 +43,6 @@ def test_plot_correspondences_handles_resolution_mismatch():
         *correspondences_for_ref(_single_ref_result(), 0),
         max_pairs=10,
         show=False,
-        warp_corners=False,
     )
     assert fig is not None
     plt.close(fig)
@@ -63,26 +61,34 @@ def test_plot_correspondences_plain_arrays():
     assert fig is not None
 
 
-def test_plot_correspondences_warp_boxes_stay_in_their_panels():
-    """Warped boxes are drawn as clipped lines; the view leaves a margin around both images."""
+def test_plot_correspondences_align_puts_each_match_at_the_same_spot():
+    """align=True draws the reference in the query's frame, so a match sits at one spot in both."""
     rng = np.random.default_rng(3)
     query = np.zeros((60, 100, 3), dtype=np.uint8)
     ref_image = np.zeros((100, 60, 3), dtype=np.uint8)
-    q_px = rng.uniform(0, 59, (20, 2)).astype(np.float32)
+    r_px = rng.uniform(0, 59, (20, 2)).astype(np.float32)
 
-    # Reference is the query shifted by 5 px: a clean homography
-    fig = plot_correspondences(
-        query, ref_image, q_px, q_px + 5.0, warp_corners=True, show=False
-    )
+    # Query px are the reference px halved and shifted: an exact similarity
+    q_px = (0.5 * r_px + [30.0, 5.0]).astype(np.float32)
+    fig = plot_correspondences(query, ref_image, q_px, r_px, align=True, show=False)
     ax = fig.axes[0]
-    boxes = [line for line in ax.get_lines() if line.get_color() in ("cyan", "yellow")]
-    assert len(boxes) == 2
-    assert all(line.get_clip_box() is not ax.bbox for line in boxes)
+    query_dots, ref_dots = (c.get_offsets() for c in ax.collections)
 
-    # Query spans x 0..100 with a 25 px margin; reference is scaled to height 60
-    x_min, x_max = ax.get_xlim()
-    assert x_min == -25.0
-    assert x_max == pytest.approx(100 + 25 + 9 + 36 + 9)
+    # Reference panel starts one query width plus a 4% gap to the right
+    np.testing.assert_allclose(ref_dots - [104.0, 0.0], query_dots, atol=1e-3)
+    outlines = [line for line in ax.get_lines() if line.get_color() == "yellow"]
+    assert len(outlines) == 2
+    plt.close(fig)
+
+
+def test_plot_correspondences_align_skips_outline_without_a_fit():
+    """One pair cannot fix a similarity; the plot falls back to the plain layout."""
+    query = np.zeros((60, 100, 3), dtype=np.uint8)
+    px = np.array([[10.0, 10.0]], dtype=np.float32)
+    fig = plot_correspondences(query, query, px, px, align=True, show=False)
+    assert not [
+        line for line in fig.axes[0].get_lines() if line.get_color() == "yellow"
+    ]
     plt.close(fig)
 
 
@@ -131,7 +137,6 @@ def test_plot_correspondences_same_resolution_still_works():
         *correspondences_for_ref(_single_ref_result(), 0),
         max_pairs=10,
         show=False,
-        warp_corners=False,
     )
     assert fig is not None
     plt.close(fig)

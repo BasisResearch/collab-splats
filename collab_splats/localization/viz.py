@@ -66,15 +66,19 @@ def correspondences_for_ref(
 ########################################################################
 
 
-def _image_corners(image: np.ndarray) -> np.ndarray:
+def _fit_similarity(ref_px: np.ndarray, query_px: np.ndarray) -> np.ndarray | None:
     """
-    The four pixel-center corners of an image, as cv2.perspectiveTransform input (4, 1, 2).
+    Scale, rotation and shift taking reference px onto query px; None when the fit fails.
+
+    - similarity, not homography: two cameras in a 3D scene share no plane-to-plane map
+    - least-median fit: robust without a pixel threshold to tune
+    - (2, 3) matrix, as cv2.warpAffine takes it
     """
-    h, w = image.shape[:2]
-    corners = np.array(
-        [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32
-    )
-    return corners.reshape(-1, 1, 2)
+    if len(ref_px) < 2:
+        return None
+
+    S, _ = cv2.estimateAffinePartial2D(ref_px, query_px, method=cv2.LMEDS)
+    return S
 
 
 def plot_correspondences(
@@ -84,15 +88,16 @@ def plot_correspondences(
     ref_px: np.ndarray,
     inlier_mask: np.ndarray | None = None,
     max_pairs: int = 200,
-    warp_corners: bool = False,
+    align: bool = False,
     show: bool = True,
 ) -> plt.Figure | None:
     """
     Side-by-side query and reference image with inlier/outlier connecting lines.
 
     - green lines for inliers, red for outliers
-    - warp_corners: cyan quad = query corners on the ref, yellow quad = ref corners on the query
-    - each panel keeps a 25% margin; a quad is clipped to its own panel and margin
+    - align: reference scaled, rotated and shifted into the query's frame, so a match sits at
+      the same spot in both panels; a yellow box outlines the reference on both
+    - align falls back to the plain layout when the inliers fix no similarity
 
     Args:
         query_image: HxWx3 uint8 RGB query image.
@@ -101,14 +106,14 @@ def plot_correspondences(
         ref_px: (K, 2) pixel coordinates in the reference image; correspondences_for_ref slices them per frame.
         inlier_mask: (K,) bool inlier flags; None draws every pair as an inlier.
         max_pairs: cap on lines drawn; a random subsample is drawn beyond it.
-        warp_corners: draw homography-warped boundaries on both sides.
+        align: draw the reference in the query's frame via a similarity fit to the inliers.
         show: call plt.show() (notebook behavior); the dashboard passes False.
 
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
     """
-    kpts0 = np.asarray(query_px)
-    kpts1 = np.asarray(ref_px)
+    kpts0 = np.asarray(query_px, dtype=np.float32)
+    kpts1 = np.asarray(ref_px, dtype=np.float32)
 
     # Nothing to draw without correspondences
     if len(kpts0) == 0:
@@ -120,32 +125,15 @@ def plot_correspondences(
         if inlier_mask is None
         else np.asarray(inlier_mask, dtype=bool)
     )
-    H = None
+    h, w = query_image.shape[:2]
+    S = None
 
-    # Homography from all inliers before subsampling; a subsampled set degrades H
-    if warp_corners:
-        inlier_kpts0 = kpts0[inliers]
-        inlier_kpts1 = kpts1[inliers]
+    # Similarity from all inliers before subsampling; a subsample degrades the fit
+    if align:
+        S = _fit_similarity(kpts1[inliers], kpts0[inliers])
 
-        if len(inlier_kpts0) >= 4:
-            H, _ = cv2.findHomography(
-                inlier_kpts0,
-                inlier_kpts1,
-                cv2.USAC_MAGSAC,
-                3.5,
-                maxIters=1_000,
-                confidence=0.999,
-            )
-
-            if H is None:
-                logger.debug(
-                    "plot_correspondences: homography degenerate — skipping corner warp"
-                )
-        else:
-            logger.debug(
-                "plot_correspondences: only %d inliers — need ≥4 for corner warp",
-                len(inlier_kpts0),
-            )
+        if S is None:
+            logger.debug("plot_correspondences: no similarity fit — plain layout")
 
     # Random subsample beyond max_pairs
     if len(kpts0) > max_pairs:
@@ -153,66 +141,47 @@ def plot_correspondences(
         idx = rng.choice(len(kpts0), max_pairs, replace=False)
         kpts0, kpts1, inliers = kpts0[idx], kpts1[idx], inliers[idx]
 
-    # Reference beside the query at its height; a margin around each holds boxes past the image
-    h, w = query_image.shape[:2]
-    ref_scale = h / ref_image.shape[0]
-    ref_w = ref_image.shape[1] * ref_scale
-    margin_q = 0.25 * w
-    margin_r = 0.25 * ref_w
-    margin_y = 0.25 * h
-    ref_x0 = w + margin_q + margin_r
+    # Aligned: the reference resampled into the query's frame, grey where it has no pixels
+    ref_shown = ref_image
+    ref_pts = kpts1
+
+    if S is not None:
+        ref_shown = cv2.warpAffine(ref_image, S, (w, h), borderValue=(128, 128, 128))
+        ref_pts = kpts1 @ S[:, :2].T + S[:, 2]
+
+    # Reference panel beside the query at its height
+    ref_scale = h / ref_shown.shape[0]
+    ref_w = ref_shown.shape[1] * ref_scale
+    ref_x0 = 1.04 * w
+    ref_pts = ref_pts * ref_scale + [ref_x0, 0]
 
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.imshow(query_image, extent=(0, w, h, 0))
-    ax.imshow(ref_image, extent=(ref_x0, ref_x0 + ref_w, h, 0))
+    ax.imshow(ref_shown, extent=(ref_x0, ref_x0 + ref_w, h, 0))
 
-    # Query corners onto the reference via H, reference corners onto the query via H⁻¹
-    if warp_corners and H is not None:
-        warped_q = cv2.perspectiveTransform(_image_corners(query_image), H)[:, 0]
-        warped_r = cv2.perspectiveTransform(
-            _image_corners(ref_image), np.linalg.inv(H)
-        )[:, 0]
-        boxes = [
-            (
-                warped_q * ref_scale + [ref_x0, 0],
-                "cyan",
-                ref_x0 - margin_r,
-                ref_w + 2 * margin_r,
-            ),
-            (warped_r, "yellow", -margin_q, w + 2 * margin_q),
-        ]
+    # Reference outline on both panels, each clipped to its own panel
+    if S is not None:
+        rh, rw = ref_image.shape[:2]
+        corners = np.array(
+            [[0, 0], [rw, 0], [rw, rh], [0, rh], [0, 0]], dtype=np.float32
+        )
+        outline = corners @ S[:, :2].T + S[:, 2]
 
-        # Each box clipped to its own panel plus margin, so it never spills into the other
-        for quad, color, x_min, width in boxes:
-            closed = np.vstack([quad, quad[:1]])
-            (line,) = ax.plot(closed[:, 0], closed[:, 1], color=color, linewidth=2)
-            clip = Rectangle(
-                (x_min, -margin_y), width, h + 2 * margin_y, transform=ax.transData
+        for panel_x in (0.0, ref_x0):
+            (line,) = ax.plot(
+                outline[:, 0] + panel_x, outline[:, 1], color="yellow", linewidth=2
             )
-            line.set_clip_path(clip)
+            line.set_clip_path(Rectangle((panel_x, 0), w, h, transform=ax.transData))
 
     # Lines per pair, then keypoint dots on both sides
-    for (x0, y0), (x1, y1), ok in zip(kpts0, kpts1, inliers):
+    for (x0, y0), (x1, y1), ok in zip(kpts0, ref_pts, inliers):
         color = "lime" if ok else "red"
-        ax.plot(
-            [x0, x1 * ref_scale + ref_x0],
-            [y0, y1 * ref_scale],
-            color=color,
-            linewidth=0.8,
-            alpha=0.6,
-        )
+        ax.plot([x0, x1], [y0, y1], color=color, linewidth=0.8, alpha=0.6)
 
     ax.scatter(kpts0[:, 0], kpts0[:, 1], s=8, c="white", zorder=3, linewidths=0)
-    ax.scatter(
-        kpts1[:, 0] * ref_scale + ref_x0,
-        kpts1[:, 1] * ref_scale,
-        s=8,
-        c="white",
-        zorder=3,
-        linewidths=0,
-    )
-    ax.set_xlim(-margin_q, ref_x0 + ref_w + margin_r)
-    ax.set_ylim(h + margin_y, -margin_y)
+    ax.scatter(ref_pts[:, 0], ref_pts[:, 1], s=8, c="white", zorder=3, linewidths=0)
+    ax.set_xlim(0, ref_x0 + ref_w)
+    ax.set_ylim(h, 0)
     ax.axis("off")
     ax.set_title(f"query ↔ reference — {inliers.sum()}/{len(inliers)} inliers shown")
     fig.tight_layout()

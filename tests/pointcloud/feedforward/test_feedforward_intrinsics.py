@@ -258,8 +258,10 @@ def test_full_res_k_applies_the_crop_origin():
     K = np.array([[[10.0, 0.0, 6.0], [0.0, 10.0, 4.0], [0.0, 0.0, 1.0]]])
     coords = np.array([[11, 7, 59, 47, 70, 50]], dtype=np.float32)
     out = _full_res_k(K, coords, (12, 8))[0]
+
+    # Pixel-center principal point (ADR 024): (c + 0.5) * scale - 0.5 + origin
     np.testing.assert_allclose(
-        [out[0, 0], out[1, 1], out[0, 2], out[1, 2]], [40, 50, 35, 27]
+        [out[0, 0], out[1, 1], out[0, 2], out[1, 2]], [40, 50, 36.5, 29]
     )
 
 
@@ -268,9 +270,11 @@ def test_full_res_k_uses_each_images_own_crop_box():
     Two images with different crop boxes each rescale by their OWN box, not image 1's.
     """
     s1, s2 = 518 / 1000, 518 / 1080
+
+    # Model-grid K from source K by the pixel-center rescale (ADR 024): (c + 0.5) * s - 0.5
     params = [
-        [1000 * s1, 1000 * s1, 500 * s1, 500 * s1],
-        [900 * s2, 880 * s2, 470 * s2, 590 * s2],
+        [1000 * s1, 1000 * s1, 500.5 * s1 - 0.5, 500.5 * s1 - 0.5],
+        [900 * s2, 880 * s2, 470.5 * s2 - 0.5, 590.5 * s2 - 0.5],
     ]
     K = np.array(
         [[[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]] for fx, fy, cx, cy in params]

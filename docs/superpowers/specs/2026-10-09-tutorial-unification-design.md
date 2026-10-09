@@ -38,14 +38,15 @@ Source: user review notes, 2026-10-09.
 
 ### Library changes (`collab_splats/utils/visualization.py`)
 
-1. New `camera_view(extrinsics) -> dict`
-   - input: (N, 4, 4) w2c OpenCV poses
+1. New `camera_view(extrinsics, points=None, *, azimuth_deg=90, elevation_deg=20, distance=1.5) -> dict`
+   - input: (N, 4, 4) w2c OpenCV poses; optional (M, 3) scene points
    - up: mean of the cameras' up vectors (`-c2w[:, :3, 1]`), normalized; fixes the upside-down
      point clouds and meshes (pyvista's default view assumes y-up, OpenCV is y-down)
-   - focal point: centroid of the camera centers, shifted along the mean forward direction by
-     half the trajectory extent (bounding-box diagonal of the centers)
-   - position: focal point pushed sideways (perpendicular to mean forward and up) and slightly
-     up, at a distance scaled to the trajectory extent
+   - focal point and size: center and diagonal of the points' 5-95 percentile box when given;
+     else the camera centroid shifted along the mean forward by half the trajectory extent
+   - position: focal point pushed sideways (azimuth 90 = perpendicular to mean forward and up)
+     and slightly up (elevation), `distance` x size away
+   - azimuth/elevation keys returned as 0 so `apply_view` does not rotate again
    - returns a `viz_kwargs` dict that `apply_view` / `visualize_splat` accept
 2. `visualize_splat` frustums
    - already colored viridis by frame order when `camera_kwargs` has no `"color"`; pages switch

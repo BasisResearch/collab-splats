@@ -280,11 +280,14 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         self, frames: torch.Tensor, layer_index: int
     ) -> dict[str, Any]:
         """
-        Q/K at one cross-frame block, plus joint poses, for LC verification.
+        Q/K at one cross-frame block, plus joint poses and geometry, for LC verification.
+
+        - one _forward gives both, so _verify_loop_candidate needs no second pass
+        - world points are the depth unprojected, as _postprocess builds them
 
         Args:
-            frames: (2, C, H, W) preprocessed frames.
-            layer_index: cross-frame block to tap.
+            frames: (2, C, H, W) preprocessed frames on CPU or GPU.
+            layer_index: cross-frame block to tap; -1 = last.
 
         Returns:
             {"q", "k": (B, heads, tokens, head_dim), "poses": (2, 4, 4) w2c,
@@ -292,6 +295,27 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
 
         Raises:
             NotImplementedError: the backend does not support loop closure.
+        """
+        # Capture attention queries and keys at the chosen block during one forward pass
+        attn = self._lc_attn(layer_index)
+
+        with capture_qk(attn.qkv, attn.num_heads) as captured:
+            raw = self._forward(self.model, frames)
+
+        # Unproject each frame's depth into world points
+        depth = raw["depth"].reshape(raw["depth"].shape[:3])
+        world_points = unproject_frames(depth, raw["extrinsic"], raw["intrinsics"])
+
+        # Return the poses and geometry alongside the captured queries and keys
+        captured["poses"] = extrinsics_to_homogeneous(raw["extrinsic"])
+        captured["world_points"] = world_points
+        captured["conf"] = raw["depth_conf"]
+
+        return captured
+
+    def _lc_attn(self, layer_index: int) -> torch.nn.Module:
+        """
+        Attention module (with .qkv and .num_heads) that loop closure taps; the base has none.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support loop closure"

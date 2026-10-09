@@ -20,13 +20,10 @@ from torchvision.transforms.functional import to_tensor
 from vggt.utils.load_fn import load_and_preprocess_images
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
-from collab_splats.geometry.projection import unproject_frames
-from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 from collab_splats.pointcloud.feedforward.base import (
     BaseFeedforwardCreator,
     _decode_depth_head,
     _frame_sizes,
-    capture_qk,
     center_crop_coords,
 )
 
@@ -157,50 +154,11 @@ class VGGTXCreator(BaseFeedforwardCreator):
             ),
         }
 
-    def extract_intermediate_features(
-        self, frames: torch.Tensor, layer_index: int
-    ) -> dict[str, Any]:
+    def _lc_attn(self, layer_index: int) -> torch.nn.Module:
         """
-        Hook aggregator.global_blocks[layer_index].attn.qkv on a 2-frame forward.
-
-        - the same forward gives poses and geometry, so _verify_loop_candidate needs no second one
-
-        Args:
-            frames: (2, C, H, W) preprocessed frames on CPU or GPU.
-            layer_index: global block to tap; -1 = last.
-
-        Returns:
-            "q", "k" (B, heads, tokens, head_dim), "poses" (2, 4, 4) w2c,
-            "world_points" (2, H, W, 3) and "conf" (2, H, W).
+        Attention of aggregator.global_blocks[layer_index], the block loop closure taps.
         """
-        device = next(self.model.parameters()).device
-        dtype = next(self.model.parameters()).dtype
-
-        # Add a batch dimension and move the frames to the model's device and dtype
-        batch = frames.unsqueeze(0).to(device, dtype=dtype)
-
-        # Capture attention queries and keys at the chosen layer during one forward pass
-        attn = self.model.aggregator.global_blocks[layer_index].attn
-
-        with capture_qk(attn.qkv, attn.num_heads) as captured, torch.no_grad():
-            predictions = self.model(batch)
-
-        # Decode poses and depth from that same forward pass
-        raw = _decode_depth_head(
-            predictions, frames.shape[-2:], pose_encoding_to_extri_intri
-        )
-
-        # Unproject each frame's depth into world points
-        world_points = unproject_frames(
-            raw["depth"][..., 0], raw["extrinsic"], raw["intrinsics"]
-        )
-
-        # Return the poses and geometry alongside the captured queries and keys
-        captured["poses"] = extrinsics_to_homogeneous(raw["extrinsic"])
-        captured["world_points"] = world_points
-        captured["conf"] = raw["depth_conf"]
-
-        return captured
+        return self.model.aggregator.global_blocks[layer_index].attn
 
 
 ########################################################################

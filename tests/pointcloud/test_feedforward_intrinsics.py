@@ -45,7 +45,7 @@ def _make_raw_omega(model_h: int = 16, model_w: int = 8) -> dict:
 def _make_omega_creator(N: int = 2) -> VGGTOmegaCreator:
     """Build a VGGTOmegaCreator with minimal config for unit tests (no model loaded)."""
     creator = VGGTOmegaCreator.__new__(VGGTOmegaCreator)
-    creator.conf_threshold = 50.0
+    creator.conf_percentile = 50.0
     creator.max_points = 500_000
     creator.image_paths = [MagicMock() for _ in range(N)]
     # VGGTOmega-style original_coords: full image, no crop (AR in supported range)

@@ -210,7 +210,7 @@ def _postprocessed_outputs():
         "intrinsics": intrinsic,
     }
 
-    creator = VGGTXCreator(conf_threshold=0.0)
+    creator = VGGTXCreator(conf_percentile=0.0)
     creator.image_paths = [Path(f"{i:06d}.jpg") for i in range(N)]
     creator.original_coords = np.tile(
         np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (N, 1)

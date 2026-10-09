@@ -43,7 +43,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
     Attributes:
         model_name: HuggingFace id for VGGT.from_pretrained.
         chunk_size: attention chunk size; lower it on OOM for long sequences.
-        conf_threshold: depth-confidence percentile cutoff (0-100); 35.0 keeps the top 65%.
+        conf_percentile: depth-confidence percentile cutoff (0-100); 35.0 keeps the top 65%.
     """
 
     # Loop-closure settings for VGGT-X, calibrated in docs/parity.md
@@ -55,7 +55,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
 
     model_name: str = "facebook/VGGT-1B"
     chunk_size: int = 256
-    conf_threshold: float = 35.0
+    conf_percentile: float = 35.0
 
     def _load_model(self, device: str) -> Any:
         """

@@ -47,7 +47,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
     - subclasses implement the abstract methods; each docstring states its contract
 
     Attributes:
-        conf_threshold: depth-confidence percentile (0-100); pixels strictly above it are kept.
+        conf_percentile: depth-confidence percentile (0-100); pixels strictly above it are kept.
         min_views: other views that must agree with a pixel's depth; 0 turns the filter off.
         mv_rel_thresh: multiview agreement tolerance, as a fraction of depth.
         frames: preproc's RGB uint8 frames by file name; None, any path missing, or loger reads the files.
@@ -61,7 +61,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
     _lc_layer_index: ClassVar[int | None] = None
     _lc_token_offset: ClassVar[int | None] = None
 
-    conf_threshold: float = 50.0
+    conf_percentile: float = 50.0
 
     # Settings for the multiview depth filter, which is off when min_views is 0
     min_views: int = 0
@@ -222,7 +222,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
 
         - reads images (N, 3, H, W) in [0, 1], extrinsic (N, 3, 4) w2c, model-grid intrinsics (N, 3, 3)
         - reads depth (N, H, W) or (N, H, W, 1), depth_conf (N, H, W), optional keep-mask `mask`
-        - keeps pixels with depth > 0 and in `mask`, or above the conf_threshold percentile without one
+        - keeps pixels with depth > 0 and in `mask`, or above the conf_percentile cutoff without one
         - the multiview filter, when on, is ANDed on top
         - intrinsics left None; PointcloudResult derives the full-res K
         """
@@ -247,7 +247,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         if "mask" in raw_outputs:
             valid &= raw_outputs["mask"]
         else:
-            valid &= confidence_mask(depth_conf, self.conf_threshold)
+            valid &= confidence_mask(depth_conf, self.conf_percentile)
 
         # Optionally also require the depth to agree across views
         valid &= self._multiview_mask(depth, intrinsic, extrinsic_4x4)

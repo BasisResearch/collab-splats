@@ -12,9 +12,9 @@ def test_base_has_max_points_field():
     assert fields["max_points"].default == 500_000
 
 
-def test_vggtx_conf_threshold_default():
+def test_vggtx_conf_percentile_default():
     fields = {f.name: f for f in dataclasses.fields(VGGTXCreator)}
-    assert fields["conf_threshold"].default == 35.0
+    assert fields["conf_percentile"].default == 35.0
 
 
 def test_vggtx_inherits_max_points():

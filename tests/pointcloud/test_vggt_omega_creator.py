@@ -95,7 +95,7 @@ def test_vggt_omega_creator_defaults():
     assert c.model_path is None
     assert c.resolution == 512
     assert c.resize_mode == "balanced"
-    assert c.conf_threshold == 50.0
+    assert c.conf_percentile == 50.0
 
 
 def test_vggt_omega_creator_missing_image_dir_raises(tmp_path):

@@ -222,7 +222,7 @@ def test_base_creator_no_extractor_name():
 
 
 def _postprocess(
-    depth_conf: np.ndarray, images: torch.Tensor, conf_threshold: float
+    depth_conf: np.ndarray, images: torch.Tensor, conf_percentile: float
 ) -> PointcloudResult:
     """
     Base _postprocess over flat depth-2 frames with these confidences and images.
@@ -240,7 +240,7 @@ def _postprocess(
         "depth_conf": depth_conf,
     }
     creator = object.__new__(_StubCreator)
-    creator.conf_threshold = conf_threshold
+    creator.conf_percentile = conf_percentile
     creator.min_views = 0
     creator.image_paths = [Path(f"frame_{i:06d}") for i in range(n)]
     creator.original_coords = np.tile(
@@ -252,7 +252,7 @@ def _postprocess(
 def test_postprocess_returns_pixel_indices():
     n, h, w = 3, 8, 8
     depth_conf = np.random.default_rng(0).random((n, h, w)).astype(np.float32)
-    out = _postprocess(depth_conf, torch.zeros(n, 3, h, w), conf_threshold=0.5)
+    out = _postprocess(depth_conf, torch.zeros(n, 3, h, w), conf_percentile=0.5)
 
     assert out.pixel_indices.shape == (len(out.points), 3)
     assert out.pixel_indices.dtype == np.int32
@@ -270,7 +270,9 @@ def test_pixel_indices_align_with_colors():
         for c in range(w):
             images[:, :, r, c] = (r * 10 + c) / 255.0
 
-    out = _postprocess(np.ones((n, h, w), dtype=np.float32), images, conf_threshold=0.0)
+    out = _postprocess(
+        np.ones((n, h, w), dtype=np.float32), images, conf_percentile=0.0
+    )
 
     images_np = (images.permute(0, 2, 3, 1).numpy() * 255).astype(np.uint8)
     fi, ri, ci = out.pixel_indices.T

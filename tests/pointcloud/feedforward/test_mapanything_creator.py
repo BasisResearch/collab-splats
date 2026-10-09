@@ -30,7 +30,7 @@ def _centered_k(h: int, w: int) -> torch.Tensor:
 def test_mapanything_defaults():
     c = MapAnythingCreator()
     assert c.model_name == "facebook/map-anything"
-    assert c.confidence_percentile == 35.0
+    assert c.conf_percentile == 35.0
     assert c.min_views == 0
     assert c.mv_rel_thresh == 0.01
     assert c.minibatch_size == 1
@@ -825,12 +825,12 @@ def test_stack_predictions_masked_keeps_the_upstream_mask():
 
 
 def test_postprocess_mask_key_replaces_the_confidence_cutoff():
-    """A raw "mask" key decides the kept pixels; conf_threshold is not applied."""
+    """A raw "mask" key decides the kept pixels; conf_percentile is not applied."""
     h, w, n = 16, 24, 2
     raw = _stack(masked=True, n=n, h=h, w=w)
     creator = MapAnythingCreator(
-        min_views=0, conf_threshold=0.9
-    )  # above every conf: would keep nothing
+        min_views=0, conf_percentile=100.0
+    )  # nothing is above the 100th percentile: would keep nothing
     creator.image_paths = []
     creator.original_coords = np.tile(
         np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1)

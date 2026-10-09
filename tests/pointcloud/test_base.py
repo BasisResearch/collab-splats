@@ -322,7 +322,7 @@ def test_clean_before_the_cap(tmp_path):
         "depth": depth.astype(np.float32),
         "depth_conf": np.ones((n, h, w), dtype=np.float32),
     }
-    creator = _EchoCreator(max_points=300, conf_threshold=0.0, clean=True)
+    creator = _EchoCreator(max_points=300, conf_percentile=0.0, clean=True)
     creator.image_paths = [Path(f"frame_{i:06d}") for i in range(n)]
     creator.original_coords = np.tile(
         np.array([0, 0, w, h, w, h], dtype=np.float32), (n, 1)

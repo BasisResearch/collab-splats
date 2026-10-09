@@ -658,14 +658,14 @@ def test_multiview_confidence_mask_is_wired_and_off_by_default():
     assert len(on.points) == (n - 1) * off.model_height * off.model_width
 
 
-def test_conf_threshold_field_reaches_the_point_filter():
-    # Found by mutation: replacing self.conf_threshold with a literal survived everything else
+def test_conf_percentile_field_reaches_the_point_filter():
+    # Found by mutation: replacing self.conf_percentile with a literal survived everything else
     # - the fake's confidence is constant, so the mask's own cut cannot tell values apart
     with patch(
         "collab_splats.pointcloud.feedforward.base.confidence_mask",
         wraps=confidence_mask,
     ) as mask:
-        _forward_and_postprocess(conf_threshold=37.0)
+        _forward_and_postprocess(conf_percentile=37.0)
 
     assert mask.call_args.args[1] == 37.0
 

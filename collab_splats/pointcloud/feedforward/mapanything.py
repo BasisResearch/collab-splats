@@ -72,7 +72,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
 
     Attributes:
         model_name: HuggingFace id for MapAnything.from_pretrained.
-        confidence_percentile: learned-confidence percentile cutoff (0-100), always applied.
+        conf_percentile: learned-confidence percentile cutoff (0-100), applied by upstream's mask.
         min_views: other views that must agree to keep a pixel; 0 is off.
         mv_rel_thresh: depth tolerance as a fraction of the expected depth.
         minibatch_size: views per inference step; lower it on OOM.
@@ -88,7 +88,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     _lc_layer_index: ClassVar[int] = 4
 
     model_name: str = "facebook/map-anything"
-    confidence_percentile: float = 35.0
+    conf_percentile: float = 35.0
     minibatch_size: int = 1
     resize_mode: str = (
         "fixed"  # "fixed" (aspect-ratio lookup table), "longest_side", "square"
@@ -282,7 +282,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
                 apply_mask=True,
                 mask_edges=True,
                 apply_confidence_mask=True,
-                confidence_percentile=self.confidence_percentile,
+                confidence_percentile=self.conf_percentile,
             )
         else:
             processed = postprocess_model_outputs_for_inference(

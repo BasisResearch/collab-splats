@@ -28,10 +28,11 @@ PACKAGES = (
     "mesh",
     "localization",
     "dashboard",
+    "utils",
 )
 
 # Single modules held to the contract, release checks included, before their whole package is
-MODULES = ("utils/io.py", "reconstructor.py", "remote.py", "__main__.py", "viewer.py")
+MODULES = ("reconstructor.py", "remote.py", "__main__.py", "viewer.py")
 
 # Repo-root dirs outside collab_splats/ held to the contract; their top-level *.py only
 TOP_LEVEL = ("evals", "scripts")
@@ -253,6 +254,7 @@ RELEASED: frozenset[str] = frozenset(
         "localization",
         "dashboard",
         "scripts",
+        "utils",
     }
 )
 

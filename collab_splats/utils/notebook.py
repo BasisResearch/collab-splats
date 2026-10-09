@@ -1,15 +1,22 @@
-"""Notebook display helpers — visualization and debug utilities for tutorial notebooks.
+"""
+Notebook display helpers for the tutorial notebooks.
 
-These functions are intentionally print()-based and pyvista/matplotlib-dependent.
-Do not import this module from core library code.
-
-TODO(reorganize): review final home — may warrant a dedicated collab_splats/notebooks/ package
-once the set of helpers stabilizes. See worklog/notes/2026-05-23-notebook-abstraction-opportunities.md.
+- matplotlib-dependent; never imported from core library code
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
+import torch
+from matplotlib.axes import Axes
+
+from collab_splats.utils.visualization import (
+    compute_heatmap,
+    compute_masked_image,
+    pca_to_rgb,
+)
 
 ########################################################
 ########## Semantics / feature helpers #################
@@ -17,20 +24,24 @@ import numpy as np
 
 
 def feature_viz_row(
-    axes,
+    axes: Sequence[Axes],
     frame: np.ndarray,
-    features,
+    features: torch.Tensor | np.ndarray,
     sim_map: np.ndarray,
     title_prefix: str = "",
     query_label: str = "",
 ) -> None:
-    """Render PCA→RGB, similarity heatmap, and masked image into a row of 3 matplotlib axes."""
-    from collab_splats.utils.visualization import (
-        compute_heatmap,
-        compute_masked_image,
-        pca_to_rgb,
-    )
+    """
+    PCA colors, similarity heatmap and masked image in a row of three axes.
 
+    Args:
+        axes: three matplotlib axes, filled left to right.
+        frame: (H, W, 3) uint8 image.
+        features: (C, pH, pW) patch features for the PCA panel.
+        sim_map: (H, W) similarity in [0, 1].
+        title_prefix: prepended to every panel title.
+        query_label: text query named in the heatmap title.
+    """
     sim_title = (
         f"{title_prefix}Similarity: {query_label}"
         if query_label

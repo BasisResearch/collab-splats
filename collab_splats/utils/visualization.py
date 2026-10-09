@@ -1,4 +1,12 @@
-from typing import Any, List, Optional, Union
+"""
+Notebook plots: semantic overlays, pyvista scenes with camera frustums, reprojection.
+
+- semantic: similarity heatmap, PCA feature colors, threshold mask, instance masks
+- 3D: visualize_splat renders a mesh or pointcloud with w2c camera frustums
+- reprojection: z-buffered point splat and a photo / render / blend figure
+"""
+
+from typing import Any
 
 import cv2
 import matplotlib
@@ -17,7 +25,7 @@ from collab_splats.geometry.transforms import (
 )
 from collab_splats.utils.image import features_to_rgb
 
-# Main visualization code - adaptation of your original
+# Default pyvista add_mesh kwargs for meshes and RGB pointclouds
 MESH_KWARGS = {
     "scalars": "RGB",
     "rgb": True,
@@ -90,20 +98,31 @@ def apply_viridis(sims: np.ndarray) -> np.ndarray:
 
 def compute_heatmap(
     image: np.ndarray,
-    sim_map: Union["torch.Tensor", np.ndarray],
+    sim_map: torch.Tensor | np.ndarray,
     alpha: float = 0.5,
     colormap: str = "viridis",
 ) -> np.ndarray:
-    import torch
+    """
+    Similarity map as a colormap blended over the image.
 
+    - sim_map is min-max normalized, then resized to the image when shapes differ
+
+    Args:
+        image: (H, W, 3) uint8 image.
+        sim_map: (H, W) or squeezable similarity map, any range.
+        alpha: overlay weight; 0 is the image only, 1 the heatmap only.
+        colormap: matplotlib colormap name.
+
+    Returns:
+        (H, W, 3) uint8 blend.
+    """
+    # Similarity to a numpy (H, W) map on the image grid
     if isinstance(sim_map, torch.Tensor):
         sim_map = sim_map.detach().cpu().numpy()
     sim_map = np.squeeze(sim_map)  # (H,W)
 
     h, w = image.shape[:2]
     if sim_map.shape != (h, w):
-        import cv2
-
         sim_map = cv2.resize(sim_map, (w, h), interpolation=cv2.INTER_LINEAR)
 
     eps = 1e-8
@@ -146,22 +165,20 @@ def pca_to_rgb(
 
 def compute_masked_image(
     image: np.ndarray,
-    sim_map: Union["torch.Tensor", np.ndarray],
+    sim_map: torch.Tensor | np.ndarray,
     threshold: float = 0.5,
 ) -> np.ndarray:
-    """Mask image to black where similarity is below threshold.
+    """
+    Image blacked out where similarity is below threshold.
 
     Args:
-        image: Original image (H, W, 3) uint8.
-        sim_map: Similarity map (H, W) or (H, W, 1), float in [0, 1].
-        threshold: Pixels with sim < threshold are set to black.
+        image: (H, W, 3) uint8 image.
+        sim_map: (H, W) or (H, W, 1) similarity in [0, 1].
+        threshold: pixels with similarity below it are set to black.
 
     Returns:
-        Masked image (H, W, 3) uint8.
+        (H, W, 3) uint8 masked copy.
     """
-    import cv2
-    import torch
-
     if isinstance(sim_map, torch.Tensor):
         sim_map = sim_map.detach().cpu().numpy()
     sim_map = np.squeeze(sim_map)  # (H, W)
@@ -178,22 +195,20 @@ def compute_masked_image(
 
 def overlay_masks(
     image: np.ndarray,
-    masks: "torch.Tensor",
+    masks: torch.Tensor | np.ndarray,
     alpha: float = 0.5,
 ) -> np.ndarray:
-    """Overlay segmentation masks on image with distinct colors per mask.
+    """
+    Segmentation masks blended over the image, one tab20 color per mask.
 
     Args:
-        image: Original image (H, W, 3) uint8.
-        masks: Binary masks (N, H, W) bool or float, one per detected object.
-        alpha: Blend weight for mask colors (0=image only, 1=colors only).
+        image: (H, W, 3) uint8 image.
+        masks: (N, mH, mW) binary masks, one per object; resized to the image.
+        alpha: overlay weight; 0 is the image only, 1 the mask colors only.
 
     Returns:
-        Blended image (H, W, 3) uint8.
+        (H, W, 3) uint8 blend.
     """
-    import cv2
-    import torch
-
     if isinstance(masks, torch.Tensor):
         masks_np = masks.detach().cpu().numpy()  # (N, H, W)
     else:
@@ -218,7 +233,9 @@ def overlay_masks(
 
 
 def _resolve_mesh_kwargs(mesh: pv.PolyData, mesh_kwargs: dict) -> dict:
-    """Return mesh_kwargs, auto-detecting RGB pointcloud mode when kwargs are empty."""
+    """
+    mesh_kwargs, or the RGB pointcloud kwargs when empty and the mesh carries RGB points.
+    """
     if mesh_kwargs:
         return mesh_kwargs
     if (
@@ -260,22 +277,32 @@ def apply_view(plotter: pv.Plotter, viz_kwargs: dict) -> None:
 
 
 def visualize_splat(
-    mesh: Union[str, pv.PolyData],
-    aligned_cameras: Optional[List[np.ndarray]] = None,
-    mesh_kwargs: dict = {},
-    camera_kwargs: dict = {},
-    viz_kwargs: dict = {},
-    out_fn: Optional[str] = None,
-):
+    mesh: str | pv.PolyData,
+    aligned_cameras: list[np.ndarray] | None = None,
+    mesh_kwargs: dict | None = None,
+    camera_kwargs: dict | None = None,
+    viz_kwargs: dict | None = None,
+    out_fn: str | None = None,
+) -> pv.Plotter:
     """
-    Visualize point cloud with camera frustums using PyVista
+    PyVista scene of a mesh or pointcloud with camera frustums.
+
+    - every n_poses-th camera gets a frustum (camera_kwargs "n_poses", default 3)
 
     Args:
-        mesh: Path to a PLY file or a PyVista PolyData to visualize.
-        aligned_cameras: List of (4,4) world-to-camera matrices (OpenCV convention,
-            e.g. PointcloudResult.extrinsics). Passed directly to
-            create_camera_frustum_pyvista, which inverts internally.
+        mesh: PLY path or PolyData.
+        aligned_cameras: (4, 4) w2c OpenCV poses, e.g. PointcloudResult.extrinsics.
+        mesh_kwargs: add_mesh kwargs; empty auto-detects RGB pointcloud styling.
+        camera_kwargs: frustum geometry (n_poses, scale, aspect_ratio, fov) and add_mesh kwargs.
+        viz_kwargs: camera placement, zoom, lighting and screenshot options.
+        out_fn: screenshot path; no screenshot when omitted.
+
+    Returns:
+        The plotter, not yet shown.
     """
+    mesh_kwargs = mesh_kwargs or {}
+    camera_kwargs = camera_kwargs or {}
+    viz_kwargs = viz_kwargs or {}
     plotter = pv.Plotter()
 
     # Either a mesh or a point cloud
@@ -322,15 +349,23 @@ def visualize_splat(
     return plotter
 
 
-def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
-    """Create a camera frustum wireframe in world space.
+def create_camera_frustum_pyvista(
+    pose: np.ndarray,
+    scale: float = 0.02,
+    aspect_ratio: float = 1.33,
+    fov: float = 60,
+) -> pv.PolyData:
+    """
+    Camera frustum wireframe in world space.
 
     Args:
-        pose: (4, 4) float32 world-to-camera matrix (OpenCV convention).
-            Matches PointcloudResult.extrinsics[i] directly — no inversion needed.
-        scale: Controls overall frustum size (near = scale*0.1, far = scale*5).
-        aspect_ratio: Width / height of the image plane.
-        fov: Vertical field of view in degrees.
+        pose: (4, 4) w2c OpenCV pose, e.g. PointcloudResult.extrinsics[i]; inverted here.
+        scale: overall size; near plane at scale * 0.1, far at scale * 5.
+        aspect_ratio: image-plane width / height.
+        fov: vertical field of view in degrees.
+
+    Returns:
+        Apex, near and far planes as line cells.
     """
     fov_rad = np.radians(fov)
     near = scale * 0.1
@@ -385,12 +420,15 @@ def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
 
 
 def pointcloud_to_polydata(pts3d: np.ndarray, **point_data) -> pv.PolyData:
-    """Convert pts3d + named scalar arrays to a PyVista PolyData.
+    """
+    PolyData of world points with named per-point arrays.
 
     Args:
-        pts3d: (P, 3) float32 world-space XYZ
-        **point_data: named scalar arrays to attach as PyVista point arrays.
-            e.g. RGB=colors, features=feat_arr, similarity=scores
+        pts3d: (P, 3) float32 world XYZ.
+        **point_data: per-point arrays by name, e.g. RGB=colors, similarity=scores.
+
+    Returns:
+        The point cloud; pts3d is copied.
     """
     cloud = pv.PolyData(pts3d.copy())
     for k, v in point_data.items():

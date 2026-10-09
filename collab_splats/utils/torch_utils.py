@@ -1,12 +1,17 @@
-"""General-purpose PyTorch and model-loading utilities."""
+"""
+PyTorch device, precision, batching and model-loading helpers.
+
+- RegistryMixin: name-to-class registry shared by the backend and model zoos
+"""
 
 import gc
 import logging
 import sys
 import threading
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, ClassVar, Generator, Iterator, List
+from typing import Any, ClassVar
 
 import numpy as np
 import torch
@@ -20,12 +25,19 @@ logger = logging.getLogger(__name__)
 
 
 def get_device() -> str:
-    """Return 'cuda' if a CUDA device is available, otherwise 'cpu'."""
+    """
+    Torch device name for this process.
+
+    Returns:
+        "cuda" when a CUDA device is available, else "cpu".
+    """
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def pytorch_gc():
-    """Run Python garbage collection, then release freed CUDA blocks to the driver."""
+def pytorch_gc() -> None:
+    """
+    Run Python garbage collection, then release freed CUDA blocks to the driver.
+    """
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -129,14 +141,18 @@ def vendored_path(root: Path, hint: str) -> Iterator[None]:
 
 
 def infer_batch_size(mem_per_image_gb: float, headroom: float = 0.3) -> int:
-    """Compute safe batch size from available VRAM.
+    """
+    Safe batch size from the device's total VRAM.
 
     Args:
-        mem_per_image_gb: Estimated GPU memory per image in GB.
-        headroom: Fraction of VRAM reserved for batch data (rest = model weights).
+        mem_per_image_gb: estimated GPU memory per image, in GB.
+        headroom: fraction of VRAM reserved for batch data (the rest for model weights).
 
     Returns:
-        Batch size >= 1. Returns 1 if CUDA is unavailable.
+        Batch size >= 1; 1 when CUDA is unavailable.
+
+    Raises:
+        ValueError: if mem_per_image_gb is not positive.
     """
     if mem_per_image_gb <= 0:
         raise ValueError(f"mem_per_image_gb must be positive, got {mem_per_image_gb}")
@@ -146,15 +162,16 @@ def infer_batch_size(mem_per_image_gb: float, headroom: float = 0.3) -> int:
     return 1
 
 
-def batch_iterator(batch_size: int, *args) -> Generator[List[Any], None, None]:
-    """Yield aligned batches of size *batch_size* from one or more parallel sequences.
+def batch_iterator(batch_size: int, *args: Any) -> Generator[list[Any], None, None]:
+    """
+    Aligned batches of batch_size items from one or more parallel sequences.
 
     Args:
-        batch_size: Number of items per batch.
-        *args: One or more sequences of equal length.
+        batch_size: items per batch; the last batch may be shorter.
+        *args: one or more sequences of equal length.
 
     Yields:
-        A list of sliced sequences, one per input arg.
+        One slice per input sequence, in argument order.
 
     Raises:
         ValueError: no sequences, or sequences of different lengths.
@@ -173,28 +190,30 @@ def batch_iterator(batch_size: int, *args) -> Generator[List[Any], None, None]:
 ########################################################
 
 
-def load_hf_weights(repo_id: str, filename: str):
-    """Download a single file from a Hugging Face Hub repository.
+def load_hf_weights(repo_id: str, filename: str) -> str:
+    """
+    Download one file from a Hugging Face Hub repository.
 
     Args:
-        repo_id: HuggingFace repo (e.g. ``"facebook/dinov2-small"``).
-        filename: File path within the repo.
+        repo_id: Hub repo, e.g. "facebook/dinov2-small".
+        filename: file path within the repo.
 
     Returns:
-        Local path to the downloaded file.
+        Local path to the downloaded (or cached) file.
     """
     return hf_hub_download(repo_id=repo_id, filename=filename)
 
 
-def load_torchhub_model(repo_id: str, model_name: str):
-    """Load a pre-trained model from torch.hub.
+def load_torchhub_model(repo_id: str, model_name: str) -> torch.nn.Module:
+    """
+    Pre-trained model from torch.hub.
 
     Args:
-        repo_id: GitHub repo (e.g. ``"facebookresearch/dinov2"``).
-        model_name: Entry-point name registered in the repo's ``hubconf.py``.
+        repo_id: GitHub repo, e.g. "facebookresearch/dinov2".
+        model_name: entry point registered in the repo's hubconf.py.
 
     Returns:
-        The loaded model (nn.Module).
+        The loaded model.
     """
     return torch.hub.load(repo_id, model_name)
 
@@ -205,23 +224,46 @@ def load_torchhub_model(repo_id: str, model_name: str):
 
 
 class RegistryMixin:
-    """Name-based class registry. Declare ``_registry: Dict[str, type] = {}`` in subclass."""
+    """
+    Name-based class registry.
+
+    - each registry base declares its own `_registry: ClassVar[dict[str, type]] = {}`
+    """
 
     _registry: ClassVar[dict]
 
     @classmethod
-    def register(cls, name: str):
-        """Class decorator: register a subclass under *name*."""
+    def register(cls, name: str) -> Callable[[type], type]:
+        """
+        Class decorator registering a subclass under a name.
 
-        def decorator(subclass):
+        Args:
+            name: registry key, e.g. the config backend name.
+
+        Returns:
+            A decorator that registers the class and returns it unchanged.
+        """
+
+        def decorator(subclass: type) -> type:
             cls._registry[name] = subclass
             return subclass
 
         return decorator
 
     @classmethod
-    def get(cls, name: str):
-        """Return registered class for *name*, or raise ValueError."""
+    def get(cls, name: str) -> type:
+        """
+        Registered class for a name.
+
+        Args:
+            name: registry key.
+
+        Returns:
+            The class registered under name.
+
+        Raises:
+            ValueError: if name is not registered; the message lists the known names.
+        """
         if name not in cls._registry:
             raise ValueError(
                 f"Unknown '{name}'. Available: {list(cls._registry.keys())}"

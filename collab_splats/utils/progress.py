@@ -16,13 +16,21 @@ def progress(
     on_progress: Callable[[int, int], None] | None = None,
 ) -> Iterator[Any]:
     """
-    Yield from an iterable, driving a tqdm bar or an on_progress(done, total) callback.
+    Items of an iterable, driving a tqdm bar or an on_progress(done, total) callback.
 
-    A caller with a UI passes on_progress and gets no terminal bar; a caller
-    without one gets the bar. Exactly one of the two runs, never both.
+    - on_progress given: no terminal bar (a UI caller); otherwise the bar
+    - exactly one of the two runs, never both
+
+    Args:
+        iterable: items to pass through.
+        total: item count; len(iterable) when omitted, 0 when unsized.
+        desc: tqdm bar label.
+        on_progress: called with (done, total) after each item.
+
+    Yields:
+        Each item of iterable, in order.
     """
-    # len() when the caller did not say — an unsized iterable reports total 0,
-    # which tqdm renders as an open-ended bar rather than a wrong denominator.
+    # Unsized iterable reports total 0: tqdm draws an open-ended bar, not a wrong denominator
     if total is None:
         try:
             total = len(iterable)  # type: ignore[arg-type]

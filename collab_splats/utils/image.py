@@ -9,7 +9,6 @@ Image helpers: PIL coercion, guided depth upsampling, hole filling, feature PCA 
 """
 
 from pathlib import Path
-from typing import Union
 
 import cv2
 import numpy as np
@@ -32,17 +31,18 @@ CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
 CLIP_STD = [0.26862954, 0.26130258, 0.27577711]
 
 
-def open_image(image: Union[str, Path, np.ndarray, Image.Image]) -> Image.Image:
-    """Coerce various image representations to a PIL Image.
+def open_image(image: str | Path | np.ndarray | Image.Image) -> Image.Image:
+    """
+    PIL Image from a path, an array or an existing PIL Image.
 
     Args:
-        image: File path (str or Path), numpy array, or PIL Image.
+        image: file path, (H, W[, C]) array, or PIL Image (returned as is).
 
     Returns:
-        PIL Image instance.
+        The image as PIL.
 
     Raises:
-        ValueError: If *image* is an unsupported type.
+        ValueError: if image is an unsupported type.
     """
     if isinstance(image, (str, Path)):
         return Image.open(image)
@@ -54,14 +54,15 @@ def open_image(image: Union[str, Path, np.ndarray, Image.Image]) -> Image.Image:
 
 
 def resize_image(image: Image.Image, longest_edge: int) -> Image.Image:
-    """Resize maintaining aspect ratio so the longest edge equals *longest_edge*.
+    """
+    Aspect-preserving resize so the longest edge equals longest_edge.
 
     Args:
-        image: PIL Image to resize.
-        longest_edge: Target pixel length for the longest dimension.
+        image: image to resize.
+        longest_edge: target pixel length of the longest dimension.
 
     Returns:
-        Resized PIL Image.
+        The resized image, bilinear.
     """
     width, height = image.size
     ratio = longest_edge / max(width, height)

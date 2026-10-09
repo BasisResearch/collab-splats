@@ -585,19 +585,13 @@ def load_video_quality(
 
     Raises:
         FileNotFoundError: no cached report and the video does not exist.
-        ValueError: a cached report without "frames", or compute_video_quality rejects the input.
+        ValueError: compute_video_quality rejects the input.
     """
     report_path = Path(report_path)
 
     if report_path.exists():
         logger.info("video quality: reusing %s", report_path)
-        report = json.loads(report_path.read_text())
-
-        if "frames" not in report:
-            raise ValueError(
-                f"{report_path} is a stale video-quality report (no 'frames'); delete it and re-run"
-            )
-        return report
+        return json.loads(report_path.read_text())
 
     report = compute_video_quality(
         video_path, motion_stride=motion_stride, workers=workers

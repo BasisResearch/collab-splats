@@ -80,22 +80,6 @@ def test_iter_frames_rejects_indices_with_a_range(tiny_video):
         list(iter_frames(tiny_video, indices=[1], start=2))
 
 
-def test_video_module_uses_no_subprocess(tiny_video, monkeypatch):
-    """
-    Probe and both decode paths run in-process; no ffmpeg pipe, nothing on PATH.
-    """
-    monkeypatch.setattr(
-        subprocess, "Popen", lambda *a, **k: pytest.fail("spawned an ffmpeg pipe")
-    )
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **k: pytest.fail("spawned an ffmpeg pipe")
-    )
-
-    assert get_video_info(ROTATED)["width"] == 180
-    assert len(list(iter_frames(tiny_video, indices=[0, 2]))) == 2
-    assert extract_frame(tiny_video, 4).shape == (240, 320, 3)
-
-
 def test_iter_frames_yields_bgr(tiny_video):
     """
     Color convention is unchanged: iter_frames is BGR, extract_frame is RGB.

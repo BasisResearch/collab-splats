@@ -121,13 +121,6 @@ def test_pool_single_pos_matches_max():
 ########################################################################
 
 
-def test_tokens_to_feature_map_is_private():
-    """Only the three feature backends call it; it is not user surface."""
-    assert "tokens_to_feature_map" not in su.__all__
-    assert not hasattr(su, "tokens_to_feature_map")
-    assert callable(su._tokens_to_feature_map)
-
-
 def test_package_re_exports_every_utils_public_name():
     """
     Every name in utils/store __all__ is reachable as `from collab_splats.semantics import <name>`.

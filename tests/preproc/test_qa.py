@@ -763,13 +763,3 @@ def test_load_video_quality_writes_then_reuses(tiny_video, tmp_path):
 
     assert report_path.stat().st_mtime_ns == stamp
     assert second["frames"] == first["frames"]
-
-
-def test_load_video_quality_rejects_a_stale_report(tmp_path):
-    report_path = tmp_path / "video_quality_report.json"
-
-    # The retired no-frames sentinel an older run could have left on disk
-    report_path.write_text(json.dumps({"available": False, "reason": "x"}))
-
-    with pytest.raises(ValueError, match="stale"):
-        load_video_quality(tmp_path / "unused.mp4", report_path)

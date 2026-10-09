@@ -229,11 +229,11 @@ def sky_masks(
         )
 
     # Threshold on read, so hits and misses share one path and a new threshold reuses the cache
-    return np.stack(
-        [
-            cv2.imread(str(cache_dir / f"frame_{i:06d}.png"), cv2.IMREAD_GRAYSCALE)  # type: ignore[operator]
-            / 255.0
-            > threshold
-            for i in wanted
-        ]
-    )
+    probs = frames.read_frames(cache_dir, wanted, gray=True)
+    masks = np.empty(probs.shape, dtype=bool)
+
+    # Per-frame threshold keeps the float temporary to one frame
+    for row, prob in enumerate(probs):
+        masks[row] = prob / 255.0 > threshold
+
+    return masks

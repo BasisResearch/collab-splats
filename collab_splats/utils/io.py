@@ -84,9 +84,9 @@ def write_json(path: str | Path, obj: Any, *, indent: int = 2) -> Path:
 ########################################################################
 
 
-def read_image(path: str | Path) -> np.ndarray:
+def read_image(path: str | Path, *, gray: bool = False) -> np.ndarray:
     """
-    Decode one image file as RGB.
+    Decode one image file as RGB, or as one gray channel.
 
     - cv2 decode then BGR -> RGB, the same pixels read_frames has always returned
     - cv2.imread answers None for a missing or undecodable file; raised here by name
@@ -94,17 +94,24 @@ def read_image(path: str | Path) -> np.ndarray:
 
     Args:
         path: image file.
+        gray: decode as one grayscale channel instead of RGB.
 
     Returns:
-        (H, W, 3) uint8 RGB.
+        (H, W, 3) uint8 RGB, or (H, W) uint8 when gray.
 
     Raises:
         FileNotFoundError: the file is missing or cv2 cannot decode it.
     """
-    bgr = cv2.imread(str(path), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
-    if bgr is None:
+    mode = cv2.IMREAD_GRAYSCALE if gray else cv2.IMREAD_COLOR
+    image = cv2.imread(str(path), mode | cv2.IMREAD_IGNORE_ORIENTATION)
+
+    if image is None:
         raise FileNotFoundError(f"cannot read image: {path}")
-    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    if gray:
+        return image
+
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
 def to_uint8_hwc(images: np.ndarray, *, channels_first: bool) -> np.ndarray:

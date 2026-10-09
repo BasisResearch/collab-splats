@@ -162,10 +162,14 @@ def write_frames(
 
 
 def read_frames(
-    dir: Path | str, idxs: Sequence[int] | None = None, *, workers: int = 8
+    dir: Path | str,
+    idxs: Sequence[int] | None = None,
+    *,
+    workers: int = 8,
+    gray: bool = False,
 ) -> np.ndarray:
     """
-    Read frames from an images directory as one RGB stack.
+    Read frames from an images directory as one RGB (or grayscale) stack.
 
     - decoded on a thread pool straight into one preallocated stack; cv2 releases the GIL
 
@@ -174,9 +178,10 @@ def read_frames(
         idxs: SOURCE frame indices to read, in the order given; None reads every
             frame in filename order.
         workers: decode threads.
+        gray: decode each frame as one grayscale channel instead of RGB.
 
     Returns:
-        (N, H, W, 3) uint8 RGB.
+        (N, H, W, 3) uint8 RGB, or (N, H, W) uint8 when gray.
 
     Raises:
         FileNotFoundError: when no frame resolves: idxs is None over an empty directory, or idxs is empty.
@@ -188,7 +193,7 @@ def read_frames(
         raise FileNotFoundError(f"read_frames: no frame images in {dir}")
 
     # First frame sets the stack's shape and dtype
-    first = read_image(paths[0])
+    first = read_image(paths[0], gray=gray)
     stack = np.empty((len(paths), *first.shape), first.dtype)
     stack[0] = first
 
@@ -196,7 +201,7 @@ def read_frames(
         """
         Decode frame i into its slot of the stack.
         """
-        stack[i] = read_image(paths[i])
+        stack[i] = read_image(paths[i], gray=gray)
 
     # Remaining frames decode on the pool; a worker's exception re-raises here
     with ThreadPoolExecutor(workers) as pool:

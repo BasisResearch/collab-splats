@@ -392,18 +392,21 @@ def test_sky_masks_segments_without_stacking_every_uncached_frame(
 ):
     # read_frames returns one np.stack of every miss — ~10 GB for an 853-frame scene, on top
     # of whatever fusion buffers the mesh stage is already holding. Segmenting reads one batch
-    # at a time, so this whole run must never reach read_frames.
+    # at a time, so this whole run must never read RGB frames through read_frames.
     images_dir, _ = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
     monkeypatch.setattr(
         sky.BaseSegmentation,
         "get",
         classmethod(lambda cls, name: lambda: _ConstantBackend(True)),
     )
-    monkeypatch.setattr(
-        sky.frames,
-        "read_frames",
-        lambda *a, **k: pytest.fail("sky_masks called read_frames"),
-    )
+    read_frames = sky.frames.read_frames
+
+    def gray_only(*args, gray=False, **kwargs):
+        if not gray:
+            pytest.fail("sky_masks read RGB frames through read_frames")
+        return read_frames(*args, gray=gray, **kwargs)
+
+    monkeypatch.setattr(sky.frames, "read_frames", gray_only)
 
     assert sky.sky_masks(images_dir).all()
 

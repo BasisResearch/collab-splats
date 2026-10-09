@@ -26,7 +26,10 @@ from collab_splats.geometry.transforms import (
     estimate_intrinsics_from_points,
     invert_poses,
 )
-from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
+from collab_splats.pointcloud.feedforward.base import (
+    BaseFeedforwardCreator,
+    _frame_sizes,
+)
 from collab_splats.utils.torch_utils import load_hf_weights, vendored_path
 
 logger = logging.getLogger(__name__)
@@ -166,7 +169,7 @@ class LoGeRCreator(BaseFeedforwardCreator):
         - returns (N, 3, H, W) float32 images in [0, 1] and (N, 6) original_coords
         """
         # Refuse frames of different sizes, since LoGeR sizes every frame from the first one
-        sizes = {Image.open(p).size for p in paths}
+        sizes = set(_frame_sizes(paths, None))
 
         if len(sizes) != 1:
             raise ValueError(

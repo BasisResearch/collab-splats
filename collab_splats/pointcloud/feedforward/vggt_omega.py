@@ -29,7 +29,7 @@ from vggt_omega.utils.load_fn import (
 )
 from vggt_omega.utils.pose_enc import encoding_to_camera
 
-from collab_splats.geometry.projection import unproject
+from collab_splats.geometry.projection import unproject_frames
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 from collab_splats.pointcloud.feedforward.base import (
     BaseFeedforwardCreator,
@@ -295,14 +295,13 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         raw = _decode_depth_head(predictions, frames.shape[-2:], encoding_to_camera)
 
         # Unproject each frame's depth into world points
-        depth = torch.from_numpy(raw["depth"][..., 0])
-        world_to_cam = torch.from_numpy(raw["extrinsic"])
-        intrinsics = torch.from_numpy(raw["intrinsics"])
-        world_points = unproject(depth, world_to_cam, intrinsics)
+        world_points = unproject_frames(
+            raw["depth"][..., 0], raw["extrinsic"], raw["intrinsics"]
+        )
 
         # Return the poses and geometry alongside the captured queries and keys
         captured["poses"] = extrinsics_to_homogeneous(raw["extrinsic"])
-        captured["world_points"] = world_points.numpy()
+        captured["world_points"] = world_points
         captured["conf"] = raw["depth_conf"]
 
         return captured

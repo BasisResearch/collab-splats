@@ -19,7 +19,10 @@ import numpy as np
 import torch
 from PIL import Image
 
-from collab_splats.geometry.projection import multiview_depth_confidence, unproject
+from collab_splats.geometry.projection import (
+    multiview_depth_confidence,
+    unproject_frames,
+)
 from collab_splats.geometry.transforms import extrinsics_to_homogeneous
 from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResult
 from collab_splats.pointcloud.utils import confidence_mask, cross_frame_attention_ratio
@@ -236,10 +239,7 @@ class BaseFeedforwardCreator(BasePointcloudCreator, RegistryMixin):
         model_h, model_w = int(depth.shape[1]), int(depth.shape[2])
 
         # Unproject the depth into a world point for every pixel, instead of using the backend's point maps
-        depth_t = torch.as_tensor(depth, dtype=torch.float32)
-        world_to_cam = torch.as_tensor(extrinsic, dtype=torch.float32)
-        intrinsics_t = torch.as_tensor(intrinsic, dtype=torch.float32)
-        world_points = unproject(depth_t, world_to_cam, intrinsics_t).numpy()
+        world_points = unproject_frames(depth, extrinsic, intrinsic)
 
         # Keep pixels with positive depth that pass the backend's mask, or the confidence cutoff if it has none
         valid = depth > 0

@@ -78,7 +78,7 @@ KEYS = ("x_i", "K_j", "I_i", "I_j", "gx_j", "gy_j", "uv_j", "weight")
 
 
 def photometric_samples(
-    world_to_cam: torch.Tensor,
+    extrinsics: torch.Tensor,
     gray: torch.Tensor,
     depth: torch.Tensor,
     intrinsics: torch.Tensor,
@@ -102,7 +102,7 @@ def photometric_samples(
     - occluded samples dropped: frame j's depth disagrees with the carried depth
 
     Args:
-        world_to_cam: (N, 4, 4) poses.
+        extrinsics: (N, 4, 4) poses.
         gray: (N, H, W) brightness.
         depth: (N, H, W) z-depth; <= min_depth is invalid.
         intrinsics: (N, 3, 3) K at this scale.
@@ -125,7 +125,7 @@ def photometric_samples(
     device, dtype = depth.device, depth.dtype
 
     # Overlapping pairs: nearest camera centers facing within max_view_angle_deg
-    cam_to_world = torch.linalg.inv(world_to_cam)
+    cam_to_world = torch.linalg.inv(extrinsics)
     centers = cam_to_world[:, :3, 3]
     forward = F.normalize(cam_to_world[:, :3, 2], dim=-1)
     max_view_angle = np.deg2rad(max_view_angle_deg)
@@ -176,8 +176,8 @@ def photometric_samples(
     K_i = intrinsics[i_idx]
     xy_i = (uv_i - K_i[:, :2, 2]) / K_i[:, [0, 1], [0, 1]] * d_i[:, None]
     x_i = torch.cat([xy_i, d_i[:, None]], dim=-1)
-    cam_i = pp.mat2SE3(world_to_cam[i_idx], check=False)
-    cam_j = pp.mat2SE3(world_to_cam[j_idx], check=False)
+    cam_i = pp.mat2SE3(extrinsics[i_idx], check=False)
+    cam_j = pp.mat2SE3(extrinsics[j_idx], check=False)
     x_w = cam_i.Inv().Act(x_i)
     x_j = cam_j.Act(x_w)
     uvw = torch.einsum("mij,mj->mi", intrinsics[j_idx], x_j)

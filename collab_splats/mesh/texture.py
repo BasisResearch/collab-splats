@@ -216,7 +216,7 @@ def unwrap_view_charts(
 def _face_view_scores(
     verts: np.ndarray,
     faces: np.ndarray,
-    w2c: np.ndarray,
+    extrinsics: np.ndarray,
     K: np.ndarray,
     image_hw: tuple[int, int],
     *,
@@ -236,19 +236,19 @@ def _face_view_scores(
     corners = faces_t.long()
     centroids = verts_h[:, :3][corners].mean(1)
     n_faces = len(faces)
-    w2c_t = torch.from_numpy(w2c.astype(np.float32)).cuda()
+    extrinsics_t = torch.from_numpy(extrinsics.astype(np.float32)).cuda()
     K_t = torch.from_numpy(K.astype(np.float32)).cuda()
-    scores = torch.zeros(n_faces, len(w2c), dtype=torch.float16, device="cuda")
+    scores = torch.zeros(n_faces, len(extrinsics), dtype=torch.float16, device="cuda")
 
-    for k in range(len(w2c)):
+    for k in range(len(extrinsics)):
         rast, depth = _rasterize_view(
-            ctx, verts_h, faces_t, w2c_t[k], K_t[k], height, width
+            ctx, verts_h, faces_t, extrinsics_t[k], K_t[k], height, width
         )
         face_id = rast[..., 3].long().flatten()
         owned = torch.bincount(face_id[face_id > 0] - 1, minlength=n_faces).float()
 
         # Projected area of each face; in front and fully framed only
-        pixels, cam = project(verts_h[:, :3], w2c_t[k], K_t[k])
+        pixels, cam = project(verts_h[:, :3], extrinsics_t[k], K_t[k])
         p = pixels[corners]
         area = cast(torch.Tensor, _signed_area(p))
         area = area.abs()
@@ -261,7 +261,7 @@ def _face_view_scores(
         ).all(1)
 
         # Centroid depth test for faces too small to own pixels
-        centroid_px, centroid_cam = project(centroids, w2c_t[k], K_t[k])
+        centroid_px, centroid_cam = project(centroids, extrinsics_t[k], K_t[k])
         d = _nearest_depth(depth, centroid_px)
         near = (d > 0) & ((centroid_cam[:, 2] - d).abs() < rel_tol * d)
 
@@ -650,7 +650,7 @@ def _visible_pixel_size(
     points: torch.Tensor,
     dirs: torch.Tensor,
     depth: torch.Tensor,
-    w2c: torch.Tensor,
+    extrinsics: torch.Tensor,
     K: torch.Tensor,
     eps: float,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -660,14 +660,14 @@ def _visible_pixel_size(
     - pixel size = dist / (fx * cos): grazing and distant views resolve the surface coarsely
     - inf for back-faces, texels behind the camera or out of frame, and texels the depth render hides
     - hidden: depth at the nearest pixel; testing all 4 bilinear pixels hides grazing ground from itself
-    - depth: the occluder's (H, W) camera depth in this view, 0 where empty; w2c, K float32 cuda
+    - depth: the occluder's (H, W) camera depth in this view, 0 where empty; extrinsics, K float32 cuda
     """
     height, width = depth.shape
-    pixels, cam = project(points, w2c, K)
+    pixels, cam = project(points, extrinsics, K)
 
     # Facing the camera: the camera-frame normal points back along the camera-frame position
     dist = cam.norm(dim=1)
-    cam_dirs = dirs @ w2c[:3, :3].T
+    cam_dirs = dirs @ extrinsics[:3, :3].T
     cos = -(cam_dirs * cam).sum(1) / dist
 
     # In front of the camera and inside the frame
@@ -761,7 +761,7 @@ def _rasterize_view(
     ctx: dr.RasterizeCudaContext,
     verts_h: torch.Tensor,
     faces: torch.Tensor,
-    w2c: torch.Tensor,
+    extrinsics: torch.Tensor,
     K: torch.Tensor,
     height: int,
     width: int,
@@ -769,15 +769,15 @@ def _rasterize_view(
     """
     Face-id raster and camera depth of a mesh in one view.
 
-    - verts_h: (P, 4) homogeneous float32 cuda vertices; faces: (F, 3) int32 cuda; w2c, K float32 cuda
+    - verts_h: (P, 4) homogeneous float32 cuda vertices; faces: (F, 3) int32 cuda; extrinsics, K float32 cuda
     - returns rast (H, W, 4), whose channel 3 is face id + 1 (0 = empty), and depth (H, W), 0 where empty
     """
     proj = torch.from_numpy(_gl_projection(K, width, height)).cuda()
-    clip = verts_h @ (proj @ w2c).T
+    clip = verts_h @ (proj @ extrinsics).T
     rast, _ = dr.rasterize(ctx, clip[None], faces, resolution=[height, width])
 
     # Camera z interpolated over the same fragments
-    z = (verts_h @ w2c[2])[:, None].contiguous()
+    z = (verts_h @ extrinsics[2])[:, None].contiguous()
     depth, _ = dr.interpolate(z[None], rast, faces)
     hit = rast[0, ..., 3] > 0
     return rast[0], depth[0, ..., 0] * hit

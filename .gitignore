@@ -17,7 +17,6 @@ evals/results/
 
 # Internal working docs (kept local, not tracked)
 docs/superpowers/
-docs/semantics.md
 
 # Eval benchmark data (downloaded on-demand via evals/data/download_datasets.py)
 data/

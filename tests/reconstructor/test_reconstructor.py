@@ -4,7 +4,7 @@ import itertools
 import json
 import weakref
 from pathlib import Path
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import MagicMock, call, create_autospec, patch
 
 import cv2
 import numpy as np
@@ -48,7 +48,7 @@ def _make_config(tmp_path, overrides=None):
         },
         "semantics": {
             "enabled": False,
-            "extractor": "dinov2",
+            "extractors": ["dinov2"],
             "n_components": 64,
             "resolution": 512,
         },
@@ -442,14 +442,14 @@ def _touch_frames(rec, frame_idxs):
         (rec.images_dir / f"frame_{fi:06d}.png").touch()
 
 
-def _seed_codes(rec, name, maps, latent_dim=None, extractor_kwargs=None):
+def _seed_codes(rec, name, maps, latent_dim=None):
     """A valid <name>_codes.zarr over rec's images/, as a finished extract + encode leaves it."""
     path = rec.semantics_cache_dir / f"{name}_codes.zarr"
     attrs = {
         "extractor": name,
         "patch_size": 14,
         "n_frames": len(maps),
-        "extractor_kwargs": extractor_kwargs or {},
+        "extractor_kwargs": {},
         "latent_dim": latent_dim,
     }
     write_feature_cache(path, iter(torch.from_numpy(m) for m in maps), len(maps), attrs)
@@ -460,7 +460,13 @@ def test_semantics_valid_cache_skips_the_extractor(tmp_path):
     """A codes store valid for this extractor, kwargs and width is lifted without building the extractor."""
     config = _make_config(
         tmp_path,
-        {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}},
+        {
+            "semantics": {
+                "enabled": True,
+                "extractors": ["dinov2"],
+                "n_components": None,
+            }
+        },
     )
     rec = Reconstructor(config)
     _touch_frames(rec, [0, 1])
@@ -480,12 +486,11 @@ def test_semantics_valid_cache_skips_the_extractor(tmp_path):
     assert codes_path.exists()
 
 
-def test_semantics_invalid_cache_extracts_with_extractor_kwargs(tmp_path):
-    """semantics.extractor_kwargs reaches the extractor build and the codes store's attrs."""
+def test_semantics_runs_each_listed_extractor_in_order(tmp_path):
+    """Every listed extractor is built with its defaults, in list order, and writes its own lifted store."""
     semantics = {
         "enabled": True,
-        "extractor": "dinov2",
-        "extractor_kwargs": {"layer": 20},
+        "extractors": ["talk2dino", "dinov2"],
         "n_components": None,
     }
     rec = _semantics_rec(tmp_path, semantics)
@@ -493,25 +498,48 @@ def test_semantics_invalid_cache_extracts_with_extractor_kwargs(tmp_path):
     with _stub_extraction() as extractor_base:
         rec.semantics()
 
-    extractor_base.get.assert_called_once_with("dinov2")
-    extractor_base.get.return_value.assert_called_once_with(layer=20)
-    attrs = dict(
-        zarr.open(str(rec.semantics_cache_dir / "dinov2_codes.zarr"), mode="r").attrs
-    )
-    assert attrs["extractor_kwargs"] == {"layer": 20}
-    assert attrs["latent_dim"] is None
+    assert [c.args[0] for c in extractor_base.get.call_args_list] == [
+        "talk2dino",
+        "dinov2",
+    ]
+    assert extractor_base.get.return_value.call_args_list == [call(), call()]
+    assert all(path.exists() for path in rec.lifted_stores.values())
+    assert rec.done("semantics")
+
+
+def test_semantics_fits_the_autoencoder_on_a_resident_tensor(tmp_path):
+    """The AE trains on the whole feature set as one tensor, not on the zarr."""
+    rec = _semantics_rec(tmp_path, COMPRESSED)
+    real_fit = FeatureAutoencoder.fit
+    seen = []
+
+    def fit(ae, features, **kwargs):
+        seen.append(features)
+        return real_fit(ae, features, **kwargs)
+
+    with _stub_extraction(), patch.object(FeatureAutoencoder, "fit", fit):
+        rec.semantics()
+
+    assert len(seen) == 1 and isinstance(seen[0], torch.Tensor)
+    assert seen[0].shape == (2, 32, 2, 2)
 
 
 def test_run_refuses_semantics_if_lifted_exists(tmp_path):
     config = _make_config(
         tmp_path,
-        {"semantics": {"enabled": True, "extractor": "dinov2", "n_components": None}},
+        {
+            "semantics": {
+                "enabled": True,
+                "extractors": ["dinov2"],
+                "n_components": None,
+            }
+        },
     )
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)
-    lifted_dir = rec.backend_dir / "semantics"
-    lifted_dir.mkdir(parents=True)
-    (lifted_dir / "dinov2_lifted.zarr").mkdir()
+    write_point_features(
+        rec.lifted_stores["dinov2"], np.zeros((1, 2), np.float32), None
+    )
 
     with (
         patch.object(R, "write_feature_cache") as write,
@@ -563,7 +591,7 @@ def _stub_extraction(dim=32):
 
 
 COMPRESSED = {
-    "extractor": "dinov2",
+    "extractors": ["dinov2"],
     "n_components": 8,
     "max_epochs": 1,
     "target_cosine": None,
@@ -660,7 +688,7 @@ def test_semantics_n_components_change_re_extracts(tmp_path):
 def test_semantics_uncompressed_writes_full_width_codes_without_features(
     tmp_path, monkeypatch
 ):
-    rec = _semantics_rec(tmp_path, {"extractor": "dinov2", "n_components": None})
+    rec = _semantics_rec(tmp_path, {"extractors": ["dinov2"], "n_components": None})
     written = []
     real_write = R.write_feature_cache
     monkeypatch.setattr(
@@ -702,7 +730,7 @@ def test_load_frame_maps_pointcloud_frame_to_store_row(tmp_path):
 
 def test_semantics_uncompressed_writes_full_dim_and_no_weights(tmp_path):
     """n_components: null is supported: full-dim codes, no autoencoder, attrs say so."""
-    rec = _semantics_rec(tmp_path, {"extractor": "dinov2", "n_components": None})
+    rec = _semantics_rec(tmp_path, {"extractors": ["dinov2"], "n_components": None})
 
     with _stub_extraction():
         rec.semantics()
@@ -1116,7 +1144,7 @@ def test_run_default_uses_config_enabled(tmp_path):
     config = _make_config(
         tmp_path,
         {
-            "semantics": {"enabled": True, "extractor": "dinov2"},
+            "semantics": {"enabled": True, "extractors": ["dinov2"]},
             "mesh": {"enabled": False},
         },
     )
@@ -1510,15 +1538,23 @@ def test_done_pointcloud_needs_zarr_and_colmap(tmp_path):
     assert rec.done("pointcloud") is True
 
 
-def test_done_semantics_is_per_extractor(tmp_path):
-    """The marker is this run's extractor — another extractor's lifted store must not satisfy it."""
-    config = _make_config(tmp_path, {"semantics": {"extractor": "dinov2"}})
+def test_done_semantics_needs_every_listed_extractor(tmp_path):
+    """Every listed extractor's lifted store is needed; an unlisted one never counts."""
+    config = _make_config(
+        tmp_path, {"semantics": {"extractors": ["dinov2", "ocr_lens"]}}
+    )
     rec = Reconstructor(config)
     sem_dir = rec.backend_dir / "semantics"
-    sem_dir.mkdir(parents=True)
-    (sem_dir / "talk2dino_lifted.zarr").mkdir()
+
+    for name in ("talk2dino", "dinov2"):
+        write_point_features(
+            sem_dir / f"{name}_lifted.zarr", np.zeros((1, 2), np.float32), None
+        )
+
     assert rec.done("semantics") is False
-    (sem_dir / "dinov2_lifted.zarr").mkdir()
+    write_point_features(
+        sem_dir / "ocr_lens_lifted.zarr", np.zeros((1, 2), np.float32), None
+    )
     assert rec.done("semantics") is True
 
 
@@ -1534,21 +1570,11 @@ def _seed_mesh(rec):
     return vertices.astype(np.float32)
 
 
-def _mesh_semantics_rec(tmp_path, extractor, extractor_kwargs=None, dim=4):
+def _mesh_semantics_rec(tmp_path, extractor, dim=4):
     """Uncompressed codes seeded (no extraction), a one-point reconstruction and a quad mesh.ply."""
-    semantics = {
-        "enabled": True,
-        "extractor": extractor,
-        "extractor_kwargs": extractor_kwargs or {},
-        "n_components": None,
-    }
+    semantics = {"enabled": True, "extractors": [extractor], "n_components": None}
     rec = _semantics_rec(tmp_path, semantics)
-    _seed_codes(
-        rec,
-        extractor,
-        [np.ones((dim, 2, 2), np.float16)] * 2,
-        extractor_kwargs=extractor_kwargs,
-    )
+    _seed_codes(rec, extractor, [np.ones((dim, 2, 2), np.float16)] * 2)
     return rec, _seed_mesh(rec)
 
 
@@ -1584,7 +1610,7 @@ def test_semantics_lifts_queryable_codes_onto_mesh_vertices(tmp_path):
     np.testing.assert_array_equal(vertex_cloud.points, vertices)
     assert vertex_cloud.pixel_indices is None
 
-    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    store = zarr.open(str(rec.lifted_stores["talk2dino"]), mode="r")
     assert store["vertex_features"].dtype == np.float16
     expected = np.arange(16, dtype=np.float16).reshape(4, 4)
     expected[3] = 0
@@ -1606,7 +1632,7 @@ def test_semantics_without_vertex_mode_writes_points_only(tmp_path):
     with patch.object(R, "lift_features", side_effect=_arange_lift(calls)):
         rec.semantics()
 
-    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    store = zarr.open(str(rec.lifted_stores["dinov2"]), mode="r")
     assert len(calls) == 1
     assert "vertex_features" not in store and "vertex_word_ids" not in store
     assert "mesh_sha256" not in store.attrs
@@ -1614,14 +1640,14 @@ def test_semantics_without_vertex_mode_writes_points_only(tmp_path):
 
 
 def test_semantics_without_mesh_writes_points_only(tmp_path):
-    rec = _semantics_rec(tmp_path, {"extractor": "talk2dino", "n_components": None})
+    rec = _semantics_rec(tmp_path, {"extractors": ["talk2dino"], "n_components": None})
     _seed_codes(rec, "talk2dino", [np.ones((4, 2, 2), np.float16)] * 2)
     calls = []
 
     with patch.object(R, "lift_features", side_effect=_arange_lift(calls)):
         rec.semantics()
 
-    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    store = zarr.open(str(rec.lifted_stores["talk2dino"]), mode="r")
     assert (
         len(calls) == 1
         and "vertex_features" not in store
@@ -1654,9 +1680,7 @@ def _stub_lens(n_words=70):
 
 
 def test_semantics_stores_each_vertex_top_64_words(tmp_path):
-    rec, _ = _mesh_semantics_rec(
-        tmp_path, "ocr_lens", extractor_kwargs={"model_id": "local/llava"}
-    )
+    rec, _ = _mesh_semantics_rec(tmp_path, "ocr_lens")
     calls = []
 
     with (
@@ -1665,9 +1689,9 @@ def test_semantics_stores_each_vertex_top_64_words(tmp_path):
     ):
         rec.semantics()
 
-    # The extracting checkpoint's lens; one decode per frame; one word lift over the vocabulary
-    processor.assert_called_once_with("local/llava")
-    decoder.assert_called_once_with("local/llava")
+    # The default checkpoint's lens; one decode per frame; one word lift over the vocabulary
+    processor.assert_called_once_with("llava-hf/llava-v1.6-vicuna-7b-hf")
+    decoder.assert_called_once_with("llava-hf/llava-v1.6-vicuna-7b-hf")
     assert decode.call_count == 2
     assert calls[1][1] == 70
 
@@ -1681,7 +1705,7 @@ def test_semantics_stores_each_vertex_top_64_words(tmp_path):
 
     # Each seen vertex keeps the top-64 of its lifted row, descending
     expected = torch.arange(4 * 70, dtype=torch.float32).reshape(4, 70).topk(64, dim=1)
-    store = zarr.open(str(rec.outputs["semantics"]), mode="r")
+    store = zarr.open(str(rec.lifted_stores["ocr_lens"]), mode="r")
     assert (
         store["vertex_word_ids"].dtype == np.int16
         and store["vertex_word_probs"].dtype == np.float16
@@ -1700,11 +1724,13 @@ def test_semantics_stores_each_vertex_top_64_words(tmp_path):
 
 
 def test_done_semantics_is_stale_once_mesh_ply_changes(tmp_path):
-    rec = Reconstructor(_make_config(tmp_path, {"semantics": {"extractor": "dinov2"}}))
+    rec = Reconstructor(
+        _make_config(tmp_path, {"semantics": {"extractors": ["dinov2"]}})
+    )
     _seed_mesh(rec)
     sha = hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
     write_point_features(
-        rec.outputs["semantics"],
+        rec.lifted_stores["dinov2"],
         np.zeros((1, 2), np.float32),
         None,
         attrs={"mesh_sha256": sha},
@@ -1717,8 +1743,12 @@ def test_done_semantics_is_stale_once_mesh_ply_changes(tmp_path):
 
 def test_done_semantics_without_a_recorded_mesh_stays_done(tmp_path):
     # Points-only store (dinov2, or lifted before any mesh): nothing on the mesh to go stale
-    rec = Reconstructor(_make_config(tmp_path, {"semantics": {"extractor": "dinov2"}}))
-    write_point_features(rec.outputs["semantics"], np.zeros((1, 2), np.float32), None)
+    rec = Reconstructor(
+        _make_config(tmp_path, {"semantics": {"extractors": ["dinov2"]}})
+    )
+    write_point_features(
+        rec.lifted_stores["dinov2"], np.zeros((1, 2), np.float32), None
+    )
     _seed_mesh(rec)
     assert rec.done("semantics") is True
 
@@ -1780,7 +1810,7 @@ def test_mesh_without_pointcloud_on_disk_still_raises(tmp_path):
 
 def test_semantics_reads_pointcloud_zarr_from_disk(tmp_path):
     config = _make_config(
-        tmp_path, {"semantics": {"extractor": "dinov2", "n_components": None}}
+        tmp_path, {"semantics": {"extractors": ["dinov2"], "n_components": None}}
     )
     rec = Reconstructor(config)
     _seed_pointcloud_markers(rec)

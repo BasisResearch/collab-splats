@@ -218,7 +218,7 @@ def test_semantics_lifts_only_the_rows_the_pointcloud_holds(tmp_path):
         return torch.zeros(5, 4)
 
     # Uncompressed dinov2, extractor and writer stubbed: only the row pick and the lift run
-    recon.config["semantics"]["extractor"] = "dinov2"
+    recon.config["semantics"]["extractors"] = ["dinov2"]
     recon.config["semantics"]["n_components"] = None
 
     with (

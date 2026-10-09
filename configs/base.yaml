@@ -42,11 +42,10 @@ pointcloud:
 
 semantics:
   enabled: true
-  extractor: talk2dino   # talk2dino | dinov2 | maskclip | ocr_lens
-  extractor_kwargs: {}
-  n_components: 64       # null = full width
-  target_cosine: 0.95
-  max_epochs: 100
+  extractors: [talk2dino, ocr_lens]   # run in order; talk2dino | dinov2 | maskclip | ocr_lens
+  n_components: 128      # null = full width
+  target_cosine: null    # null = run max_epochs; else stop at this mean reconstruction cosine
+  max_epochs: 30
 
 
 ########################################

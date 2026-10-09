@@ -419,10 +419,10 @@ parameter and raises.
 | `pointcloud.mv_rel_thresh` | float | `0.01` | Multiview agreement tolerance, as a fraction of depth |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points, every method. sfm deletes the same points3D from the mapper's COLMAP export, which keeps its tracks and camera model |
 | `semantics.enabled` | bool | `true` | Extract and lift semantic features |
-| `semantics.extractor` | str | `talk2dino` | `talk2dino`, `dinov2`, or `maskclip` |
-| `semantics.n_components` | int\|null | `64` | Autoencoder latent dim; null = no compression |
-| `semantics.target_cosine` | float | `0.95` | Stop autoencoder training at this mean reconstruction cosine, `max_epochs` the ceiling. Measured on the training set, so on small scenes a pass means "fit completed", not "features trustworthy"; at production scale (10^5-10^6 patches) the gap largely closes |
-| `semantics.max_epochs` | int | `100` | Autoencoder training ceiling |
+| `semantics.extractors` | list[str] | `[talk2dino, ocr_lens]` | Run in order, one model on the GPU at a time, each writing `<extractor>_lifted.zarr`: `talk2dino`, `dinov2`, `maskclip`, `ocr_lens`. All share the settings below; each builds with its own defaults |
+| `semantics.n_components` | int\|null | `128` | Autoencoder latent dim; null = no compression |
+| `semantics.target_cosine` | float\|null | `null` | null runs every `max_epochs`; else stop once the mean reconstruction cosine reaches it. Early stops cost query fidelity (GH010238: talk2dino top-5% IoU 0.68 at a 0.95 stop vs 0.78 after 30 epochs) |
+| `semantics.max_epochs` | int | `30` | Autoencoder epochs; the fit holds the whole feature set on the GPU (ocr_lens 300 frames: 3.1 GB, ~1 min) |
 | `mesh.enabled` | bool | `true` | Fuse a TSDF mesh after the pointcloud stage, writing `<backend>/mesh.ply` |
 | `mesh.source` | str | `feedforward` | `feedforward` fuses `pointcloud.zarr` depth lifted onto the original frames; `splats` fuses depth and color rendered from the splats stage's `ckpt.pt` (needs the splats stage, which is never auto-run) |
 | `mesh.voxel_depth_px` | float | `4.0` | TSDF voxel edge in depth pixels: `voxel = voxel_depth_px × depth / fx` at the `voxel_ref_percentile` depth, `fx` on the depth's own grid (model grid for feedforward). Derived per scene, so it follows the reconstruction's scale; coarsened further when the surface blocks would exceed 8 GB. `4.0` reproduces the hand-tuned `0.0025` of the 294-frame GH010229 run |

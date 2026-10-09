@@ -106,14 +106,14 @@ def test_tutorial_scene_skips_run_when_all_done(scene_ns, monkeypatch):
 def test_tutorial_scene_extractor_selects_the_store(scene_ns):
     default = scene_ns["tutorial_scene"]()
     ocr = scene_ns["tutorial_scene"](extractor="ocr_lens")
-    assert default.outputs["semantics"].name == "talk2dino_lifted.zarr"
-    assert ocr.outputs["semantics"].name == "ocr_lens_lifted.zarr"
+    assert list(default.lifted_stores) == ["talk2dino"]
+    assert ocr.lifted_stores["ocr_lens"].name == "ocr_lens_lifted.zarr"
     assert ocr.config["semantics"]["max_epochs"] == 20
 
 
 def test_tutorial_scene_does_not_mutate_scene_config(scene_ns):
     scene_ns["tutorial_scene"](extractor="ocr_lens")
-    assert scene_ns["SCENE_CONFIG"]["semantics"]["extractor"] == "talk2dino"
+    assert scene_ns["SCENE_CONFIG"]["semantics"]["extractors"] == ["talk2dino"]
 
 
 def test_work_dir_is_emptied_on_each_call(scene_ns, tmp_path):

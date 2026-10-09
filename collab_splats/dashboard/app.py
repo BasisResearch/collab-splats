@@ -707,11 +707,14 @@ class SplatsApp:
             with self._op_log.step(f"{scene}/{backend}: reading pointcloud.zarr"):
                 result = rec.result
 
+            # Semantics shows the first configured extractor with a fresh lifted store
+            fresh = rec.fresh_lifted_stores()
+            extractor_name = next(iter(fresh), next(iter(rec.lifted_stores)))
             value = (
                 result,
                 rec.outputs["mesh"] if rec.done("mesh") else None,
-                rec.outputs["semantics"] if rec.done("semantics") else None,
-                rec.config["semantics"]["extractor"],
+                fresh.get(extractor_name),
+                extractor_name,
             )
             self._cache.put(key, "loaded", value)
             return value

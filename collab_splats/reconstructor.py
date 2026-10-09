@@ -286,7 +286,8 @@ class Reconstructor:
         """
         Reject a config that would fail mid-run, before any stage starts.
 
-        - only cross-field checks: required paths, method/backend pairing, LC/sfm/LoGeR exclusions
+        - only cross-field checks: required paths, method/backend pairing, LC/sfm/LoGeR exclusions, semantics
+          extractor names
         - per-argument bounds live in the creators and create_tsdf_mesh
         - pointcloud.loop_closure and bundle_adjustment are normalized in place to dicts carrying `enabled`
 
@@ -364,6 +365,20 @@ class Reconstructor:
             BundleAdjustmentConfig(**{k: v for k, v in ba.items() if k != "enabled"})
         except ValueError as e:
             raise ValueError(f"pointcloud.bundle_adjustment: {e}") from e
+
+        # Semantics extractors: a non-empty list of registered names
+        extractors = config["semantics"]["extractors"]
+
+        if not isinstance(extractors, list) or not extractors:
+            raise ValueError(
+                f"semantics.extractors must be a non-empty list, got {extractors!r}"
+            )
+
+        for name in extractors:
+            try:
+                BaseFeatureExtractor.get(name)
+            except ValueError as e:
+                raise ValueError(f"semantics.extractors: {e}") from e
 
         # Refuse LC with sfm: LC wraps a feedforward creator in sequential submaps
         if method == "sfm" and lc["enabled"]:
@@ -487,21 +502,63 @@ class Reconstructor:
         Marker file per stage; a stage is done when its marker exists.
 
         - localize writes into pointcloud.zarr, so done() checks it separately
+        - semantics is the lifted stores' directory; done() checks each of lifted_stores
 
         Returns:
             Stage name to its marker path.
         """
-        extractor = self.config["semantics"]["extractor"]
         return {
             "preproc": self.images_dir,
             "pointcloud": self.pointcloud_zarr,
             "refine": self.backend_dir / "colmap" / "refine.json",
-            "semantics": self.backend_dir / "semantics" / f"{extractor}_lifted.zarr",
+            "semantics": self.backend_dir / "semantics",
             "splats": self.backend_dir / "splats" / "ckpt.pt",
             "mesh": self.backend_dir / "mesh.ply",
             "reconstruction_quality_report": self.backend_dir
             / "reconstruction_quality_report.json",
         }
+
+    @property
+    def lifted_stores(self) -> dict[str, Path]:
+        """
+        Lifted store per configured extractor, in run order.
+
+        Returns:
+            Extractor name to <backend_dir>/semantics/<extractor>_lifted.zarr.
+        """
+        return {
+            name: self.outputs["semantics"] / f"{name}_lifted.zarr"
+            for name in self.config["semantics"]["extractors"]
+        }
+
+    def fresh_lifted_stores(self) -> dict[str, Path]:
+        """
+        The configured lifted stores on disk that still index the current mesh.
+
+        - a store with no recorded mesh hash, or no mesh.ply, counts as fresh
+        - a store whose recorded hash differs from mesh.ply is stale: its vertex arrays index another mesh
+
+        Returns:
+            Extractor name to lifted store path, in run order, fresh stores only.
+        """
+        mesh_path = self.outputs["mesh"]
+        mesh_sha = (
+            hashlib.sha256(mesh_path.read_bytes()).hexdigest()
+            if mesh_path.exists()
+            else None
+        )
+        fresh = {}
+
+        for name, path in self.lifted_stores.items():
+            if not path.exists():
+                continue
+
+            recorded = zarr.open(str(path), mode="r").attrs.get("mesh_sha256")
+
+            if recorded is None or mesh_sha is None or recorded == mesh_sha:
+                fresh[name] = path
+
+        return fresh
 
     ########################################
     # Stage dispatch
@@ -515,8 +572,8 @@ class Reconstructor:
             stage: a key of STAGES.
 
         Returns:
-            True when the marker exists; pointcloud also needs the COLMAP model; semantics with a recorded mesh hash
-            also needs mesh.ply to match it.
+            True when the marker exists; pointcloud also needs the COLMAP model; semantics needs every lifted store
+            fresh against mesh.ply.
         """
         # localize lives inside pointcloud.zarr; pointcloud also needs its COLMAP model
         if stage == "localize":
@@ -528,20 +585,9 @@ class Reconstructor:
         if stage == "pointcloud":
             return self.pointcloud_zarr.exists() and self.colmap_model_dir.exists()
 
-        # Semantics with vertex arrays is stale when mesh.ply changed since their lift
-        if (
-            stage == "semantics"
-            and self.outputs["semantics"].exists()
-            and self.outputs["mesh"].exists()
-        ):
-            recorded = zarr.open(str(self.outputs["semantics"]), mode="r").attrs.get(
-                "mesh_sha256"
-            )
-            return (
-                recorded is None
-                or recorded
-                == hashlib.sha256(self.outputs["mesh"].read_bytes()).hexdigest()
-            )
+        # Semantics needs every configured extractor's lifted store, each fresh against mesh.ply
+        if stage == "semantics":
+            return self.fresh_lifted_stores().keys() == self.lifted_stores.keys()
 
         return self.outputs[stage].exists()
 
@@ -975,19 +1021,30 @@ class Reconstructor:
 
     def semantics(self) -> None:
         """
-        Extract 2D features, compress every frame to fp16 codes, lift the codes onto the points.
+        Run each configured extractor in turn: features, fp16 codes, lift onto the points.
+
+        - extractors run in config order, one model resident at a time; all share n_components and AE settings
+        - each rebuilds its lifted store; a valid codes cache skips its extraction and AE fit
+        """
+        for name, path in self.lifted_stores.items():
+            logger.info("semantics: %s", name)
+            self._semantics_extractor(name, path)
+
+    def _semantics_extractor(self, name: str, lifted_path: Path) -> None:
+        """
+        Extract one extractor's 2D features, compress every frame to fp16 codes, lift the codes onto the points.
 
         - codes store `<extractor>_codes.zarr` reused when valid (name, frames, kwargs, latent_dim)
         - a miss extracts full-width features to a temporary `<extractor>_features.zarr`, trains the AE on all
           of them, encodes every frame, then deletes them; n_components null keeps full width, no AE
+        - the AE trains on the features loaded onto the GPU once; the encode pass reads the zarr per frame
         - lift reads one frame of codes at a time; rows follow the zarr's frames (maybe a subset)
         - lifted store written atomically with its own autoencoder.pt; codes and lifted stores are pushed
         - with mesh.ply: ocr_lens also stores each vertex's top-64 words (decode, then lift), queryable
           extractors `vertex_features` (codes on vertices); both record the mesh's sha256
         """
         cfg = self.config["semantics"]
-        name = cfg["extractor"]
-        extractor_kwargs = cfg["extractor_kwargs"]
+        extractor_kwargs: dict[str, Any] = {}
         latent_dim = cfg["n_components"]
         codes_path = self.semantics_cache_dir / f"{name}_codes.zarr"
         features_path = self.semantics_cache_dir / f"{name}_features.zarr"
@@ -1036,12 +1093,16 @@ class Reconstructor:
                 ae = FeatureAutoencoder(
                     input_dim=features.shape[1], latent_dim=latent_dim
                 )
+
+                # Whole feature set on the GPU once; streaming from disk costs 10-20 s/epoch
+                resident = torch.from_numpy(features[:]).to(get_device())
                 ae.fit(
-                    features,
+                    resident,
                     epochs=cfg["max_epochs"],
                     target_cosine=cfg["target_cosine"],
                 )
-                ae.to(get_device())
+                del resident
+                pytorch_gc()
                 encoded = map(
                     partial(_load_frame, features, range(n_frames), ae), range(n_frames)
                 )
@@ -1079,9 +1140,7 @@ class Reconstructor:
 
             # ocr_lens: each frame's top-64 words per patch, lifted as indexed maps; each vertex keeps its top-64
             if name == "ocr_lens":
-                model_id = extractor_kwargs.get(
-                    "model_id", "llava-hf/llava-v1.6-vicuna-7b-hf"
-                )
+                model_id = "llava-hf/llava-v1.6-vicuna-7b-hf"
                 vocab = word_vocabulary(load_processor(model_id).tokenizer)
                 decoder = load_decoder(model_id)
 
@@ -1145,7 +1204,7 @@ class Reconstructor:
 
         # Write points, vertex arrays and attrs together; the lifted store is the stage's done marker
         write_point_features(
-            self.outputs["semantics"],
+            lifted_path,
             to_numpy(lifted),
             ae,
             vertex_arrays=vertex_arrays,

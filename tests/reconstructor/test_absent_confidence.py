@@ -107,7 +107,7 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
         "output_path": str(tmp_path),
         "pointcloud": {"method": "feedforward", "backend": "vggtx"},
         "mesh": {"conf_percentile": 20},
-        "semantics": {"extractor": "dinov2"},
+        "semantics": {"extractors": ["dinov2"]},
         "splats": {
             "enabled": True,
             "max_steps": 1,

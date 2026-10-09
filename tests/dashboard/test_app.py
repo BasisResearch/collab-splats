@@ -16,6 +16,7 @@ from collab_splats.dashboard.app import (
 )
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.reconstructor import Reconstructor
+from collab_splats.semantics.store import write_point_features
 
 # Flat curated scene id: YYYY_MM_DD-PARENTFOLDER-VIDEONAME, one video inside
 SCENE = "2026_05_07-birds-clip_03"
@@ -89,7 +90,7 @@ def _done_backend(out, backend=BACKEND, extractor=None):
     (out / backend / "colmap" / "sparse" / "0").mkdir(parents=True)
 
     if extractor is not None:
-        config = {"semantics": {"extractor": extractor}}
+        config = {"semantics": {"extractors": [extractor]}}
         (out / backend / "run_config.yaml").write_text(yaml.safe_dump(config))
 
 
@@ -352,14 +353,13 @@ def test_persisted_stages_drop_unknown_names(tmp_path):
 
 
 def test_reconstructor_reads_the_recorded_run_config(tmp_path):
-    """The recorded extractor wins, so outputs['semantics'] names the store that run wrote."""
+    """The recorded extractors win, so lifted_stores names the store that run wrote."""
     app, _ = _app(tmp_path)
     _done_backend(tmp_path / SCENE, extractor="dinov2")
     rec = app._reconstructor(SCENE, BACKEND)
-    assert (
-        rec.outputs["semantics"]
-        == tmp_path / SCENE / BACKEND / "semantics" / "dinov2_lifted.zarr"
-    )
+    assert rec.lifted_stores == {
+        "dinov2": tmp_path / SCENE / BACKEND / "semantics" / "dinov2_lifted.zarr"
+    }
     assert rec.config["output_path"] == str(tmp_path / SCENE)
     assert rec.done("pointcloud")
 
@@ -758,7 +758,7 @@ def test_load_job_reads_a_done_backend(tmp_path, monkeypatch):
     out = tmp_path / SCENE
     _done_backend(out)
     lifted = out / BACKEND / "semantics" / "talk2dino_lifted.zarr"
-    lifted.mkdir(parents=True)
+    write_point_features(lifted, np.zeros((1, 2), np.float32), None)
     monkeypatch.setattr(PointcloudResult, "load_zarr", lambda p, **kwargs: "result")
     app._load_outputs(SCENE, BACKEND)
     job_fn, _on_done, _doc = app._gpu.submitted[-1]

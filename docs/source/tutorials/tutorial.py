@@ -55,7 +55,7 @@ SCENE_CONFIG = {
             "normal_consistency": {"weight": 0.05, "start": 700},
         },
     },
-    "semantics": {"extractor": "talk2dino", "max_epochs": 20},
+    "semantics": {"extractors": ["talk2dino"], "max_epochs": 20},
 }
 
 
@@ -78,7 +78,7 @@ def tutorial_scene(*stages: str, extractor: str | None = None) -> Reconstructor:
     config["output_path"] = str(SCENE_DIR)
 
     if extractor is not None:
-        config["semantics"]["extractor"] = extractor
+        config["semantics"]["extractors"] = [extractor]
 
     scene = Reconstructor(config)
     missing = [s for s in stages if not scene.done(s)]

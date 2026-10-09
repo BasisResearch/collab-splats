@@ -457,7 +457,7 @@ def _make_config(tmp_path, video_path):
         },
         "semantics": {
             "enabled": False,
-            "extractor": "dinov2",
+            "extractors": ["dinov2"],
             "n_components": 64,
             "resolution": 512,
         },

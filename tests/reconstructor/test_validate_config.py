@@ -2,7 +2,9 @@
 Config-load refusals owned by Reconstructor.validate_config.
 """
 
+from contextlib import ExitStack
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -113,13 +115,48 @@ def test_loop_closure_is_normalized_to_a_dict(tmp_path):
 
 
 @pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
-def test_sfm_refuses_bundle_adjustment_and_loop_closure(backend):
-    for key in ("bundle_adjustment", "loop_closure"):
-        cfg = _sfm_cfg(backend)
-        cfg["pointcloud"][key] = True
+def test_sfm_refuses_loop_closure(backend):
+    cfg = _sfm_cfg(backend)
+    cfg["pointcloud"]["loop_closure"] = True
 
-        with pytest.raises(ValueError, match=key):
-            Reconstructor.validate_config(cfg)
+    with pytest.raises(ValueError, match="loop_closure"):
+        Reconstructor.validate_config(cfg)
+
+
+@pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
+def test_sfm_accepts_bundle_adjustment_and_skips_refine(tmp_path, backend):
+    # sfm + BA validates; the default stage set drops refine (the mapper runs its own BA)
+    r = Reconstructor(
+        _cfg(tmp_path, method="sfm", backend=backend, bundle_adjustment=True)
+    )
+    assert r.config["pointcloud"]["bundle_adjustment"]["enabled"]
+
+    # Record every stage run() calls
+    calls = []
+    stages = [
+        "preproc",
+        "pointcloud",
+        "refine",
+        "semantics",
+        "mesh",
+        "localize",
+        "reconstruction_quality_report",
+    ]
+
+    with ExitStack() as stack:
+        for name in stages:
+            stack.enter_context(
+                patch.object(
+                    Reconstructor,
+                    name,
+                    side_effect=lambda *a, _n=name, **k: calls.append(_n),
+                )
+            )
+
+        r.run()
+
+    assert "pointcloud" in calls
+    assert "refine" not in calls
 
 
 def test_loop_closure_with_loger_is_refused(tmp_path):

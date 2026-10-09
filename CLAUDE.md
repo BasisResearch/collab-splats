@@ -48,7 +48,7 @@ bash setup.sh                    # full install (uv sync — all deps incl. VGGT
 
 ## Architecture Overview
 
-Core pipeline: video/images → pointcloud (feedforward: VGGT-X / VGGT-Omega / MapAnything / LoGeR, or sfm: InstantSfM / COLMAP / hloc + VDA depth) → optional BA / optional LC (both feedforward only — sfm refuses them) → `pointcloud.zarr` → mesh/features/splats.
+Core pipeline: video/images → pointcloud (feedforward: VGGT-X / VGGT-Omega / MapAnything / LoGeR, or sfm: InstantSfM / COLMAP / hloc + VDA depth) → optional BA / optional LC (both feedforward only — sfm refuses LC and skips BA) → `pointcloud.zarr` → mesh/features/splats.
 
 ```
 collab_splats/

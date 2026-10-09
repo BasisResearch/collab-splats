@@ -20,7 +20,7 @@ import zarr
 
 from collab_splats.preproc.frames import frame_paths
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.utils.io import open_valid, to_json_safe
+from collab_splats.utils.io import LZ4, open_valid, to_json_safe
 from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,7 @@ def write_feature_cache(
                 chunks=(1, *fmap.shape),
                 dtype="float16",
                 fill_value=0,
+                compressors=LZ4,
             )
 
         fmap = fmap.detach().cpu()
@@ -180,10 +181,10 @@ def write_point_features(
     # Codes, vertex arrays, weights, then attrs into the tmp dir; a failure removes it
     try:
         store = zarr.open(str(tmp), mode="w")
-        store["features"] = codes.astype(np.float16)
+        store.create_array("features", data=codes.astype(np.float16), compressors=LZ4)
 
         for key, array in (vertex_arrays or {}).items():
-            store[key] = array
+            store.create_array(key, data=array, compressors=LZ4)
 
         if ae is not None:
             ae.save(tmp / "autoencoder.pt")

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import torch
 import zarr
+from zarr.codecs.blosc import BloscCname
 
 import collab_splats.semantics.store as store
 from collab_splats.semantics.compression import FeatureAutoencoder
@@ -317,3 +318,28 @@ def test_read_point_features_decodes_a_named_array(tmp_path):
     np.testing.assert_allclose(
         out, vertex / np.linalg.norm(vertex, axis=1, keepdims=True), rtol=1e-3
     )
+
+
+def _cnames(arr: zarr.Array) -> list[str]:
+    """
+    Blosc codec names of an array's compressors; None for a non-Blosc codec.
+    """
+    return [getattr(c, "cname", None) for c in arr.compressors]
+
+
+def test_semantics_stores_write_lz4(tmp_path):
+    # Both stores share the pipeline's one LZ4 codec, not zarr's zstd default
+    cache = tmp_path / "fake_codes.zarr"
+    store.write_feature_cache(cache, iter(_maps(2)), 2, ATTRS)
+    lifted = tmp_path / "fake_lifted.zarr"
+    write_point_features(
+        lifted,
+        np.ones((3, 2), np.float32),
+        None,
+        vertex_arrays={"vertex_features": np.ones((4, 2), np.float16)},
+    )
+
+    assert _cnames(zarr.open(str(cache), mode="r")["features"]) == [BloscCname.lz4]
+    lifted_store = zarr.open(str(lifted), mode="r")
+    assert _cnames(lifted_store["features"]) == [BloscCname.lz4]
+    assert _cnames(lifted_store["vertex_features"]) == [BloscCname.lz4]

@@ -236,6 +236,19 @@ def test_from_pointcloud_miss_without_images_raises(tmp_path, stub_matcher):
         )
 
 
+def test_from_pointcloud_without_world_points_raises(tmp_path, stub_matcher):
+    result = _mock_result(np.zeros((1, 8, 8, 3), np.float32))
+    result.world_points = None
+
+    with pytest.raises(ValueError, match="world_points"):
+        CameraLocalizer.from_pointcloud(
+            result,
+            zarr_path=tmp_path / "pc.zarr",
+            ids=["a"],
+            extractor=stub_matcher(_three_keypoints),
+        )
+
+
 def test_load_index_without_global_desc_raises_keyerror(tmp_path, stub_matcher):
     wp = np.zeros((1, 8, 8, 3), np.float32)
     loc = CameraLocalizer(

@@ -705,11 +705,18 @@ class CameraLocalizer:
             The localizer.
 
         Raises:
-            ValueError: result's per-frame arrays or ids disagree in length, or a rebuild is needed without images,
+            ValueError: result has no world_points, or its per-frame arrays or ids disagree in length,
+                or a rebuild is needed without images,
                 or a rebuild's frame size disagrees with original_coords.
         """
         coords = result.original_coords
-        assert result.world_points is not None
+
+        # Reference geometry is required; a points-only result cannot index frames
+        if result.world_points is None:
+            raise ValueError(
+                "CameraLocalizer.from_pointcloud: result has no world_points"
+            )
+
         n = len(result.world_points)
 
         # Default labels: the reconstruction's own image paths

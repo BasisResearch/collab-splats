@@ -37,7 +37,7 @@ def calculate_pairwise_frame_scale(
     """
     Scale taking one frame's points into another's units, for two frames of the same image.
 
-    - each frame's points are moved into its own camera first (divergence: docs/parity.md)
+    - each frame's points are moved into its own camera first (divergence: decision 027)
     - None when points are missing, grids differ, or the scale is not finite and > 0
 
     Args:
@@ -268,7 +268,7 @@ class PoseGraph:
             K_curr_first = intrinsics_4x4(submap.intrinsics[0].astype(np.float64))
             T = np.linalg.inv(K_prev_last) @ K_curr_first
 
-            # Overlap scale, each frame in its own camera (rotation_only; diverges from solver.py:141, docs/parity.md)
+            # Overlap scale, each frame in its own camera (rotation_only; diverges from solver.py:141, decision 027)
             scale = None
 
             if n_overlap > 0:

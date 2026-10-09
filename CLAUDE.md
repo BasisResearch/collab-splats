@@ -7,7 +7,8 @@ Always follow:
 - At the start of every conversation always call /brainstorming -- use superpowers to accomplish tasks.
 - Active spec/plan for in-flight work lives in docs/superpowers/specs/ and docs/superpowers/plans/.
 - Architecture decisions: docs/superpowers/decisions/NNN-slug.md (sequential numbering).
-- User-facing module docs live in docs/ (mirrors code tree).
+- User-facing module docs live in docs/source/api/<package>.rst: prose sections above the
+  automodule blocks (see geometry.rst). No standalone docs/*.md module docs.
 - Superpowers specs/plans belong in docs/superpowers/specs/ and docs/superpowers/plans/.
 - Completed work is appended to docs/superpowers/CHANGELOG.md, never written into this
   file. This file lists in-flight work only and must stay well under 40,000 characters —

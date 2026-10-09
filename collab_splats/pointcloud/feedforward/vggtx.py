@@ -46,7 +46,7 @@ class VGGTXCreator(BaseFeedforwardCreator):
         conf_percentile: depth-confidence percentile cutoff (0-100); 35.0 keeps the top 65%.
     """
 
-    # Loop-closure settings for VGGT-X, calibrated in docs/parity.md
+    # Loop-closure settings for VGGT-X, calibrated in decision 027
     _lc_layer_index: ClassVar[int] = (
         10  # layer 20, used for other VGGT models, does not detect loops here
     )

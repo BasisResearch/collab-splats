@@ -110,7 +110,7 @@ class VGGTOmegaCreator(BaseFeedforwardCreator):
         resize_mode: "balanced" (token count near resolution^2) or "max_size" (longest side = resolution).
     """
 
-    # Loop-closure settings for VGGT-Omega, calibrated in docs/parity.md
+    # Loop-closure settings for VGGT-Omega, calibrated in decision 027
     _lc_layer_index: ClassVar[int] = 13
     default_verify_match_ratio: ClassVar[float] = 1.55
     _lc_token_offset: ClassVar[int] = (

@@ -1,6 +1,6 @@
-# Parity references: VGGT-SPARK and VGGT-SLAM
+# 027 — Loop-closure parity vs VGGT-SPARK and VGGT-SLAM
 
-The one place the two external parity references are described.
+Date: 2026-10-09 · Status: accepted (record) · Moved from `docs/parity.md`
 
 - our loop closure (`collab_splats/geometry/loop_closure/`) ports VGGT-SLAM's SL(4) pose graph
 - both references were used only to check that port against upstream numbers
@@ -39,7 +39,7 @@ All paths are at `MIT-SPARK/VGGT-SLAM @ fd3fd218`, used under its BSD-2-Clause l
 | `geometry/loop_closure/map.py` `GraphMap` | `vggt_slam/map.py:GraphMap` |
 | `geometry/loop_closure/matching.py` | `vggt_slam/loop_closure.py` (`LoopMatch`, `LoopMatchQueue` → `find_loop_closures`) + `vggt_slam/map.py:retrieve_best_score_frame`, per decision 015 |
 | `geometry/loop_closure/wrapper.py` `LoopClosure` | `main.py:109-130` (window loop) + `vggt_slam/solver.py` `Solver` structure (`run_predictions` / `add_points`); graph construction stays in `PoseGraph` |
-| `pointcloud/utils.py` `cross_frame_attention_ratio` | VGGT-SPARK `get_similarity()` + top-quarter mean `r[r >= np.percentile(r, 75)].mean()` |
+| `pointcloud/utils.py` `cross_frame_attention_ratio` | VGGT-SPARK `get_similarity()`; the top-quarter mean `r[r >= np.percentile(r, 75)].mean()` is in `BaseFeedforwardCreator._verify_loop_candidate` |
 
 Config defaults that mirror VGGT-SLAM (`LoopClosureConfig`, `wrapper.py`):
 
@@ -204,7 +204,7 @@ Source: `evals/results/parity_harness/vggt_spark_similarity.json` (removed)
 |---|---|---|---|
 | verify layer `_lc_layer_index` | 20 | SPARK `target_layer=20` of 24 global blocks; `-1` scores ~0.66 vs ~1.02 | removed; each LC-capable creator sets its own |
 | verify threshold `default_verify_match_ratio` | 0.85 | SPARK's acceptance threshold for the attention ratio on VGGT-1B | removed; each LC-capable creator sets its own |
-| similarity aggregation | mean of top-25% | SPARK `get_similarity()` + `r[r >= np.percentile(r, 75)].mean()` | `cross_frame_attention_ratio`, `pointcloud/utils.py` |
+| similarity aggregation | mean of top-25% | SPARK `get_similarity()` + `r[r >= np.percentile(r, 75)].mean()` | `_verify_loop_candidate`, `pointcloud/feedforward/base.py` |
 | native verify threshold | 0.95 | SPARK `image_match_ratio` (native head); 21/21 positives accepted, AUC 0.92 | removed with the `vggt_spark` creator |
 
 - the `BaseFeedforwardCreator` LC classvars default to `None`; `_verify_loop_candidate` raises when they are unset

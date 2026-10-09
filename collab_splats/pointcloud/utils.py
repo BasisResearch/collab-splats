@@ -1,7 +1,7 @@
 """
 Point-set cleaning (outlier mask, confidence mask, random cap) and a loop-closure attention score.
 
-- cross_frame_attention_ratio ports VGGT-SPARK get_similarity(); see docs/parity.md
+- cross_frame_attention_ratio ports VGGT-SPARK get_similarity(); see decision 027
 """
 
 from __future__ import annotations

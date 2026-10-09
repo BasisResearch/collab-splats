@@ -16,7 +16,7 @@ Flags, output layout, and the processed-scene contract: [../configs/README.md](.
 
 - [pointcloud.md](pointcloud.md) — depth alignment, bundle adjustment, backend config blocks
 - [mesh.md](mesh.md) — TSDF fusion, cleaning, texturing, vertex features
-- [splats.md](splats.md) — Gaussian-splat training on upstream gsplat
-- [parity.md](parity.md) — loop-closure provenance and parity vs VGGT-SLAM
 
-Tutorials and the API reference build with `make docs` from `docs/source/`.
+Splats docs live in the API reference (`docs/source/api/splats.rst`); loop-closure parity vs
+VGGT-SLAM is decision 027. Tutorials and the API reference build with `make docs` from
+`docs/source/`.

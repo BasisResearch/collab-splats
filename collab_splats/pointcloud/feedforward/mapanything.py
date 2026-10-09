@@ -83,7 +83,7 @@ class MapAnythingCreator(BaseFeedforwardCreator):
     # MapAnything adds no extra tokens before the image tokens in its attention blocks
     _lc_token_offset: ClassVar[int] = 0
 
-    # Loop-closure settings tuned for this model (see docs/parity.md)
+    # Loop-closure settings tuned for this model (see decision 027)
     default_verify_match_ratio: ClassVar[float] = 1.46
     _lc_layer_index: ClassVar[int] = 4
 

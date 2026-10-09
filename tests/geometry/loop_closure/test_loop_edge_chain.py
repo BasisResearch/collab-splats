@@ -12,7 +12,7 @@ query/detected images, and prove:
 
 Scale inputs diverge from VGGT-SLAM on the point frame: each frame's dense
 points are moved from its submap's frame-0 camera into its own camera, so a
-translated camera does not bias the scale (upstream's does; docs/parity.md).
+translated camera does not bias the scale (upstream's does; decision 027).
 """
 
 from __future__ import annotations

@@ -24,7 +24,6 @@ from collab_splats.geometry.transforms import (
 )
 from collab_splats.pointcloud.feedforward import base as ff_base
 from collab_splats.preproc import frames as fr
-from collab_splats.reconstructor import LEAF_STAGES, STAGES
 
 DEPTH_COLUMNS = {
     "idx1",
@@ -787,27 +786,6 @@ def test_multiview_agreement_is_null_when_no_other_view_sees_the_frame():
     depth, K, extr = _two_view()
     extr[1, 0, 3] = -100.0  # camera 1 far off to the side: nothing projects in bounds
     assert metrics._collect_pairs(depth, K, extr, 0.05)[2] == [None, None]
-
-
-########################################
-# The stage wiring
-########################################
-
-
-def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
-    assert "reconstruction_quality_report" in LEAF_STAGES
-    assert STAGES["reconstruction_quality_report"] == ("pointcloud",)
-    assert list(STAGES).index("reconstruction_quality_report") > list(STAGES).index(
-        "pointcloud"
-    )
-
-
-def test_report_does_not_demote_any_existing_leaf():
-    """
-    A new dependency edge would silently break another stage's disk re-run.
-    """
-    for s in ("refine", "semantics", "mesh", "localize"):
-        assert s in LEAF_STAGES
 
 
 ########################################

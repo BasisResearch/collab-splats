@@ -8,10 +8,13 @@ import pathlib
 import numpy as np
 import pytest
 import torch
+from scipy.linalg import rq
+from scipy.spatial.transform import Rotation as ScipyR
 
 import collab_splats.geometry.bundle_adjustment as ba_mod
 from collab_splats.geometry.transforms import (
     _compute_weighted_median,
+    decompose_camera,
     estimate_intrinsics_from_points,
     extrinsics_to_homogeneous,
     fit_dominant_plane,
@@ -690,3 +693,66 @@ def test_transform_points_pose_batch_is_exact_fp32_under_tf32():
         torch.set_float32_matmul_precision(precision)
 
     assert torch.equal(out, per_pose)
+
+
+########################################################################
+# Camera decomposition
+########################################################################
+
+
+def test_decompose_camera_round_trip():
+    K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float64)
+    R = ScipyR.from_euler("y", 15, degrees=True).as_matrix()
+    t = np.array([0.1, -0.2, 0.5])
+    P34 = K @ np.hstack([R, t[:, None]])  # (3, 4)
+    K_out, R_out, t_out, scale = decompose_camera(P34)
+    assert np.allclose(K_out[:3, :3] / K_out[0, 0], K / K[0, 0], atol=1e-6)
+    assert np.allclose(np.abs(R_out), np.abs(R), atol=1e-5)
+    assert np.allclose(t_out, t, atol=1e-5)
+
+
+def test_decompose_camera_accepts_4x4():
+    K = np.eye(3, dtype=np.float64) * 400.0
+    R = np.eye(3, dtype=np.float64)
+    t = np.zeros(3)
+    P34 = K @ np.hstack([R, t[:, None]])
+    P44 = np.vstack([P34, [0, 0, 0, 1]])
+    K_out, R_out, t_out, scale = decompose_camera(P44)
+    assert K_out.shape[0] == 3
+
+
+def test_decompose_camera_keeps_a_reflection_like_upstream():
+    """
+    det<0 input returns det<0 R: upstream has no snap and no reflection fix.
+    """
+    K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float64)
+    refl = ScipyR.from_euler("y", 15, degrees=True).as_matrix() @ np.diag(
+        [1.0, 1.0, -1.0]
+    )
+    P34 = K @ np.hstack([refl, np.zeros((3, 1))])
+    _, R_out, _, _ = decompose_camera(P34)
+    assert np.linalg.det(R_out) < 0
+    assert np.allclose(R_out, refl.T, atol=1e-10)
+
+
+def test_decompose_camera_returns_the_unsnapped_rq_rotation_like_upstream():
+    """
+    R and t bit-equal upstream's arithmetic: inv of RQ's sign-fixed R, no U @ Vt snap.
+    """
+    # Upstream vggt_slam/slam_utils.py:45-83 arithmetic on a generic camera
+    K = np.array([[512.3, 0.7, 301.9], [0, 498.1, 247.3], [0, 0, 1]], dtype=np.float64)
+    R = ScipyR.from_euler("xyz", [23.0, -41.0, 67.0], degrees=True).as_matrix()
+    P34 = 1.7 * K @ np.hstack([R, np.array([[0.3], [-1.2], [2.9]])])
+    K_rq, R_rq = rq(P34[:, :3])
+    signs = np.sign(np.diag(K_rq))
+    K_rq, R_rq = K_rq * signs[None, :], R_rq * signs[:, None]
+
+    # A snap moves R by ~1e-16, so only bit-equality can see it
+    _, R_out, t_out, _ = decompose_camera(P34)
+    assert np.array_equal(R_out, np.linalg.inv(R_rq))
+    assert np.array_equal(t_out, np.linalg.inv(K_rq) @ P34[:, 3])
+
+
+def test_decompose_camera_rejects_bad_shape():
+    with pytest.raises(ValueError, match="expected"):
+        decompose_camera(np.ones((2, 4)))

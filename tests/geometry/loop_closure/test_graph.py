@@ -7,68 +7,15 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
-from scipy.linalg import rq
 from scipy.spatial.transform import Rotation as ScipyR
 
 from collab_splats.geometry.loop_closure import graph as graph_mod
-from collab_splats.geometry.loop_closure.graph import PoseGraph
+from collab_splats.geometry.loop_closure.graph import (
+    PoseGraph,
+    calculate_pairwise_frame_scale,
+)
 from collab_splats.geometry.loop_closure.submap import Submap
-from collab_splats.geometry.transforms import decompose_camera
 from tests.geometry.loop_closure._helpers import drive_pose_graph, graph_extrinsics
-
-
-def test_decompose_camera_round_trip():
-    K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float64)
-    R = ScipyR.from_euler("y", 15, degrees=True).as_matrix()
-    t = np.array([0.1, -0.2, 0.5])
-    P34 = K @ np.hstack([R, t[:, None]])  # (3, 4)
-    K_out, R_out, t_out, scale = decompose_camera(P34)
-    assert np.allclose(K_out[:3, :3] / K_out[0, 0], K / K[0, 0], atol=1e-6)
-    assert np.allclose(np.abs(R_out), np.abs(R), atol=1e-5)
-    assert np.allclose(t_out, t, atol=1e-5)
-
-
-def test_decompose_camera_accepts_4x4():
-    K = np.eye(3, dtype=np.float64) * 400.0
-    R = np.eye(3, dtype=np.float64)
-    t = np.zeros(3)
-    P34 = K @ np.hstack([R, t[:, None]])
-    P44 = np.vstack([P34, [0, 0, 0, 1]])
-    K_out, R_out, t_out, scale = decompose_camera(P44)
-    assert K_out.shape[0] == 3
-
-
-def test_decompose_camera_keeps_a_reflection_like_upstream():
-    """
-    det<0 input returns det<0 R: upstream has no snap and no reflection fix.
-    """
-    K = np.array([[500, 0, 320], [0, 500, 240], [0, 0, 1]], dtype=np.float64)
-    refl = ScipyR.from_euler("y", 15, degrees=True).as_matrix() @ np.diag(
-        [1.0, 1.0, -1.0]
-    )
-    P34 = K @ np.hstack([refl, np.zeros((3, 1))])
-    _, R_out, _, _ = decompose_camera(P34)
-    assert np.linalg.det(R_out) < 0
-    assert np.allclose(R_out, refl.T, atol=1e-10)
-
-
-def test_decompose_camera_returns_the_unsnapped_rq_rotation_like_upstream():
-    """
-    R and t bit-equal upstream's arithmetic: inv of RQ's sign-fixed R, no U @ Vt snap.
-    """
-    # Upstream vggt_slam/slam_utils.py:45-83 arithmetic on a generic camera
-    K = np.array([[512.3, 0.7, 301.9], [0, 498.1, 247.3], [0, 0, 1]], dtype=np.float64)
-    R = ScipyR.from_euler("xyz", [23.0, -41.0, 67.0], degrees=True).as_matrix()
-    P34 = 1.7 * K @ np.hstack([R, np.array([[0.3], [-1.2], [2.9]])])
-    K_rq, R_rq = rq(P34[:, :3])
-    signs = np.sign(np.diag(K_rq))
-    K_rq, R_rq = K_rq * signs[None, :], R_rq * signs[:, None]
-
-    # A snap moves R by ~1e-16, so only bit-equality can see it
-    _, R_out, t_out, _ = decompose_camera(P34)
-    assert np.array_equal(R_out, np.linalg.inv(R_rq))
-    assert np.array_equal(t_out, np.linalg.inv(K_rq) @ P34[:, 3])
-
 
 ########################################
 ########## PoseGraph tests #############
@@ -197,11 +144,6 @@ def test_incremental_pose_graph_returns_correct_shape():
 ########################################
 ####### error handling #################
 ########################################
-
-
-def test_decompose_camera_rejects_bad_shape():
-    with pytest.raises(ValueError, match="expected"):
-        decompose_camera(np.ones((2, 4)))
 
 
 def _optimizer_raising(exc):
@@ -530,3 +472,301 @@ def testcalculate_pairwise_frame_scale_gates_by_the_prior_submaps_conf_percentil
     assert graph_mod.calculate_pairwise_frame_scale(
         lc, 0, reg, 0, 100
     ) == pytest.approx(2.0, rel=1e-5)
+
+
+########################################
+####### scale fits and H_w init #######
+########################################
+
+
+def _regular_submap(sid: int, k: int, seed: int) -> Submap:
+    """Deterministic submap: identity-ish poses + random dense points."""
+    rng = np.random.default_rng(seed)
+    poses = np.tile(np.eye(4, dtype=np.float32), (k, 1, 1))
+    # small forward translation per frame so inter-frame relatives are non-trivial
+    for i in range(k):
+        poses[i, :3, 3] = [0.0, 0.0, 0.1 * (sid * k + i)]
+    P = 64
+    return Submap(
+        submap_id=sid,
+        frames=np.zeros((k, 3, 4, 4), dtype=np.float32),
+        poses=poses,
+        intrinsics=np.tile(np.eye(3, dtype=np.float32), (k, 1, 1)),
+        retrieval_vectors=rng.standard_normal((k, 8)).astype(np.float32),
+        image_paths=[f"s{sid}_f{i}.jpg" for i in range(k)],
+        points=rng.standard_normal((k, 8, P // 8, 3)).astype(np.float32),
+        conf=np.full((k, 8, P // 8), 50.0, dtype=np.float32),
+        frame_start=sid * k,
+    )
+
+
+@pytest.fixture
+def two_submaps():
+    return [_regular_submap(0, 4, 1), _regular_submap(1, 4, 2)]
+
+
+def _lc_submap(sid: int, q_path: str, d_path: str) -> Submap:
+    """2-frame loop-closure submap tying q_path→d_path."""
+    poses = np.tile(np.eye(4, dtype=np.float32), (2, 1, 1))
+    return Submap(
+        submap_id=sid,
+        poses=poses,
+        intrinsics=np.tile(np.eye(3, dtype=np.float32), (2, 1, 1)),
+        image_paths=[q_path, d_path],
+        points=np.zeros((2, 8, 8, 3), dtype=np.float32),
+        conf=np.full((2, 8, 8), 50.0, dtype=np.float32),
+    )
+
+
+def test_min_conf_points_reaches_sequential_and_both_anchor_scale_fits(
+    two_submaps, monkeypatch
+):
+    """PoseGraph(min_conf_points=...) reaches the sequential scale fit and both loop-anchor fits."""
+    seen = []
+    real = graph_mod.calculate_pairwise_frame_scale
+
+    def spy(*args):
+        seen.append(args[-1])
+        return real(*args)
+
+    monkeypatch.setattr(graph_mod, "calculate_pairwise_frame_scale", spy)
+    lc = _lc_submap(99, "s1_f1.jpg", "s0_f1.jpg")
+    pg = PoseGraph(min_conf_points=10)
+    for s in two_submaps:
+        pg.add_submap(s, overlap_frames=1)
+        pg.optimize()
+    assert seen == [10]
+
+    seen.clear()
+    pg.add_loop_edge(lc)
+    assert seen == [10, 10]
+
+
+def _one_frame_submap(
+    submap_id, pts, pose=None, conf=None, conf_threshold=None
+) -> Submap:
+    """1-frame submap with K = I; P points laid out as a (1, 1, P, 3) grid."""
+    n = len(pts)
+    pose = np.eye(4) if pose is None else pose
+    return Submap(
+        submap_id=submap_id,
+        poses=pose[None].astype(np.float32),
+        intrinsics=np.eye(3, dtype=np.float32)[None],
+        image_paths=[f"frame_{submap_id}.png"],
+        points=np.asarray(pts, dtype=np.float32).reshape(1, 1, n, 3),
+        conf=None
+        if conf is None
+        else np.asarray(conf, dtype=np.float32).reshape(1, 1, n),
+        conf_threshold=conf_threshold,
+    )
+
+
+def _frame_scale(
+    curr_pts,
+    prior_pts,
+    curr_pose=None,
+    curr_conf=None,
+    prior_conf=None,
+    conf_threshold=None,
+) -> float:
+    """calculate_pairwise_frame_scale between two 1-frame submaps, min_conf_points 10."""
+    curr = _one_frame_submap(1, curr_pts, curr_pose, curr_conf, conf_threshold)
+    prior = _one_frame_submap(0, prior_pts, None, prior_conf, conf_threshold)
+    return calculate_pairwise_frame_scale(curr, 0, prior, 0, min_conf_points=10)
+
+
+def test_frame_scale_known_ratio():
+    rng = np.random.default_rng(1)
+    X = rng.random((50, 3))
+    assert abs(_frame_scale(X, X * 2.5) - 2.5) < 0.01
+
+
+def test_frame_scale_degenerate_source_falls_back_to_one():
+    # Every source point at the origin: no valid ratio, scale 1.0
+    assert _frame_scale(np.zeros((5, 3)), np.ones((5, 3))) == 1.0
+
+
+def test_scale_estimation_survives_intersubmap_rotation():
+    """Scale estimation moves each frame's points into its own camera first.
+
+    The key failure mode: curr world origin is far from prev world origin.
+    Skipping the camera move leaves curr_pts at their small curr-world magnitudes while
+    prev_pts are large → scale wildly off.  Applying the full w2c pose
+    (rotation + translation) first recovers the correct 1/true_scale ratio.
+
+    Why 1/true_scale?  H_scale = diag([scale, scale, scale, 1]) is right-multiplied
+    into H_w.  When curr world is at true_scale times prev world, the SL4 homography
+    for the overlap frame satisfies P_prev = P_curr @ diag([true_scale,...,1]), so
+    H_scale must be diag([1/true_scale,...,1]) — i.e. scale = 1/true_scale.
+    """
+    rng = np.random.default_rng(42)
+    true_scale = 3.0
+
+    # Canonical scene: small cluster of points near the origin
+    N = 200
+    X_scene = rng.standard_normal((N, 3)) * 0.1
+
+    # Prev world: scene at [D, 0, 0], overlap-frame camera at the origin (P_prev_ov = I)
+    D = 10.0
+    X_prev = X_scene + np.array([D, 0.0, 0.0])
+    P_prev_ov = np.eye(4, dtype=np.float64)
+
+    # Curr world: same points as true_scale * R_w @ X_scene, near the curr origin (prev [D, 0, 0])
+    R_w = ScipyR.from_euler("z", 30, degrees=True).as_matrix()
+    X_curr = true_scale * (R_w @ X_scene.T).T
+
+    # Overlap-frame camera in curr world: true_scale * R_w @ (0 - scene_offset) = true_scale * R_w @ [-D, 0, 0]
+    C_cam_curr = true_scale * (R_w @ np.array([-D, 0.0, 0.0]))
+    R_cam_curr = R_w.T  # compensate for world rotation
+    t_cam_curr = -R_cam_curr @ C_cam_curr
+    P_curr_ov = np.eye(4, dtype=np.float64)
+    P_curr_ov[:3, :3] = R_cam_curr
+    P_curr_ov[:3, 3] = t_cam_curr
+
+    # Without the camera move (identity curr pose) vs with the full w2c pose
+    assert np.array_equal(P_prev_ov, np.eye(4))
+    scale_old = _frame_scale(X_curr, X_prev)
+    scale_new = _frame_scale(X_curr, X_prev, curr_pose=P_curr_ov)
+
+    # With the camera move: scale = 1/true_scale (the H_scale correction for a 3× curr world)
+    expected = 1.0 / true_scale
+    assert abs(scale_new - expected) / expected < 0.05, (
+        f"New scale {scale_new:.4f} far from expected {expected:.4f}"
+    )
+    # Without it: X_curr near origin (~0.3) vs X_prev far (~10), so scale_old >> expected
+    assert scale_old > 5.0, (
+        f"Unmoved points should give a large wrong scale, got {scale_old:.3f}"
+    )
+
+
+def test_confidence_masking_reduces_scale_noise():
+    """Confidence filtering excludes noisy low-conf points from scale estimation.
+
+    The scale is median(||prior[i]|| / ||curr[i]||) over the masked points.
+    When curr world is world_scale× larger than prev world, the function
+    returns ~1/world_scale (the SL4 correction factor).
+
+    Setup: 20 good points (conf=50, ratio=0.5) + 80 noisy points (conf=5,
+    ratio≈50, far from truth). Noisy majority corrupts the unmasked median
+    but the joint mask (conf>25) selects only the 20 good points.
+    """
+    rng = np.random.default_rng(42)
+    world_scale = 2.0
+    expected_scale = 1.0 / world_scale  # 0.5
+
+    N_good = 20
+    N_noisy = 80  # majority — enough to shift unmasked median far from truth
+
+    # Good points: prev far from origin, curr = world_scale × prev → ratio = 0.5
+    X_prev_good = rng.standard_normal((N_good, 3)) + np.array([10.0, 0.0, 0.0])
+    X_curr_in_prev_good = world_scale * X_prev_good  # ratio ||prev||/||curr|| = 0.5
+
+    # Noisy points: large curr norms, small prev norms → ratio ≈ 50 (far from 0.5)
+    X_prev_noisy = rng.standard_normal((N_noisy, 3)) * 0.01 + np.array([0.1, 0.0, 0.0])
+    X_curr_in_prev_noisy = rng.standard_normal((N_noisy, 3)) * 5.0 + np.array(
+        [10.0, 0.0, 0.0]
+    )
+
+    X_prev = np.vstack([X_prev_good, X_prev_noisy])
+    X_curr_in_prev = np.vstack([X_curr_in_prev_good, X_curr_in_prev_noisy])
+
+    # Confidence: good=50 (above threshold 25), noisy=5 (below threshold)
+    conf_threshold = 25.0
+    conf_prev = np.array([50.0] * N_good + [5.0] * N_noisy, dtype=np.float32)
+    conf_curr = np.array([50.0] * N_good + [5.0] * N_noisy, dtype=np.float32)
+
+    # Without conf: 80 noisy points dominate the median, pulling it away from 0.5
+    scale_unmasked = _frame_scale(X_curr_in_prev, X_prev)
+
+    # With conf on both sides: the joint tier (both > threshold) keeps only the 20 good points
+    joint_mask = (conf_curr > conf_threshold) & (conf_prev > conf_threshold)
+    assert joint_mask.sum() == N_good, (
+        f"Should have exactly {N_good} good points in mask"
+    )
+    scale_masked = _frame_scale(
+        X_curr_in_prev,
+        X_prev,
+        curr_conf=conf_curr,
+        prior_conf=conf_prev,
+        conf_threshold=conf_threshold,
+    )
+
+    err_masked = abs(scale_masked - expected_scale) / expected_scale
+    err_unmasked = abs(scale_unmasked - expected_scale) / expected_scale
+
+    assert err_masked < 0.05, (
+        f"Masked scale {scale_masked:.3f} far from expected {expected_scale:.3f}"
+    )
+    assert err_unmasked > err_masked, (
+        f"Masking should improve estimate: masked_err={err_masked:.3f}, "
+        f"unmasked_err={err_unmasked:.3f}"
+    )
+
+
+def _make_w2c(R: np.ndarray, t: np.ndarray) -> np.ndarray:
+    M = np.eye(4, dtype=np.float64)
+    M[:3, :3] = R
+    M[:3, 3] = t
+    return M
+
+
+def _make_submap(
+    poses: np.ndarray, world_points: np.ndarray, submap_id: int = 0
+) -> Submap:
+    k = poses.shape[0]
+    # Submap.points is a dense (K, H, W, 3) grid; lay any (K, P, 3) input out as H = 1
+    pts = np.asarray(world_points, dtype=np.float32).reshape(k, 1, -1, 3)
+    return Submap(
+        submap_id=submap_id,
+        frames=None,
+        poses=poses.astype(np.float32),
+        intrinsics=np.tile(np.eye(3), (k, 1, 1)).astype(np.float32),
+        retrieval_vectors=np.zeros((k, 64), dtype=np.float32),
+        image_paths=[f"frame_{i:04d}.png" for i in range(k)],
+        frame_start=submap_id * k,
+        points=pts,
+    )
+
+
+def test_hw_formula_integration_two_submaps_rotated():
+    """Integration: 2-submap PGO with 30° rotation between world frames.
+    New H_w correctly initializes the first frame of submap 2 with the rotation.
+    Check: first frame of submap 2 in output has rotation close to R_w (not identity).
+    """
+    rng = np.random.default_rng(0)
+    R_w = ScipyR.from_euler("z", 30, degrees=True).as_matrix()
+    k = 2
+
+    # Prev submap: identity camera (overlap frame = last frame = identity)
+    poses_prev = np.stack(
+        [_make_w2c(np.eye(3), np.array([i * 0.1, 0.0, 0.0])) for i in range(k)]
+    )
+    # Curr submap: first frame (overlap) has 30° rotation in curr world
+    poses_curr = np.stack(
+        [_make_w2c(R_w, np.array([i * 0.1, 0.0, 0.0])) for i in range(k)]
+    )
+
+    wp_prev = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
+    wp_curr = rng.standard_normal((k, 5, 5, 3)).astype(np.float32) * 0.1
+
+    prev_sub = _make_submap(poses_prev.astype(np.float32), wp_prev, submap_id=0)
+    curr_sub = _make_submap(poses_curr.astype(np.float32), wp_curr, submap_id=1)
+
+    total_frames = k + (k - 1)  # 3 with overlap=1
+    result = drive_pose_graph(
+        [prev_sub, curr_sub], lc_submaps=[], total_frames=total_frames, overlap_frames=1
+    )
+
+    assert result.shape == (total_frames, 4, 4)
+    # First frame (reference) should be near identity
+    assert np.allclose(result[0], np.eye(4), atol=0.15), (
+        f"Frame 0 should be near identity, got\n{result[0]}"
+    )
+    # T-based H_w: R_w in H_opt and local_proj cancels to I; the old K-only H_w left R_w visible
+    R_out = result[
+        k, :3, :3
+    ]  # unique frame of curr submap (starts at frame_start=submap_id*k=k)
+    rot_vs_identity = np.linalg.norm(R_out - np.eye(3), "fro")
+    assert rot_vs_identity < 0.3, (
+        f"With correct H_w, rotation should cancel in extraction (got rot_vs_identity={rot_vs_identity:.3f})"
+    )

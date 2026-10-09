@@ -4,7 +4,7 @@ Stage table dispatch: order, dependencies, skip and refuse rules.
 
 import pytest
 
-from collab_splats.reconstructor import STAGES, Reconstructor
+from collab_splats.reconstructor import LEAF_STAGES, STAGES, Reconstructor
 
 
 def _recon(tmp_path, monkeypatch, done=()):
@@ -95,3 +95,19 @@ def test_named_done_leaf_refuses_before_any_stage_runs(tmp_path, monkeypatch):
         r.run(["semantics", "mesh"])
 
     assert calls == []
+
+
+def test_report_is_a_leaf_stage_depending_only_on_pointcloud():
+    assert "reconstruction_quality_report" in LEAF_STAGES
+    assert STAGES["reconstruction_quality_report"] == ("pointcloud",)
+    assert list(STAGES).index("reconstruction_quality_report") > list(STAGES).index(
+        "pointcloud"
+    )
+
+
+def test_report_does_not_demote_any_existing_leaf():
+    """
+    A new dependency edge would silently break another stage's disk re-run.
+    """
+    for s in ("refine", "semantics", "mesh", "localize"):
+        assert s in LEAF_STAGES

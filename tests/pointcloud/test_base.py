@@ -365,7 +365,8 @@ def test_feedforward_result_has_new_fields():
 
 def test_feedforward_result_new_fields_default_none():
     field_map = {f.name: f for f in fields(PointcloudResult)}
-    assert field_map["pixel_indices"].default is None
+    for name in ("pixel_indices", "images", "confidence", "world_points"):
+        assert field_map[name].default is None
 
 
 def test_load_zarr_load_images_flag(tmp_path: Path):

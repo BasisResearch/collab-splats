@@ -223,3 +223,31 @@ def test_points_are_rows_of_the_world_grid():
     grid = out.world_points.reshape(-1, 3)
     assert len(out.points) > 0
     assert {tuple(p) for p in out.points} <= {tuple(p) for p in grid}
+
+
+def test_vggtx_postprocess_populates_ba_fields():
+    """VGGTXCreator._postprocess() must populate images/confidence/world_points."""
+
+    creator = VGGTXCreator.__new__(VGGTXCreator)
+    creator.conf_threshold = 1.0
+    creator.image_paths = [Path("a.jpg"), Path("b.jpg")]
+    creator.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1)
+    )  # full-frame box
+
+    N, H, W = 2, 8, 8
+    raw_outputs = {
+        "depth": np.ones((N, H, W, 1), dtype=np.float32),
+        "depth_conf": np.ones((N, H, W), dtype=np.float32),
+        "images": torch.zeros(N, 3, H, W),
+        "extrinsic": np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32),
+        "intrinsics": np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
+    }
+
+    result = creator._postprocess(raw_outputs)
+
+    assert result.images is not None
+    assert result.confidence is not None
+    assert result.world_points is not None
+    assert result.images.shape[0] == N
+    assert result.confidence.shape == (N, H, W)

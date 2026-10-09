@@ -13,11 +13,6 @@ class _CreatorWithDefault:
     default_verify_match_ratio = 0.72
 
 
-def test_config_verify_match_ratio_defaults_to_none():
-    # None means "resolve per-model default at wrapper init"
-    assert LoopClosureConfig().verify_match_ratio is None
-
-
 def test_explicit_config_none_resolves_to_model_default():
     # Explicit config without verify_match_ratio still picks up the creator's calibrated value
     lc = LoopClosure(_CreatorWithDefault(), config=LoopClosureConfig(submap_size=16))

@@ -375,6 +375,9 @@ def test_ba_config_defaults():
     assert cfg.shared_camera is True
     assert cfg.track_source == "xfeat"
     assert cfg.track_kwargs == {}
+    assert cfg.max_reproj_error == 4.0
+    assert cfg.lm_steps == 40
+    assert cfg.min_inliers_per_frame == 64
 
 
 def test_ba_config_rejects_schur_with_refined_shared_focal():

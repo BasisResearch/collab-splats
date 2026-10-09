@@ -33,4 +33,5 @@ Stages run in order: `preproc` → `pointcloud` → `refine` → `semantics` →
 `reconstruction_quality_report` always run; the rest are enabled in the config. Enable Gaussian-splat training with `splats.enabled: true` in the
 config; outputs land in `<output-root>/<video-stem>/<backend>/splats/`.
 
-See the [Tutorials](tutorials/index) for full worked examples.
+See the [Tutorials](tutorials/index.rst) for full worked examples.
+Every CLI flag and config key is in [Configuration](configuration).

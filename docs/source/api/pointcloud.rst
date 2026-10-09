@@ -12,7 +12,7 @@ SfM backends
 
 ``pointcloud.method: sfm`` dispatches ``pointcloud.backend`` through ``SFM_CREATORS``:
 ``instantsfm`` (global), ``colmap`` and ``hloc`` (incremental). See
-``configs/README.md`` for the config blocks.
+:doc:`/configuration` for the config blocks.
 
 .. automodule:: collab_splats.pointcloud.sfm
    :no-members:

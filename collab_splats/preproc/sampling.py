@@ -125,10 +125,11 @@ class _OpticalFlowSelector:
         # Reference keyframe, set by accept()
         self.keyframe: np.ndarray | None = None
         self.keyframe_pts: np.ndarray | None = None
+        self.keyframe_hist: np.ndarray | None = None
 
     def accept(self, gray: np.ndarray) -> None:
         """
-        Make gray the reference keyframe and seed its Shi-Tomasi corners.
+        Make gray the reference keyframe and seed its Shi-Tomasi corners and histogram.
         """
         self.keyframe = gray.copy()
         self.keyframe_pts = cv2.goodFeaturesToTrack(
@@ -138,6 +139,10 @@ class _OpticalFlowSelector:
             minDistance=8,
             blockSize=7,
         )
+
+        # Keyframe histogram once per accept, not once per scored candidate
+        hist = cv2.calcHist([self.keyframe], [0], None, [self.hist_bins], [0, 256])
+        self.keyframe_hist = cv2.normalize(hist, hist).flatten()
 
     def score(self, gray: np.ndarray) -> tuple[float, dict]:
         """
@@ -221,11 +226,10 @@ class _OpticalFlowSelector:
         """
         Intensity-histogram correlation with the keyframe, clamped to [0, 1].
         """
-        h1 = cv2.calcHist([self.keyframe], [0], None, [self.hist_bins], [0, 256])
-        h2 = cv2.calcHist([gray], [0], None, [self.hist_bins], [0, 256])
-        h1 = cv2.normalize(h1, h1).flatten()
-        h2 = cv2.normalize(h2, h2).flatten()
-        return float(max(0.0, min(1.0, cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))))
+        hist = cv2.calcHist([gray], [0], None, [self.hist_bins], [0, 256])
+        hist = cv2.normalize(hist, hist).flatten()
+        similarity = cv2.compareHist(self.keyframe_hist, hist, cv2.HISTCMP_CORREL)
+        return float(max(0.0, min(1.0, similarity)))
 
 
 ########################################################################
@@ -342,7 +346,7 @@ def _decode_selection(
     records: list[dict] = []
 
     for idx in progress(chosen, total=len(chosen), desc=desc, on_progress=on_progress):
-        frames.append(cv2.cvtColor(decoded[idx], cv2.COLOR_BGR2RGB))
+        frames.append(cv2.cvtColor(decoded.pop(idx), cv2.COLOR_BGR2RGB))
 
         # blur_score comes from the report, not a recompute — same measurement,
         # and it is the column the record has always carried.

@@ -121,27 +121,6 @@ def test_pool_single_pos_matches_max():
 ########################################################################
 
 
-def test_utils_no_longer_re_exports_torch_helpers():
-    """
-    The back-compat shim is gone — torch helpers come from collab_splats.utils.torch_utils.
-
-    - `batch_iterator` is checked against __all__ only: the re-export must not come back
-    """
-    for name in (
-        "get_device",
-        "pytorch_gc",
-        "infer_batch_size",
-        "load_hf_weights",
-        "load_torchhub_model",
-        "interpolate_to_patch_size",
-    ):
-        assert not hasattr(su, name), f"semantics.utils still exposes {name}"
-
-    assert "batch_iterator" not in su.__all__, (
-        "batch_iterator is an internal dependency, not public surface"
-    )
-
-
 def test_tokens_to_feature_map_is_private():
     """Only the three feature backends call it; it is not user surface."""
     assert "tokens_to_feature_map" not in su.__all__

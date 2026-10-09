@@ -612,3 +612,94 @@ def test_localize_never_upscales_smaller_query(stub_matcher):
 
     assert shapes[-1] == (32, 32)
     np.testing.assert_allclose(res.pts2d, _grid_keypoints(query), atol=1e-4)
+
+
+########################################################################
+########## seed_intrinsics #############################################
+########################################################################
+
+
+def test_seed_landscape_focal_and_center():
+    K = seed_intrinsics(480, 640)  # H, W
+    f = 1.2 * 640  # 1.2 * max(W, H)
+    assert K.shape == (3, 3)
+    assert np.isclose(K[0, 0], f)  # fx
+    assert np.isclose(K[1, 1], f)  # fy (square pixels)
+    assert np.isclose(K[0, 2], 319.5)  # cx = (W - 1) / 2, pixel-center
+    assert np.isclose(K[1, 2], 239.5)  # cy = (H - 1) / 2
+    assert K.dtype == np.float32
+
+
+def test_seed_portrait_uses_max_dimension():
+    K = seed_intrinsics(800, 600)  # H > W
+    f = 1.2 * 800
+    assert np.isclose(K[0, 0], f)
+    assert np.isclose(K[1, 1], f)
+    assert np.isclose(K[0, 2], 299.5)
+    assert np.isclose(K[1, 2], 399.5)
+
+
+def test_localizationresult_carries_intrinsics_field():
+    K = seed_intrinsics(480, 640)
+    r = LocalizationResult(
+        pose=None,
+        n_correspondences=0,
+        n_inliers=0,
+        pts2d=None,
+        pts3d_matched=None,
+        inlier_mask=None,
+        query_intrinsics=K,
+    )
+    assert np.allclose(r.query_intrinsics, K)
+
+
+########################################################################
+########## LocalizationResult.ranked_ref_frames ########################
+########################################################################
+
+
+def _make(ref_frame_indices, inlier_mask):
+    return LocalizationResult(
+        pose=None,
+        n_inliers=int(np.sum(inlier_mask)) if inlier_mask is not None else 0,
+        n_correspondences=len(ref_frame_indices)
+        if ref_frame_indices is not None
+        else 0,
+        pts2d=None,
+        pts3d_matched=None,
+        pts2d_ref=None,
+        inlier_mask=inlier_mask,
+        ref_frame_indices=ref_frame_indices,
+    )
+
+
+def test_ranked_orders_by_inlier_count_desc():
+    ref = np.array([0, 0, 1, 2, 2, 2], dtype=np.int32)
+    mask = np.array([True, True, True, True, True, True])
+    res = _make(ref, mask)
+    assert res.ranked_ref_frames == [2, 0, 1]
+
+
+def test_ranked_excludes_zero_inlier_frames():
+    ref = np.array([0, 1, 1], dtype=np.int32)
+    mask = np.array([False, True, True])
+    res = _make(ref, mask)
+    assert res.ranked_ref_frames == [1]
+
+
+def test_ranked_empty_when_no_result():
+    assert _make(None, None).ranked_ref_frames == []
+    ref = np.array([0, 1], dtype=np.int32)
+    assert _make(ref, None).ranked_ref_frames == []
+
+
+def test_ranked_empty_when_no_inliers():
+    ref = np.array([0, 1, 2], dtype=np.int32)
+    mask = np.array([False, False, False])
+    assert _make(ref, mask).ranked_ref_frames == []
+
+
+def test_ranked_breaks_ties_by_lowest_index():
+    ref = np.array([2, 0, 1], dtype=np.int32)  # one inlier each
+    mask = np.array([True, True, True])
+    assert _make(ref, mask).ranked_ref_frames == [0, 1, 2]

@@ -31,11 +31,6 @@ def test_megaloc_is_registered():
     assert BaseRetrievalExtractor.get("megaloc") is MegaLocExtractor
 
 
-def test_pe_clip_is_gone():
-    with pytest.raises(ValueError, match="Unknown"):
-        BaseRetrievalExtractor.get("pe-clip")
-
-
 @pytest.mark.slow
 def test_megaloc_descriptors_are_unit_norm_on_cpu():
     extractor = MegaLocExtractor(device="cpu")

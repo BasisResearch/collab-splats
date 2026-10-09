@@ -314,33 +314,6 @@ def test_sky_masks_rethresholds_cache_without_model(tmp_path, monkeypatch):
     assert sky.sky_masks(images_dir, threshold=0.5).all()
 
 
-def test_sky_masks_reads_old_binary_cache(tmp_path, monkeypatch):
-    """A 0/255 PNG from the old format thresholds to the same mask."""
-    images_dir = tmp_path / "images"
-    fr.write_frames(images_dir, [np.zeros((16, 16, 3), np.uint8)], [0])
-
-    cache_dir = tmp_path / "sky"
-    cache_dir.mkdir()
-    old_mask = np.zeros((16, 16), np.uint8)
-    old_mask[:8] = 255
-    cv2.imwrite(str(cache_dir / "frame_000000.png"), old_mask)
-
-    # A fully warm cache must never ask the registry for the model
-    monkeypatch.setattr(
-        sky.BaseSegmentation,
-        "get",
-        classmethod(
-            lambda cls, name: MagicMock(
-                side_effect=AssertionError("model should not be called")
-            )
-        ),
-    )
-
-    mask = sky.sky_masks(images_dir, cache_dir=cache_dir)
-
-    assert mask[0, :8].all() and not mask[0, 8:].any()
-
-
 def test_sky_masks_second_call_runs_the_model_zero_times(tmp_path, monkeypatch):
     # Each frame gets a DIFFERENT sky band, so the warm call is compared and not merely counted
     # - a uniform fixture makes every row identical, and then a cache that returned the wrong

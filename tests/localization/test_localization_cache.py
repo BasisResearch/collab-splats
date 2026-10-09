@@ -556,3 +556,136 @@ def test_write_csr_small_db_is_one_chunk(tmp_path):
     localizer_mod._write_csr(group, feats)
 
     assert group["descriptors"].chunks == (5, 4)
+
+
+########################################################################
+########## Decoupled (images, ids) index build #########################
+########################################################################
+
+
+class _ContentExtractor:
+    """Deterministic stub whose output DEPENDS on image content.
+
+    Keypoints/descriptors are derived from pixel values, so the parity equality
+    below fails if the index build feeds different frames (or a different order)
+    than direct extraction — a content-independent stub would pass vacuously.
+    """
+
+    model_name = "content"
+    max_num_keypoints = 2048
+
+    def extract(self, images):
+        if isinstance(images, list):
+            return [self._one(im) for im in images]
+        return self._one(images)
+
+    def to_device(self, features):
+        return features
+
+    def _one(self, image):
+        img = image.astype(np.float32)
+        h, w = img.shape[:2]
+        # 8 keypoints whose coordinates hash local pixel intensity
+        ys = (img[:, :, 0].mean(axis=1).argsort()[:8]).astype(np.float32)
+        xs = (img[:, :, 1].mean(axis=0).argsort()[:8]).astype(np.float32)
+        kpts = torch.from_numpy(np.stack([xs % w, ys % h], axis=1))
+        # Descriptors summarise per-channel statistics around each keypoint row
+        desc = torch.from_numpy(
+            np.stack(
+                [img[int(y) % h, int(x) % w] / 255.0 for x, y in zip(xs, ys)]
+            ).astype(np.float32)
+        )
+        return LocalFeatures(keypoints=kpts, descriptors=desc, image_size=(w, h))
+
+
+def test_index_features_match_direct_extraction():
+    rng = np.random.default_rng(0)
+    frames = [rng.integers(0, 256, (96, 128, 3), dtype=np.uint8) for _ in range(3)]
+    ids = [f"frame_{i:06d}.jpg" for i in range(3)]
+    extractor = _ContentExtractor()
+
+    # Reference: extract each frame directly (the pure operation).
+    direct = [extractor.extract(f) for f in frames]
+    # Sanity: the stub is content-sensitive — different frames give different features
+    assert not torch.equal(direct[0].keypoints, direct[1].keypoints) or not torch.equal(
+        direct[0].descriptors, direct[1].descriptors
+    )
+
+    # Under test: build the index via the decoupled (images, ids) path.
+    loc = CameraLocalizer(
+        world_points=np.zeros((3, 96, 128, 3), np.float32),
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (3, 1, 1)),
+        images=iter(frames),
+        ids=ids,
+        extractor=extractor,
+    )
+
+    assert len(loc._frame_features) == 3
+    for got, want in zip(loc._frame_features, direct):
+        assert torch.equal(got.keypoints, want.keypoints)
+        assert torch.equal(got.descriptors, want.descriptors)
+    assert loc.image_paths == ids
+
+
+########################################################################
+########## Provenance attrs ############################################
+########################################################################
+
+
+def _eight_keypoints(image: np.ndarray) -> np.ndarray:
+    """Eight fixed keypoints, whatever the image."""
+    return np.arange(16, dtype=np.float32).reshape(8, 2)
+
+
+def _make_localizer(tmp_path, stub_matcher, n_frames=2):
+    """Build a localizer from synthetic RGB arrays (no GPU, no image IO)."""
+    images = [np.full((48, 64, 3), 128, dtype=np.uint8) for _ in range(n_frames)]
+    ids = [f"{i:05d}.jpg" for i in range(n_frames)]
+    wp = np.random.default_rng(0).normal(size=(n_frames, 48, 64, 3)).astype(np.float32)
+    extr = np.tile(np.eye(4, dtype=np.float32), (n_frames, 1, 1))
+    return (
+        CameraLocalizer(
+            wp, extr, images=images, ids=ids, extractor=stub_matcher(_eight_keypoints)
+        ),
+        wp,
+        extr,
+    )
+
+
+def test_save_index_writes_build_attrs(tmp_path, stub_matcher):
+    loc, *_ = _make_localizer(tmp_path, stub_matcher)
+    zp = tmp_path / "pointcloud.zarr"
+    loc.save_index(
+        zp,
+        "disk",
+        attrs={
+            "backbone": "vggtx",
+            "ba": True,
+            "lc": False,
+            "built_at": "2026-07-14T00:00:00",
+        },
+    )
+    group = zarr.open(str(zp), mode="r")["local_features/disk"]
+    assert group.attrs["backbone"] == "vggtx"
+    assert group.attrs["ba"] is True
+    assert group.attrs["extractor"] == "disk"
+
+
+def test_save_index_without_attrs_still_stamps_extractor(tmp_path, stub_matcher):
+    loc, *_ = _make_localizer(tmp_path, stub_matcher)
+    zp = tmp_path / "pointcloud.zarr"
+    loc.save_index(zp, "disk")
+    group = zarr.open(str(zp), mode="r")["local_features/disk"]
+    assert group.attrs["extractor"] == "disk"
+
+
+def test_save_index_rebuild_replaces_stale_attrs(tmp_path, stub_matcher):
+    # Rebuild without attrs must not inherit provenance from a previous build
+    loc, *_ = _make_localizer(tmp_path, stub_matcher)
+    zp = tmp_path / "pointcloud.zarr"
+    loc.save_index(zp, "disk", attrs={"backbone": "vggtx", "ba": True})
+    loc.save_index(zp, "disk")
+    group = zarr.open(str(zp), mode="r")["local_features/disk"]
+    assert "ba" not in group.attrs
+    assert "backbone" not in group.attrs
+    assert group.attrs["extractor"] == "disk"

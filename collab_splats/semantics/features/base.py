@@ -14,7 +14,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms as T
 from PIL import Image
 
 from collab_splats.semantics.utils import (
@@ -116,9 +115,14 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
             "[%s] Extracting features: %d images", type(self).__name__, len(images)
         )
 
-        # Preprocess and batch; torch.stack needs every image at one grid
-        preprocessed = [self.preprocess(img) for img in images]
-        batch = torch.stack(preprocessed).to(self.device)
+        # Resize on CPU as uint8; np.stack needs every image at one grid
+        resized = [self._resize(img) for img in images]
+        stacked = np.stack(resized)
+        batch_u8 = torch.from_numpy(stacked)
+
+        # Ship uint8 to the device, then convert and normalize there
+        batch_u8 = batch_u8.to(self.device)
+        batch = self._normalize_batch(batch_u8)
 
         # Backbone tokens, prefix included
         with torch.no_grad():
@@ -152,6 +156,15 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         Returns:
             (C, H, W) float32 CPU tensor. H and W are multiples of `patch_size`.
         """
+        resized = self._resize(image)
+        batch_u8 = torch.from_numpy(resized[None])
+        batch = self._normalize_batch(batch_u8)
+        return batch[0]
+
+    def _resize(self, image: Union[str, Path, np.ndarray, Image.Image]) -> np.ndarray:
+        """
+        Image as (H, W, 3) uint8 RGB at the configured resolution, H and W patch multiples.
+        """
         img = open_image(image).convert("RGB")
 
         if self._resize_mode == "square":
@@ -172,10 +185,25 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
         w, h = img.size
         ph = round(h / self.patch_size) * self.patch_size
         pw = round(w / self.patch_size) * self.patch_size
+
         if (ph, pw) != (h, w):
             img = img.resize((pw, ph), Image.BILINEAR)
 
-        return self._normalize(T.ToTensor()(img))
+        return np.array(img)
+
+    def _normalize_batch(self, batch_u8: torch.Tensor) -> torch.Tensor:
+        """
+        (B, H, W, 3) uint8 to (B, 3, H, W) normalized float32 on the input's device.
+
+        - same ops as T.ToTensor then `_normalize`: float, / 255, then (x - mean) / std
+        - divides by a 255 tensor: a CUDA scalar divide multiplies by 1/255 and drifts
+        """
+        batch = batch_u8.permute(0, 3, 1, 2)
+        batch = batch.contiguous()
+        batch = batch.float()
+        scale = torch.tensor(255.0, device=batch.device)
+        batch = batch / scale
+        return self._normalize(batch)
 
     @property
     def name(self) -> str:

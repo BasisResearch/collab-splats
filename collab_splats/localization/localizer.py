@@ -69,13 +69,14 @@ def _crop_to_model_grid(
     Full-res pixels on the model grid: inverse of PointcloudResult.__post_init__'s crop map.
 
     - box is one original_coords row [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], pixel-corner
+    - px and the result are pixel-center: (px - tl + 0.5) * scale - 0.5
     - pixels outside the grid come back outside it; sample_world_points marks them invalid
     """
     H, W = model_hw
     crop_wh = np.array([box[2] - box[0], box[3] - box[1]], dtype=np.float32)
     scale = np.array([W, H], dtype=np.float32) / crop_wh
-    shifted = px - box[:2]
-    return (shifted * scale).astype(np.float32)
+    shifted = px - box[:2] + 0.5
+    return (shifted * scale - 0.5).astype(np.float32)
 
 
 def _to_query_grid(

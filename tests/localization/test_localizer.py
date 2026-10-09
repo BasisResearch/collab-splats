@@ -397,12 +397,13 @@ def test_localize_refs_refuses_non_reconstruction_frame(stub_matcher):
 
 
 def test_crop_map_samples_matching_model_pixel():
+    # Pixel-center map: model px m sits at full px (m + 0.5) / s - 0.5 + tl, s = 50 / 1000
     box = np.array([100, 0, 1100, 1000, 1200, 1000], np.float32)
-    px_full = np.array([[100 + 20 * 20, 10 * 20]], np.float32)
+    px_full = np.array([[100 + 20.5 * 20 - 0.5, 10.5 * 20 - 0.5]], np.float32)
 
     px_model = localizer_mod._crop_to_model_grid(px_full, box, (50, 50))
 
-    np.testing.assert_allclose(px_model, [[20.0, 10.0]])
+    np.testing.assert_allclose(px_model, [[20.0, 10.0]], atol=1e-5)
 
 
 def _cropped_keypoints(image: np.ndarray) -> np.ndarray:
@@ -410,7 +411,7 @@ def _cropped_keypoints(image: np.ndarray) -> np.ndarray:
     The model-grid keypoint grid placed where it lands in a 128x96 frame center-cropped to 96x96.
     """
     grid = _grid_keypoints(np.zeros((64, 64, 3)))
-    return grid * (96 / 64) + np.array([16, 0])
+    return (grid + 0.5) * (96 / 64) - 0.5 + np.array([16, 0])
 
 
 def test_localize_fullres_cropped_refs(stub_matcher):
@@ -442,7 +443,7 @@ def _anisotropic_keypoints(image: np.ndarray) -> np.ndarray:
     """
     Model-grid pixels of a 64x48 grid placed in a 200x100 frame through crop box [20, 4, 180, 100].
     """
-    return _model_px() / np.array([64 / 160, 48 / 96]) + np.array([20, 4])
+    return (_model_px() + 0.5) / np.array([64 / 160, 48 / 96]) - 0.5 + np.array([20, 4])
 
 
 def _model_px() -> np.ndarray:

@@ -21,7 +21,7 @@ from collab_splats.semantics.utils import (
     _tokens_to_feature_map,
     compute_semantic_contrast,
 )
-from collab_splats.utils.image import open_image, resize_image
+from collab_splats.utils.image import features_to_rgb, open_image, resize_image
 from collab_splats.utils.torch_utils import RegistryMixin
 
 logger = logging.getLogger(__name__)
@@ -196,27 +196,6 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
             f"{type(self).__name__} is not registered — use @BaseFeatureExtractor.register('name')"
         )
 
-    @staticmethod
-    def features_to_rgb(feat: "torch.Tensor") -> "np.ndarray":
-        """
-        Project a feature map onto its top-3 PCs for display.
-
-        Args:
-            feat: (D, H_p, W_p) float tensor — one frame's output from forward().
-
-        Returns:
-            (H_p, W_p, 3) uint8 ndarray. All-zero when the features have no variance.
-        """
-        D, H_p, W_p = feat.shape
-        E = feat.reshape(D, -1).T.float()
-        E = E - E.mean(dim=0, keepdim=True)
-        _, _, Vt = torch.linalg.svd(E, full_matrices=False)
-        rgb = (E @ Vt[:3].T).detach().cpu().numpy()
-        # Normalize to [0, 255]: shift to zero, scale by range, guard zero-variance case
-        rgb -= rgb.min()
-        rgb /= rgb.max() + 1e-8
-        return (rgb.reshape(H_p, W_p, 3) * 255).astype(np.uint8)
-
     def _build_positional_basis(self, H_p: int, W_p: int) -> None:
         """
         Positional subspace at one patch grid, from a zero-pixel image (INSID3).
@@ -311,7 +290,7 @@ class BaseFeatureExtractor(RegistryMixin, nn.Module, ABC):
                 f"No positional bias cached for patch grid ({H_p}, {W_p}). "
                 "Call debias() at this resolution first."
             )
-        return self.features_to_rgb(self._zero_feats_cache[(H_p, W_p)])
+        return features_to_rgb(self._zero_feats_cache[(H_p, W_p)])
 
     def debias(self, features: list[torch.Tensor]) -> list[torch.Tensor]:
         """

@@ -3,6 +3,7 @@
 import cv2
 import numpy as np
 import pytest
+import torch
 from PIL import Image
 
 from collab_splats.utils.image import (
@@ -10,6 +11,7 @@ from collab_splats.utils.image import (
     CLIP_STD,
     IMAGENET_MEAN,
     IMAGENET_STD,
+    features_to_rgb,
     fill_missing_pixels,
     open_image,
     resize_image,
@@ -212,3 +214,30 @@ def test_upsample_depths_matches_a_cv2_guided_filter_oracle():
     np.maximum(want, 0.0, out=want)
 
     np.testing.assert_allclose(got, want, rtol=0, atol=1e-3)
+
+
+def test_features_to_rgb_shape():
+    rgb = features_to_rgb(torch.randn(16, 6, 8))
+    assert rgb.shape == (6, 8, 3)
+    assert rgb.dtype == np.uint8
+
+
+def test_features_to_rgb_normalizes_each_channel():
+    # Every principal component spans the full [0, 255] range on its own
+    rgb = features_to_rgb(torch.randn(32, 4, 4))
+    flat = rgb.reshape(-1, 3)
+    assert (flat.min(axis=0) == 0).all()
+    assert (flat.max(axis=0) >= 254).all()
+
+
+def test_features_to_rgb_constant_returns_zero():
+    # Identical feature vectors have zero variance, so every channel stays 0
+    rgb = features_to_rgb(torch.ones(16, 4, 4))
+    assert rgb.max() == 0
+
+
+def test_features_to_rgb_accepts_ndarray():
+    feat = np.random.default_rng(0).standard_normal((8, 3, 5)).astype(np.float32)
+    np.testing.assert_array_equal(
+        features_to_rgb(feat), features_to_rgb(torch.from_numpy(feat))
+    )

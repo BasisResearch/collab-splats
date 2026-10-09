@@ -15,6 +15,7 @@ from collab_splats.geometry.transforms import (
     shift_intrinsics,
     transform_points,
 )
+from collab_splats.utils.image import features_to_rgb
 
 # Main visualization code - adaptation of your original
 MESH_KWARGS = {
@@ -116,48 +117,30 @@ def compute_heatmap(
 
 
 def pca_to_rgb(
-    features: "torch.Tensor",
+    features: torch.Tensor | np.ndarray,
     image: np.ndarray,
     alpha: float = 0.5,
 ) -> np.ndarray:
-    """Project (C, pH, pW) feature tensor to RGB via PCA, blend over image.
+    """
+    Feature map's top-3 PCA image, resized to the frame and blended over it.
+
+    - the projection is utils.image.features_to_rgb: per-channel normalized
 
     Args:
-        features: Feature tensor of shape (C, pH, pW).
-        image: Original image (H, W, 3) uint8.
-        alpha: Blend weight for PCA overlay (0=image only, 1=PCA only).
+        features: (C, pH, pW) feature map.
+        image: (H, W, 3) uint8 frame.
+        alpha: blend weight of the PCA overlay; 0 is the frame only, 1 the PCA only.
 
     Returns:
-        Blended image (H, W, 3) uint8.
+        (H, W, 3) uint8 blend.
     """
-    import cv2
-    import torch
-    from sklearn.decomposition import PCA
+    pca_img = features_to_rgb(features)
 
-    if isinstance(features, torch.Tensor):
-        feat_np = features.detach().cpu().float().numpy()  # (C, pH, pW)
-    else:
-        feat_np = features
-
-    C, pH, pW = feat_np.shape
-    flat = feat_np.reshape(C, -1).T  # (pH*pW, C)
-
-    pca = PCA(n_components=3)
-    projected = pca.fit_transform(flat)  # (pH*pW, 3)
-
-    # Normalize each channel to [0, 1]
-    for i in range(3):
-        col = projected[:, i]
-        col_min, col_max = col.min(), col.max()
-        projected[:, i] = (col - col_min) / (col_max - col_min + 1e-8)
-
-    pca_img = projected.reshape(pH, pW, 3)  # (pH, pW, 3)
-    pca_img = (pca_img * 255).astype(np.uint8)
-
+    # Resize the patch-grid image to the frame and blend
     H, W = image.shape[:2]
     pca_resized = cv2.resize(pca_img, (W, H), interpolation=cv2.INTER_LINEAR)
-
     blended = (1 - alpha) * image.astype(float) + alpha * pca_resized.astype(float)
+
     return np.clip(blended, 0, 255).astype(np.uint8)
 
 

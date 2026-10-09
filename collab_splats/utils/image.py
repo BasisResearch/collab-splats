@@ -1,10 +1,11 @@
 # collab_splats/utils/image.py
 """
-Image helpers: PIL coercion, guided depth upsampling, hole filling.
+Image helpers: PIL coercion, guided depth upsampling, hole filling, feature PCA view.
 
 - open_image, resize_image: PIL coercion and aspect-preserving resize
 - upsample_depths: model-res depth onto the original-res RGB grid (kornia guided filter)
 - fill_missing_pixels: push-pull fill of unknown pixels (texture atlas, hull ground heights)
+- features_to_rgb: top-3 PCA view of a (D, H_p, W_p) feature map
 """
 
 from pathlib import Path
@@ -215,3 +216,32 @@ def fill_missing_pixels(image: np.ndarray, known: np.ndarray) -> np.ndarray:
         out = values[level] / np.maximum(weight, 1e-8) * weight + up * (1.0 - weight)
 
     return out.astype(np.float32)
+
+
+def features_to_rgb(features: torch.Tensor | np.ndarray) -> np.ndarray:
+    """
+    Feature map projected onto its top-3 principal components, as a patch-grid RGB image.
+
+    - torch SVD of the centered patch vectors; no sklearn
+    - each channel min-max normalized on its own; a zero-variance channel stays 0
+
+    Args:
+        features: (D, H_p, W_p) feature map, one frame's output from forward().
+
+    Returns:
+        (H_p, W_p, 3) uint8 RGB.
+    """
+    feat = torch.as_tensor(features).detach().float()
+    D, H_p, W_p = feat.shape
+
+    # Center patch vectors, project onto the top-3 right singular vectors
+    E = feat.reshape(D, -1).T
+    E = E - E.mean(dim=0, keepdim=True)
+    _, _, Vt = torch.linalg.svd(E, full_matrices=False)
+    rgb = (E @ Vt[:3].T).cpu().numpy()
+
+    # Per-channel min-max to [0, 1]; the epsilon keeps a flat channel at 0
+    rgb -= rgb.min(axis=0)
+    rgb /= rgb.max(axis=0) + 1e-8
+
+    return (rgb.reshape(H_p, W_p, 3) * 255).astype(np.uint8)

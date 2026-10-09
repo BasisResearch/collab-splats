@@ -16,6 +16,7 @@ from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.semantics.features.dino import DINOFeatureExtractor
 from collab_splats.semantics.features.maskclip import MaskCLIPExtractor
 from collab_splats.semantics.features.talk2dino import Talk2DinoExtractor
+from collab_splats.utils.image import features_to_rgb
 
 # ---------------------------------------------------------------------------
 # Fake extractor: minimal concrete implementation for testing base-class logic
@@ -233,10 +234,10 @@ def test_debias_validated_silences_warning(caplog):
     assert "not yet validated" not in caplog.text
 
 
-def test_get_bias_visualization_matches_features_to_rgb():
+def test_get_bias_visualization_is_pca_of_zero_image_features():
     ext = _FakeExtractor(svd_components=4)
     [feat] = ext.forward([Image.new("RGB", (28, 28))])
     ext.debias([feat])
     _, H_p, W_p = feat.shape
-    expected = ext.features_to_rgb(ext._zero_feats_cache[(H_p, W_p)])
+    expected = features_to_rgb(ext._zero_feats_cache[(H_p, W_p)])
     assert np.array_equal(ext.get_bias_visualization(H_p, W_p), expected)

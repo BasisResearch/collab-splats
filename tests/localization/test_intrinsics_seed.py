@@ -11,8 +11,8 @@ def test_seed_landscape_focal_and_center():
     assert K.shape == (3, 3)
     assert np.isclose(K[0, 0], f)  # fx
     assert np.isclose(K[1, 1], f)  # fy (square pixels)
-    assert np.isclose(K[0, 2], 320.0)  # cx = W/2
-    assert np.isclose(K[1, 2], 240.0)  # cy = H/2
+    assert np.isclose(K[0, 2], 319.5)  # cx = (W - 1) / 2, pixel-center
+    assert np.isclose(K[1, 2], 239.5)  # cy = (H - 1) / 2
     assert K.dtype == np.float32
 
 
@@ -21,8 +21,8 @@ def test_seed_portrait_uses_max_dimension():
     f = 1.2 * 800
     assert np.isclose(K[0, 0], f)
     assert np.isclose(K[1, 1], f)
-    assert np.isclose(K[0, 2], 300.0)
-    assert np.isclose(K[1, 2], 400.0)
+    assert np.isclose(K[0, 2], 299.5)
+    assert np.isclose(K[1, 2], 399.5)
 
 
 def test_localizationresult_carries_intrinsics_field():

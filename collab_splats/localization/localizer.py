@@ -25,7 +25,7 @@ import zarr
 from tqdm.auto import tqdm
 
 from collab_splats.geometry.projection import sample_world_points
-from collab_splats.geometry.transforms import rescale_intrinsics
+from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
 from collab_splats.localization.extractors import LocalFeatures, LocalMatcher
 from collab_splats.localization.retrieval import BaseRetrievalExtractor
 from collab_splats.utils.io import LZ4
@@ -46,7 +46,8 @@ def seed_intrinsics(height: int, width: int) -> np.ndarray:
     """
     Pinhole K seed from image proportions, COLMAP's f = 1.2 * max(W, H) rule.
 
-    - centered principal point, square pixels; pycolmap SIMPLE_PINHOLE refinement solves the true focal
+    - pixel-center K: principal point at the image center ((W - 1) / 2, (H - 1) / 2)
+    - square pixels; pycolmap SIMPLE_PINHOLE refinement solves the true focal
 
     Args:
         height: image height, px.
@@ -57,7 +58,7 @@ def seed_intrinsics(height: int, width: int) -> np.ndarray:
     """
     f = 1.2 * max(width, height)
     return np.array(
-        [[f, 0.0, width / 2.0], [0.0, f, height / 2.0], [0.0, 0.0, 1.0]],
+        [[f, 0.0, (width - 1) / 2.0], [0.0, f, (height - 1) / 2.0], [0.0, 0.0, 1.0]],
         dtype=np.float32,
     )
 
@@ -79,26 +80,37 @@ def _crop_to_model_grid(
     return (shifted * scale - 0.5).astype(np.float32)
 
 
+def _rescale_center_intrinsics(
+    K: np.ndarray, src_hw: tuple[int, int], dst_hw: tuple[int, int]
+) -> np.ndarray:
+    """
+    Pixel-center K resized from one grid to another: shift to corner, rescale, shift back.
+    """
+    K = shift_intrinsics(K, (0.5, 0.5))
+    K = rescale_intrinsics(K, src_hw, dst_hw)
+    K = shift_intrinsics(K, (-0.5, -0.5))
+    return K.astype(np.float32)
+
+
 def _to_query_grid(
     result: LocalizationResult, small_hw: tuple[int, int], full_hw: tuple[int, int]
 ) -> LocalizationResult:
     """
     Result with K and query px mapped from the shrunk query grid back to the original one.
 
-    - per-axis full / small scale, pixel-corner convention as rescale_intrinsics; pose unchanged
+    - per-axis full / small scale, pixel-center K and px: (px + 0.5) * scale - 0.5; pose unchanged
     """
     if small_hw == full_hw:
         return result
 
-    K = rescale_intrinsics(result.query_intrinsics, small_hw, full_hw)
-    K = K.astype(np.float32)
+    K = _rescale_center_intrinsics(result.query_intrinsics, small_hw, full_hw)
     pts2d = result.pts2d
 
     if pts2d is not None:
         scale = np.array(
             [full_hw[1] / small_hw[1], full_hw[0] / small_hw[0]], dtype=np.float32
         )
-        pts2d = pts2d * scale
+        pts2d = (pts2d + 0.5) * scale - 0.5
 
     return dataclasses.replace(result, query_intrinsics=K, pts2d=pts2d)
 
@@ -298,7 +310,7 @@ class LocalizationResult:
     pts2d_ref: np.ndarray | None = None  # (M, 2) reference px
     ref_frame_indices: np.ndarray | None = None  # (M,) int32
     query_intrinsics: np.ndarray | None = (
-        None  # (3, 3) refined K when a pose is found, else the input K
+        None  # (3, 3) pixel-center K: refined when a pose is found, else the input K
     )
     ref_hw: tuple[int, int] | None = None  # (H, W) of the reference images
 
@@ -1034,7 +1046,8 @@ class CameraLocalizer:
 
         Args:
             query_image: HxWx3 uint8 RGB.
-            query_intrinsics: (3, 3) K; None seeds from proportions; its focal is refined, fx == fy.
+            query_intrinsics: (3, 3) pixel-center K, as PointcloudResult.intrinsics; None seeds from proportions;
+                its focal is refined, fx == fy.
             refs: reconstruction frame indices to match against.
 
         Returns:
@@ -1059,7 +1072,9 @@ class CameraLocalizer:
         if query_intrinsics is None:
             query_intrinsics = seed_intrinsics(*small_hw)
         else:
-            query_intrinsics = rescale_intrinsics(query_intrinsics, full_hw, small_hw)
+            query_intrinsics = _rescale_center_intrinsics(
+                query_intrinsics, full_hw, small_hw
+            )
 
         query_feats = self._extractor.extract(small)
         assert isinstance(query_feats, LocalFeatures)
@@ -1121,6 +1136,7 @@ class CameraLocalizer:
 
         - no pose: correspondences are still returned for display when any exist
         - SIMPLE_PINHOLE query camera: pycolmap refines the focal, the principal point stays fixed
+        - px and K both pixel-center: with no distortion and a fixed principal point, a common shift cancels
         """
         ref_hw = self._image_hw
         n_corr = sum(len(a) for a in all_q)

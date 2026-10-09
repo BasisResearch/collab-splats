@@ -8,7 +8,7 @@ import pytest
 import torch
 import zarr
 
-from collab_splats.geometry.transforms import rescale_intrinsics
+from collab_splats.geometry.transforms import rescale_intrinsics, shift_intrinsics
 from collab_splats.localization import (
     LocalFeatures,
     LocalizationResult,
@@ -418,10 +418,9 @@ def test_localize_fullres_cropped_refs(stub_matcher):
     # Model grid 64x64; refs are 128x96 full-res frames whose center 96x96 crop became the grid
     wp, K_model = _plane_scene()
     box = np.array([[16, 0, 112, 96, 128, 96]], np.float32)
-    scale = 96 / 64
-    K_full = K_model.copy()
-    K_full[:2] *= scale
-    K_full[0, 2] += 16
+    K_full = shift_intrinsics(K_model, (0.5, 0.5))
+    K_full = rescale_intrinsics(K_full, (64, 64), (96, 96))
+    K_full = shift_intrinsics(K_full, (16 - 0.5, -0.5))
     ref = np.zeros((96, 128, 3), np.uint8)
     loc = CameraLocalizer(
         wp,
@@ -488,7 +487,8 @@ def _pnp_scene(f: float = 800.0, H: int = 480, W: int = 640, n: int = 200) -> tu
     Random 3D points in front of a known world-to-camera pose, projected through a centered K.
     """
     rng = np.random.default_rng(3)
-    K = np.array([[f, 0, W / 2], [0, f, H / 2], [0, 0, 1]], dtype=np.float64)
+    cx, cy = (W - 1) / 2, (H - 1) / 2
+    K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], dtype=np.float64)
     pose = np.eye(4)
     pose[:3, :3] = np.array(
         [[0.9950042, 0, 0.0998334], [0, 1, 0], [-0.0998334, 0, 0.9950042]]
@@ -498,7 +498,7 @@ def _pnp_scene(f: float = 800.0, H: int = 480, W: int = 640, n: int = 200) -> tu
     # Points in camera space inside the image, then back to world
     px = rng.uniform([20, 20], [W - 20, H - 20], (n, 2))
     depth = rng.uniform(3.0, 9.0, n)
-    rays = np.column_stack([(px[:, 0] - W / 2) / f, (px[:, 1] - H / 2) / f, np.ones(n)])
+    rays = np.column_stack([(px[:, 0] - cx) / f, (px[:, 1] - cy) / f, np.ones(n)])
     pts_cam = rays * depth[:, None]
     pts_world = (pts_cam - pose[:3, 3]) @ pose[:3, :3]
     return px.astype(np.float32), pts_world.astype(np.float32), pose, K
@@ -534,7 +534,7 @@ def test_solve_pnp_returns_refined_focal(stub_matcher):
     assert K.shape == (3, 3) and K.dtype == np.float32
     assert K[0, 0] == K[1, 1]
     assert abs(K[0, 0] - 800.0) / 800.0 < 0.01
-    np.testing.assert_allclose(K[:2, 2], [320.0, 240.0])
+    np.testing.assert_allclose(K[:2, 2], [319.5, 239.5])
     np.testing.assert_allclose(res.pose, pose_true, atol=1e-2)
     assert seed[0, 0] == np.float32(1.2 * 640)
 
@@ -602,13 +602,20 @@ def test_localize_shrinks_larger_query_to_reference_long_side(
         [[50, 0, small_hw[1] / 2], [0, 50, small_hw[0] / 2], [0, 0, 1]],
         dtype=np.float32,
     )
-    K_full = rescale_intrinsics(K_small, small_hw, query_hw)
+
+    # Pixel-center K and px: shift to corner, scale, shift back
+    scale = np.array([query_hw[1] / small_hw[1], query_hw[0] / small_hw[0]])
+    K_full = shift_intrinsics(K_small, (0.5, 0.5))
+    K_full = rescale_intrinsics(K_full, small_hw, query_hw)
+    K_full = shift_intrinsics(K_full, (-0.5, -0.5))
+    small_px = _grid_keypoints(np.zeros((*small_hw, 3)))
+    expected_px = (small_px + 0.5) * scale - 0.5
 
     res = loc.localize(query, query_intrinsics=K_full)
 
     assert shapes[-1] == small_hw
     np.testing.assert_allclose(res.query_intrinsics, K_full, atol=1e-4)
-    np.testing.assert_allclose(res.pts2d, _grid_keypoints(query), atol=1e-4)
+    np.testing.assert_allclose(res.pts2d, expected_px, atol=1e-4)
     assert res.pose is not None
 
 

@@ -22,4 +22,5 @@ Date: 2026-10-08 · Status: accepted · Branch: `feat/rgbd-ba-cf`
 ## Consequences
 
 - zarrs written before this keep the old full-res K; a leaf-stage re-run on one uses it; full re-run fixes it (no legacy guard)
-- out of scope, still corner: `preproc/undistort.py` (cv2 with COLMAP K, sub-pixel effect), the localizer's pycolmap query K (never reads `PointcloudResult` K), `plot_reprojection`
+- out of scope, still corner: `preproc/undistort.py` (cv2 with COLMAP K, sub-pixel effect), `plot_reprojection`
+- the localizer is pixel-center end to end (2026-10-09): seed K, caller K, returned K and query px; the crop map inverts `__post_init__`

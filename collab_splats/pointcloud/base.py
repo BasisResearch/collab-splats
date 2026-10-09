@@ -121,10 +121,36 @@ class PointcloudResult:
         - dense arrays are chunked by frame
         - images are written, but load_zarr skips them by default
         - world_points are not written: load_zarr unprojects them from depth
+        - written to a hidden sibling, then swapped in: a killed write never sits at path
 
         Args:
             path: directory for the zarr store, created if absent.
             extra_attrs: provenance, e.g. method and backend, merged into store.attrs.
+        """
+        # Write a fresh hidden sibling; a failure removes it
+        path = Path(path)
+        tmp = path.with_name(f".{path.name}.tmp")
+        old = path.with_name(f".{path.name}.old")
+        shutil.rmtree(tmp, ignore_errors=True)
+
+        try:
+            self._write_zarr(tmp, extra_attrs)
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+
+        # Move the old store aside, rename the new one in, drop the old
+        shutil.rmtree(old, ignore_errors=True)
+
+        if path.exists():
+            path.rename(old)
+
+        tmp.rename(path)
+        shutil.rmtree(old, ignore_errors=True)
+
+    def _write_zarr(self, path: Path, extra_attrs: dict | None) -> None:
+        """
+        Every array and attr of this result into a new zarr store at path.
         """
         store = zarr.open(str(path), mode="w")
 

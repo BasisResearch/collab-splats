@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 import zarr
 
@@ -171,3 +172,46 @@ def test_zarr_optional_fields_roundtrip(tmp_path):
 
     assert loaded.pixel_indices is not None
     np.testing.assert_array_equal(loaded.pixel_indices, result.pixel_indices)
+
+
+def _fail_on_second_array(monkeypatch):
+    """
+    Patch zarr's create_array to raise on its second call, like a kill mid-write.
+    """
+    create_array = zarr.Group.create_array
+    calls = []
+
+    def flaky(self, *args, **kwargs):
+        calls.append(args)
+        if len(calls) == 2:
+            raise OSError("interrupted")
+        return create_array(self, *args, **kwargs)
+
+    monkeypatch.setattr(zarr.Group, "create_array", flaky)
+
+
+def test_interrupted_save_leaves_no_store(tmp_path, monkeypatch):
+    """A write killed mid-way leaves nothing at the path, so done() cannot trust it."""
+    store_path = tmp_path / "pointcloud.zarr"
+    _fail_on_second_array(monkeypatch)
+
+    with pytest.raises(OSError, match="interrupted"):
+        _make_result().save_zarr(store_path)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+def test_interrupted_overwrite_keeps_the_old_store(tmp_path, monkeypatch):
+    """A re-save killed mid-way leaves the previous store whole and loadable."""
+    store_path = tmp_path / "pointcloud.zarr"
+    old = _make_result(n_frames=2)
+    old.save_zarr(store_path, extra_attrs={"backend": "old"})
+    _fail_on_second_array(monkeypatch)
+
+    with pytest.raises(OSError, match="interrupted"):
+        _make_result(n_frames=3).save_zarr(store_path)
+
+    loaded = PointcloudResult.load_zarr(store_path)
+    assert len(loaded.extrinsics) == 2
+    assert zarr.open_group(str(store_path), mode="r").attrs["backend"] == "old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["pointcloud.zarr"]

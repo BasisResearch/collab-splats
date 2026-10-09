@@ -503,7 +503,6 @@ def test_public_api_surface():
         "undistort_frames",
         "write_frames",
     }
-    assert not hasattr(preproc, "plot_frame_scores")
     # The report is the deliverable; the primitives that build it stay behind
     # collab_splats.preproc.qa. Re-exporting them all would grow this surface for
     # callers who only ever want the report.

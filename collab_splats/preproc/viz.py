@@ -67,39 +67,6 @@ def plot_selection(total_frames: int, selections: dict[str, Sequence[int]]) -> N
     plt.show()
 
 
-def plot_frame_scores(frame_scores: list) -> None:
-    """
-    3-panel timeseries of per-frame signals: disparity / rotation / histogram similarity.
-
-    Args:
-        frame_scores: records from sample_optical_flow, one per kept frame.
-    """
-    if not frame_scores:
-        plt.subplots(3, 1, figsize=(12, 6))
-        plt.show()
-        return
-    idxs = [d["frame_idx"] for d in frame_scores]
-    panels = [
-        ([d["disparity"] for d in frame_scores], "Disparity (px)", "steelblue"),
-        ([d["rotation"] for d in frame_scores], "Rotation (deg)", "seagreen"),
-        (
-            [d["histogram_similarity"] for d in frame_scores],
-            "Histogram similarity",
-            "tomato",
-        ),
-    ]
-    fig, axes = plt.subplots(3, 1, figsize=(12, 6), sharex=True)
-    for ax, (values, ylabel, color) in zip(axes, panels):
-        ax.plot(idxs, values, color=color, linewidth=0.8, marker="o", markersize=3)
-        ax.set_ylabel(ylabel, fontsize=9)
-    axes[-1].set_xlabel("Frame index")
-    fig.suptitle(
-        "Optical-flow scores of the kept frames (vs the previous keyframe)", fontsize=11
-    )
-    fig.tight_layout()
-    plt.show()
-
-
 ########################################################################
 # Video quality report plots: raw columns, no thresholds; saved, never shown
 ########################################################################

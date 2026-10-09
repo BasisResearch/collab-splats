@@ -12,7 +12,6 @@ from collab_splats.preproc.viz import (
     plot_correlation,
     plot_frame_extremes,
     plot_frame_grid,
-    plot_frame_scores,
     plot_motion,
     plot_photometric,
     plot_selection,
@@ -23,24 +22,6 @@ from collab_splats.preproc.viz import (
 def _close_figures():
     yield
     plt.close("all")
-
-
-def _fake_records(n=30):
-    """
-    Score records shaped like sample_optical_flow output.
-    """
-    rng = np.random.default_rng(0)
-    return [
-        {
-            "frame_idx": i,
-            "blur_score": 200.0,
-            "disparity": float(rng.random() * 80),
-            "rotation": float(rng.random() * 3),
-            "histogram_similarity": float(rng.random()),
-            "score": float(rng.random()),
-        }
-        for i in range(n)
-    ]
 
 
 def test_plot_frame_grid_smoke():
@@ -59,15 +40,6 @@ def test_plot_selection_one_panel_per_method():
         "uniform",
         "optical_flow",
     ]
-
-
-def test_plot_frame_scores_smoke():
-    plot_frame_scores(_fake_records())
-    assert len(plt.gcf().axes) == 3
-
-
-def test_plot_frame_scores_empty_input():
-    plot_frame_scores([])  # must not raise
 
 
 ########################################################################

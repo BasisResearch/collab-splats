@@ -35,7 +35,7 @@ PCD_KWARGS = MESH_KWARGS.copy()
 PCD_KWARGS.update(
     {
         "render_points_as_spheres": True,
-        "point_size": 0.5,
+        "point_size": 3.0,
         "ambient": 0.3,
         "diffuse": 0.8,
         "specular": 0.1,
@@ -276,6 +276,75 @@ def apply_view(plotter: pv.Plotter, viz_kwargs: dict) -> None:
         plotter.add_light(pv.Light(**light))
 
 
+def camera_view(
+    extrinsics: np.ndarray,
+    points: np.ndarray | None = None,
+    *,
+    azimuth_deg: float = 90.0,
+    elevation_deg: float = 20.0,
+    distance: float = 1.5,
+) -> dict[str, Any]:
+    """
+    Upright side-on viz_kwargs derived from OpenCV camera poses.
+
+    - up: mean camera up (-y of each c2w), so OpenCV y-down scenes render upright
+    - azimuth 90 looks at the scene from the side of the walking direction, 0 from behind it
+    - azimuth/elevation keys are zeroed so apply_view does not rotate the view again
+
+    Args:
+        extrinsics: (N, 4, 4) w2c OpenCV poses.
+        points: (M, 3) scene points; their 5-95 percentile box sets focal point and size.
+        azimuth_deg: angle around up from behind the cameras toward their right side.
+        elevation_deg: angle above the horizontal.
+        distance: eye distance in units of the scene size.
+
+    Returns:
+        A viz_kwargs dict for apply_view / visualize_splat.
+    """
+    # Mean up and forward of the cameras; forward made orthogonal to up
+    c2w = invert_poses(np.asarray(extrinsics, dtype=np.float64))
+    centers = c2w[:, :3, 3]
+    up = -c2w[:, :3, 1].mean(axis=0)
+    up /= np.linalg.norm(up)
+    forward = c2w[:, :3, 2].mean(axis=0)
+    forward -= up * (forward @ up)
+
+    # Cameras facing every way (an orbit): any horizontal direction will do
+    if np.linalg.norm(forward) < 1e-6:
+        forward = np.cross(up, [1.0, 0.0, 0.0])
+
+        if np.linalg.norm(forward) < 1e-6:
+            forward = np.cross(up, [0.0, 1.0, 0.0])
+
+    forward /= np.linalg.norm(forward)
+    right = np.cross(forward, up)
+
+    # Scene center and size: from the points when given, else ahead of the trajectory
+    if points is not None:
+        lo, hi = np.percentile(np.asarray(points), [5, 95], axis=0)
+        focal = (lo + hi) / 2
+        size = float(np.linalg.norm(hi - lo))
+    else:
+        size = float(np.linalg.norm(np.ptp(centers, axis=0)))
+        focal = centers.mean(axis=0) + 0.5 * size * forward
+
+    # Eye on a sphere around the focal point
+    az = np.radians(azimuth_deg)
+    el = np.radians(elevation_deg)
+    horizontal = np.cos(az) * -forward + np.sin(az) * right
+    direction = np.cos(el) * horizontal + np.sin(el) * up
+    position = focal + distance * size * direction
+
+    return {
+        "position": tuple(position),
+        "focal_point": tuple(focal),
+        "view_up": tuple(up),
+        "azimuth": 0,
+        "elevation": 0,
+        "zoom": 1.0,
+    }
+
+
 def visualize_splat(
     mesh: str | pv.PolyData,
     aligned_cameras: list[np.ndarray] | None = None,
@@ -288,6 +357,7 @@ def visualize_splat(
     PyVista scene of a mesh or pointcloud with camera frustums.
 
     - every n_poses-th camera gets a frustum (camera_kwargs "n_poses", default 3)
+    - frustums are viridis by frame order with a scalar bar unless camera_kwargs sets color
 
     Args:
         mesh: PLY path or PolyData.
@@ -314,25 +384,34 @@ def visualize_splat(
 
     # Work on a copy so the caller's dict is not mutated across calls
     cam_kw = dict(camera_kwargs)
+
     if aligned_cameras is not None:
         n_poses = cam_kw.pop("n_poses", 3)
         scale = cam_kw.pop("scale", 0.02)
         aspect_ratio = cam_kw.pop("aspect_ratio", 1.33)
         fov = cam_kw.pop("fov", 60)
-        cmap = plt.get_cmap("viridis")
+        frustums = []
 
         for i in range(0, len(aligned_cameras), n_poses):
-            pose = aligned_cameras[i]
             frustum = create_camera_frustum_pyvista(
-                pose, scale=scale, aspect_ratio=aspect_ratio, fov=fov
+                aligned_cameras[i], scale=scale, aspect_ratio=aspect_ratio, fov=fov
             )
+            frustum.point_data["frame order"] = np.full(frustum.n_points, i)
+            frustums.append(frustum)
 
-            # Per-frustum color (copy cam_kw so color override doesn't leak between iterations)
-            kw = dict(cam_kw)
-            if "color" not in kw:
-                kw["color"] = cmap(i / max(1, len(aligned_cameras)))[:3]
+        # One fixed color when given, else viridis by frame order with a scalar bar
+        merged = pv.merge(frustums)
 
-            plotter.add_mesh(frustum, **kw)
+        if "color" in cam_kw:
+            plotter.add_mesh(merged, scalars=None, **cam_kw)
+        else:
+            plotter.add_mesh(
+                merged,
+                scalars="frame order",
+                cmap="viridis",
+                scalar_bar_args={"title": "frame order"},
+                **cam_kw,
+            )
 
     # Pin the camera and add the configured lights
     apply_view(plotter, viz_kwargs)

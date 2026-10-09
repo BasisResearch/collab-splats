@@ -331,12 +331,13 @@ def plot_frame_extremes(
     column: str = "blur",
     n: int = 6,
     dpi: int = 150,
+    max_width: int = 900,
 ) -> Path:
     """
     The n highest and n lowest frames of one per-frame report column, decoded from the video.
 
-    - top row = highest values, bottom row = lowest
-    - each thumbnail is captioned with frame index, wall-clock time and the value, so a reader
+    - one row: the n highest values, then the n lowest
+    - each thumbnail is captioned with the value, frame index and wall-clock time, so a reader
       can judge what the number means on this footage
     - one seek per thumbnail (2n decodes) — for notebooks and spot checks
 
@@ -345,44 +346,42 @@ def plot_frame_extremes(
         video_path: the source video the report was computed from.
         out_dir: directory the PNG is written into; created if absent.
         column: any key of report["frames"] except frame_idx — blur, laplacian, exposure_mean, ...
-        n: thumbnails per row.
-        dpi: PNG resolution; blur has to stay visible in the thumbnails.
+        n: thumbnails per group.
+        dpi: PNG resolution.
+        max_width: width of the saved PNG in pixels.
 
     Returns:
         Path to the written PNG.
     """
-    # Unpack columns and rank
+    # Unpack columns and rank: highest first, then lowest
     frames, video = report["frames"], report["video"]
     fps = video["fps"]
     idx = np.asarray(frames["frame_idx"])
     values = np.asarray(frames[column], dtype=float)
     order = np.argsort(values)
-    rows = [(f"highest {column}", order[::-1][:n]), (f"lowest {column}", order[:n])]
+    picks = [("high", i) for i in order[::-1][:n]] + [("low", i) for i in order[:n]]
 
-    # Panels: one thumbnail per extreme frame, decoded at source resolution
+    # Decode the thumbnails first; their aspect sets the row height
     info = get_video_info(video_path)
-    fig, axes = plt.subplots(2, n, figsize=(3.3 * n, 14), squeeze=False)
-    for (label, sel), axrow in zip(rows, axes):
-        for ax, i in zip(axrow, sel):
-            ax.imshow(extract_frame(video_path, int(idx[i]), info=info))
-            ax.set_title(
-                f"#{idx[i]}  t={idx[i] / fps:.1f}s\n{column}={values[i]:.3g}",
-                fontsize=10,
-            )
-            ax.axis("off")
-        axrow[0].text(
-            -0.04,
-            0.5,
-            label,
-            transform=axrow[0].transAxes,
-            rotation=90,
-            va="center",
-            ha="right",
-            fontsize=12,
+    thumbs = [extract_frame(video_path, int(idx[i]), info=info) for _, i in picks]
+    aspect = thumbs[0].shape[0] / thumbs[0].shape[1]
+
+    # One row of panels whose total width is max_width pixels
+    fig_width = max_width / dpi
+    panel_width = fig_width / len(picks)
+    fig, axes = plt.subplots(
+        1, len(picks), figsize=(fig_width, panel_width * aspect + 0.9), squeeze=False
+    )
+
+    for ax, (group, i), thumb in zip(axes[0], picks, thumbs):
+        ax.imshow(thumb)
+        ax.set_title(
+            f"{group}: {values[i]:.3g}\n#{idx[i]} t={idx[i] / fps:.1f}s", fontsize=6
         )
+        ax.axis("off")
 
     # Title, save and close
-    title = f"{Path(video['path']).name} — {column} extremes ({len(idx)} frames @ {fps:.2f} fps)"
+    title = f"{column} extremes ({len(idx)} frames)"
     return _save(fig, out_dir, f"extremes-{column}.png", title=title, dpi=dpi)
 
 

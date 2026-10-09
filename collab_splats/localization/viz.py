@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.patches import Rectangle
 
 if TYPE_CHECKING:
     from collab_splats.localization.localizer import LocalizationResult
@@ -65,18 +66,6 @@ def correspondences_for_ref(
 ########################################################################
 
 
-def _draw_quad(
-    image: np.ndarray, corners: np.ndarray, color: tuple[int, int, int]
-) -> None:
-    """
-    Draw a closed 4-corner polygon on an RGB image in place.
-    """
-    for i in range(4):
-        start = corners[i - 1][0].astype(int)
-        end = corners[i][0].astype(int)
-        cv2.line(image, tuple(start), tuple(end), color, 4)
-
-
 def _image_corners(image: np.ndarray) -> np.ndarray:
     """
     The four pixel-center corners of an image, as cv2.perspectiveTransform input (4, 1, 2).
@@ -103,6 +92,7 @@ def plot_correspondences(
 
     - green lines for inliers, red for outliers
     - warp_corners: cyan quad = query corners on the ref, yellow quad = ref corners on the query
+    - each panel keeps a 25% margin; a quad is clipped to its own panel and margin
 
     Args:
         query_image: HxWx3 uint8 RGB query image.
@@ -163,36 +153,49 @@ def plot_correspondences(
         idx = rng.choice(len(kpts0), max_pairs, replace=False)
         kpts0, kpts1, inliers = kpts0[idx], kpts1[idx], inliers[idx]
 
-    W = query_image.shape[1]
-    query_image_disp = query_image.copy()
-    ref_image_disp = ref_image.copy()
+    # Reference beside the query at its height; a margin around each holds boxes past the image
+    h, w = query_image.shape[:2]
+    ref_scale = h / ref_image.shape[0]
+    ref_w = ref_image.shape[1] * ref_scale
+    margin_q = 0.25 * w
+    margin_r = 0.25 * ref_w
+    margin_y = 0.25 * h
+    ref_x0 = w + margin_q + margin_r
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.imshow(query_image, extent=(0, w, h, 0))
+    ax.imshow(ref_image, extent=(ref_x0, ref_x0 + ref_w, h, 0))
 
     # Query corners onto the reference via H, reference corners onto the query via H⁻¹
     if warp_corners and H is not None:
-        corners_q = _image_corners(query_image)
-        warped_q = cv2.perspectiveTransform(corners_q, H)
-        _draw_quad(ref_image_disp, warped_q, (0, 255, 255))
-        corners_r = _image_corners(ref_image)
-        H_inv = np.linalg.inv(H)
-        warped_r = cv2.perspectiveTransform(corners_r, H_inv)
-        _draw_quad(query_image_disp, warped_r, (255, 255, 0))
+        warped_q = cv2.perspectiveTransform(_image_corners(query_image), H)[:, 0]
+        warped_r = cv2.perspectiveTransform(
+            _image_corners(ref_image), np.linalg.inv(H)
+        )[:, 0]
+        boxes = [
+            (
+                warped_q * ref_scale + [ref_x0, 0],
+                "cyan",
+                ref_x0 - margin_r,
+                ref_w + 2 * margin_r,
+            ),
+            (warped_r, "yellow", -margin_q, w + 2 * margin_q),
+        ]
 
-    # Rescale the reference to the query height; the heights differ and np.concatenate would raise
-    ref_scale = query_image_disp.shape[0] / ref_image_disp.shape[0]
-
-    if ref_scale != 1.0:
-        new_w = round(ref_image_disp.shape[1] * ref_scale)
-        ref_image_disp = cv2.resize(ref_image_disp, (new_w, query_image_disp.shape[0]))
-
-    combined = np.concatenate([query_image_disp, ref_image_disp], axis=1)
-    fig, ax = plt.subplots(figsize=(14, 5))
-    ax.imshow(combined)
+        # Each box clipped to its own panel plus margin, so it never spills into the other
+        for quad, color, x_min, width in boxes:
+            closed = np.vstack([quad, quad[:1]])
+            (line,) = ax.plot(closed[:, 0], closed[:, 1], color=color, linewidth=2)
+            clip = Rectangle(
+                (x_min, -margin_y), width, h + 2 * margin_y, transform=ax.transData
+            )
+            line.set_clip_path(clip)
 
     # Lines per pair, then keypoint dots on both sides
     for (x0, y0), (x1, y1), ok in zip(kpts0, kpts1, inliers):
         color = "lime" if ok else "red"
         ax.plot(
-            [x0, x1 * ref_scale + W],
+            [x0, x1 * ref_scale + ref_x0],
             [y0, y1 * ref_scale],
             color=color,
             linewidth=0.8,
@@ -201,14 +204,15 @@ def plot_correspondences(
 
     ax.scatter(kpts0[:, 0], kpts0[:, 1], s=8, c="white", zorder=3, linewidths=0)
     ax.scatter(
-        kpts1[:, 0] * ref_scale + W,
+        kpts1[:, 0] * ref_scale + ref_x0,
         kpts1[:, 1] * ref_scale,
         s=8,
         c="white",
         zorder=3,
         linewidths=0,
     )
-    ax.axvline(W, color="white", linewidth=1, alpha=0.5)
+    ax.set_xlim(-margin_q, ref_x0 + ref_w + margin_r)
+    ax.set_ylim(h + margin_y, -margin_y)
     ax.axis("off")
     ax.set_title(f"query ↔ reference — {inliers.sum()}/{len(inliers)} inliers shown")
     fig.tight_layout()

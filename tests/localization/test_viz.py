@@ -8,6 +8,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pytest
 
 from collab_splats.localization.localizer import LocalizationResult
 from collab_splats.localization.viz import (
@@ -60,6 +61,29 @@ def test_plot_correspondences_plain_arrays():
         q, r, q_px, r_px, inlier_mask=np.arange(10) % 2 == 0, show=False
     )
     assert fig is not None
+
+
+def test_plot_correspondences_warp_boxes_stay_in_their_panels():
+    """Warped boxes are drawn as clipped lines; the view leaves a margin around both images."""
+    rng = np.random.default_rng(3)
+    query = np.zeros((60, 100, 3), dtype=np.uint8)
+    ref_image = np.zeros((100, 60, 3), dtype=np.uint8)
+    q_px = rng.uniform(0, 59, (20, 2)).astype(np.float32)
+
+    # Reference is the query shifted by 5 px: a clean homography
+    fig = plot_correspondences(
+        query, ref_image, q_px, q_px + 5.0, warp_corners=True, show=False
+    )
+    ax = fig.axes[0]
+    boxes = [line for line in ax.get_lines() if line.get_color() in ("cyan", "yellow")]
+    assert len(boxes) == 2
+    assert all(line.get_clip_box() is not ax.bbox for line in boxes)
+
+    # Query spans x 0..100 with a 25 px margin; reference is scaled to height 60
+    x_min, x_max = ax.get_xlim()
+    assert x_min == -25.0
+    assert x_max == pytest.approx(100 + 25 + 9 + 36 + 9)
+    plt.close(fig)
 
 
 def test_correspondences_for_ref_slices_one_frame():

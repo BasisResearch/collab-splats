@@ -55,7 +55,7 @@ SCENE_CONFIG = {
             "normal_consistency": {"weight": 0.05, "start": 700},
         },
     },
-    "semantics": {"extractor": "maskclip", "max_epochs": 20},
+    "semantics": {"extractor": "talk2dino", "max_epochs": 20},
 }
 
 

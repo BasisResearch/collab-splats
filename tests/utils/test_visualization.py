@@ -15,6 +15,7 @@ from matplotlib.figure import Figure
 from collab_splats.utils.visualization import (
     PCD_KWARGS,
     _resolve_mesh_kwargs,
+    camera_view,
     compute_heatmap,
     compute_masked_image,
     create_camera_frustum_pyvista,
@@ -23,6 +24,7 @@ from collab_splats.utils.visualization import (
     plot_reprojection,
     pointcloud_to_polydata,
     render_points,
+    visualize_splat,
 )
 
 K = np.array([[100.0, 0.0, 32.0], [0.0, 100.0, 24.0], [0.0, 0.0, 1.0]])
@@ -298,6 +300,63 @@ def test_frustum_rectangles_closed():
     assert len(frustum.lines) == 48, (
         f"Expected 48 line array entries (closed rects), got {len(frustum.lines)}"
     )
+
+
+########################################
+####### Camera view ####################
+########################################
+
+
+def _walk_poses(n: int = 5) -> np.ndarray:
+    """
+    w2c poses of a camera stepping along world +x, looking along +z with OpenCV y down.
+    """
+    poses = np.tile(np.eye(4), (n, 1, 1))
+    poses[:, 0, 3] = -np.arange(n, dtype=float)
+    return poses
+
+
+def test_camera_view_up_is_opposite_opencv_y():
+    view = camera_view(_walk_poses())
+    np.testing.assert_allclose(view["view_up"], [0, -1, 0], atol=1e-6)
+
+
+def test_camera_view_keys_reset_apply_view_defaults():
+    view = camera_view(_walk_poses())
+    assert {"position", "focal_point", "view_up"} <= set(view)
+    assert view["azimuth"] == 0 and view["elevation"] == 0
+
+
+def test_camera_view_looks_from_the_side():
+    # Walking along +x and looking along +z: the side eye sits along x from the focal point
+    view = camera_view(_walk_poses())
+    offset = np.asarray(view["position"]) - np.asarray(view["focal_point"])
+    assert abs(offset[0]) > abs(offset[2])
+
+
+def test_camera_view_points_set_focal_point():
+    points = np.random.default_rng(0).normal(loc=[3, 0, 10], size=(1000, 3))
+    view = camera_view(_walk_poses(), points)
+    np.testing.assert_allclose(view["focal_point"], [3, 0, 10], atol=0.3)
+
+
+########################################
+####### visualize_splat ################
+########################################
+
+
+def test_visualize_splat_time_colored_frustums_get_scalar_bar():
+    cloud = pv.PolyData(np.random.default_rng(0).normal(size=(50, 3)))
+    plotter = visualize_splat(cloud, _walk_poses(), camera_kwargs={"n_poses": 1})
+    assert "frame order" in plotter.scalar_bars
+    plotter.close()
+
+
+def test_visualize_splat_fixed_color_frustums_have_no_scalar_bar():
+    cloud = pv.PolyData(np.random.default_rng(0).normal(size=(50, 3)))
+    plotter = visualize_splat(cloud, _walk_poses(), camera_kwargs={"color": "red"})
+    assert "frame order" not in plotter.scalar_bars
+    plotter.close()
 
 
 ########################################################################

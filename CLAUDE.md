@@ -28,11 +28,11 @@ These tasks are started but not complete — do not assume their targets are don
 Full entries live in [docs/superpowers/CHANGELOG.md](docs/superpowers/CHANGELOG.md) —
 read it before assuming any subsystem below is unchanged. Five newest:
 
+- **tutorial-unification** (2026-10-09)
 - **final-cleanup** (2026-10-08)
 - **dashboard-release** (2026-10-08)
 - **tutorial-rework** (2026-10-08)
 - **scene-viewer** (2026-10-08)
-- **semantics-storage** (2026-10-07)
 
 ## Installation and Setup
 

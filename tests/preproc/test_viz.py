@@ -187,6 +187,17 @@ def _stub_decode(monkeypatch):
     )
 
 
+def test_plot_frame_extremes_one_row_width_capped(tmp_path, monkeypatch):
+    _stub_decode(monkeypatch)
+    report = _fake_video_quality_report()
+    path = plot_frame_extremes(
+        report, "fake.mp4", tmp_path, n=3, dpi=100, max_width=600
+    )
+    with Image.open(path) as img:
+        assert img.width == 600
+        assert img.height < img.width
+
+
 _PLOTTERS = {
     "photometric": (lambda r, o, **kw: plot_photometric(r, o, **kw), 90),
     "motion": (lambda r, o, **kw: plot_motion(r, o, **kw), 90),

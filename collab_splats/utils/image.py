@@ -75,6 +75,17 @@ def resize_image(image: Image.Image, longest_edge: int) -> Image.Image:
 ########################################################
 
 
+def _nearest_source_index(n_out: int, n_in: int) -> np.ndarray:
+    """
+    Source index per output pixel along one axis, exactly as cv2.INTER_NEAREST picks it.
+
+    - cv2 floors x / (n_out / n_in) in double precision, clamped to the last source pixel
+    """
+    inverse_scale = 1.0 / (n_out / n_in)
+    index = np.floor(np.arange(n_out) * inverse_scale).astype(np.int64)
+    return np.minimum(index, n_in - 1)
+
+
 def _guided_upsample_depth(
     depth: np.ndarray,
     rgb_full: np.ndarray,
@@ -100,29 +111,32 @@ def _guided_upsample_depth(
     if tl_x < 0 or tl_y < 0 or cr_x > W or cr_y > H:
         raise ValueError(f"Crop box {crop_box} lies outside the {H}x{W} canvas")
 
-    # Nearest resize of depth and validity to crop size — blocky but never invents values
-    depth_nn = cv2.resize(depth, (cw, ch), interpolation=cv2.INTER_NEAREST)
-    valid_nn = (depth_nn > 0).astype(np.float32)
+    # Nearest resize on the device, gathering the source rows and columns cv2.INTER_NEAREST picks
+    depth_t = torch.as_tensor(depth, device=device)
+    rows = _nearest_source_index(ch, depth.shape[0])
+    cols = _nearest_source_index(cw, depth.shape[1])
+    rows_t = torch.as_tensor(rows, device=device)
+    cols_t = torch.as_tensor(cols, device=device)
+    depth_nn = depth_t[rows_t][:, cols_t]
+    valid_nn = (depth_nn > 0).float()
 
-    # Gray guide in [0, 1] from the original-res crop; radius spans ~2x the upsample factor
-    guide = (
-        cv2.cvtColor(rgb_full[tl_y:cr_y, tl_x:cr_x], cv2.COLOR_RGB2GRAY).astype(
-            np.float32
-        )
-        / 255.0
-    )
+    # Gray guide in [0, 1]: cv2 conversion on the CPU (uint8 upload), scaling on the device
+    gray = cv2.cvtColor(rgb_full[tl_y:cr_y, tl_x:cr_x], cv2.COLOR_RGB2GRAY)
+    gray_t = torch.as_tensor(gray, device=device).float()
+
+    # Divide by a device tensor: a CUDA scalar divide multiplies by the reciprocal (1 ulp off)
+    max_level = torch.tensor(255.0, device=device)
+    guide_t = gray_t / max_level
 
     # Zero-mean guide: offset-invariant filter, less float32 cancellation in a and b
-    guide = guide - 0.5
+    guide_t = guide_t - 0.5
 
     if radius is None:
         radius = max(1, int(np.ceil(2 * cw / depth.shape[1])))
 
     # Validity-weighted filtering: depth and validity as two channels of one guided filter
-    guide_t = torch.as_tensor(guide, device=device)[None, None]
-    src_t = torch.as_tensor(np.stack([depth_nn * valid_nn, valid_nn]), device=device)[
-        None
-    ]
+    guide_t = guide_t[None, None]
+    src_t = torch.stack([depth_nn * valid_nn, valid_nn])[None]
     num, den = guided_blur(guide_t, src_t, 2 * radius + 1, eps)[0]
     filtered = torch.where(den > 1e-6, num / den.clamp(min=1e-6), 0.0)
 

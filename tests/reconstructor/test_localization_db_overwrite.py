@@ -107,11 +107,14 @@ def test_build_refuses_a_missing_images_store_and_keeps_the_db(tmp_path):
 
 def test_localize_stage_always_rebuilds(tmp_path):
     """run() only calls localize() to (re)build, so the stale group is always dropped."""
-    # Minimal config; base.yaml fills the rest (matcher=loma default)
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "localization": {"enabled": True, "matcher": "loma"},
+        "localization": {
+            "enabled": True,
+            "matcher": "loma",
+            "retrieval": "dino-salad",
+        },
     }
     rec = Reconstructor(config)
     pc_zarr = rec.backend_dir / "pointcloud.zarr"

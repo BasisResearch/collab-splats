@@ -63,15 +63,15 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **mesh_overrides):
 
 
 def test_mask_sky_zeroes_feedforward_depth_where_sky_and_nowhere_else(tmp_path):
-    # Top two rows sky; every other pixel must survive bit-identically
+    # Bottom two rows sky; every other pixel must survive bit-identically
     mask = np.zeros((2, 8, 8), bool)
-    mask[:, :2] = True
+    mask[:, 6:] = True
     fused = {}
 
     sky = _run_feedforward_mesh(tmp_path, fused, mask, mask_sky=True)
 
-    assert np.all(fused["depths"][:, :2] == 0.0)
-    assert np.all(fused["depths"][:, 2:] == 1.0)
+    assert np.all(fused["depths"][:, 6:] == 0.0)
+    assert np.all(fused["depths"][:, :6] == 1.0)
     # Feedforward masks the zarr's own frames (minimal_feedforward_result: frames 0 and 1)
     assert sky.call_args.kwargs["idxs"] == [0, 1]
 

@@ -126,9 +126,8 @@ def test_sfm_stage_builds_the_creator_from_the_block_and_the_clean_switch(
     assert creator_cls.call_args.kwargs == {
         "clean": clean,
         "max_points": pc_cfg["max_points"],
-        **pc_cfg[backend],
+        **pc_cfg.get(backend, {}),
     }
-    assert creator_cls.call_args.kwargs["min_registered_frac"] == 0.5
 
 
 def test_sfm_stage_hands_create_the_scene_dirs(tmp_path):

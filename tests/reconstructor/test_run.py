@@ -78,8 +78,10 @@ def test_done_non_leaf_is_skipped(tmp_path, monkeypatch):
 def test_default_stages_follow_config(tmp_path, monkeypatch):
     r, calls = _recon(tmp_path, monkeypatch)
     r.config["mesh"]["enabled"] = False
+    r.config["localization"]["enabled"] = False
+    r.config["pointcloud"]["bundle_adjustment"]["enabled"] = True
     r.run()
-    assert calls == ["preproc", "pointcloud", "reconstruction_quality_report"]
+    assert calls == ["preproc", "pointcloud", "refine", "reconstruction_quality_report"]
 
 
 def test_outputs_names_one_marker_per_file_stage(tmp_path):

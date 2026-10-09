@@ -6,11 +6,11 @@ from typing import Any
 from unittest.mock import patch
 
 import numpy as np
+import pycolmap
 
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.pointcloud.feedforward.base import BaseFeedforwardCreator
 from collab_splats.reconstructor import Reconstructor
-from collab_splats.utils.colmap import read_colmap_reconstruction
 from tests.pointcloud.conftest import _frame_files, _frames
 from tests.reconstructor._stubs import stub_creator_cls
 
@@ -127,7 +127,7 @@ def test_pointcloud_stage_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
     np.testing.assert_array_equal(reloaded.colors, stored.colors)
 
     # The COLMAP export and the PLY carry the same 60 points
-    assert read_colmap_reconstruction(rec.colmap_model_dir).num_points3D() == 60
+    assert pycolmap.Reconstruction(str(rec.colmap_model_dir)).num_points3D() == 60
     header = (rec.backend_dir / "sparse_pc.ply").read_bytes()[:200]
     assert b"element vertex 60\n" in header
 
@@ -157,6 +157,6 @@ def test_pointcloud_stage_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp
     )
     assert len(stored.points) == 61
     assert np.abs(stored.points).max() == 50.0
-    assert read_colmap_reconstruction(rec.colmap_model_dir).num_points3D() == 61
+    assert pycolmap.Reconstruction(str(rec.colmap_model_dir)).num_points3D() == 61
     header = (rec.backend_dir / "sparse_pc.ply").read_bytes()[:200]
     assert b"element vertex 61\n" in header

@@ -13,7 +13,6 @@ import pytest
 from collab_splats.pointcloud.sfm import base as base_mod
 from collab_splats.pointcloud.sfm.base import BaseSfmCreator
 from collab_splats.preproc import frames as fr
-from collab_splats.utils.colmap import read_colmap_reconstruction
 
 # Source frame indices of the store; non-contiguous so a row/index mix-up shows
 FRAME_IDX = (0, 9, 30)
@@ -142,7 +141,7 @@ def test_create_writes_model_and_returns_aligned_result(scene):
     assert depth_calls == [((3, HEIGHT, WIDTH, 3), out_dir, NAMES)]
 
     # One model on disk, stem names; the result covers every registered frame
-    written = read_colmap_reconstruction(model_dir)
+    written = pycolmap.Reconstruction(str(model_dir))
     assert sorted(im.name for im in written.images.values()) == [
         Path(n).stem for n in NAMES
     ]
@@ -182,7 +181,7 @@ def test_outlier_removed_from_result_and_export_when_clean(scene, clean, n_far):
     result = creator.create_pointcloud(images_dir, out_dir, model_dir)
 
     # The COLMAP model and the zarr points hold one point set
-    written = read_colmap_reconstruction(model_dir)
+    written = pycolmap.Reconstruction(str(model_dir))
     assert written.num_points3D() == len(result.points)
     far = [p for p in written.points3D.values() if p.xyz[0] > 10]
     assert len(far) == n_far
@@ -197,7 +196,7 @@ def test_cap_trims_the_export_to_the_result_points(scene):
     )
 
     # Exactly the capped points survive in the export, tracks intact
-    written = read_colmap_reconstruction(model_dir)
+    written = pycolmap.Reconstruction(str(model_dir))
     exported = sorted(
         tuple(p.xyz.astype(np.float32).tolist()) for p in written.points3D.values()
     )
@@ -214,7 +213,9 @@ def test_trackless_points3d_dropped_before_write(scene):
     )
 
     assert (
-        read_colmap_reconstruction(model_dir).num_points3D() == len(result.points) == 30
+        pycolmap.Reconstruction(str(model_dir)).num_points3D()
+        == len(result.points)
+        == 30
     )
 
 
@@ -240,7 +241,7 @@ def test_export_keeps_the_mapper_tracks(scene):
 
     _Fake(model=_model()).create_pointcloud(images_dir, out_dir, model_dir)
 
-    written = read_colmap_reconstruction(model_dir)
+    written = pycolmap.Reconstruction(str(model_dir))
     assert all(len(p.track.elements) == len(NAMES) for p in written.points3D.values())
 
 
@@ -249,6 +250,6 @@ def test_export_keeps_a_distorted_mapper_camera(scene):
 
     _Fake(model=_model(radial=0.1)).create_pointcloud(images_dir, out_dir, model_dir)
 
-    camera = next(iter(read_colmap_reconstruction(model_dir).cameras.values()))
+    camera = next(iter(pycolmap.Reconstruction(str(model_dir)).cameras.values()))
     assert camera.model.name == "SIMPLE_RADIAL"
     assert camera.params[3] == pytest.approx(0.1)

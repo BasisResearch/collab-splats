@@ -1,7 +1,8 @@
 """
-COLMAP binary model IO: stem-named, atomically swapped writes and the matching read.
+COLMAP binary model IO: stem-named, atomically swapped writes.
 
-- callers own the layout: both functions take the model dir itself
+- callers own the layout: the writer takes the model dir itself
+- reading back is plain pycolmap.Reconstruction(str(model_dir))
 """
 
 import shutil
@@ -42,21 +43,3 @@ def write_colmap_reconstruction(
         model_dir.rename(old)
     tmp.rename(model_dir)
     shutil.rmtree(old, ignore_errors=True)
-
-
-def read_colmap_reconstruction(model_dir: Path) -> pycolmap.Reconstruction:
-    """
-    Binary model in `model_dir`; the inverse of write_colmap_reconstruction.
-
-    Args:
-        model_dir: directory holding the three .bin files.
-
-    Returns:
-        The loaded reconstruction.
-
-    Raises:
-        FileNotFoundError: model_dir does not exist.
-    """
-    if not Path(model_dir).is_dir():
-        raise FileNotFoundError(f"no COLMAP model at {model_dir}")
-    return pycolmap.Reconstruction(str(model_dir))

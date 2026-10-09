@@ -4,12 +4,8 @@ Tests for utils/colmap.py: stem names, atomic swap, round trip.
 
 import numpy as np
 import pycolmap
-import pytest
 
-from collab_splats.utils.colmap import (
-    read_colmap_reconstruction,
-    write_colmap_reconstruction,
-)
+from collab_splats.utils.colmap import write_colmap_reconstruction
 
 
 def _recon(names: list[str]) -> pycolmap.Reconstruction:
@@ -37,7 +33,7 @@ def test_write_names_are_stems(tmp_path):
         _recon(["frame_000001.png", "frame_000002.jpg"]), model_dir
     )
     names = sorted(
-        img.name for img in read_colmap_reconstruction(model_dir).images.values()
+        img.name for img in pycolmap.Reconstruction(str(model_dir)).images.values()
     )
     assert names == ["frame_000001", "frame_000002"]
 
@@ -47,7 +43,7 @@ def test_write_replaces_whole_model(tmp_path):
     write_colmap_reconstruction(_recon(["a.png", "b.png"]), model_dir)
     write_colmap_reconstruction(_recon(["c.png"]), model_dir)
     assert [
-        img.name for img in read_colmap_reconstruction(model_dir).images.values()
+        img.name for img in pycolmap.Reconstruction(str(model_dir)).images.values()
     ] == ["c"]
     assert sorted(p.name for p in tmp_path.iterdir()) == ["m"]
 
@@ -58,8 +54,3 @@ def test_write_clears_crash_leftovers(tmp_path):
     (tmp_path / ".m.old").mkdir()
     write_colmap_reconstruction(_recon(["a.png"]), model_dir)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["m"]
-
-
-def test_read_missing_raises(tmp_path):
-    with pytest.raises(FileNotFoundError):
-        read_colmap_reconstruction(tmp_path / "absent")

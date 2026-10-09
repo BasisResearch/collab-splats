@@ -26,37 +26,6 @@ _NAMES = ["frame_000000.jpg", "frame_000001.jpg"]
 ########################################################
 
 
-def _recon_with_keypoint(xy):
-    """
-    Minimal stand-in for pycolmap objects: one point3D (id 7) observed once in
-    image 1 ("frame_000000.jpg") at original-res keypoint `xy`.
-    """
-
-    class _Elem:
-        image_id, point2D_idx = 1, 0
-
-    class _Track:
-        elements = [_Elem()]
-
-    class _P3D:
-        track = _Track()
-
-    class _Pt2D:
-        pass
-
-    _Pt2D.xy = np.asarray(xy, dtype=np.float64)
-
-    class _Img:
-        name = "frame_000000.jpg"
-        points2D = [_Pt2D()]
-
-    class _Recon:
-        points3D = {7: _P3D()}
-        images = {1: _Img()}
-
-    return _Recon()
-
-
 def test_empty_track_points_are_ignored():
     # InstantSfM exports sub-min-track-length points with empty tracks — the result
     # tail must exclude them (pixel_indices reads track.elements[0])
@@ -71,12 +40,11 @@ def test_empty_track_points_are_ignored():
     assert len(out.pixel_indices) == 1
 
 
-def test_pixel_indices_from_reconstruction_scales_to_depth_res():
+def test_pixel_indices_scales_to_depth_res():
     # Original 800x600 -> depth 80x60 = scale 0.1; keypoint (200, 100) -> (row 10, col 20)
-    idx = depth_mod._pixel_indices_from_reconstruction(
-        _recon_with_keypoint((200.0, 100.0)),
-        point3d_ids=[7],
-        name_to_row={"frame_000000.jpg": 0},
+    idx = depth_mod._pixel_indices(
+        np.array([0]),
+        np.array([[200.0, 100.0]]),
         scale_x=0.1,
         scale_y=0.1,
         depth_hw=(60, 80),
@@ -88,10 +56,9 @@ def test_pixel_indices_from_reconstruction_scales_to_depth_res():
 
 def test_pixel_indices_clamped_to_grid():
     # Edge keypoint -> scaled index must stay in-grid
-    idx = depth_mod._pixel_indices_from_reconstruction(
-        _recon_with_keypoint((799.9, 599.9)),
-        point3d_ids=[7],
-        name_to_row={"frame_000000.jpg": 0},
+    idx = depth_mod._pixel_indices(
+        np.array([0]),
+        np.array([[799.9, 599.9]]),
         scale_x=0.1,
         scale_y=0.1,
         depth_hw=(60, 80),
@@ -103,10 +70,9 @@ def test_pixel_indices_floor_negative_subpixel_clamps_to_zero():
     # floor-then-clip reproduces int-then-clamp exactly, not just clamps
     # - pre-clip: col = -5.0 * 0.1 = -0.5, row = -3.0 * 0.1 = -0.3; floor gives (-1, -1)
     # - old int() truncation gave (0, 0) instead; both then clamp to the same cell (0, 0)
-    idx = depth_mod._pixel_indices_from_reconstruction(
-        _recon_with_keypoint((-5.0, -3.0)),
-        point3d_ids=[7],
-        name_to_row={"frame_000000.jpg": 0},
+    idx = depth_mod._pixel_indices(
+        np.array([0]),
+        np.array([[-5.0, -3.0]]),
         scale_x=0.1,
         scale_y=0.1,
         depth_hw=(60, 80),

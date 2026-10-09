@@ -188,7 +188,6 @@ def align_depth(
             "the reconstruction describe different runs."
         )
 
-    name_to_row = {name: row for row, name in enumerate(registered)}
     depths = np.asarray(depths, dtype=np.float32)
     n, h, w = depths.shape
 
@@ -239,25 +238,65 @@ def align_depth(
         np.float32
     )
 
+    # One pass over the 3D points: id, xyz, color, track length and first observation
+    point_ids, point_xyz, point_colors, track_lengths, first_obs = [], [], [], [], []
+
+    for pid, point in reconstruction.points3D.items():
+        point_ids.append(pid)
+        point_xyz.append(point.xyz)
+        point_colors.append(point.color)
+        track_lengths.append(point.track.length())
+
+        # Empty tracks get a placeholder; they are dropped before pixel_indices reads it
+        if track_lengths[-1] > 0:
+            elem = point.track.element(0)
+            first_obs.append((elem.image_id, elem.point2D_idx))
+        else:
+            first_obs.append((-1, -1))
+
+    # Sort the point table by id so observations can gather rows by searchsorted
+    point_ids = np.asarray(point_ids, dtype=np.int64)
+    order = np.argsort(point_ids)
+    point_ids = point_ids[order]
+    point_xyz = np.asarray(point_xyz, dtype=np.float64).reshape(-1, 3)
+    point_xyz = point_xyz[order]
+    point_colors = np.asarray(point_colors, dtype=np.uint8).reshape(-1, 3)
+    point_colors = point_colors[order]
+    track_lengths = np.asarray(track_lengths, dtype=np.int64)
+    track_lengths = track_lengths[order]
+    first_obs = np.asarray(first_obs, dtype=np.int64).reshape(-1, 2)
+    first_obs = first_obs[order]
+
     # Find a scale per frame that matches the predicted depth to the COLMAP depth
     scales = np.full(n, np.nan)
     pooled_ratios: list[np.ndarray] = []
     pooled_rows: list[np.ndarray] = []
+    obs_keys: list[np.ndarray] = []
+    obs_xys: list[np.ndarray] = []
+    key_stride = max(im.num_points2D() for im in images_sorted)
 
     for row, image in enumerate(images_sorted):
-        # Get the COLMAP depth of every 3D point seen in this frame
-        observations = [p for p in image.points2D if p.has_point3D()]
+        # Read this frame's observing keypoints once: index, pixel and 3D point id
+        observations = image.get_observation_points2D()
 
-        if not observations:
+        if len(observations) == 0:
             continue
 
-        xyz = np.stack(
-            [reconstruction.points3D[p.point3D_id].xyz for p in observations]
-        )
+        xy = np.array([p.xy for p in observations], dtype=np.float64).reshape(-1, 2)
+        obs_pids = np.array([p.point3D_id for p in observations], dtype=np.int64)
+        point2d_idxs = image.get_observation_point2D_idxs()
+        point2d_idxs = np.asarray(point2d_idxs, dtype=np.int64)
+
+        # Key each observation by (frame row, keypoint index) for the pixel_indices gather
+        obs_keys.append(row * key_stride + point2d_idxs)
+        obs_xys.append(xy)
+
+        # Get the COLMAP depth of every 3D point seen in this frame
+        point_rows = np.searchsorted(point_ids, obs_pids)
+        xyz = point_xyz[point_rows]
         d_colmap = (image.cam_from_world() * xyz)[:, 2]
 
         # Look up the predicted depth at each point's pixel
-        xy = np.stack([p.xy for p in observations])
         u = np.floor(xy[:, 0] * sx).astype(np.int64)
         v = np.floor(xy[:, 1] * sy).astype(np.int64)
         in_bounds = (u >= 0) & (u < w) & (v >= 0) & (v < h)
@@ -325,22 +364,22 @@ def align_depth(
     depths = (depths * scales[:, None, None]).astype(np.float32)
 
     # Collect the COLMAP 3D points that were seen in at least one image
-    point3d_ids = sorted(
-        pid for pid, p in reconstruction.points3D.items() if len(p.track.elements) > 0
+    seen = track_lengths > 0
+    points = point_xyz[seen].astype(np.float32)
+    colors = point_colors[seen]
+
+    # Pixel of each point's first observation, gathered by (frame row, keypoint index) key
+    image_to_row = {im.image_id: row for row, im in enumerate(images_sorted)}
+    first_rows = np.array(
+        [image_to_row[image_id] for image_id in first_obs[seen, 0]], dtype=np.int64
     )
-    points = np.array(
-        [reconstruction.points3D[pid].xyz for pid in point3d_ids], dtype=np.float32
-    ).reshape(-1, 3)
-    colors = np.array(
-        [reconstruction.points3D[pid].color for pid in point3d_ids], dtype=np.uint8
-    ).reshape(-1, 3)
-    pixel_indices = _pixel_indices_from_reconstruction(
-        reconstruction,
-        point3d_ids,
-        name_to_row,
-        scale_x=sx,
-        scale_y=sy,
-        depth_hw=(h, w),
+    first_keys = first_rows * key_stride + first_obs[seen, 1]
+    keys_all = np.concatenate(obs_keys)
+    xy_all = np.concatenate(obs_xys)
+    first_obs_rows = np.searchsorted(keys_all, first_keys)
+    first_xy = xy_all[first_obs_rows]
+    pixel_indices = _pixel_indices(
+        first_rows, first_xy, scale_x=sx, scale_y=sy, depth_hw=(h, w)
     )
 
     # Resize the images to the depth-map size
@@ -446,32 +485,28 @@ def _depth_cache_complete(npy_dir: Path, names: list[str]) -> bool:
     }
 
 
-def _pixel_indices_from_reconstruction(
-    recon: pycolmap.Reconstruction,
-    point3d_ids: list[int],
-    name_to_row: dict[str, int],
+def _pixel_indices(
+    frame_rows: np.ndarray,
+    xy: np.ndarray,
+    *,
     scale_x: float,
     scale_y: float,
     depth_hw: tuple[int, int],
 ) -> np.ndarray:
     """
-    (P, 3) int32 [frame, row, col] source pixel of each point, from COLMAP tracks.
+    (P, 3) int32 [frame, row, col] source pixel of each point, from its first track observation.
 
-    - uses the point's first track observation, scaled to the depth grid
+    - xy is the original-res keypoint, floored onto the depth grid and clamped into it
     - sfm has no dense source pixel, so the observing keypoint stands in
     """
     h, w = depth_hw
-    out = np.zeros((len(point3d_ids), 3), dtype=np.int32)
+    out = np.zeros((len(frame_rows), 3), dtype=np.int32)
 
-    # Use the first image that saw each point, and its pixel on the depth map
-    for i, pid in enumerate(point3d_ids):
-        elem = recon.points3D[pid].track.elements[0]
-        image = recon.images[elem.image_id]
-        xy = image.points2D[elem.point2D_idx].xy
-        col = np.floor(xy[0] * scale_x)
-        col = int(np.clip(col, 0, w - 1))
-        row = np.floor(xy[1] * scale_y)
-        row = int(np.clip(row, 0, h - 1))
-        out[i] = (name_to_row[image.name], row, col)
+    # Floor each keypoint onto the depth grid, then clamp it inside
+    col = np.floor(xy[:, 0] * scale_x)
+    row = np.floor(xy[:, 1] * scale_y)
+    out[:, 0] = frame_rows
+    out[:, 1] = np.clip(row, 0, h - 1)
+    out[:, 2] = np.clip(col, 0, w - 1)
 
     return out

@@ -12,6 +12,7 @@ from collab_splats.geometry.projection import project
 from collab_splats.geometry.transforms import (
     invert_poses,
     rescale_intrinsics,
+    shift_intrinsics,
     transform_points,
 )
 
@@ -519,7 +520,7 @@ def plot_reprojection(
         points: (P, 3) world points.
         colors: (P, 3) per-point RGB, uint8 0-255 or float 0-1.
         w2c: (4, 4) or (3, 4) world-to-camera pose of the photo.
-        K: (3, 3) camera matrix of the photo at full resolution.
+        K: (3, 3) pixel-center camera matrix of the photo at full resolution, as localize returns.
         max_width: widest displayed width in pixels.
         radius: point footprint half-width in pixels.
         title: figure suptitle; none when omitted.
@@ -535,7 +536,11 @@ def plot_reprojection(
     out_h = round(h * scale)
     photo = cv2.resize(image, (out_w, out_h), interpolation=cv2.INTER_AREA)
     photo = photo / 255.0
-    K_scaled = rescale_intrinsics(K, (h, w), (out_h, out_w))
+
+    # Pixel-center K rescales via the corner convention: shift +0.5, rescale, shift -0.5
+    K_scaled = shift_intrinsics(K, (0.5, 0.5))
+    K_scaled = rescale_intrinsics(K_scaled, (h, w), (out_h, out_w))
+    K_scaled = shift_intrinsics(K_scaled, (-0.5, -0.5))
 
     # Render and blend
     rgb, depth = render_points(

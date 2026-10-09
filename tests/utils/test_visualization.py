@@ -96,3 +96,17 @@ def test_plot_reprojection_three_panels_downscaled():
         assert ax.images[0].get_array().shape[:2] == (240, 320)
     assert "coverage" in fig.axes[1].get_title()
     assert fig.get_suptitle() == "check"
+
+
+def test_plot_reprojection_rescales_pixel_center_k():
+    # Center-K point at full px (15, 11); half scale puts it at (15.5 * 0.5 - 0.5, 11.5 * 0.5 - 0.5) = (7.25, 5.25)
+    image = np.zeros((48, 64, 3), dtype=np.uint8)
+    u, v, z = 15.0, 11.0, 2.0
+    points = np.array([[(u - K[0, 2]) / 100 * z, (v - K[1, 2]) / 100 * z, z]])
+    colors = np.array([[1.0, 0.0, 0.0]])
+
+    fig = plot_reprojection(image, points, colors, IDENTITY, K, max_width=32, radius=0)
+
+    render = np.asarray(fig.axes[1].images[0].get_array())
+    hit = np.argwhere(render[..., 1] < 0.5)
+    np.testing.assert_array_equal(hit, [[5, 7]])

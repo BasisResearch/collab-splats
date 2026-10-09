@@ -2,13 +2,10 @@
 Progress reporting: one tqdm-or-callback wrapper shared across modules.
 """
 
-import logging
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from tqdm.auto import tqdm
-
-logger = logging.getLogger(__name__)
 
 
 def progress(

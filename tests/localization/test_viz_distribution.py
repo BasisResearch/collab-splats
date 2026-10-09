@@ -69,18 +69,6 @@ def test_distribution_clamps_short_n_frames():
     plt.close(fig)
 
 
-def test_distribution_marks_localized_frames():
-    loc = _fake_result()
-    fig = plot_inlier_distribution(
-        loc.ref_frame_indices,
-        loc.inlier_mask,
-        n_frames=4,
-        frame_sources=["reconstruction"] * 3 + ["localized"],
-    )
-    assert fig is not None
-    plt.close(fig)
-
-
 def test_correspondences_returns_figure_for_selected_ref():
     loc = _fake_result()  # frame 2 has 3 inliers of 10
     query = np.full((48, 64, 3), 100, dtype=np.uint8)

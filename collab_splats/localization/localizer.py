@@ -1,7 +1,7 @@
 """
 Stage 3 pose estimation: cached-feature matches, world-point lookup, pycolmap absolute pose.
 
-- feature DB: pointcloud.zarr local_features/<matcher>/{reconstruction,localized}
+- feature DB: pointcloud.zarr local_features/<matcher>/reconstruction
 - refs: DINO-SALAD top-k reconstruction frames, or frames the caller chooses
 - ref px map through the preprocess crop onto the world_points grid before lookup
 """
@@ -12,7 +12,7 @@ import dataclasses
 import itertools
 import logging
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -172,16 +172,6 @@ def localization_db_exists(zarr_path: Path | str, extractor_name: str) -> bool:
     return "image_paths" in store[key].attrs
 
 
-def _append_rows(group: zarr.Group, name: str, rows: np.ndarray) -> None:
-    """
-    Append rows to an existing array in one resize and one write.
-    """
-    arr = group[name]
-    n = arr.shape[0]
-    arr.resize((n + len(rows), *arr.shape[1:]))
-    arr[n:] = rows
-
-
 def _features_from_csr(
     group: zarr.Group, image_sizes: list[tuple[int, int]]
 ) -> list[LocalFeatures]:
@@ -257,33 +247,6 @@ def _write_csr(
         group.create_array(
             "keypoints_normalized", data=data, chunks=(rows, 2), compressors=LZ4
         )
-
-
-def _append_csr(group: zarr.Group, feats: list[LocalFeatures]) -> None:
-    """
-    Append frames to an existing CSR feature group, one resize and write per array.
-    """
-    counts = [len(f.keypoints) for f in feats]
-    last = int(group["frame_offsets"][-1])
-    offsets = last + np.cumsum(counts, dtype=np.int64)
-    _append_rows(group, "frame_offsets", offsets)
-    kpts = [to_numpy(f.keypoints) for f in feats]
-    descs = [to_numpy(f.descriptors) for f in feats]
-    kpts = np.concatenate(kpts, dtype=np.float32)
-    descs = np.concatenate(descs, dtype=np.float32)
-    _append_rows(group, "keypoints", kpts)
-    _append_rows(group, "descriptors", descs)
-
-    # Normalized keypoints must exist for every appended frame, or the array would misalign
-    if "keypoints_normalized" in group:
-        if any(f.keypoints_normalized is None for f in feats):
-            raise ValueError(
-                "feature DB stores keypoints_normalized; every appended frame must carry it"
-            )
-
-        parts = [to_numpy(f.keypoints_normalized) for f in feats]
-        data = np.concatenate(parts, dtype=np.float32)
-        _append_rows(group, "keypoints_normalized", data)
 
 
 ########################################
@@ -402,7 +365,6 @@ class CameraLocalizer:
     Locates a query camera in a known scene from cached reference-frame features.
 
     - reference features stay on the CPU; each chosen ref moves to the matcher's device per localize
-    - localized frames are id and pose only, never match sources
     """
 
     def __init__(
@@ -414,7 +376,6 @@ class CameraLocalizer:
         *,
         extractor: LocalMatcher | None = None,
         config: dict | None = None,
-        progress_callback: Callable[[int, int], None] | None = None,
         original_coords: np.ndarray | None = None,
         top_k: int = 8,
         batch_size: int = 32,
@@ -431,7 +392,6 @@ class CameraLocalizer:
             extractor: local matcher; None builds LocalMatcher("loma").
             config: pycolmap options: "estimation" {"ransac": {"max_error"}} (50),
                 "refinement" {"refine_focal_length", "refine_extra_params"} (True, False).
-            progress_callback: called (frame_index, total) as frames are indexed.
             original_coords: (N, 6) preprocess crop per frame; None means images are the uncropped grid source.
             top_k: retrieved reference frames per localize(refs=None).
             batch_size: frames per extract and embed call.
@@ -453,14 +413,8 @@ class CameraLocalizer:
         )
         descs = []
 
-        # Extract and embed per chunk; tqdm only without an external progress sink
-        bar = tqdm(
-            total=len(ids),
-            desc="Indexing frames",
-            unit="frame",
-            leave=False,
-            disable=progress_callback is not None,
-        )
+        # Extract and embed per chunk
+        bar = tqdm(total=len(ids), desc="Indexing frames", unit="frame", leave=False)
 
         for chunk in _chunked(images, batch_size):
             start = len(self._frame_features)
@@ -482,10 +436,6 @@ class CameraLocalizer:
             self._frame_features += feats
             descs.append(self._embed(chunk))
             bar.update(len(chunk))
-
-            if progress_callback is not None:
-                for k in range(start, len(self._frame_features)):
-                    progress_callback(k, len(ids))
 
         bar.close()
 
@@ -524,8 +474,6 @@ class CameraLocalizer:
         self._batch_size = batch_size
         self._original_coords = original_coords
         self._ids = [str(i) for i in ids]
-        self._localized_ids: list[str] = []
-        self._localized_extrinsics: list[np.ndarray] = []
         self._frame_features: list[LocalFeatures] = []
 
     def _set_frames(
@@ -552,40 +500,24 @@ class CameraLocalizer:
     ########################################
 
     @property
-    def frame_sources(self) -> list[str]:
-        """
-        Provenance per frame, index-aligned with image_paths.
-
-        Returns:
-            'reconstruction' or 'localized' per frame.
-        """
-        return ["reconstruction"] * len(self._ids) + ["localized"] * len(
-            self._localized_ids
-        )
-
-    @property
     def image_paths(self) -> list[str]:
         """
-        Frame ids, index-aligned with frame_sources and extrinsics.
+        Frame ids, index-aligned with extrinsics.
 
         Returns:
-            Frame ids: reconstruction then localized.
+            Reconstruction frame ids.
         """
-        return self._ids + self._localized_ids
+        return self._ids
 
     @property
     def extrinsics(self) -> np.ndarray:
         """
-        World-to-camera pose of every frame: reconstruction then localized.
+        World-to-camera pose of every reconstruction frame.
 
         Returns:
             (N, 4, 4) poses.
         """
-        if not self._localized_extrinsics:
-            return self._extrinsics
-
-        localized = np.stack(self._localized_extrinsics)
-        return np.concatenate([self._extrinsics, localized], axis=0)
+        return self._extrinsics
 
     ########################################
     # Retrieval
@@ -626,7 +558,7 @@ class CameraLocalizer:
         """
         Persist the reconstruction features and global descriptors to pointcloud.zarr.
 
-        - replaces the extractor's whole group, localized frames included
+        - replaces the extractor's whole group
         - image_paths is written last: it marks the DB complete
 
         Args:
@@ -637,7 +569,7 @@ class CameraLocalizer:
         store = zarr.open(str(zarr_path), mode="a")
         ext_key = f"local_features/{extractor_name}"
 
-        # Clean overwrite; localized poses belong to the reconstruction being replaced
+        # Clean overwrite of the extractor's group
         if ext_key in store:
             del store[ext_key]
 
@@ -682,7 +614,7 @@ class CameraLocalizer:
         """
         Localizer from the zarr feature DB, attached to the current scene geometry.
 
-        - localized frames load as ids and poses only; the retrieval model loads on first localize
+        - the retrieval model loads on first localize
         - the retrieval model is the one stored with the DB, so queries embed like the references
 
         Args:
@@ -734,183 +666,10 @@ class CameraLocalizer:
         )
         global_desc = rec_group["global_desc"][:]
         obj._set_frames(rec_features, global_desc, hw)
-
-        # Localized frames, if any: ids and the poses image_paths commits
-        loc_key = f"local_features/{extractor_name}/localized"
-
-        if loc_key in store:
-            loc_group = store[loc_key]
-            obj._localized_ids = [
-                str(p) for p in loc_group.attrs.get("image_paths", [])
-            ]
-            obj._localized_extrinsics = list(
-                loc_group["extrinsics"][: len(obj._localized_ids)]
-            )
-
         logger.info(
-            "CameraLocalizer.load_index: %d rec + %d loc frames [%s]",
-            len(rec_ids),
-            len(obj._localized_ids),
-            extractor_name,
+            "CameraLocalizer.load_index: %d frames [%s]", len(rec_ids), extractor_name
         )
         return obj
-
-    def update_index(
-        self,
-        new_images: Iterable[np.ndarray],
-        new_ids: list[str],
-        zarr_path: Path | str,
-        extractor_name: str,
-        progress_callback: Callable[[int, int], None] | None = None,
-    ) -> None:
-        """
-        Extract and embed new reconstruction frames; append them to the zarr DB in one write per array.
-
-        - persist only: this localizer is unchanged, since the new frames have no world_points yet
-        - reload via load_index with geometry that covers them
-
-        Args:
-            new_images: (h, w, 3) uint8 RGB frames, drawn lazily.
-            new_ids: labels, index-aligned with new_images.
-            zarr_path: pointcloud.zarr path.
-            extractor_name: feature-cache key.
-            progress_callback: called (frame_index, total) as frames are extracted.
-        """
-        new_features: list[LocalFeatures] = []
-        descs = []
-
-        # Extract and embed per chunk
-        for chunk in _chunked(new_images, self._batch_size):
-            start = len(new_features)
-            feats = self._extractor.extract(chunk)
-            assert isinstance(feats, list)
-            new_features += feats
-            descs.append(self._embed(chunk))
-
-            if progress_callback is not None:
-                for k in range(start, len(new_features)):
-                    progress_callback(k, len(new_ids))
-
-        new_desc = np.concatenate(descs)
-
-        # No DB yet: write this localizer's frames first, then append
-        if not localization_db_exists(zarr_path, extractor_name):
-            logger.warning("update_index: no reconstruction DB, writing it first")
-            self.save_index(zarr_path, extractor_name)
-
-        store = zarr.open(str(zarr_path), mode="a")
-        group = store[f"local_features/{extractor_name}/reconstruction"]
-
-        # Arrays first, then the image_paths commit marker
-        _append_csr(group, new_features)
-        _append_rows(group, "global_desc", new_desc)
-        paths = [str(p) for p in group.attrs["image_paths"]]
-        paths += [str(i) for i in new_ids]
-        group.attrs["image_paths"] = paths
-        logger.info(
-            "CameraLocalizer.update_index: appended %d frames [%s]",
-            len(new_ids),
-            extractor_name,
-        )
-
-    def add_localized_frame(
-        self,
-        image_path: Path | str,
-        pose: np.ndarray,
-        zarr_path: Path | str | None = None,
-        extractor_name: str | None = None,
-        provenance: dict | None = None,
-    ) -> None:
-        """
-        Record a localized frame's pose; it is never a match source.
-
-        - a repeat of an existing id is logged and skipped
-        - persisted to the localized group when zarr_path and extractor_name are given
-        - call clear_localized_frames after BA / LC updates that invalidate poses
-
-        Args:
-            image_path: frame id.
-            pose: (4, 4) world-to-camera.
-            zarr_path: pointcloud.zarr path; None keeps id and pose in memory only.
-            extractor_name: feature-cache key; None keeps id and pose in memory only.
-            provenance: opaque per-frame metadata stored beside the frame.
-        """
-        frame_id = str(image_path)
-
-        if frame_id in self._ids or frame_id in self._localized_ids:
-            logger.warning(
-                "CameraLocalizer.add_localized_frame: %s already in index, skipping",
-                frame_id,
-            )
-            return
-
-        self._localized_ids.append(frame_id)
-        self._localized_extrinsics.append(np.asarray(pose))
-
-        if zarr_path is not None and extractor_name is not None:
-            self._append_localized_to_zarr(
-                frame_id, pose, zarr_path, extractor_name, provenance
-            )
-
-    @staticmethod
-    def _append_localized_to_zarr(
-        frame_id: str,
-        pose: np.ndarray,
-        zarr_path: Path | str,
-        extractor_name: str,
-        provenance: dict | None,
-    ) -> None:
-        """
-        Write one localized frame's pose at row len(image_paths), then commit its id.
-
-        - rows past image_paths, left by a crashed append, are overwritten
-        """
-        store = zarr.open(str(zarr_path), mode="a")
-        loc_key = f"local_features/{extractor_name}/localized"
-        pose_row = np.asarray(pose)[None]
-        meta = provenance if provenance is not None else {}
-
-        # First frame creates the group
-        if loc_key not in store:
-            group = store.require_group(loc_key)
-            group.create_array(
-                "extrinsics", data=pose_row, chunks=(1, 4, 4), compressors=LZ4
-            )
-            group.attrs.update({"provenance": [meta], "image_paths": [frame_id]})
-            return
-
-        # Later frames write row n, then commit provenance and image_paths together
-        group = store[loc_key]
-        paths = list(group.attrs["image_paths"])
-        metas = list(group.attrs["provenance"])
-        n = len(paths)
-        group["extrinsics"].resize((n + 1, 4, 4))
-        group["extrinsics"][n] = pose_row[0]
-        group.attrs.update(
-            {"provenance": metas[:n] + [meta], "image_paths": paths + [frame_id]}
-        )
-
-    @staticmethod
-    def clear_localized_frames(zarr_path: Path | str, extractor_name: str) -> None:
-        """
-        Delete the extractor's localized group; reconstruction data is untouched.
-
-        - call after BA / LC updates that invalidate localized poses, then reload via load_index
-
-        Args:
-            zarr_path: pointcloud.zarr path.
-            extractor_name: feature-cache key.
-        """
-        store = zarr.open(str(zarr_path), mode="a")
-        loc_key = f"local_features/{extractor_name}/localized"
-
-        if loc_key in store:
-            del store[loc_key]
-            logger.info(
-                "CameraLocalizer.clear_localized_frames: cleared '%s' from %s",
-                extractor_name,
-                zarr_path,
-            )
 
     @classmethod
     def from_pointcloud(
@@ -921,7 +680,6 @@ class CameraLocalizer:
         images: Iterable[np.ndarray] | None = None,
         ids: list[str] | None = None,
         extractor: LocalMatcher | None = None,
-        progress_callback: Callable[[int, int], None] | None = None,
         top_k: int = 8,
         config: dict | None = None,
         retrieval: str = "dino-salad",
@@ -931,7 +689,7 @@ class CameraLocalizer:
 
         - cache hit: ids, max_num_keypoints, retrieval name and full-res (H, W) all match the DB
         - a hit draws nothing from images; an incomplete DB rebuilds
-        - a rebuild replaces the DB and drops its localized frames
+        - a rebuild replaces the DB
 
         Args:
             result: the reconstruction; reads world_points, extrinsics, original_coords, image_paths.
@@ -939,7 +697,6 @@ class CameraLocalizer:
             images: (h, w, 3) uint8 RGB full-res reference frames, aligned to ids; drawn only on a rebuild.
             ids: frame labels, index-aligned with result's frames; None labels them str(result.image_paths).
             extractor: local matcher; None builds LocalMatcher("loma"). Its model_name keys the DB.
-            progress_callback: called (frame_index, total) during a rebuild.
             top_k: retrieved reference frames per localize(refs=None).
             config: pycolmap options, as __init__.
             retrieval: retrieval registry name; keys the DB's global descriptors.
@@ -1019,7 +776,6 @@ class CameraLocalizer:
             ids,
             extractor=extractor,
             config=config,
-            progress_callback=progress_callback,
             original_coords=coords,
             top_k=top_k,
             retrieval=retrieval,

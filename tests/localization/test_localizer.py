@@ -249,30 +249,6 @@ def test_localization_result_fields_on_success(stub_matcher):
     assert len(result.ref_frame_indices) == result.n_correspondences
 
 
-def test_camera_localizer_calls_progress_callback(stub_matcher):
-    """progress_callback(i, total) called once per reference frame, 0-indexed."""
-    pts3d, world_points, extrinsics, K = _make_synthetic_scene()
-    extractor = _projecting_matcher(stub_matcher, pts3d, extrinsics, K)
-    calls = []
-
-    images = _frame_images(len(extrinsics))
-    ids = [f"frame_{i:04d}.png" for i in range(len(extrinsics))]
-
-    CameraLocalizer(
-        world_points,
-        extrinsics,
-        images=images,
-        ids=ids,
-        extractor=extractor,
-        progress_callback=lambda i, total: calls.append((i, total)),
-    )
-
-    total = len(extrinsics)
-    assert len(calls) == total
-    assert calls[0] == (0, total)
-    assert calls[-1] == (total - 1, total)
-
-
 def test_localize_via_depth_lookup(stub_matcher):
     """Query identical to ref frame 0 localizes at ref 0's pose via world_points sampling."""
     wp, K = _plane_scene()

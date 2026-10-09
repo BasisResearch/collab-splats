@@ -223,7 +223,6 @@ def plot_inlier_distribution(
     ref_frame_indices: np.ndarray | None,
     inlier_mask: np.ndarray | None,
     n_frames: int | None = None,
-    frame_sources: list[str] | None = None,
 ) -> plt.Figure | None:
     """
     Per-reference-image inlier bars with total-correspondence markers.
@@ -231,13 +230,11 @@ def plot_inlier_distribution(
     - bars are colored viridis by frame index (frame order == time), matching the 3D camera view
     - each bar gets a black tick at that image's total correspondence count
     - uniform totals collapse the ticks to one dashed horizontal line
-    - frames whose source is 'localized' get a red bar edge
 
     Args:
         ref_frame_indices: (M,) reference frame index per correspondence.
         inlier_mask: (M,) bool inlier flags per correspondence.
         n_frames: total reference frames, so bars include zero-match frames; defaults to max(ref_frame_indices) + 1.
-        frame_sources: per-frame provenance, 'reconstruction' or 'localized'.
 
     Returns:
         The matplotlib Figure, or None when there is nothing to plot.
@@ -258,18 +255,10 @@ def plot_inlier_distribution(
     cmap = plt.get_cmap("viridis")
     stops = np.linspace(0, 1, max(n, 2))
     colors = cmap(stops)[:n]
-    edge = [
-        "red"
-        if frame_sources is not None
-        and i < len(frame_sources)
-        and frame_sources[i] == "localized"
-        else "none"
-        for i in range(n)
-    ]
 
     fig, ax = plt.subplots(figsize=(10, 2.6))
     x = np.arange(n)
-    ax.bar(x, inliers, color=colors, edgecolor=edge, linewidth=1.5)
+    ax.bar(x, inliers, color=colors)
 
     # Totals: single dashed line when uniform, per-bar ticks otherwise
     nonzero = totals[totals > 0]

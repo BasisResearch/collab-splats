@@ -18,7 +18,6 @@ from collab_splats.pointcloud.base import BasePointcloudCreator, PointcloudResul
 from collab_splats.pointcloud.depth import align_depth, estimate_depth
 from collab_splats.pointcloud.sfm.sift_db import PAIRINGS
 from collab_splats.preproc import frames
-from collab_splats.utils.io import read_image
 from collab_splats.utils.torch_utils import pytorch_gc
 
 logger = logging.getLogger(__name__)
@@ -174,7 +173,8 @@ class BaseSfmCreator(BasePointcloudCreator):
         self._recon = recon
 
         # Build the dense point cloud by aligning the depth maps to the COLMAP model
-        keyframes = np.stack([read_image(paths[row]) for row in rows])
+        registered_idxs = [frames.frame_idx_from_path(paths[row]) for row in rows]
+        keyframes = frames.read_frames(images_dir, registered_idxs)
         registered_names = [names[row] for row in rows]
         result, align_attrs = align_depth(
             recon, depths[rows], keyframes, registered_names

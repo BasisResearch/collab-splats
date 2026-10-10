@@ -147,7 +147,7 @@ def test_calibrate_camera_rejects_too_few_images(tmp_path):
 def test_calibrate_camera_tunable_defaults():
     # tunable defaults are pinned
     params = inspect.signature(calibrate_camera).parameters
-    assert params["max_frames"].default == 60 and params["min_images"].default == 8
+    assert params["max_frames"].default == 96 and params["min_images"].default == 8
     assert (
         params["num_threads"].default == 8
         and params["min_registered_frac"].default == 0.6

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 def calibrate_camera(
     images_dir: Path,
     *,
-    max_frames: int = 60,
+    max_frames: int = 96,
     min_images: int = 8,
     min_registered_frac: float = 0.6,
     num_threads: int = 8,

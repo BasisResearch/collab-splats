@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 def clean_repair_mesh(
     mesh: o3d.geometry.TriangleMesh,
+    c2w: np.ndarray | None = None,
     min_area_frac: float = 6e-6,
     max_gap_frac: float = 0.01,
     max_hole_perimeter_ratio: float = 0.014,
@@ -57,6 +58,7 @@ def clean_repair_mesh(
 
     Args:
         mesh: fused mesh, edited in place by the floater cut.
+        c2w: see make_convex_hull; required when use_convex_hull is on.
         min_area_frac: see remove_floaters.
         max_gap_frac: see remove_floaters.
         max_hole_perimeter_ratio: see fill_holes.
@@ -67,7 +69,7 @@ def clean_repair_mesh(
         The cleaned mesh, and mesh itself after the floater cut: only fused faces, no hull or hole fill.
     """
     real = remove_floaters(mesh, min_area_frac=min_area_frac, max_gap_frac=max_gap_frac)
-    cleaned = make_convex_hull(real) if use_convex_hull else real
+    cleaned = make_convex_hull(real, c2w) if use_convex_hull else real
     cleaned = fill_holes(
         cleaned,
         max_hole_perimeter_ratio=max_hole_perimeter_ratio,
@@ -268,9 +270,10 @@ def fill_holes(
 
 def trim_mesh_edges(
     mesh: o3d.geometry.TriangleMesh,
+    c2w: np.ndarray,
     *,
     outline_open: int = 8,
-    min_up_agreement: float = 0.3,
+    min_up_cos: float = 0.7,
 ) -> o3d.geometry.TriangleMesh:
     """
     Cut the ragged outer edge: rim-connected regions outside the smoothed top-down outline.
@@ -281,8 +284,9 @@ def trim_mesh_edges(
 
     Args:
         mesh: input mesh; not modified.
+        c2w: see make_convex_hull.
         outline_open: opening radius that smooths the outline, cells of the median edge length.
-        min_up_agreement: see make_convex_hull.
+        min_up_cos: see make_convex_hull.
 
     Returns:
         New mesh with the same vertices and the trimmed faces.
@@ -295,7 +299,7 @@ def trim_mesh_edges(
     trimmed = o3d.geometry.TriangleMesh(mesh)
 
     # Top-down image of the mesh on the ground plane
-    frame, center = _find_ground_plane(verts, faces, min_up_agreement=min_up_agreement)
+    frame, center = _find_ground_plane(verts, c2w, min_up_cos=min_up_cos)
     res = _median_edge(verts, faces)
     xy = ((verts - center) @ frame.T)[:, :2]
     lo, shape = _ground_image_bounds(xy, res, margin=outline_open)
@@ -406,6 +410,7 @@ def bridge_mesh_edges(
 
 def make_convex_hull(
     mesh: o3d.geometry.TriangleMesh,
+    c2w: np.ndarray,
     *,
     hull_round: int = 20,
     outline_open: int = 8,
@@ -413,25 +418,26 @@ def make_convex_hull(
     rim_max_edge: float = 3.0,
     bridge_radius: float = 3.0,
     min_piece_faces: int = 1000,
-    min_up_agreement: float = 0.3,
+    min_up_cos: float = 0.7,
 ) -> o3d.geometry.TriangleMesh:
     """
     Trim the ragged outer edge, then patch the ground out to a rounded convex hull.
 
     - lengths are in cells: pixels of the top-down image of the mesh, one median edge length each
-    - up: the dominant plane's normal, on the side the area-weighted face normal points to
+    - ground: the largest RANSAC plane facing the cameras' up, on the cameras' side
     - assumes a ground-dominated height field; indoor and object scenes should leave it off
     - necks of the outer rim are bridged, so inlets become interior holes fill_holes can close
 
     Args:
         mesh: input mesh; not modified.
+        c2w: (N, 4, 4) camera-to-world poses, OpenCV axes; they set the expected up and its sign.
         hull_round: opening radius that rounds the hull's corners, cells.
         outline_open: see trim_mesh_edges.
         rim_max_dz: join a rim vertex only within this of its neighbours' median height, cells.
         rim_max_edge: drop patch triangles touching the rim with a 3D edge over this, cells.
         bridge_radius: see bridge_mesh_edges (radius).
         min_piece_faces: pieces with fewer faces are dropped.
-        min_up_agreement: smallest |mean face normal . plane normal| that counts as a ground.
+        min_up_cos: smallest |plane normal . expected up| that counts as ground.
 
     Returns:
         New mesh: trimmed, patched out to the hull, manifold.
@@ -448,7 +454,7 @@ def make_convex_hull(
     )
 
     # Ground frame; top-down image of the mesh, with a margin for the hull's rounding
-    frame, center = _find_ground_plane(verts, faces, min_up_agreement=min_up_agreement)
+    frame, center = _find_ground_plane(verts, c2w, min_up_cos=min_up_cos)
     res = _median_edge(verts, faces)
     local = (verts - center) @ frame.T
     lo, shape = _ground_image_bounds(local[:, :2], res, margin=hull_round)
@@ -466,7 +472,7 @@ def make_convex_hull(
         o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces)
     )
     trimmed = trim_mesh_edges(
-        cut, outline_open=outline_open, min_up_agreement=min_up_agreement
+        cut, c2w, outline_open=outline_open, min_up_cos=min_up_cos
     )
     faces = _drop_small_pieces(verts, np.asarray(trimmed.triangles), min_piece_faces)
 
@@ -931,39 +937,57 @@ def prepare_mesh(
 
 
 def _find_ground_plane(
-    verts: np.ndarray, faces: np.ndarray, *, min_up_agreement: float
+    verts: np.ndarray,
+    c2w: np.ndarray,
+    *,
+    min_up_cos: float,
+    max_planes: int = 3,
+    flat_ratio: float = 0.25,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Rotation into ground coordinates (rows x, y, up) and the center it is taken about.
 
-    - RANSAC plane with a fixed seed: the same mesh always gets the same frame
-    - up: the side the area-weighted mean face normal points to; it shrinks as walls cancel
-    - flipping rows 1 and 2 together keeps the frame right-handed
+    - expected up: normal of the plane the camera centers span; mean camera up if the path is a line
+    - ground: first of max_planes RANSAC planes (fixed seed, earlier inliers removed) facing expected up
+    - up points to the side the cameras are on; flipping rows 1 and 2 together keeps it right-handed
     """
+    centers = c2w[:, :3, 3]
+
+    # Expected up: the camera path's plane normal, or the mean camera up when the path is not flat
+    spread, axes = np.linalg.eigh(np.cov(centers.T))
+
+    if spread[0] < flat_ratio * spread[1]:
+        expected = axes[:, 0]
+    else:
+        expected = -c2w[:, :3, 1].mean(axis=0)
+        expected /= np.linalg.norm(expected)
+
+    # First RANSAC plane that faces expected up; walls and slopes are removed and refit
     o3d.utility.random.seed(0)
-    rot, _ = fit_dominant_plane(verts)
+    keep = np.ones(len(verts), dtype=bool)
+    cosines = []
 
-    # Agreement of the mean face normal with the plane normal; too weak means no ground
-    corners = verts[faces]
-    face_normals = np.cross(
-        corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]
-    )
-    agree = float(
-        face_normals.sum(axis=0) @ rot[2] / np.linalg.norm(face_normals, axis=1).sum()
-    )
+    for _ in range(max_planes):
+        rot, t = fit_dominant_plane(verts[keep])
+        cosines.append(round(abs(float(rot[2] @ expected)), 3))
 
-    if abs(agree) < min_up_agreement:
+        if cosines[-1] >= min_up_cos:
+            break
+
+        keep &= np.abs(verts @ rot[2] + t[2]) >= 0.02
+    else:
         raise ValueError(
-            f"no dominant ground plane (mean face normal . plane normal = {agree:.3f}, "
-            f"below {min_up_agreement}) — leave use_convex_hull off for this scene."
+            f"no dominant ground plane (|plane normal . camera up| = {cosines}, "
+            f"below {min_up_cos}) — leave use_convex_hull off for this scene."
         )
 
+    # Up toward the cameras
     frame = rot.copy()
 
-    if agree < 0:
+    if np.median(centers @ rot[2] + t[2]) < 0:
         frame[1:] *= -1
 
-    logger.debug("ground plane: up agreement %.3f", agree)
+    logger.debug("ground plane: |normal . camera up| per plane %s", cosines)
     return frame, np.median(verts, axis=0)
 
 

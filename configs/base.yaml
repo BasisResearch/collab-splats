@@ -58,7 +58,7 @@ mesh:
 
   # Depth filtering
   depth_trunc_percentile: 99   # required, max 99
-  conf_percentile: 20          # null = off
+  conf_percentile: 10          # null = off
   mask_sky: true
 
   # TSDF fusion

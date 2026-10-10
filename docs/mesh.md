@@ -180,13 +180,18 @@ Cleaning is not optional in the pipeline. `remove_floaters`, `make_convex_hull` 
 
 ### Convex hull (`mesh.use_convex_hull`, on by default in `configs/base.yaml`; set `false` indoors and for objects)
 
-`clean_repair_mesh(mesh, use_convex_hull=True)` runs `make_convex_hull` between
+`clean_repair_mesh(mesh, c2w, use_convex_hull=True)` runs `make_convex_hull` between
 `remove_floaters` and `fill_holes`. It trims the ragged outer edge of a fused scene and patches
 the ground out to a rounded convex hull, so the outline is smooth and the edge has no strands:
 
-1. **Frame** — the dominant plane from `geometry.fit_dominant_plane` (fixed RANSAC seed) is the
-   ground; up is the side the area-weighted mean face normal points to (TSDF normals face free
-   space). No cameras are needed
+1. **Frame** — the expected up is the normal of the plane the camera centers span (the mean
+   camera up when the path is close to a line). The ground is the first of up to 3 RANSAC planes
+   (`geometry.fit_dominant_plane`, fixed seed; each failed plane's inliers removed before the next
+   fit) with `|normal · expected up| >= min_up_cos` (0.7); up points to the side the cameras are on.
+   On GH010229 (300 frames) the camera-path normal is within 2° of the ground at both
+   `conf_percentile` 10 and 20, while the mean camera up is 33° off (the GoPro pitches down). The
+   area-weighted face normal this replaced scored 0.30 at conf 10 and failed: flipped ground faces
+   and walls cancel it out, and it could not tell a large wall from the ground
 2. **Hull cut** — faces outside the rounded convex hull of the mesh's top-down coverage go
 3. **Outline trim** (`trim_mesh_edges`) — faces outside the smoothed outline that connect to
    the outer rim go; interior patches stay

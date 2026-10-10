@@ -6,6 +6,7 @@ import pytest
 from scipy.spatial import cKDTree
 
 from collab_splats.mesh.clean import (
+    _find_ground_plane,
     _local_median,
     _mesh_coverage_mask,
     bridge_mesh_edges,
@@ -232,6 +233,41 @@ def _ground_scene(n=140, res=0.17, upside_down=False):
     return mesh
 
 
+def _camera(position, forward):
+    """OpenCV camera-to-world pose at position looking along forward, with world +z up."""
+    forward = forward / np.linalg.norm(forward)
+    right = np.cross(forward, [0.0, 0.0, 1.0])
+    right /= np.linalg.norm(right)
+    c2w = np.eye(4)
+    c2w[:3, :3] = np.stack([right, np.cross(forward, right), forward], axis=1)
+    c2w[:3, 3] = position
+    return c2w
+
+
+def _orbit_cameras(center=(0.0, 0.0), radius=5.0, height=1.5, pitch_deg=30.0, n=24):
+    """Cameras walking a circle above the ground, looking along the path and pitched down."""
+    pitch = np.radians(pitch_deg)
+    poses = []
+
+    for theta in np.linspace(0, 2 * np.pi, n, endpoint=False):
+        tangent = np.array([-np.sin(theta), np.cos(theta), 0.0])
+        forward = np.cos(pitch) * tangent - np.sin(pitch) * np.array([0.0, 0.0, 1.0])
+        position = [
+            center[0] + radius * np.cos(theta),
+            center[1] + radius * np.sin(theta),
+            height,
+        ]
+        poses.append(_camera(np.array(position), forward))
+
+    return np.stack(poses)
+
+
+def _flip_cameras(c2w):
+    """The poses under the same 180-degree turn about x as _ground_scene(upside_down=True)."""
+    turn = np.diag([1.0, -1.0, -1.0, 1.0])
+    return turn @ c2w
+
+
 def _loop_perimeters(mesh):
     mmesh = mn.meshFromFacesVerts(
         np.ascontiguousarray(np.asarray(mesh.triangles), dtype=np.int32),
@@ -246,7 +282,10 @@ def _loop_perimeters(mesh):
 
 
 def test_make_convex_hull_then_fill_holes_leaves_one_manifold_piece_with_only_the_outer_rim():
-    filled = fill_holes(make_convex_hull(_ground_scene()), max_hole_perimeter_ratio=3.9)
+    filled = fill_holes(
+        make_convex_hull(_ground_scene(), _orbit_cameras()),
+        max_hole_perimeter_ratio=3.9,
+    )
     assert len(_loop_perimeters(filled)) == 1
     assert len(filled.get_non_manifold_edges(allow_boundary_edges=True)) == 0
     assert _n_components(filled) == 1
@@ -254,7 +293,7 @@ def test_make_convex_hull_then_fill_holes_leaves_one_manifold_piece_with_only_th
 
 def test_make_convex_hull_patch_lies_on_the_ground_and_is_kept():
     scene = _ground_scene()
-    hull = make_convex_hull(scene)
+    hull = make_convex_hull(scene, _orbit_cameras())
     dist, _ = cKDTree(np.asarray(scene.vertices)).query(np.asarray(hull.vertices))
     patch = np.asarray(hull.vertices)[dist > 1e-6]
     assert len(patch) > 500
@@ -285,7 +324,7 @@ def test_trim_mesh_edges_cuts_a_thin_spur_off_the_rim_and_keeps_the_vertices():
     spur = (np.abs(center[:, 1] - 0.5) < 1.5 * step) & (center[:, 0] > 0.5)
     plane.triangles = o3d.utility.Vector3iVector(faces[disc | spur])
 
-    trimmed = trim_mesh_edges(plane)
+    trimmed = trim_mesh_edges(plane, _orbit_cameras((0.5, 0.5), 0.3, 0.2))
     kept = np.asarray(trimmed.vertices)[np.asarray(trimmed.triangles)].mean(axis=1)
     assert len(trimmed.vertices) == len(plane.vertices)
     assert np.linalg.norm(kept[:, :2] - 0.5, axis=1).max() < 0.3 + 2 * step
@@ -295,7 +334,7 @@ def test_trim_mesh_edges_cuts_a_thin_spur_off_the_rim_and_keeps_the_vertices():
 def test_make_convex_hull_shortens_the_outline():
     scene = _ground_scene()
     assert (
-        _loop_perimeters(make_convex_hull(scene))[-1]
+        _loop_perimeters(make_convex_hull(scene, _orbit_cameras()))[-1]
         < 0.8 * _loop_perimeters(scene)[-1]
     )
 
@@ -315,7 +354,9 @@ def test_make_convex_hull_caps_patch_edges_that_touch_the_rim():
     )
 
     # Bridges off: they span two rim edges by design, the cap is on patch faces
-    hull = make_convex_hull(scene, rim_max_edge=3.0, bridge_radius=0.0)
+    hull = make_convex_hull(
+        scene, _orbit_cameras(), rim_max_edge=3.0, bridge_radius=0.0
+    )
 
     # Patch faces with both a source vertex and a patch vertex: none reaches past the cap
     hull_verts = np.asarray(hull.vertices)
@@ -333,18 +374,26 @@ def test_make_convex_hull_caps_patch_edges_that_touch_the_rim():
 
 
 def test_make_convex_hull_rejects_a_mesh_without_ground():
-    box = o3d.geometry.TriangleMesh.create_box(5.0, 5.0, 3.0)
-    box.compute_triangle_normals()
-    walls = np.abs(np.asarray(box.triangle_normals)[:, 2]) < 0.5
-    box.triangles = o3d.utility.Vector3iVector(np.asarray(box.triangles)[walls])
+    """Four dense walls of a room and no floor: every RANSAC plane is a wall."""
+    side = o3d.geometry.TriangleMesh.create_box(5.0, 0.01, 3.0).subdivide_midpoint(4)
+    room = o3d.geometry.TriangleMesh()
+
+    for angle in range(4):
+        wall = o3d.geometry.TriangleMesh(side).translate((-2.5, -2.5, 0.0))
+        room += wall.rotate(
+            o3d.geometry.get_rotation_matrix_from_axis_angle([0, 0, angle * np.pi / 2]),
+            center=(0, 0, 0),
+        )
 
     with pytest.raises(ValueError, match="no dominant ground"):
-        make_convex_hull(box)
+        make_convex_hull(room, _orbit_cameras(radius=1.5))
 
 
 def test_make_convex_hull_is_the_same_either_way_up():
-    upright = make_convex_hull(_ground_scene())
-    flipped = make_convex_hull(_ground_scene(upside_down=True))
+    upright = make_convex_hull(_ground_scene(), _orbit_cameras())
+    flipped = make_convex_hull(
+        _ground_scene(upside_down=True), _flip_cameras(_orbit_cameras())
+    )
     flipped.rotate(np.diag([1.0, -1.0, -1.0]), center=(0, 0, 0))
     assert abs(len(flipped.triangles) - len(upright.triangles)) < 0.05 * len(
         upright.triangles
@@ -360,15 +409,52 @@ def test_make_convex_hull_is_the_same_either_way_up():
 def test_make_convex_hull_leaves_the_input_untouched():
     scene = _ground_scene()
     verts, faces = np.asarray(scene.vertices).copy(), np.asarray(scene.triangles).copy()
-    make_convex_hull(scene)
+    make_convex_hull(scene, _orbit_cameras())
     np.testing.assert_array_equal(np.asarray(scene.vertices), verts)
     np.testing.assert_array_equal(np.asarray(scene.triangles), faces)
+
+
+def test_find_ground_plane_skips_a_wall_bigger_than_the_ground():
+    """A wall with more vertices than the ground is RANSAC's first plane; the camera path rejects it."""
+    ground = np.asarray(_ground_scene().vertices)
+    xs, zs = np.meshgrid(np.linspace(-15, 15, 200), np.linspace(0.5, 20, 200))
+    wall = np.stack([xs.ravel(), np.full(xs.size, -14.0), zs.ravel()], axis=1)
+    assert len(wall) > len(ground)
+
+    frame, _ = _find_ground_plane(
+        np.concatenate([ground, wall]), _orbit_cameras(), min_up_cos=0.7
+    )
+    np.testing.assert_allclose(frame[2], [0.0, 0.0, 1.0], atol=1e-3)
+
+
+def test_find_ground_plane_points_up_toward_the_cameras():
+    frame, _ = _find_ground_plane(
+        np.asarray(_ground_scene(upside_down=True).vertices),
+        _flip_cameras(_orbit_cameras()),
+        min_up_cos=0.7,
+    )
+    np.testing.assert_allclose(frame[2], [0.0, 0.0, -1.0], atol=1e-3)
+    np.testing.assert_allclose(np.linalg.det(frame), 1.0)
+
+
+def test_find_ground_plane_falls_back_to_the_camera_up_on_a_straight_path():
+    """Cameras on a line span no plane; their mean up, pitched 30 degrees off the ground normal, still passes."""
+    pitch = np.radians(30.0)
+    forward = np.array([np.cos(pitch), 0.0, -np.sin(pitch)])
+    line = np.stack(
+        [_camera(np.array([x, 0.0, 1.5]), forward) for x in np.linspace(-5, 5, 20)]
+    )
+
+    frame, _ = _find_ground_plane(
+        np.asarray(_ground_scene().vertices), line, min_up_cos=0.7
+    )
+    np.testing.assert_allclose(frame[2], [0.0, 0.0, 1.0], atol=1e-3)
 
 
 def test_clean_repair_mesh_runs_the_convex_hull_only_when_asked():
     default, _ = clean_repair_mesh(_ground_scene())
     off, _ = clean_repair_mesh(_ground_scene(), use_convex_hull=False)
-    on, _ = clean_repair_mesh(_ground_scene(), use_convex_hull=True)
+    on, _ = clean_repair_mesh(_ground_scene(), _orbit_cameras(), use_convex_hull=True)
     np.testing.assert_array_equal(
         np.asarray(off.triangles), np.asarray(default.triangles)
     )

@@ -1343,7 +1343,9 @@ class Reconstructor:
         del depths
 
         # Clean; the floater-cut real surface comes back as the texture occluder
-        cleaned, real = clean_repair_mesh(mesh, use_convex_hull=cfg["use_convex_hull"])
+        cleaned, real = clean_repair_mesh(
+            mesh, c2w, use_convex_hull=cfg["use_convex_hull"]
+        )
 
         # Fill, decimate and repair; the full-density cleaned mesh is freed before texturing
         prepared = prepare_mesh(

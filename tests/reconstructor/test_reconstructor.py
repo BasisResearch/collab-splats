@@ -875,17 +875,17 @@ def test_mesh_passes_use_convex_hull_to_cleaning(tmp_path, monkeypatch):
 
 def test_mesh_sdf_trunc_mult_scales_the_truncation_band(tmp_path, monkeypatch):
     """
-    sdf_trunc reaches create_tsdf_mesh as sdf_trunc_mult x voxel_size, defaulting to 4x.
+    sdf_trunc reaches create_tsdf_mesh as sdf_trunc_mult x voxel_size, defaulting to 6x.
 
     - the multiplier, not voxel_size, sets the thin-structure floor: a TSDF cancels anything
-      thinner than 2 x sdf_trunc, so the default band is 8 voxels wide
+      thinner than 2 x sdf_trunc, so the default band is 12 voxels wide
     - measured on GH010229 at voxel 0.2 (scene diagonal 262 world units): the default floor is
       1.60 units, while the voxel grid alone would resolve 0.40
     """
     default = _mesh_fuse(
         tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16))
     ).call_args.kwargs
-    assert default["sdf_trunc"] == pytest.approx(0.04)
+    assert default["sdf_trunc"] == pytest.approx(0.06)
 
     narrow = _mesh_fuse(
         tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16)), sdf_trunc_mult=1.5
@@ -1017,11 +1017,13 @@ def test_mesh_writes_the_prepared_mesh_without_texture(tmp_path, monkeypatch):
         tmp_path, monkeypatch, texture=False
     )
 
-    assert R.clean_repair_mesh.call_args.args == (fused,)
+    fused_arg, c2w = R.clean_repair_mesh.call_args.args
+    assert fused_arg is fused
+    assert c2w.shape[1:] == (4, 4)
     assert prepare.call_args.args == (cleaned,)
     assert prepare.call_args.kwargs == {
         "voxel_size": 0.01,
-        "smooth_iterations": 10,
+        "smooth_iterations": 30,
         "max_faces": 1_500_000,
     }
     written = o3d.io.read_triangle_mesh(str(rec.backend_dir / "mesh.ply"))

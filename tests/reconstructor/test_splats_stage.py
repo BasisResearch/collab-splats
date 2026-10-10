@@ -175,7 +175,8 @@ def test_mesh_source_splats_fuses_from_the_checkpoint(tmp_path):
     assert render.call_args.args == (splats_dir / "ckpt.pt", recon.images_dir)
     fused = fuse.call_args.args[0]
     assert [float(fused[view].min()) for view in range(3)] == [1.0, 2.0, 3.0]
-    assert clean.call_args.args == (fuse.return_value,)
+    assert clean.call_args.args[0] is fuse.return_value
+    np.testing.assert_array_equal(clean.call_args.args[1], rendered[2])
 
 
 def test_mesh_source_unknown_raises(tmp_path):

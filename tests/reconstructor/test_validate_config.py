@@ -199,6 +199,6 @@ def test_base_config_path_is_read(tmp_path):
     assert rec.config["mesh"]["voxel_depth_px"] == 0.123
 
 
-def test_base_yaml_mesh_sdf_trunc_mult_default_is_four():
-    # base.yaml carries mesh.sdf_trunc_mult at Open3D's noisy-sensor default
-    assert _base_config()["mesh"]["sdf_trunc_mult"] == 4.0
+def test_base_yaml_mesh_sdf_trunc_mult_default_is_six():
+    # base.yaml widens mesh.sdf_trunc_mult past Open3D's 4.0 to average more views per voxel
+    assert _base_config()["mesh"]["sdf_trunc_mult"] == 6.0

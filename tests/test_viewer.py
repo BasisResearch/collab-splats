@@ -20,7 +20,13 @@ from collab_splats.semantics.features import (
     BaseQueryableExtractor,
 )
 from collab_splats.semantics.store import read_point_features, write_point_features
-from collab_splats.viewer import Viewer, _build, _find_stores
+from collab_splats.viewer import (
+    Viewer,
+    _browse,
+    _build,
+    _find_backends,
+    _find_stores,
+)
 
 
 @pytest.fixture(scope="module")
@@ -695,4 +701,49 @@ def test_main_runs_as_a_module():
         text=True,
         check=True,
     )
-    assert "backend_dir" in out.stdout and "--texture_size" in out.stdout
+    assert "outputs root" in out.stdout and "--texture_size" in out.stdout
+
+
+def test_find_backends_lists_meshed_scene_backends_by_label(tmp_path):
+    # Two meshed backends, one backend without a mesh, one mesh too shallow to be a backend
+    for backend in ("b_scene/vggt_omega", "a_scene/vggt_omega", "a_scene/vggt_x"):
+        (tmp_path / backend).mkdir(parents=True)
+
+    _backend(tmp_path / "b_scene/vggt_omega")
+    _backend(tmp_path / "a_scene/vggt_omega")
+    _backend(tmp_path / "a_scene")
+
+    assert _find_backends(tmp_path) == {
+        "a_scene/vggt_omega": tmp_path / "a_scene/vggt_omega",
+        "b_scene/vggt_omega": tmp_path / "b_scene/vggt_omega",
+    }
+
+
+def test_browse_switching_scenes_replaces_the_mesh_and_rebuilds_semantics(
+    tmp_path, fresh_viewer, stub_text
+):
+    # Scene a has a stub_text store; scene b is a larger quad with none
+    a, b = tmp_path / "a/omega", tmp_path / "b/omega"
+    a.mkdir(parents=True)
+    b.mkdir(parents=True)
+    _vertex_store(_backend(a), "stub_text", np.eye(4, 2))
+    vertices, faces, _ = _quad()
+    trimesh.Trimesh(vertices * 2, faces, process=False).export(b / "mesh.ply")
+
+    scene = _browse(
+        fresh_viewer, _find_backends(tmp_path), textured=False, texture_size=64
+    )
+    assert scene.options == ("a/omega", "b/omega") and scene.value == "a/omega"
+    assert {"Semantics", "Query"} <= set(_inputs(fresh_viewer))
+
+    scene.value = "b/omega"
+    np.testing.assert_allclose(fresh_viewer.meshes["mesh"][0], vertices * 2)
+    assert not {"Semantics", "Query"} & set(_inputs(fresh_viewer))
+
+    # Back to a: exactly one Semantics dropdown, on a's store
+    scene.value = "a/omega"
+    labels = [
+        h.label for h in fresh_viewer.server.gui._gui_input_handle_from_uuid.values()
+    ]
+    assert labels.count("Semantics") == 1 and labels.count("Query") == 1
+    np.testing.assert_allclose(fresh_viewer.meshes["mesh"][0], vertices)

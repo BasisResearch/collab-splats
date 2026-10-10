@@ -6,10 +6,13 @@ Browser 3D scene viewer over viser: arrays in, named scene nodes out.
 - served at http://<host>:<port> over a websocket; no display needed on the host
 - `python -m collab_splats.viewer <scene>/<backend>`: the mesh, plus a Semantics dropdown
   over its lifted stores' vertex arrays
+- `python -m collab_splats.viewer <outputs root>`: a Scene dropdown over every meshed backend
 
 Usage:
     HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\
         /workspace/outputs/<scene>/<backend> --port 8080
+    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\
+        /workspace/outputs --textured --port 8080
 """
 
 import argparse
@@ -821,14 +824,76 @@ def _build(
     return dropdown
 
 
+def _find_backends(root: Path) -> dict[str, Path]:
+    """
+    Meshed backends under an outputs root, `<scene>/<backend>` -> backend dir.
+
+    - listed: every `<root>/<scene>/<backend>/mesh.ply`, sorted by label
+    """
+    return {
+        f"{path.parent.parent.name}/{path.parent.name}": path.parent
+        for path in sorted(root.glob("*/*/mesh.ply"))
+    }
+
+
+def _browse(
+    viewer: Viewer, backends: dict[str, Path], textured: bool, texture_size: int
+) -> viser.GuiDropdownHandle:
+    """
+    Add a Scene dropdown over meshed backends; switching rebuilds the mesh and its Semantics.
+
+    - starts on the first backend by label
+    - switching sets the old Semantics dropdown to `none` (its own teardown), removes it, then builds anew
+
+    Args:
+        viewer: viewer to populate.
+        backends: `<scene>/<backend>` label -> backend dir, as `_find_backends` returns.
+        textured: show each backend's texture/mesh.obj; picks stay on mesh.ply.
+        texture_size: displayed texture edge, pixels.
+
+    Returns:
+        The Scene dropdown.
+    """
+    scene = viewer.server.gui.add_dropdown("Scene", options=tuple(backends))
+    semantics = []
+
+    def switch(_=None) -> None:
+        """
+        Tear down the current backend's Semantics, then build the selected backend.
+        """
+        # The Semantics dropdown's `none` clears heat, probe, labels and mode GUI
+        for dropdown in semantics:
+            dropdown.value = "none"
+            dropdown.remove()
+
+        semantics.clear()
+
+        # Same node name: the selected mesh upserts over the shown one
+        dropdown = _build(viewer, backends[scene.value], textured, texture_size)
+
+        if dropdown is not None:
+            semantics.append(dropdown)
+
+        viewer._reset_view()
+        logger.info("scene: %s", scene.value)
+
+    scene.on_update(switch)
+    switch()
+    return scene
+
+
 def main() -> None:
     """
-    Serve a backend's mesh with its queryable semantics; blocks until interrupted.
+    Serve one backend's mesh, or every meshed backend under a root, with semantics; blocks.
+
+    - a path holding mesh.ply is one backend; any other path is an outputs root with a Scene dropdown
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("backend_dir", type=Path)
+    parser.add_argument(
+        "path", type=Path, help="<scene>/<backend>, or an outputs root of scenes"
+    )
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument(
         "--textured",
@@ -841,9 +906,21 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
 
+    # One backend, or a root whose meshed backends fill the Scene dropdown
+    single = (args.path / "mesh.ply").exists()
+    backends = {} if single else _find_backends(args.path)
+
+    if not single and not backends:
+        parser.error(f"no mesh.ply in {args.path} or its <scene>/<backend> dirs")
+
     viewer = Viewer(port=args.port)
     viewer.server.gui.configure_theme(control_layout="fixed")
-    _build(viewer, args.backend_dir, args.textured, args.texture_size)
+
+    if single:
+        _build(viewer, args.path, args.textured, args.texture_size)
+    else:
+        _browse(viewer, backends, args.textured, args.texture_size)
+
     viewer.serve_forever()
 
 

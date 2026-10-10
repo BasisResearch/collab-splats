@@ -543,7 +543,7 @@ def test_depth_filter_drops_planted_outlier(tmp_path, scene, monkeypatch):
 
     # Frame pair (0, 6) gets its first match's reference keypoint swapped for a far one
     matcher = _RecordingMatcher(scene, corrupt=(0, 6))
-    _run(tmp_path, scene, matcher, window=6, retrieval_k=0, depth_tol=0.5)
+    _run(tmp_path, scene, matcher, window=6, retrieval_k=0, max_transfer_px=0.5)
 
     expected = np.stack([ia[1:], ib[1:]], axis=1)
     np.testing.assert_array_equal(_pair_matches(seen, 0, 6), expected)
@@ -562,7 +562,7 @@ def test_depth_filter_rejects_one_direction_failure(tmp_path, scene, monkeypatch
     x, y = int(kp[0]), int(kp[1])
     scene["world_points"][0, y : y + 2, x : x + 2, 0] += 0.5
     after, _ = sample_world_points(scene["world_points"][0], kps_a)
-    _run(tmp_path, scene, _FakeMatcher(scene), window=6, retrieval_k=0, depth_tol=0.5)
+    _run(tmp_path, scene, _FakeMatcher(scene), window=6, retrieval_k=0, max_transfer_px=0.5)
 
     # The 6 -> 0 transfer of the same match still passes
     kp_b = (scene["kp_full"][6][ib[:1]] + 0.5) / 2 - 0.5
@@ -684,7 +684,7 @@ SMALL_SCENE = {
     "retrieval_nms": 4,
     "seed_fraction": 4 / 12,
     "min_matches": 15,
-    "depth_tol": 2.0,
+    "max_transfer_px": 2.0,
 }
 
 
@@ -798,7 +798,7 @@ def test_build_tracks_matches_prototype(tmp_path, scene, monkeypatch):
     monkeypatch.setattr(proto, "RETR_K", SMALL_SCENE["retrieval_k"])
     monkeypatch.setattr(proto, "RETR_NMS", SMALL_SCENE["retrieval_nms"])
     monkeypatch.setattr(proto, "MIN_MATCHES", SMALL_SCENE["min_matches"])
-    monkeypatch.setattr(proto, "DEPTH_TOL", SMALL_SCENE["depth_tol"])
+    monkeypatch.setattr(proto, "DEPTH_TOL", SMALL_SCENE["max_transfer_px"])
     monkeypatch.setattr(proto, "FULL_DIR", full_dir)
 
     # Env-read knobs pinned so a stray MT_* export cannot skew parity

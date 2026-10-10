@@ -149,7 +149,7 @@ def build_tracks(
     retrieval_nms: int = 25,
     seed_fraction: float = 0.34,
     min_matches: int = 50,
-    depth_tol: float = 8.0,
+    max_transfer_px: float = 8.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Star tracks from verified matcher correspondences, on the model grid.
@@ -172,7 +172,7 @@ def build_tracks(
         retrieval_nms: frame gap at or under which retrieval pairs are suppressed.
         seed_fraction: share of frames, evenly spaced (at least 2), whose keypoints seed tracks.
         min_matches: verified inliers a pair needs to join the correspondence graph.
-        depth_tol: symmetric transfer-error gate, model px.
+        max_transfer_px: symmetric transfer-error gate, model px.
 
     Returns:
         frame (M,) int32, track (M,) int32, xy (M, 2) model px, score (M,) all 1.0 and pts3d (P, 3) world;
@@ -334,13 +334,9 @@ def build_tracks(
         )
 
         # One per-match-camera transfer error each way for the whole chunk
-        err_ab = reprojection_error(
-            kp_world_t[rows_a], w2c[frame_b], K[frame_b], kps_t[rows_b]
-        )
-        err_ba = reprojection_error(
-            kp_world_t[rows_b], w2c[frame_a], K[frame_a], kps_t[rows_a]
-        )
-        ok = torch.maximum(err_ab, err_ba) < depth_tol
+        err_ab = reprojection_error(kp_world_t[rows_a], w2c[frame_b], K[frame_b], kps_t[rows_b])
+        err_ba = reprojection_error(kp_world_t[rows_b], w2c[frame_a], K[frame_a], kps_t[rows_a])
+        ok = torch.maximum(err_ab, err_ba) < max_transfer_px
         ok = to_numpy(ok)
         ok = np.split(ok, np.cumsum(counts)[:-1])
 

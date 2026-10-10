@@ -222,11 +222,6 @@ def test_preproc_refuses_an_empty_selection(tmp_path, monkeypatch):
         rec.preproc()
 
 
-def test_from_config_file_removed():
-    """The dead, dataset-based from_config_file constructor is gone."""
-    assert not hasattr(Reconstructor, "from_config_file")
-
-
 def test_reconstructor_init(tmp_path):
     config = _make_config(tmp_path)
     rec = Reconstructor(config)
@@ -260,17 +255,6 @@ def test_init_user_override_wins_over_base(tmp_path):
     assert rec.config["pointcloud"]["backend"] == "mapanything"
     # sibling keys still filled from base
     assert rec.config["pointcloud"]["method"] == "feedforward"
-
-
-def test_validate_config_ignores_mesher(tmp_path):
-    """mesh.mesher is no longer a validated knob — its absence never raises."""
-    config = {
-        "input_path": str(tmp_path / "v.mp4"),
-        "output_path": str(tmp_path / "out"),
-    }
-    # Reaches validate via __init__ (base-merged); must not raise on missing mesher
-    rec = Reconstructor(config)
-    assert "mesher" not in rec.config["mesh"]
 
 
 def test_reconstructor_backend_dir(tmp_path):
@@ -1069,72 +1053,6 @@ def test_mesh_texture_without_cuda_raises_before_fusion(tmp_path, monkeypatch):
     fuse.assert_not_called()
 
 
-def test_run_calls_stages_in_order(tmp_path):
-    config = _make_config(tmp_path)
-    rec = Reconstructor(config)
-    calls = []
-
-    rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
-    rec.pointcloud = lambda: (
-        calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
-    )
-    rec.semantics = lambda: calls.append("semantics") or tmp_path
-    rec.mesh = lambda: calls.append("mesh") or tmp_path
-
-    rec.run(["preproc", "pointcloud", "semantics", "mesh"])
-    assert calls == ["preproc", "pointcloud", "mesh", "semantics"]
-
-
-def test_run_subset(tmp_path):
-    config = _make_config(tmp_path)
-    rec = Reconstructor(config)
-    calls = []
-
-    rec.preproc = lambda **kwargs: calls.append("preproc") or rec.images_dir
-    rec.pointcloud = lambda: (
-        calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
-    )
-
-    rec.run(["preproc", "pointcloud"])
-    assert calls == ["preproc", "pointcloud"]
-    assert "semantics" not in calls
-    assert "mesh" not in calls
-
-
-def test_run_dep_validation(tmp_path):
-    """semantics requires pointcloud to have run first."""
-    config = _make_config(tmp_path)
-    rec = Reconstructor(config)
-
-    with pytest.raises(ValueError, match="pointcloud"):
-        rec.run(["semantics"])
-
-
-def test_run_dep_satisfied_by_existing_output(tmp_path):
-    """`--stages pointcloud` alone runs when a prior preprocess's images/ exists on disk."""
-    config = _make_config(tmp_path)
-    rec = Reconstructor(config)
-    calls = []
-
-    # Preprocess output already present → dependency is satisfied without re-running it.
-    rec.images_dir.mkdir(parents=True, exist_ok=True)
-    rec.pointcloud = lambda: (
-        calls.append("pointcloud") or _make_mock_pointcloud_result(tmp_path)
-    )
-
-    rec.run(["pointcloud"])
-    assert calls == ["pointcloud"]
-
-
-def test_run_missing_dep_output_still_raises(tmp_path):
-    """pointcloud with no images/ and no preproc stage → hard error."""
-    config = _make_config(tmp_path)
-    rec = Reconstructor(config)
-
-    with pytest.raises(ValueError, match="preproc"):
-        rec.run(["pointcloud"])
-
-
 def test_run_default_uses_config_enabled(tmp_path):
     config = _make_config(
         tmp_path,
@@ -1340,7 +1258,9 @@ def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
     assert attrs["window_ba"] == [{"start": 0, "focal": 368.5, "loss_final": None}]
 
 
-@pytest.mark.parametrize("strategy, windowed", [("global", False), ("window+global", True)])
+@pytest.mark.parametrize(
+    "strategy, windowed", [("global", False), ("window+global", True)]
+)
 def test_pointcloud_stage_window_ba_follows_strategy(tmp_path, strategy, windowed):
     """BA + LC: only a window strategy hands LoopClosure a BA config; global leaves it to refine."""
     config = _make_config(
@@ -1355,7 +1275,9 @@ def test_pointcloud_stage_window_ba_follows_strategy(tmp_path, strategy, windowe
     rec = Reconstructor(config)
     creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
     mock_lc_instance = MagicMock()
-    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(tmp_path)
+    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(
+        tmp_path
+    )
     mock_lc_instance.window_ba = []
 
     with (

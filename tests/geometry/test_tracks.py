@@ -247,8 +247,11 @@ class _RecordingMatcher(_FakeMatcher):
 def _run(tmp_path: Path, scene: dict, matcher: _FakeMatcher, **kwargs) -> tuple:
     """
     build_tracks over a scene's frame store with the given matcher; flat output.
+
+    - sequential+retrieval unless the test names a pairing, so window / retrieval_k take effect
     """
     paths = _write_store(tmp_path, scene)
+    kwargs.setdefault("pairing", "sequential+retrieval")
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(tracks_mod, "LocalMatcher", lambda source: matcher)
@@ -359,6 +362,25 @@ def test_pairs_sequential_plus_retrieval(tmp_path, scene):
     assert extra
     assert extra == sorted(extra) and all(b - a > 4 for a, b in extra)
     assert len(set(pairs)) == len(pairs)
+
+
+def test_pairs_exhaustive_is_every_pair_without_retrieval(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracks_mod, "BaseRetrievalExtractor", types.SimpleNamespace(get=lambda name: _refuse_salad))
+    scene = _scene(n_frames=6)
+    matcher = _RecordingMatcher(scene)
+
+    _run(tmp_path, scene, matcher, pairing="exhaustive", window=1, retrieval_k=2)
+
+    assert matcher.pairs == [(a, b) for a in range(6) for b in range(a + 1, 6)]
+
+
+def test_pairs_default_is_exhaustive():
+    assert inspect.signature(tracks_mod.build_tracks).parameters["pairing"].default == "exhaustive"
+
+
+def test_pairs_refuses_unknown_pairing(tmp_path, scene):
+    with pytest.raises(ValueError, match="pairing"):
+        _run(tmp_path, scene, _FakeMatcher(scene), pairing="sequential")
 
 
 def test_pairs_skip_suppressed_candidates_when_few_frames(tmp_path):

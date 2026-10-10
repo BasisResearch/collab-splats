@@ -43,8 +43,9 @@ reconstruct local --output-root /workspace/outputs \
 `semantics`, `splats`, `mesh` and `localize` run only when enabled in the config
 (`pointcloud.bundle_adjustment.enabled` / `semantics.enabled` / `splats.enabled` /
 `mesh.enabled` / `localization.enabled`), or when named explicitly via `--stages`.
-With loop closure on, `refine` is not planned: BA runs inside the pointcloud stage, one
-solve per window.
+With loop closure on, `bundle_adjustment.strategy` picks the solve: `global` (default) plans
+`refine` over every frame after LC, `window` solves inside each LC window in the pointcloud
+stage, `window+global` does both.
 `semantics` runs after `mesh` and also lifts onto `mesh.ply`'s vertices; after a mesh rebuild
 it re-runs from the cached codes (the store's `mesh_sha256` no longer matches).
 A store written before `mesh.ply` existed records no hash and counts as done: re-run
@@ -395,9 +396,10 @@ parameter and raises.
 | `pointcloud.hloc.matcher_conf` | str | `superpoint+lightglue` | `hloc.match_features.confs` key. Conf keys are checked as non-empty strings only, not against hloc |
 | `pointcloud.hloc.num_threads` | int | `8` | Mapper thread cap |
 | `pointcloud.hloc.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
-| `pointcloud.bundle_adjustment.enabled` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`); with `loop_closure` on it runs inside each LC window instead (first window sets the focal, later windows hold it; no `refine` stage); a bare bool sets this |
+| `pointcloud.bundle_adjustment.enabled` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`); with `loop_closure` on, `strategy` picks where it runs; a bare bool sets this |
+| `pointcloud.bundle_adjustment.strategy` | str | `global` | Read only with `loop_closure` on: `global` = one `refine` solve over every frame after LC; `window` = a solve inside each LC window (first window sets the focal, later windows hold it; no `refine` stage); `window+global` = both; anything else is a `ValueError` |
 | `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | Track source: `xfeat` / `loma` build matcher star tracks over the full-res `images/` frames (`geometry/tracks.py`), also inside each LC window; `vggsfm` predicts tracks on the model grid; anything else is a `ValueError` |
-| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{}` | Source-specific settings forwarded to `extract_tracks`; empty takes their defaults. `vggsfm`: `max_query_pts` (4096), `query_frame_num` (8), `fine_tracking` (false; true peaks at 34 GB RSS on 50 frames). `xfeat`/`loma`: `retrieval` (`dino-salad` / `megaloc`), `seed_fraction` (0.34, in (0, 1]), `window` (10), `retrieval_k` (20) and the other `build_tracks` keywords. A key the source does not take is a `TypeError`; bad values are a `ValueError` |
+| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{}` | Source-specific settings forwarded to `extract_tracks`; empty takes their defaults. `vggsfm`: `max_query_pts` (4096), `query_frame_num` (8), `fine_tracking` (false; true peaks at 34 GB RSS on 50 frames). `xfeat`/`loma`: `retrieval` (`dino-salad` / `megaloc`), `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction` (0.34, in (0, 1]), `window` (10) and `retrieval_k` (20; both sequential+retrieval only) and the other `build_tracks` keywords. A key the source does not take is a `TypeError`; bad values are a `ValueError` |
 | `pointcloud.bundle_adjustment.vis_thresh` | float | `0.2` | Min track score for an observation (VGGSfM visibility; matcher tracks score 1.0) |
 | `pointcloud.bundle_adjustment.max_reproj_error` | float\|null | `4.0` | Pre-solve pixel reprojection gate; `null` skips the filter |
 | `pointcloud.bundle_adjustment.min_inliers_per_frame` | int | `64` | Frames below this inlier count sit out the solve |
@@ -413,7 +415,7 @@ parameter and raises.
 | `pointcloud.bundle_adjustment.depth_sigma` | float | `0.01` | Relative depth error weighted like 1 px |
 | `pointcloud.bundle_adjustment.use_photometric` | bool | `true` | Brightness matching between overlapping frames; `ValueError` with `increment_size > 0` |
 | `pointcloud.bundle_adjustment.device` | str\|null | `null` | CUDA device (`cuda`, `cuda:1`); `null` = auto. The pipeline never caches tracks; `tracks_cache_dir` is not a key |
-| `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`); with `bundle_adjustment.enabled` BA runs inside each window |
+| `pointcloud.loop_closure` | bool | `false` | Run loop closure after pointcloud (`ValueError` with `method: sfm`); with `bundle_adjustment.enabled`, `bundle_adjustment.strategy` picks per-window, global or both |
 | `pointcloud.loop_closure.retrieval` | str | `dino-salad` | Dict form only: retrieval registry name, `dino-salad` or `megaloc`; `megaloc` needs its own `lc_retrieval_threshold` |
 | `pointcloud.min_views` | int | `0` | Feedforward cross-view depth filter: keep a pixel when min(min_views, seen) other views agree. `0` = off; upstream MapAnything uses `1` |
 | `pointcloud.mv_rel_thresh` | float | `0.01` | Multiview agreement tolerance, as a fraction of depth |

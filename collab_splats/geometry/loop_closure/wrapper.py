@@ -722,6 +722,7 @@ class LoopClosure:
         - one pose and intrinsics row per frame of the full n_frames sequence
         - each submap is lifted once; the cloud keeps only the capped draw, never the dense stack
         - world_points is None: the lean store re-derives it from depth
+        - images and pixel_indices come from each frame's owning submap, so refine can read the store
         - raises ValueError on an empty cloud or zero model dims
         """
         # Overlap skip and per-submap kept-pixel table
@@ -754,8 +755,8 @@ class LoopClosure:
         intrinsics = np.tile(np.eye(3, dtype=np.float32), (n_frames, 1, 1))
         assigned = np.zeros(n_frames, dtype=bool)
         model_height = model_width = None
-        depth = confidence = None
-        pts_chunks, col_chunks = [], []
+        depth = confidence = images = None
+        pts_chunks, col_chunks, pix_chunks = [], [], []
 
         for s in self.map.ordered_submaps_by_key():
             # Lift each submap once; keep only its share of the capped draw
@@ -770,6 +771,12 @@ class LoopClosure:
             pts_chunks.append(grid_flat[idx])
             col_chunks.append(colors_flat[idx])
 
+            # Source pixel of each kept point, as global [frame, row, col]
+            frame, row, col = np.unravel_index(idx, grid[skip:].shape[:3])
+            pix_chunks.append(
+                np.stack([frame + s.frame_start + skip, row, col], axis=1).astype(np.int32)
+            )
+
             # Size the per-pixel arrays from the first grid
             if model_height is None:
                 model_height, model_width = (
@@ -782,8 +789,11 @@ class LoopClosure:
                 confidence = np.zeros(
                     (n_frames, model_height, model_width), dtype=np.float32
                 )
+                images = np.zeros(
+                    (n_frames, 3, model_height, model_width), dtype=np.float32
+                )
 
-            assert depth is not None and confidence is not None
+            assert depth is not None and confidence is not None and images is not None
 
             # First submap to cover a frame wins: the overlap frame keeps the earlier submap's pose, as evo
             poses_world = s.get_all_poses_world(self.graph)
@@ -802,12 +812,18 @@ class LoopClosure:
                 depth[g] = transform_points(grid[local_i], extrinsics[g])[..., 2]
                 confidence[g] = s.conf[local_i]
 
+                # Model-grid RGB in [0, 1] from the submap's uint8 colors
+                images[g] = s.colors[local_i].transpose(2, 0, 1) / 255.0
+
         # Stack the kept points; an empty map gives empty arrays
         points = (
             np.vstack(pts_chunks) if pts_chunks else np.zeros((0, 3), dtype=np.float32)
         )
         colors = (
             np.vstack(col_chunks) if col_chunks else np.zeros((0, 3), dtype=np.uint8)
+        )
+        pixel_indices = (
+            np.vstack(pix_chunks) if pix_chunks else np.zeros((0, 3), dtype=np.int32)
         )
 
         # Fail fast on an empty cloud or zero model dims, before PointcloudResult's K rescale fails less clearly
@@ -833,7 +849,9 @@ class LoopClosure:
             original_coords=self.base.original_coords,
             model_width=model_width,
             model_height=model_height,
+            images=torch.from_numpy(images),
             confidence=torch.from_numpy(confidence),
             world_points=None,
             depth=depth,
+            pixel_indices=pixel_indices,
         )

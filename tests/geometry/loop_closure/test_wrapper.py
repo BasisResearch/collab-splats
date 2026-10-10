@@ -868,6 +868,54 @@ def test_assemble_result_carries_depth_and_confidence_without_world_points(tmp_p
     np.testing.assert_allclose(loaded.depth, out.depth)
 
 
+def test_assemble_result_carries_images_and_pixel_indices():
+    """
+    LC result carries model-grid images and per-point source pixels, so refine can read its store.
+
+    - images come from each frame's owning submap colors; overlap frame 2 takes s0's
+    - every point equals its source pixel of the corrected world grid
+    """
+    n_frames = 5
+    s0 = _dense_submap_with_fx(0, frame_start=0, fx_values=[100.0, 101.0, 102.0])
+    s1 = _dense_submap_with_fx(1, frame_start=2, fx_values=[202.0, 203.0, 204.0])
+
+    # Two-submap graph, one optimize per add as the wrapper does
+    pg = PoseGraph()
+    for s in (s0, s1):
+        pg.add_submap(s, overlap_frames=1)
+        pg.optimize()
+
+    base = MagicMock()
+    base.max_points = 500_000
+    base.image_paths = [f"img_{i}.png" for i in range(n_frames)]
+    base.original_coords = np.tile(
+        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (n_frames, 1)
+    )
+
+    lc = LoopClosure(base)
+    lc.map = GraphMap()
+    for s in (s0, s1):
+        lc.map.add_submap(s)
+    lc.graph = pg
+    out = lc._assemble_result(n_frames)
+
+    # Images: (N, 3, H, W) in [0, 1], owning submap's colors
+    owners = [s0.colors[0], s0.colors[1], s0.colors[2], s1.colors[1], s1.colors[2]]
+    assert tuple(out.images.shape) == (n_frames, 3, 3, 4)
+
+    for g, colors in enumerate(owners):
+        np.testing.assert_allclose(
+            np.asarray(out.images[g]), colors.transpose(2, 0, 1) / 255.0, atol=1e-6
+        )
+
+    # Pixel indices: each point is its source pixel of the owning grid
+    grid0, grid1 = s0.get_world_grid(pg), s1.get_world_grid(pg)
+    frames = np.stack([grid0[0], grid0[1], grid0[2], grid1[1], grid1[2]])
+    frame, row, col = out.pixel_indices.T
+    assert out.pixel_indices.shape == (len(out.points), 3)
+    np.testing.assert_allclose(out.points, frames[frame, row, col], rtol=1e-6)
+
+
 def test_assemble_result_caps_cloud_to_max_points():
     """
     _assemble_result caps the dense cloud to base.max_points before the COLMAP export.

@@ -346,10 +346,18 @@ class Reconstructor:
             dict(ba_raw) if isinstance(ba_raw, dict) else {"enabled": bool(ba_raw)}
         )
         ba.setdefault("enabled", True)
-        # Unknown keys: neither `enabled` nor a BundleAdjustmentConfig field (tracks_cache_dir is a field, so it passes)
+        ba.setdefault("strategy", "global")
+
+        # Strategy picks the solve under LC: inside each window, over every frame after, or both
+        if ba["strategy"] not in ("window", "global", "window+global"):
+            raise ValueError(
+                f"pointcloud.bundle_adjustment.strategy must be window, global or window+global, got {ba['strategy']!r}"
+            )
+
+        # Unknown keys: neither `enabled`/`strategy` nor a BundleAdjustmentConfig field (tracks_cache_dir is a field, so it passes)
         unknown = (
             set(ba)
-            - {"enabled", "tracks_cache_dir"}
+            - {"enabled", "strategy", "tracks_cache_dir"}
             - {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
         )
 
@@ -362,7 +370,9 @@ class Reconstructor:
 
         # Build the BA config so its own checks refuse values the solver cannot run
         try:
-            BundleAdjustmentConfig(**{k: v for k, v in ba.items() if k != "enabled"})
+            BundleAdjustmentConfig(
+                **{k: v for k, v in ba.items() if k not in ("enabled", "strategy")}
+            )
         except ValueError as e:
             raise ValueError(f"pointcloud.bundle_adjustment: {e}") from e
 
@@ -634,11 +644,12 @@ class Reconstructor:
         # Default stage set from the enable flags
         if stages is None:
             pc = self.config["pointcloud"]
-            # BA is skipped for sfm (its mapper runs its own) and with LC (it runs inside each window)
+            # BA is skipped for sfm (its mapper runs its own); under LC only a global strategy plans refine
+            ba = pc["bundle_adjustment"]
             enabled = {
-                "refine": pc["bundle_adjustment"]["enabled"]
+                "refine": ba["enabled"]
                 and pc["method"] == "feedforward"
-                and not pc["loop_closure"]["enabled"],
+                and (not pc["loop_closure"]["enabled"] or ba["strategy"] != "window"),
                 "semantics": self.config["semantics"]["enabled"],
                 "splats": self.config["splats"]["enabled"],
                 "mesh": self.config["mesh"]["enabled"],
@@ -819,7 +830,7 @@ class Reconstructor:
         Reconstruct images/ into pointcloud.zarr, the COLMAP model and sparse_pc.ply.
 
         - feedforward optionally wraps the creator in loop closure, with a live viewer when viz is on
-        - BA on with LC: bundle adjustment runs inside each window; records land in the zarr attrs as window_ba
+        - BA on with LC and a window strategy: BA runs inside each window; records land in the zarr attrs as window_ba
         - sfm is experimental; its creator writes its own subset and alignment attrs
         """
         cfg = self.config["pointcloud"]
@@ -829,7 +840,7 @@ class Reconstructor:
         if cfg["method"] == "sfm" or backend == "loger":
             self._join_frames_write()
 
-        # Window BA config; set only for feedforward with LC and BA on
+        # Window BA config; set only for feedforward with LC, BA on and a window strategy
         ba_cfg = None
 
         # Feedforward creator, its LoopClosure proxy, or an sfm creator: no common base type
@@ -851,12 +862,12 @@ class Reconstructor:
             if lc.pop("enabled"):
                 lc_config = LoopClosureConfig(**lc) if lc else None
 
-                # BA with LC runs inside each window, with the refine stage's terms
-                if cfg["bundle_adjustment"]["enabled"]:
+                # Window BA runs inside each window, with the refine stage's terms
+                ba = cfg["bundle_adjustment"]
+
+                if ba["enabled"] and ba["strategy"] in ("window", "window+global"):
                     terms = {
-                        k: v
-                        for k, v in cfg["bundle_adjustment"].items()
-                        if k != "enabled"
+                        k: v for k, v in ba.items() if k not in ("enabled", "strategy")
                     }
                     ba_cfg = BundleAdjustmentConfig(**terms)
 
@@ -931,7 +942,7 @@ class Reconstructor:
         - a matcher track_source (xfeat / loma) reads the full-res frames in the images/ store
 
         Raises:
-            ValueError: pointcloud.method is sfm, or loop closure is on.
+            ValueError: pointcloud.method is sfm, or loop closure is on with the window strategy.
             FileNotFoundError: a matcher track_source and no images/ store.
         """
         cfg = self.config["pointcloud"]
@@ -939,13 +950,18 @@ class Reconstructor:
         if cfg["method"] == "sfm":
             raise ValueError("refine is not supported for pointcloud.method: sfm")
 
-        if cfg["loop_closure"]["enabled"]:
+        if cfg["loop_closure"]["enabled"] and cfg["bundle_adjustment"]["strategy"] == "window":
             raise ValueError(
-                "refine is not supported with pointcloud.loop_closure — BA already ran inside each window"
+                "refine is not supported with pointcloud.loop_closure and bundle_adjustment.strategy: window "
+                "— BA already ran inside each window"
             )
 
         # Build the BA config; a matcher track_source needs the images/ store before any load
-        terms = {k: v for k, v in cfg["bundle_adjustment"].items() if k != "enabled"}
+        terms = {
+            k: v
+            for k, v in cfg["bundle_adjustment"].items()
+            if k not in ("enabled", "strategy")
+        }
         ba_cfg = BundleAdjustmentConfig(**terms)
 
         if ba_cfg.track_source != "vggsfm" and not self.images_dir.is_dir():

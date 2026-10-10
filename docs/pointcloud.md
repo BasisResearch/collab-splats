@@ -17,12 +17,19 @@ track observations to bring that depth to the reconstruction's world scale.
 
 ## Bundle adjustment with loop closure
 
-With `pointcloud.loop_closure` and `pointcloud.bundle_adjustment.enabled` both on, BA runs
-inside each loop-closure window, right after the window's forward pass and before its submap
-enters the pose graph; the `refine` stage is skipped. The first refined window sets the focal
-and later windows hold it fixed. A window whose solve fails keeps its feedforward poses. Each
-window's outcome (start frame, focal, loss, time, peak GPU memory) is stored in the
-`pointcloud.zarr` attrs under `window_ba`.
+With `pointcloud.loop_closure` and `pointcloud.bundle_adjustment.enabled` both on,
+`pointcloud.bundle_adjustment.strategy` picks the solve:
+
+- `global` (default): plain LC windows, then the `refine` stage solves every frame at once
+- `window`: BA inside each loop-closure window, right after the window's forward pass and
+  before its submap enters the pose graph; the `refine` stage is skipped
+- `window+global`: both, in that order
+
+Window solves: the first refined window sets the focal and later windows hold it fixed; a
+window whose solve fails keeps its feedforward poses; each window's outcome (start frame,
+focal, loss, time, peak GPU memory) is stored in the `pointcloud.zarr` attrs under
+`window_ba`. The LC store carries model-grid images and per-point source pixels, so `refine`
+reads it like a single-pass store.
 
 ## Backends
 

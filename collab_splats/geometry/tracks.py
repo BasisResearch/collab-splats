@@ -137,6 +137,7 @@ def build_tracks(
     extrinsics: np.ndarray,
     intrinsics: np.ndarray,
     *,
+    pairing: Literal["exhaustive", "sequential+retrieval"] = "exhaustive",
     window: int = 10,
     retrieval: str = "dino-salad",
     retrieval_k: int = 20,
@@ -148,7 +149,7 @@ def build_tracks(
     """
     Star tracks from verified matcher correspondences, on the model grid.
 
-    - pairs: sequential window plus retrieval top-k on model-grid frames, outside the nms band
+    - pairs: every frame pair (exhaustive), or sequential window plus retrieval top-k outside the nms band
     - matches gated by symmetric reprojection under the prior poses, then pycolmap-verified in memory
     - one track per seed keypoint and its direct verified matches, >= 2 observations
     - full-res keypoints map to the model grid by separate x / y scales (multiple-of-14 height stretch)
@@ -159,9 +160,10 @@ def build_tracks(
         world_points: (N, H, W, 3) model-grid world points.
         extrinsics: (N, 4, 4) world-to-camera.
         intrinsics: (N, 3, 3) model-grid K.
-        window: sequential pair span, frames.
+        pairing: "exhaustive" (all N(N-1)/2 pairs, no retrieval) or "sequential+retrieval".
+        window: sequential pair span, frames; sequential+retrieval only.
         retrieval: BaseRetrievalExtractor registry name, e.g. "dino-salad" or "megaloc".
-        retrieval_k: retrieval pairs per frame; 0 loads no retrieval model.
+        retrieval_k: retrieval pairs per frame; 0 loads no retrieval model; sequential+retrieval only.
         retrieval_nms: frame gap at or under which retrieval pairs are suppressed.
         seed_fraction: share of frames, evenly spaced (at least 2), whose keypoints seed tracks.
         min_matches: verified inliers a pair needs to join the correspondence graph.
@@ -172,13 +174,22 @@ def build_tracks(
         rows sorted by (frame, track).
 
     Raises:
-        ValueError: seed_fraction outside (0, 1], a frame's aspect differs from the model grid's,
+        ValueError: unknown pairing, seed_fraction outside (0, 1], a frame's aspect differs from the model grid's,
             retrieval_nms < 0, or an unknown retrieval name.
     """
     # Model grid shape and per-phase wall times
     world_points = np.asarray(world_points)
     N, H, W = world_points.shape[:3]
     timings = {}
+
+    # Pairing names follow the sfm creators'
+    if pairing not in ("exhaustive", "sequential+retrieval"):
+        raise ValueError(f"build_tracks: pairing must be exhaustive or sequential+retrieval, got {pairing!r}")
+
+    # Exhaustive already holds every retrieval pair
+    if pairing == "exhaustive":
+        window = N
+        retrieval_k = 0
 
     # Seeds are a share of the frames
     if not 0 < seed_fraction <= 1:

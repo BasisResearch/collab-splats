@@ -30,7 +30,10 @@ pointcloud:
   loop_closure: false
   bundle_adjustment:        # skipped for sfm
     enabled: true
-    track_kwargs: {seed_fraction: 1.0}   # exhaustive tracks
+    strategy: global          # with LC: window | global | window+global
+    track_kwargs:
+      pairing: exhaustive     # exhaustive | sequential+retrieval
+      seed_fraction: 1.0      # every frame seeds tracks
   viz:
     enabled: false
     port: 8080

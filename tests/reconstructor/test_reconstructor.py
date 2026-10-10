@@ -880,7 +880,7 @@ def test_mesh_sdf_trunc_mult_scales_the_truncation_band(tmp_path, monkeypatch):
     - the multiplier, not voxel_size, sets the thin-structure floor: a TSDF cancels anything
       thinner than 2 x sdf_trunc, so the default band is 12 voxels wide
     - measured on GH010229 at voxel 0.2 (scene diagonal 262 world units): the default floor is
-      1.60 units, while the voxel grid alone would resolve 0.40
+      2.40 units, while the voxel grid alone would resolve 0.40
     """
     default = _mesh_fuse(
         tmp_path, monkeypatch, _tsdf_mesh_ff(model_hw=(16, 16))
@@ -1308,13 +1308,17 @@ def test_reconstructor_viewer_none_when_viz_disabled(tmp_path):
 
 
 def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
-    """BA + LC: LoopClosure gets a BA config with no track cache; the zarr records window_ba."""
+    """BA + LC, window strategy: LoopClosure gets a BA config with no track cache; the zarr records window_ba."""
     config = _make_config(
         tmp_path,
         {
             "pointcloud": {
                 "loop_closure": {"submap_size": 32},
-                "bundle_adjustment": {"enabled": True, "dtype": "float64"},
+                "bundle_adjustment": {
+                    "enabled": True,
+                    "strategy": "window",
+                    "dtype": "float64",
+                },
             }
         },
     )
@@ -1341,6 +1345,35 @@ def test_pointcloud_stage_passes_window_ba_config_and_attrs(tmp_path):
 
     attrs = result.save_zarr.call_args.kwargs["extra_attrs"]
     assert attrs["window_ba"] == [{"start": 0, "focal": 368.5, "loss_final": None}]
+
+
+@pytest.mark.parametrize("strategy, windowed", [("global", False), ("window+global", True)])
+def test_pointcloud_stage_window_ba_follows_strategy(tmp_path, strategy, windowed):
+    """BA + LC: only a window strategy hands LoopClosure a BA config; global leaves it to refine."""
+    config = _make_config(
+        tmp_path,
+        {
+            "pointcloud": {
+                "loop_closure": True,
+                "bundle_adjustment": {"enabled": True, "strategy": strategy},
+            }
+        },
+    )
+    rec = Reconstructor(config)
+    creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
+    mock_lc_instance = MagicMock()
+    mock_lc_instance.create_pointcloud.return_value = _make_mock_pointcloud_result(tmp_path)
+    mock_lc_instance.window_ba = []
+
+    with (
+        patch("collab_splats.reconstructor.get_creator", return_value=creator_cls),
+        patch(
+            "collab_splats.reconstructor.LoopClosure", return_value=mock_lc_instance
+        ) as mock_lc_cls,
+    ):
+        rec.pointcloud()
+
+    assert (mock_lc_cls.call_args.kwargs["ba"] is not None) is windowed
 
 
 def test_pointcloud_stage_lc_without_ba_passes_none(tmp_path):

@@ -29,9 +29,19 @@ def _cfg(tmp_path, **pointcloud):
 
 
 def test_validate_config_accepts_ba_with_lc_bool(tmp_path):
-    """bundle_adjustment + loop_closure=true is per-window BA, accepted at construction."""
+    """bundle_adjustment + loop_closure=true is accepted at construction, with the global strategy."""
     r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=True))
     assert r.config["pointcloud"]["bundle_adjustment"]["enabled"] is True
+    assert r.config["pointcloud"]["bundle_adjustment"]["strategy"] == "global"
+
+
+def test_validate_config_refuses_unknown_strategy(tmp_path):
+    """An unknown bundle_adjustment.strategy fails at construction, naming the value."""
+    ba = {"enabled": True, "strategy": "submap"}
+    with pytest.raises(
+        ValueError, match="strategy must be window, global or window\\+global"
+    ):
+        Reconstructor(_cfg(tmp_path, bundle_adjustment=ba, loop_closure=True))
 
 
 def test_validate_config_accepts_ba_with_lc_dict(tmp_path):
@@ -65,9 +75,16 @@ def test_validate_config_refuses_sfm_before_matcher_tracks_with_lc(tmp_path):
         )
 
 
-def test_run_config_driven_skips_refine_under_lc(tmp_path):
-    """BA + LC: BA runs inside the pointcloud stage, so the default stage set drops refine."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=True))
+@pytest.mark.parametrize(
+    "strategy, planned",
+    [("window", False), ("global", True), ("window+global", True)],
+)
+def test_run_config_driven_plans_refine_under_lc_by_strategy(
+    tmp_path, strategy, planned
+):
+    """BA + LC: the window strategy solves inside the pointcloud stage; global ones plan refine."""
+    ba = {"enabled": True, "strategy": strategy}
+    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=ba, loop_closure=True))
     calls = []
     with (
         patch.object(
@@ -96,12 +113,13 @@ def test_run_config_driven_skips_refine_under_lc(tmp_path):
     ):
         r.run()
     assert "pointcloud" in calls
-    assert "refine" not in calls
+    assert ("refine" in calls) is planned
 
 
-def test_refine_refuses_under_lc(tmp_path):
-    """An explicit refine under LC would re-solve a store BA already ran in."""
-    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=True))
+def test_refine_refuses_under_lc_window_strategy(tmp_path):
+    """An explicit refine under LC with the window strategy would re-solve a store BA already ran in."""
+    ba = {"enabled": True, "strategy": "window"}
+    r = Reconstructor(_cfg(tmp_path, bundle_adjustment=ba, loop_closure=True))
     with pytest.raises(
         ValueError, match="refine is not supported with pointcloud.loop_closure"
     ):
@@ -111,7 +129,10 @@ def test_refine_refuses_under_lc(tmp_path):
 def test_validate_config_allows_ba_without_lc(tmp_path):
     """BA alone constructs fine — the old NotImplementedError is gone."""
     r = Reconstructor(_cfg(tmp_path, bundle_adjustment=True, loop_closure=False))
-    assert r.config["pointcloud"]["bundle_adjustment"] == {"enabled": True}
+    assert r.config["pointcloud"]["bundle_adjustment"] == {
+        "enabled": True,
+        "strategy": "global",
+    }
 
 
 # ---------------------------------------------------------------------------

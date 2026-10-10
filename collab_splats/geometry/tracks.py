@@ -25,7 +25,6 @@ import pycolmap
 import torch
 import torch.nn.functional as F
 import zarr
-from zarr.codecs import BloscCodec
 
 from vggt.dependency.track_predict import predict_tracks
 
@@ -33,7 +32,7 @@ from collab_splats.geometry.projection import reprojection_error, sample_world_p
 from collab_splats.geometry.transforms import extract_intrinsics
 from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.retrieval import BaseRetrievalExtractor
-from collab_splats.utils.io import read_image
+from collab_splats.utils.io import LZ4, read_image
 from collab_splats.utils.torch_utils import get_device, pytorch_gc, to_numpy
 
 logger = logging.getLogger(__name__)
@@ -123,11 +122,10 @@ def extract_tracks(
     # Write the cache: one lz4 chunk per array, key stamped last
     if cache_dir is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        lz4 = BloscCodec(cname="lz4")
         store = zarr.open(str(cache_path), mode="w")
 
         for name, arr in zip(arrays, out):
-            store.create_array(name, data=arr, chunks=arr.shape, compressors=lz4)
+            store.create_array(name, data=arr, chunks=arr.shape, compressors=LZ4)
 
         store.attrs["cache_key"] = key
         logger.debug("Track cache saved: %s", cache_path)

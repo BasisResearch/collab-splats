@@ -30,6 +30,7 @@ from zarr.codecs import BloscCodec
 from vggt.dependency.track_predict import predict_tracks
 
 from collab_splats.geometry.projection import reprojection_error, sample_world_points
+from collab_splats.geometry.transforms import extract_intrinsics
 from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.retrieval import BaseRetrievalExtractor
 from collab_splats.utils.io import read_image
@@ -364,15 +365,8 @@ def build_tracks(
 
     for i in range(N):
         K_i = intrinsics[i]
-        params = [
-            float(K_i[0, 0]),
-            float(K_i[1, 1]),
-            float(K_i[0, 2]),
-            float(K_i[1, 2]),
-        ]
-        camera = pycolmap.Camera(
-            model="PINHOLE", width=W, height=H, params=params, camera_id=i + 1
-        )
+        params = list(extract_intrinsics(K_i))
+        camera = pycolmap.Camera(model="PINHOLE", width=W, height=H, params=params, camera_id=i + 1)
         cameras.append(camera)
 
     # Fixed RANSAC seed: thread scheduling must not change the inliers

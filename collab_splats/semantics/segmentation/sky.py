@@ -160,7 +160,8 @@ class SkyWaterSegmentation(BaseSegmentation):
 def sky_masks(
     images_dir: Path | str,
     idxs: Sequence[int] | None = None,
-    cache_dir: Path | str | None = None,
+    *,
+    cache_dir: Path | str,
     threshold: float = 0.5,
     batch_size: int = 16,
 ) -> np.ndarray:
@@ -178,8 +179,7 @@ def sky_masks(
         images_dir: keyframe directory holding frame_NNNNNN.<ext>.
         idxs: SOURCE frame indices in the order wanted; None takes every frame in
             filename order, exactly as `frames.read_frames` does.
-        cache_dir: directory of cached sky-probability PNGs; None uses images_dir's
-            sibling sky/.
+        cache_dir: directory of cached sky-probability PNGs; the layout owner names it.
         threshold: sky probability above which a pixel is sky; applied on read, so
             changing it needs no re-segmentation.
         batch_size: uncached frames decoded and segmented per forward pass.
@@ -196,7 +196,7 @@ def sky_masks(
         raise ValueError(f"sky_masks: threshold must be in [0, 1), got {threshold}")
 
     images_dir = Path(images_dir)
-    cache_dir = Path(cache_dir) if cache_dir is not None else images_dir.parent / "sky"
+    cache_dir = Path(cache_dir)
 
     # Resolve wanted frames up front, so a warm cache rejects junk too
     paths = frames.frame_paths(images_dir, idxs)

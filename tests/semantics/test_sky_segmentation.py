@@ -237,7 +237,7 @@ def test_sky_masks_reads_every_frame_in_filename_order(tmp_path, monkeypatch):
     prob[:192] = 0.9
     images_dir, model = _scene(tmp_path, monkeypatch, prob)
 
-    masks = sky.sky_masks(images_dir)
+    masks = sky.sky_masks(images_dir, cache_dir=tmp_path / "sky")
 
     assert masks.shape == (3, 16, 16)
     assert masks.dtype == bool
@@ -253,7 +253,7 @@ def test_sky_masks_rejects_threshold_outside_unit_interval(
     images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
 
     with pytest.raises(ValueError, match="threshold"):
-        sky.sky_masks(images_dir, threshold=threshold)
+        sky.sky_masks(images_dir, threshold=threshold, cache_dir=tmp_path / "sky")
     assert model.calls == 0
 
 
@@ -265,8 +265,8 @@ def test_sky_masks_returns_masks_in_the_order_idxs_names_them(tmp_path, monkeypa
     )
 
     # Filename order is (0, 5, 7), so the third segmented frame is frame_idx 7
-    sky.sky_masks(images_dir)
-    permuted = sky.sky_masks(images_dir, idxs=[7, 0, 5])
+    sky.sky_masks(images_dir, cache_dir=tmp_path / "sky")
+    permuted = sky.sky_masks(images_dir, idxs=[7, 0, 5], cache_dir=tmp_path / "sky")
 
     assert permuted[0].all()
     assert not permuted[1].any() and not permuted[2].any()
@@ -277,7 +277,7 @@ def test_sky_masks_caches_probability_as_8bit(tmp_path, monkeypatch):
     prob[:192] = 0.9
     images_dir, model = _scene(tmp_path, monkeypatch, prob)
 
-    sky.sky_masks(images_dir)
+    sky.sky_masks(images_dir, cache_dir=tmp_path / "sky")
     cached = cv2.imread(
         str(tmp_path / "sky" / "frame_000005.png"), cv2.IMREAD_GRAYSCALE
     )
@@ -295,9 +295,8 @@ def test_sky_masks_rethresholds_cache_without_model(tmp_path, monkeypatch):
         "get",
         classmethod(lambda cls, name: lambda: _ConstantBackend(True)),
     )
-    sky.sky_masks(
-        images_dir
-    )  # warm the cache with a 0.9 probability at the default threshold
+    # Warm the cache with a 0.9 probability at the default threshold
+    sky.sky_masks(images_dir, cache_dir=tmp_path / "sky")
 
     # The model factory must not be asked for again: any call raises
     monkeypatch.setattr(
@@ -310,8 +309,10 @@ def test_sky_masks_rethresholds_cache_without_model(tmp_path, monkeypatch):
         ),
     )
 
-    assert not sky.sky_masks(images_dir, threshold=0.95).any()
-    assert sky.sky_masks(images_dir, threshold=0.5).all()
+    assert not sky.sky_masks(
+        images_dir, threshold=0.95, cache_dir=tmp_path / "sky"
+    ).any()
+    assert sky.sky_masks(images_dir, threshold=0.5, cache_dir=tmp_path / "sky").all()
 
 
 def test_sky_masks_second_call_runs_the_model_zero_times(tmp_path, monkeypatch):
@@ -326,10 +327,10 @@ def test_sky_masks_second_call_runs_the_model_zero_times(tmp_path, monkeypatch):
     images_dir, model = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
     model.logits_for = _band_logits
 
-    first = sky.sky_masks(images_dir)
+    first = sky.sky_masks(images_dir, cache_dir=tmp_path / "sky")
     assert model.calls == 3
 
-    again = sky.sky_masks(images_dir)
+    again = sky.sky_masks(images_dir, cache_dir=tmp_path / "sky")
     assert model.calls == 3
     assert np.array_equal(first, again)
 
@@ -341,7 +342,7 @@ def test_sky_masks_rejects_an_unknown_frame_idx(tmp_path, monkeypatch):
     images_dir, _ = _scene(tmp_path, monkeypatch, np.zeros((384, 384), np.float32))
 
     with pytest.raises(KeyError, match="99"):
-        sky.sky_masks(images_dir, idxs=[0, 99])
+        sky.sky_masks(images_dir, idxs=[0, 99], cache_dir=tmp_path / "sky")
 
 
 def test_sky_masks_asks_the_registry_for_skywater(tmp_path, monkeypatch):
@@ -355,7 +356,7 @@ def test_sky_masks_asks_the_registry_for_skywater(tmp_path, monkeypatch):
         ),
     )
 
-    sky.sky_masks(images_dir)
+    sky.sky_masks(images_dir, cache_dir=tmp_path / "sky")
 
     assert asked == ["skywater"]
 
@@ -381,7 +382,7 @@ def test_sky_masks_segments_without_stacking_every_uncached_frame(
 
     monkeypatch.setattr(sky.frames, "read_frames", gray_only)
 
-    assert sky.sky_masks(images_dir).all()
+    assert sky.sky_masks(images_dir, cache_dir=tmp_path / "sky").all()
 
 
 ######## Batching
@@ -399,7 +400,7 @@ def test_sky_masks_segments_misses_in_batches_of_batch_size(tmp_path, monkeypatc
         np.full((384, 384), 0.9 if n == 3 else 0.0, np.float32)
     )
 
-    masks = sky.sky_masks(images_dir, batch_size=2)
+    masks = sky.sky_masks(images_dir, batch_size=2, cache_dir=tmp_path / "sky")
 
     assert model.batch_sizes == [2, 2, 1]
     assert [bool(m.all()) for m in masks] == [False, False, True, False, False]

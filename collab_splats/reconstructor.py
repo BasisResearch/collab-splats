@@ -945,7 +945,10 @@ class Reconstructor:
         if cfg["method"] == "sfm":
             raise ValueError("refine is not supported for pointcloud.method: sfm")
 
-        if cfg["loop_closure"]["enabled"] and cfg["bundle_adjustment"]["strategy"] == "window":
+        if (
+            cfg["loop_closure"]["enabled"]
+            and cfg["bundle_adjustment"]["strategy"] == "window"
+        ):
             raise ValueError(
                 "refine is not supported with pointcloud.loop_closure and bundle_adjustment.strategy: window "
                 "— BA already ran inside each window"
@@ -1302,7 +1305,11 @@ class Reconstructor:
 
         # Sky fuses as a backdrop and seeds floaters; the share is of pixels that had depth
         if cfg["mask_sky"]:
-            sky = sky_masks(self.images_dir, idxs=image_ids)
+            sky = sky_masks(
+                self.images_dir,
+                idxs=image_ids,
+                cache_dir=self.images_dir.parent / "sky",
+            )
 
             if sky.shape != depths.shape:
                 raise ValueError(

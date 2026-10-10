@@ -418,8 +418,10 @@ appear or disappear. Then run the full suite and compare against the Part 1 refe
 - **Skip delta** must match the prediction exactly. An unexplained skip counts as a miss,
   not a pass — that is the failure mode this whole design is ordered around, and the
   measurement that a green exit code will not give you.
-- **Collected count** must drop by exactly the number of tests in the deleted files, minus
-  any moved out of `test_pipeline_cu121.py`. A larger drop means a file stopped collecting.
+- **Collected count** must drop by exactly **4** across the whole cleanup: 3 from
+  `test_bae_smoke.py` and 1 from `test_mapanything_compat_patch_safe`. The 21 surviving
+  tests of the renamed environment-contract file and all 6 relocated behaviour tests are
+  net-zero. Any other drop means a file stopped collecting.
 
 For Part 5 the collected count is the primary gate, because a move should change **nothing
 else**. After the moves, the count must be identical to the pre-move count. A drop means a
@@ -439,9 +441,11 @@ distinguishes them.
 
 1. `vismatch` + `lomatch` installed; full-suite reference triple recorded.
 2. 104 orphan `__pycache__` entries and `tests/nerfstudio_methods/` removed.
-3. `tests/test_cu121_migration.py`, `tests/integration/test_pipeline_cu121.py`,
-   `tests/test_bae_smoke.py` deleted; behaviour-coverage tests from the integration file
-   relocated under `tests/pointcloud/`.
+3. `tests/test_cu121_migration.py` renamed to `tests/test_environment_contract.py`, its
+   module docstring rewritten, and `test_mapanything_compat_patch_safe` deleted (21 tests
+   survive). The 6 behaviour tests of `tests/integration/test_pipeline_cu121.py` relocated
+   to their package-appropriate files; that file and `tests/integration/` removed.
+   `tests/test_bae_smoke.py` deleted.
 4. `gpu` marker registered in `pyproject.toml`.
 5. `third_party/{VGGT-X,vggt-omega,bae,xfeat}` deleted (242M).
 6. `setup/vggt_spark.sh` added, pinned to `6e6e161`.

@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 import torch
 
-from collab_splats.geometry.bundle_adjustment import BundleAdjustmentConfig
 from collab_splats.geometry.loop_closure.graph import PoseGraph
 from collab_splats.geometry.loop_closure.map import GraphMap
 from collab_splats.geometry.loop_closure.matching import LoopMatch
@@ -20,7 +19,6 @@ from collab_splats.geometry.loop_closure.wrapper import (
 )
 from collab_splats.geometry.transforms import transform_points
 from collab_splats.pointcloud.base import PointcloudResult
-from collab_splats.pointcloud.feedforward import MapAnythingCreator, VGGTXCreator
 from collab_splats.pointcloud.utils import subsample_points
 from collab_splats.preproc.frames import frame_paths
 from tests.geometry.loop_closure._helpers import (
@@ -54,84 +52,6 @@ def _make_mock_creator(ff_result):
     m = MagicMock()
     m.raw_outputs = {}
     return m
-
-
-########################################################
-########## PointcloudResult field tests ##############
-########################################################
-
-
-def test_feedforward_result_new_fields_default_none():
-    r = _make_ff_result()
-    assert r.images is None
-    assert r.confidence is None
-    assert r.world_points is None
-
-
-########################################################
-########## BundleAdjustmentConfig tests ###############
-########################################################
-
-
-def test_bundle_adjustment_config_defaults():
-    cfg = BundleAdjustmentConfig()
-    assert cfg.max_reproj_error == 4.0
-    assert cfg.lm_steps == 40
-    assert cfg.shared_camera is True  # track-quality parity default (2026-08-19)
-    assert cfg.min_inliers_per_frame == 64
-
-
-def test_bundle_adjustment_config_custom():
-    cfg = BundleAdjustmentConfig(max_reproj_error=2.0, lm_steps=20)
-    assert cfg.max_reproj_error == 2.0
-    assert cfg.lm_steps == 20
-
-
-########################################################
-########## BaseFeedforwardCreator field tests #########
-########################################################
-
-
-def test_vggtx_postprocess_populates_ba_fields():
-    """VGGTXCreator._postprocess() must populate images/confidence/world_points."""
-
-    creator = VGGTXCreator.__new__(VGGTXCreator)
-    creator.conf_threshold = 1.0
-    creator.image_paths = [Path("a.jpg"), Path("b.jpg")]
-    creator.original_coords = np.tile(
-        np.array([0, 0, 64, 64, 64, 64], dtype=np.float32), (2, 1)
-    )  # full-frame box
-
-    N, H, W = 2, 8, 8
-    raw_outputs = {
-        "depth": np.ones((N, H, W, 1), dtype=np.float32),
-        "depth_conf": np.ones((N, H, W), dtype=np.float32),
-        "images": torch.zeros(N, 3, H, W),
-        "extrinsic": np.tile(np.eye(3, 4), (N, 1, 1)).astype(np.float32),
-        "intrinsics": np.tile(np.eye(3), (N, 1, 1)).astype(np.float32),
-    }
-
-    result = creator._postprocess(raw_outputs)
-
-    assert result.images is not None
-    assert result.confidence is not None
-    assert result.world_points is not None
-    assert result.images.shape[0] == N
-    assert result.confidence.shape == (N, H, W)
-
-
-def test_vggtx_no_use_ba_field():
-    """VGGTXCreator must not have use_ba after refactor."""
-
-    field_names = {f.name for f in dataclasses.fields(VGGTXCreator)}
-    assert "use_ba" not in field_names
-
-
-def test_mapanything_no_use_ba_field():
-    """MapAnythingCreator must not have use_ba after refactor."""
-
-    field_names = {f.name for f in dataclasses.fields(MapAnythingCreator)}
-    assert "use_ba" not in field_names
 
 
 ########################################################

@@ -353,10 +353,10 @@ class Reconstructor:
                 f"pointcloud.bundle_adjustment.strategy must be window, global or window+global, got {ba['strategy']!r}"
             )
 
-        # Unknown keys: neither `enabled`/`strategy` nor a BundleAdjustmentConfig field (tracks_cache_dir is a field, so it passes)
+        # Unknown keys: neither `enabled`/`strategy` nor a BundleAdjustmentConfig field
         unknown = (
             set(ba)
-            - {"enabled", "strategy", "tracks_cache_dir"}
+            - {"enabled", "strategy"}
             - {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
         )
 

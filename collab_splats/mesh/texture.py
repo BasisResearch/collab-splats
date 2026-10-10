@@ -138,7 +138,7 @@ def unwrap_view_charts(
     - a face may take a view only if it owns its pixels in that view's face-id buffer
     - the z-buffer gives each pixel to one face, so faces in one camera chart cannot overlap
     - faces no view fully sees get one flat patch per connected group, along its mean normal
-    - one atlas check: flipped or overwritten faces become single flat charts, then one repack
+    - flipped or overwritten faces regroup into flat patches the same way; any still broken become single charts
 
     Args:
         mesh: prepare_mesh output.
@@ -188,12 +188,7 @@ def unwrap_view_charts(
     uv = pixels.numpy()
 
     # Unseen faces: each connected group of them gets one flat patch
-    patch = _same_key_components(
-        np.where(unseen, 0, 1 + np.arange(n_faces)), pairs, n_faces
-    )
-    patch_normal = np.zeros((int(patch.max()) + 1, 3))
-    np.add.at(patch_normal, patch[unseen], fn[unseen])
-    uv[unseen] = _plane_uv(fv[unseen], patch_normal[patch[unseen]])
+    patch = _flat_patches(uv, fv, fn, unseen, pairs)
     logger.info("view charts: %d of %d faces unseen", int(unseen.sum()), n_faces)
 
     # Pack: chart key is the label view, or the plane patch for unseen faces
@@ -201,10 +196,17 @@ def unwrap_view_charts(
     uvs, chart, boxes = _pack_charts(uv, key, area, pairs, tile_m, pad, tex_size)
     bad = _find_broken_faces(uvs, chart, unseen, tex_size, min_owned)
 
-    # Broken faces become single flat charts; repack once
+    # Broken faces regroup into flat patches, so neighbors keep one chart instead of a seam each
+    if bad.any():
+        patch = _flat_patches(uv, fv, fn, bad, pairs)
+        key = np.where(bad, n_views + n_faces + patch, key)
+        uvs, chart, boxes = _pack_charts(uv, key, area, pairs, tile_m, pad, tex_size)
+        bad = _find_broken_faces(uvs, chart, unseen | bad, tex_size, min_owned)
+
+    # Faces still broken become single flat charts; repack once more
     if bad.any():
         uv[bad] = _plane_uv(fv[bad] - fv[bad][:, :1], fn[bad])
-        key = np.where(bad, n_views + n_faces + np.arange(n_faces), key)
+        key = np.where(bad, n_views + 2 * n_faces + np.arange(n_faces), key)
         uvs, _, boxes = _pack_charts(uv, key, area, pairs, tile_m, pad, tex_size)
 
     return uvs, boxes
@@ -322,6 +324,24 @@ def _same_key_components(key: np.ndarray, pairs: np.ndarray, n: int) -> np.ndarr
     p = pairs[key[pairs[:, 0]] == key[pairs[:, 1]]]
     graph = coo_matrix((np.ones(len(p)), (p[:, 0], p[:, 1])), shape=(n, n))
     return connected_components(graph, directed=False)[1]
+
+
+def _flat_patches(
+    uv: np.ndarray, fv: np.ndarray, fn: np.ndarray, mask: np.ndarray, pairs: np.ndarray
+) -> np.ndarray:
+    """
+    Masked faces flattened in place into uv, one plane per connected group along its mean normal.
+
+    - returns the group id per face; unmasked faces keep their uv and get ids of their own
+    """
+    n_faces = len(mask)
+    patch = _same_key_components(
+        np.where(mask, 0, 1 + np.arange(n_faces)), pairs, n_faces
+    )
+    normal = np.zeros((int(patch.max()) + 1, 3))
+    np.add.at(normal, patch[mask], fn[mask])
+    uv[mask] = _plane_uv(fv[mask], normal[patch[mask]])
+    return patch
 
 
 def _plane_uv(fv: np.ndarray, normal: np.ndarray) -> np.ndarray:

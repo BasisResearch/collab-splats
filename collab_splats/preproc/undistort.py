@@ -14,9 +14,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pycolmap
-import torch
 
 from collab_splats.preproc.frames import frame_paths
+from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def calibrate_camera(
     names = [paths[int(i)].name for i in idxs]
 
     # GPU SIFT only when pycolmap has CUDA and a device exists; the CUDA wheel errors on auto otherwise
-    use_gpu = pycolmap.has_cuda and torch.cuda.is_available()
+    use_gpu = pycolmap.has_cuda and get_device() == "cuda"
     device = pycolmap.Device.cuda if use_gpu else pycolmap.Device.cpu
 
     # The database and sparse output are scratch; the images are read from images_dir

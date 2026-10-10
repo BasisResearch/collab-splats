@@ -97,9 +97,9 @@ def extract_tracks(
         # A stale, half-written or corrupt store reads as None; the mode="w" write below replaces it
         store = open_valid(cache_path, {"cache_key": key})
 
-        if store is not None:
+        if isinstance(store, zarr.Group):
             logger.info("Track cache hit (skipping extraction): %s", cache_path)
-            return tuple(store[k][:] for k in arrays)
+            return tuple(np.asarray(store[k]) for k in arrays)  # type: ignore[return-value]
 
     # VGGSfM predicts tracks; matcher sources chain verified matches over the prior poses
     if source == "vggsfm":
@@ -117,7 +117,7 @@ def extract_tracks(
     # Write the cache: one lz4 chunk per array, key stamped last
     if cache_dir is not None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        store = zarr.open(str(cache_path), mode="w")
+        store = zarr.open_group(str(cache_path), mode="w")
 
         for name, arr in zip(arrays, out):
             store.create_array(name, data=arr, chunks=arr.shape, compressors=LZ4)
@@ -225,7 +225,9 @@ def build_tracks(
             frames = list(frames)
 
             # One batched extract per chunk: per-frame calls are 4.6x slower and pick other keypoints
-            feats += matcher.extract(frames)
+            chunk_feats = matcher.extract(frames)
+            assert isinstance(chunk_feats, list)
+            feats += chunk_feats
 
             # Retrieval sees the model grid, as the feedforward images: antialiased resize, one call per chunk
             if retriever is None:
@@ -244,7 +246,9 @@ def build_tracks(
     kps, kp_world = [], []
 
     for i, f in enumerate(feats):
-        w, h = f.image_size
+        image_size = f.image_size
+        assert image_size is not None
+        w, h = image_size
 
         if abs((w / h) / (W / H) - 1) > 0.02:
             raise ValueError(
@@ -327,8 +331,12 @@ def build_tracks(
         )
 
         # One per-match-camera transfer error each way for the whole chunk
-        err_ab = reprojection_error(kp_world_t[rows_a], w2c[frame_b], K[frame_b], kps_t[rows_b])
-        err_ba = reprojection_error(kp_world_t[rows_b], w2c[frame_a], K[frame_a], kps_t[rows_a])
+        err_ab = reprojection_error(
+            kp_world_t[rows_a], w2c[frame_b], K[frame_b], kps_t[rows_b]
+        )
+        err_ba = reprojection_error(
+            kp_world_t[rows_b], w2c[frame_a], K[frame_a], kps_t[rows_a]
+        )
         ok = torch.maximum(err_ab, err_ba) < max_transfer_px
         ok = to_numpy(ok)
         ok = np.split(ok, np.cumsum(counts)[:-1])
@@ -355,7 +363,9 @@ def build_tracks(
     for i in range(N):
         K_i = intrinsics[i]
         params = list(extract_intrinsics(K_i))
-        camera = pycolmap.Camera(model="PINHOLE", width=W, height=H, params=params, camera_id=i + 1)
+        camera = pycolmap.Camera(
+            model="PINHOLE", width=W, height=H, params=params, camera_id=i + 1
+        )
         cameras.append(camera)
 
     # Fixed RANSAC seed: thread scheduling must not change the inliers

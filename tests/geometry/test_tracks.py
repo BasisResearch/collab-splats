@@ -562,7 +562,14 @@ def test_depth_filter_rejects_one_direction_failure(tmp_path, scene, monkeypatch
     x, y = int(kp[0]), int(kp[1])
     scene["world_points"][0, y : y + 2, x : x + 2, 0] += 0.5
     after, _ = sample_world_points(scene["world_points"][0], kps_a)
-    _run(tmp_path, scene, _FakeMatcher(scene), window=6, retrieval_k=0, max_transfer_px=0.5)
+    _run(
+        tmp_path,
+        scene,
+        _FakeMatcher(scene),
+        window=6,
+        retrieval_k=0,
+        max_transfer_px=0.5,
+    )
 
     # The 6 -> 0 transfer of the same match still passes
     kp_b = (scene["kp_full"][6][ib[:1]] + 0.5) / 2 - 0.5

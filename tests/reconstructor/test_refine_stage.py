@@ -203,6 +203,7 @@ def test_refine_skips_in_config_run_when_marker_exists(tmp_path):
     with (
         patch.object(Reconstructor, "semantics"),
         patch.object(Reconstructor, "mesh"),
+        patch.object(Reconstructor, "localize"),
         patch.object(Reconstructor, "reconstruction_quality_report"),
         patch("collab_splats.reconstructor.BundleAdjustment.refine") as mock_refine,
     ):

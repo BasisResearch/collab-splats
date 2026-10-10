@@ -106,7 +106,6 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
         {"frame_selection": "fps", "fps": 2.0, "min_frames": 5, "max_frames": 50},
     )
     rec.preproc()
-    quality = rec.config["preproc"]["quality"]
     workers = rec.config["preproc"]["n_workers"]
     assert calls == {
         "sampler": "fps",
@@ -115,8 +114,6 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "min_frames": 5,
         "max_frames": 50,
         "report": report,
-        "quality": quality,
-        "on_empty_slot": "rescue",
     }
 
     # uniform: max_frames is the count, with no fps and no floor
@@ -130,7 +127,6 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "workers": workers,
         "max_frames": 50,
         "report": report,
-        "quality": quality,
     }
 
     # optical_flow: max_frames caps the selector
@@ -143,7 +139,6 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "sampler": "optical_flow",
         "max_frames": 50,
         "report": report,
-        "quality": quality,
     }
 
 
@@ -245,8 +240,8 @@ def test_init_fills_defaults_from_base_yaml(tmp_path):
         "output_path": str(tmp_path / "out"),
     }
     rec = Reconstructor(partial)
-    # min_frames is null in base.yaml so fps is honoured literally, NOT a stale code default
-    assert rec.config["preproc"]["min_frames"] is None
+    # min_frames is absent from base.yaml, so the sampler default applies
+    assert "min_frames" not in rec.config["preproc"]
     # fps comes from base.yaml (2.0), and fps is the default selection method
     assert rec.config["preproc"]["fps"] == 2.0
     assert rec.config["preproc"]["frame_selection"] == "fps"
@@ -375,11 +370,9 @@ def test_pointcloud_stage_feedforward_vggtx(tmp_path):
     pc = rec.config["pointcloud"]
     assert creator_cls.call_args.kwargs == {
         "max_points": pc["max_points"],
-        "min_views": pc["min_views"],
-        "mv_rel_thresh": pc["mv_rel_thresh"],
         "clean": False,
         "frames": None,
-        **pc["vggtx"],
+        **pc.get("vggtx", {}),
     }
     creator_cls.return_value.create_pointcloud.assert_called_once_with(
         rec.images_dir, rec.backend_dir, rec.colmap_model_dir

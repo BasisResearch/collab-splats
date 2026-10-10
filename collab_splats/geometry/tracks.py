@@ -111,9 +111,13 @@ def extract_tracks(
         out = _vggsfm_tracks(images, confidence, world_points, **source_kwargs)
     else:
         if extrinsics is None or intrinsics is None or not frame_paths:
-            raise ValueError(f"extract_tracks: source {source!r} needs extrinsics, intrinsics and frame_paths")
+            raise ValueError(
+                f"extract_tracks: source {source!r} needs extrinsics, intrinsics and frame_paths"
+            )
 
-        out = build_tracks(source, frame_paths, world_points, extrinsics, intrinsics, **source_kwargs)
+        out = build_tracks(
+            source, frame_paths, world_points, extrinsics, intrinsics, **source_kwargs
+        )
 
     # Write the cache: one lz4 chunk per array, key stamped last
     if cache_dir is not None:
@@ -184,7 +188,9 @@ def build_tracks(
 
     # Pairing names follow the sfm creators'
     if pairing not in ("exhaustive", "sequential+retrieval"):
-        raise ValueError(f"build_tracks: pairing must be exhaustive or sequential+retrieval, got {pairing!r}")
+        raise ValueError(
+            f"build_tracks: pairing must be exhaustive or sequential+retrieval, got {pairing!r}"
+        )
 
     # Exhaustive already holds every retrieval pair
     if pairing == "exhaustive":
@@ -193,7 +199,9 @@ def build_tracks(
 
     # Seeds are a share of the frames
     if not 0 < seed_fraction <= 1:
-        raise ValueError(f"build_tracks: seed_fraction must be in (0, 1], got {seed_fraction!r}")
+        raise ValueError(
+            f"build_tracks: seed_fraction must be in (0, 1], got {seed_fraction!r}"
+        )
 
     # Seed count scales with the scene; at least 2 so every scene seeds tracks
     seed_frames = round(seed_fraction * N)
@@ -201,7 +209,9 @@ def build_tracks(
 
     # A negative band leaves the diagonal unsuppressed, so self pairs would reach verification
     if retrieval_nms < 0:
-        raise ValueError(f"build_tracks: retrieval_nms must be >= 0, got {retrieval_nms}")
+        raise ValueError(
+            f"build_tracks: retrieval_nms must be >= 0, got {retrieval_nms}"
+        )
 
     # Unknown retrieval name raises here, even with retrieval_k == 0
     retriever_cls = BaseRetrievalExtractor.get(retrieval)
@@ -243,7 +253,9 @@ def build_tracks(
         w, h = f.image_size
 
         if abs((w / h) / (W / H) - 1) > 0.02:
-            raise ValueError(f"build_tracks: frame aspect {w}x{h} differs from model grid {W}x{H} (cropped preprocess)")
+            raise ValueError(
+                f"build_tracks: frame aspect {w}x{h} differs from model grid {W}x{H} (cropped preprocess)"
+            )
 
         scale = torch.tensor([W / w, H / h])
         keypoints = (f.keypoints + 0.5) * scale - 0.5
@@ -298,7 +310,9 @@ def build_tracks(
     K = torch.as_tensor(intrinsics, dtype=torch.float64, device=device)
     offsets = np.cumsum([0] + [len(kp) for kp in kps[:-1]])
     kps_t = torch.as_tensor(np.concatenate(kps), dtype=torch.float64, device=device)
-    kp_world_t = torch.as_tensor(np.concatenate(kp_world), dtype=torch.float64, device=device)
+    kp_world_t = torch.as_tensor(
+        np.concatenate(kp_world), dtype=torch.float64, device=device
+    )
     matched = []
     n_raw = n_kept = 0
 
@@ -314,12 +328,17 @@ def build_tracks(
         rows_a = offsets[frame_a] + np.concatenate([m.idx_q for m in results])
         rows_b = offsets[frame_b] + np.concatenate([m.idx_db for m in results])
         frame_a, frame_b, rows_a, rows_b = (
-            torch.as_tensor(x, device=device) for x in (frame_a, frame_b, rows_a, rows_b)
+            torch.as_tensor(x, device=device)
+            for x in (frame_a, frame_b, rows_a, rows_b)
         )
 
         # One per-match-camera transfer error each way for the whole chunk
-        err_ab = reprojection_error(kp_world_t[rows_a], w2c[frame_b], K[frame_b], kps_t[rows_b])
-        err_ba = reprojection_error(kp_world_t[rows_b], w2c[frame_a], K[frame_a], kps_t[rows_a])
+        err_ab = reprojection_error(
+            kp_world_t[rows_a], w2c[frame_b], K[frame_b], kps_t[rows_b]
+        )
+        err_ba = reprojection_error(
+            kp_world_t[rows_b], w2c[frame_a], K[frame_a], kps_t[rows_a]
+        )
         ok = torch.maximum(err_ab, err_ba) < depth_tol
         ok = to_numpy(ok)
         ok = np.split(ok, np.cumsum(counts)[:-1])
@@ -345,8 +364,15 @@ def build_tracks(
 
     for i in range(N):
         K_i = intrinsics[i]
-        params = [float(K_i[0, 0]), float(K_i[1, 1]), float(K_i[0, 2]), float(K_i[1, 2])]
-        camera = pycolmap.Camera(model="PINHOLE", width=W, height=H, params=params, camera_id=i + 1)
+        params = [
+            float(K_i[0, 0]),
+            float(K_i[1, 1]),
+            float(K_i[0, 2]),
+            float(K_i[1, 2]),
+        ]
+        camera = pycolmap.Camera(
+            model="PINHOLE", width=W, height=H, params=params, camera_id=i + 1
+        )
         cameras.append(camera)
 
     # Fixed RANSAC seed: thread scheduling must not change the inliers
@@ -364,7 +390,13 @@ def build_tracks(
     # Verify pairs in parallel; pycolmap releases the GIL
     with ThreadPoolExecutor(8) as pool:
         geometries = pool.map(
-            pycolmap.estimate_two_view_geometry, cams_a, kps_a, cams_b, kps_b, pair_matches, repeat(options)
+            pycolmap.estimate_two_view_geometry,
+            cams_a,
+            kps_a,
+            cams_b,
+            kps_b,
+            pair_matches,
+            repeat(options),
         )
         geometries = list(geometries)
 
@@ -450,13 +482,15 @@ def _vggsfm_tracks(
 
     # no_grad so the upstream .numpy() calls work
     with torch.no_grad():
-        pred_tracks, pred_vis_scores, _pred_confs, pred_pts3d, _pred_colors = predict_tracks(
-            images,
-            conf=conf,
-            points_3d=points,
-            max_query_pts=max_query_pts,
-            query_frame_num=query_frame_num,
-            fine_tracking=fine_tracking,
+        pred_tracks, pred_vis_scores, _pred_confs, pred_pts3d, _pred_colors = (
+            predict_tracks(
+                images,
+                conf=conf,
+                points_3d=points,
+                max_query_pts=max_query_pts,
+                query_frame_num=query_frame_num,
+                fine_tracking=fine_tracking,
+            )
         )
 
     # Upstream returns numpy; pin float32
@@ -472,7 +506,10 @@ def _vggsfm_tracks(
 
 
 def _assemble_tracks(
-    graph: pycolmap.CorrespondenceGraph, kps: list[np.ndarray], kp_world: list[np.ndarray], seed_frames: int
+    graph: pycolmap.CorrespondenceGraph,
+    kps: list[np.ndarray],
+    kp_world: list[np.ndarray],
+    seed_frames: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Star tracks as flat observations: each seed keypoint plus its direct verified matches.
@@ -508,7 +545,9 @@ def _assemble_tracks(
             # An ambiguous frame (two keypoints in the track) is dropped from the track
             counts = Counter(img_id for img_id, _ in members)
             n_conflict += sum(n > 1 for n in counts.values())
-            obs = sorted((img_id - 1, kp) for img_id, kp in members if counts[img_id] == 1)
+            obs = sorted(
+                (img_id - 1, kp) for img_id, kp in members if counts[img_id] == 1
+            )
 
             # Too short, or no world point at the first observation
             if len(obs) < 2:
@@ -529,7 +568,9 @@ def _assemble_tracks(
                 tracks.append(track_id)
                 xy.append(kps[i][k])
 
-    logger.info("tracks: %d star tracks, %d ambiguous frame drops", len(pts3d), n_conflict)
+    logger.info(
+        "tracks: %d star tracks, %d ambiguous frame drops", len(pts3d), n_conflict
+    )
 
     # Frame-major rows, the order BA's observation arrays expect
     frame = np.asarray(frames, np.int32)

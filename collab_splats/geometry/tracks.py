@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import shutil
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +31,7 @@ from collab_splats.geometry.projection import reprojection_error, sample_world_p
 from collab_splats.geometry.transforms import extract_intrinsics
 from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.retrieval import BaseRetrievalExtractor
-from collab_splats.utils.io import LZ4, read_image
+from collab_splats.utils.io import LZ4, open_valid, read_image
 from collab_splats.utils.torch_utils import get_device, pytorch_gc, to_numpy
 
 logger = logging.getLogger(__name__)
@@ -95,16 +94,12 @@ def extract_tracks(
         meta = json.dumps(meta, sort_keys=True)
         key = hashlib.sha256(meta.encode()).hexdigest()
 
-        # A stale or half-written store (key stamped last) is deleted and rebuilt
-        if cache_path.exists():
-            store = zarr.open(str(cache_path), mode="r")
+        # A stale, half-written or corrupt store reads as None; the mode="w" write below replaces it
+        store = open_valid(cache_path, {"cache_key": key})
 
-            if store.attrs.get("cache_key") == key:
-                logger.info("Track cache hit (skipping extraction): %s", cache_path)
-                return tuple(store[k][:] for k in arrays)
-
-            logger.warning("Track cache key mismatch, re-extracting: %s", cache_path)
-            shutil.rmtree(cache_path)
+        if store is not None:
+            logger.info("Track cache hit (skipping extraction): %s", cache_path)
+            return tuple(store[k][:] for k in arrays)
 
     # VGGSfM predicts tracks; matcher sources chain verified matches over the prior poses
     if source == "vggsfm":

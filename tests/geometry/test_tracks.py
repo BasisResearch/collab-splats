@@ -1049,16 +1049,29 @@ def test_unexpected_cache_error_propagates(tmp_path, monkeypatch):
     calls = _counted_vggsfm(monkeypatch)
     (tmp_path / "tracks.zarr").mkdir()
 
+    # RuntimeError is outside UNREADABLE_STORE, so open_valid must not swallow it
     def broken_open(*args, **kwargs):
-        raise TypeError("bug")
+        raise RuntimeError("bug")
 
     monkeypatch.setattr(tracks_mod.zarr, "open", broken_open)
 
-    with pytest.raises(TypeError, match="bug"):
+    with pytest.raises(RuntimeError, match="bug"):
         _cached(tmp_path)
 
     # zarr.open also backs the cache write, so only a zero extract count proves the read raised
     assert calls == []
+
+
+def test_truncated_cache_store_is_rebuilt(tmp_path, monkeypatch):
+    calls = _counted_vggsfm(monkeypatch)
+    _cached(tmp_path)
+
+    # A quota-cut write leaves zarr.json truncated mid-token
+    (tmp_path / "tracks.zarr" / "zarr.json").write_text('{"zarr_format": 3, "node_ty')
+
+    _cached(tmp_path)
+
+    assert len(calls) == 2
 
 
 def test_cache_without_frame_paths_keys_on_world_points(tmp_path, monkeypatch):

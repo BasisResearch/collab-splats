@@ -57,18 +57,18 @@ mesh:
   source: feedforward          # feedforward | splats
 
   # Depth filtering
-  depth_trunc_percentile: 95   # required, max 99
+  depth_trunc_percentile: 99   # required, max 99
   conf_percentile: 20          # null = off
   mask_sky: true
 
   # TSDF fusion
   voxel_depth_px: 4.0
   voxel_ref_percentile: 50
-  sdf_trunc_mult: 4.0
+  sdf_trunc_mult: 6.0
 
   # Cleanup
   use_convex_hull: true
-  smooth_iterations: 10
+  smooth_iterations: 30
   max_faces: 1500000
 
   # Texture

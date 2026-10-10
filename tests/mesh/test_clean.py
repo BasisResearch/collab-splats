@@ -619,7 +619,7 @@ def test_prepare_mesh_smoothing_flattens_noise_and_keeps_faces():
 
     # A tiny voxel keeps decimation from collapsing the noise away first
     rough = prepare_mesh(sphere, voxel_size=1e-5)
-    smooth = prepare_mesh(sphere, voxel_size=1e-5, smooth_iterations=10)
+    smooth = prepare_mesh(sphere, voxel_size=1e-5, smooth_iterations=30)
 
     radial_rough = np.linalg.norm(np.asarray(rough.vertices), axis=1)
     radial_smooth = np.linalg.norm(np.asarray(smooth.vertices), axis=1)

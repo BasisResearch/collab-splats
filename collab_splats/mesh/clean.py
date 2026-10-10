@@ -888,7 +888,7 @@ def prepare_mesh(
         voxel_size: TSDF voxel the mesh was fused at; sets the decimation bound.
         max_hole_perimeter_ratio: patch holes with a perimeter under this × scene_scale.
         decimate_max_error: decimation bound as a multiple of voxel_size.
-        smooth_iterations: Taubin smoothing passes; 0 skips smoothing.
+        smooth_iterations: volume-keeping relax passes; 0 skips smoothing.
         max_faces: most faces to keep after decimation; None = no limit.
 
     Returns:
@@ -908,10 +908,13 @@ def prepare_mesh(
     )
     manifold = make_manifold(lidded)
 
-    # Taubin smoothing moves vertices only; repair the few faces it folds
+    # Volume-keeping relax moves vertices only; repair the few faces it folds
     if smooth_iterations > 0:
-        smoothed = manifold.filter_smooth_taubin(number_of_iterations=smooth_iterations)
-        manifold = make_manifold(smoothed)
+        mmesh = to_meshlib(manifold)
+        relax = mm.MeshRelaxParams()
+        relax.iterations = smooth_iterations
+        mm.relaxKeepVolume(mmesh, relax)
+        manifold = make_manifold(from_meshlib(mmesh, manifold))
 
     logger.info(
         "prepare_mesh: %d -> %d faces (decimation error %.4f)",

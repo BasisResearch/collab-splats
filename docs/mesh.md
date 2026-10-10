@@ -48,7 +48,7 @@ the depth was predicted on — the model grid for feedforward, since depth upsam
 grid carries no finer detail. It then counts the 16³ surface blocks the voxel would allocate and
 coarsens by the square root of the overshoot until they fit 8 GB. On GH010229 the default lands
 at 0.0023 on the 294-frame run (hand-tuned value was 0.0025) and 0.0056 on the 1039-frame run,
-whose depth is 2.4× larger. `mesh.depth_trunc_percentile` (default `95`, required, at most 99) is the depth
+whose depth is 2.4× larger. `mesh.depth_trunc_percentile` (default `99`, required, at most 99) is the depth
 cutoff, in the same scene-relative terms; left uncut, a far depth tail crashed Open3D's extraction. The cut depth is zeroed before the voxel is sized, so
 the 8 GB block count never coarsens the voxel for depth that will not be fused.
 
@@ -57,7 +57,8 @@ principal point outside the depth grid raises, because pairing one grid's depth 
 grid's `K` collapses the mesh instead of failing (the 2026-08-11 regression). An out-of-scale
 `depth_trunc` is NOT in that set — Open3D treats it as a legitimately empty volume.
 
-`sdf_trunc` defaults to `4 × voxel_size`; the pipeline passes `mesh.sdf_trunc_mult × voxel_size`.
+`sdf_trunc` defaults to `4 × voxel_size`; the pipeline passes `mesh.sdf_trunc_mult × voxel_size`
+(`6.0` in `configs/base.yaml`).
 
 ---
 
@@ -226,8 +227,9 @@ this fill closes; the outermost edge is never lidded.
    faces
 4. `fill_holes` again with `subdivide_fill=False`, then `make_manifold` — flat lids over the
    pinholes decimation and repair open, and a repair of what the lids fold
-5. `mesh.smooth_iterations` > 0 only: Taubin smoothing, then `make_manifold` again. Last, so
-   decimation never sees it; vertices move, faces stay (GH010229, 10 passes: 4 of 1.1M faces folded)
+5. `mesh.smooth_iterations` > 0 only: meshlib `relaxKeepVolume`, then `make_manifold` again. Last,
+   so decimation never sees it; vertices move, faces stay (GH010229 300 frames at `sdf_trunc_mult`
+   6: 30 passes take 10 s, face-to-neighbor normal angle 11.3° -> 2.2°; Taubin 10 reached 3.8°)
 
 `prepare_mesh(mesh, voxel_size=...)` returns a new mesh and leaves its input unmodified.
 Filling only after decimation instead leaves fold-over faces, and the order was measured against the alternatives on GH010229 (16.73 dB reprojection PSNR,

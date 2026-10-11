@@ -374,7 +374,7 @@ parameter and raises.
 | `preproc.frame_selection` | str | `fps` | Frame sampling: `fps`, `uniform`, or `optical_flow` |
 | `preproc.fps` | float | `2.0` | `fps` method only: samples per second |
 | `preproc.min_frames` | int\|null | `null` | `fps` method only: floor on the resulting count |
-| `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see [docs/pointcloud.md](../docs/pointcloud.md#backends)) |
+| `preproc.max_frames` | int\|null | `300` | Frame budget: the COUNT for `uniform`, a ceiling for `fps`/`optical_flow` (vggt_omega OOMs above ~300 — not a LoGeR limit, see [docs/source/api/pointcloud.rst](../docs/source/api/pointcloud.rst#backends)) |
 | `preproc.n_workers` | int | `16` | Decode parallelism: the quality report (step 1) and the `fps`/`uniform` selection decode (step 2) each split into this many frame ranges at once; never changes which frames are selected. `1` = serial. Not auto-derived (`os.cpu_count()` reports host cores in a container). Set to `1` during a GPU eval run. |
 | `preproc.undistort` | bool | `false` | After `images/` is written, self-calibrate one shared OPENCV camera from those frames (pycolmap, ≤60 of them) and rewrite `images/` undistorted. COLMAP framing: focal kept, canvas resized to the undistorted corners, so frame dims change. `images/` reuse is by existence — toggling on an existing scene needs `--stages preproc --overwrite`. Localization query images are not undistorted. |
 | `preproc.on_empty_slot` | str | `rescue` | `fps` method only: a slot with no eligible frame keeps its sharpest frame (`rescue`) or is skipped (`drop`). A preproc-level key, not under `quality`. |
@@ -389,12 +389,12 @@ parameter and raises.
 | `pointcloud.instantsfm.num_retrieved` | int | `20` | As `colmap.num_retrieved` |
 | `pointcloud.instantsfm.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
 | `pointcloud.instantsfm.num_threads` | int | `8` | CPU SIFT thread cap; the GPU path ignores it |
-| `pointcloud.colmap.pairing` | str | `sequential+retrieval` | Image pairs matched: `sequential`, `retrieval`, `sequential+retrieval` or `exhaustive` (see [docs/pointcloud.md](../docs/pointcloud.md#backends), colmap backend) |
+| `pointcloud.colmap.pairing` | str | `sequential+retrieval` | Image pairs matched: `sequential`, `retrieval`, `sequential+retrieval` or `exhaustive` (see [docs/source/api/pointcloud.rst](../docs/source/api/pointcloud.rst#backends), colmap backend) |
 | `pointcloud.colmap.overlap` | int | `10` | `sequential*`: pair each frame with the next N |
 | `pointcloud.colmap.num_retrieved` | int | `20` | `*retrieval`: vocab-tree neighbors per image (9.5 MB tree, fetched once) |
 | `pointcloud.colmap.num_threads` | int | `8` | CPU SIFT + mapper thread cap; colmap's default spawns one per host core and OOMs |
 | `pointcloud.colmap.min_registered_frac` | float | `0.5` | In (0, 1]. Below this share of frames registered: `RuntimeError`; above it: subset to the registered frames, with a warning |
-| `pointcloud.hloc.pairing` | str | `sequential+retrieval` | Same four values as `colmap.pairing` (see [docs/pointcloud.md](../docs/pointcloud.md#backends), hloc backend) |
+| `pointcloud.hloc.pairing` | str | `sequential+retrieval` | Same four values as `colmap.pairing` (see [docs/source/api/pointcloud.rst](../docs/source/api/pointcloud.rst#backends), hloc backend) |
 | `pointcloud.hloc.overlap` | int | `10` | `sequential*`: pair each frame with the next N |
 | `pointcloud.hloc.num_retrieved` | int | `20` | `*retrieval`: top-k global-descriptor neighbors per image (clamped to N-1) |
 | `pointcloud.hloc.retrieval_conf` | str | `netvlad` | `hloc.extract_features.confs` key for global descriptors |
@@ -455,7 +455,7 @@ parameter and raises.
 | `mesh.max_faces` | int\|null | `1500000` | Face budget for the prepared mesh: past the error-bound decimation, a second QEM pass down to this count so texturing cost stays bounded (`null` = no cap) |
 | `mesh.smooth_iterations` | int | `30` | Volume-keeping relax passes (meshlib `relaxKeepVolume`) on the prepared mesh, after decimation and repair, before texturing (`0` = off). Moves vertices only, never removes faces; a final `make_manifold` drops the few faces it folds. `30` measured on GH010229 (300 frames, `sdf_trunc_mult` 6): face-to-neighbor normal angle 11.3° -> 2.2° in 10 s; Taubin 10 reached 3.8°; at trunc 4, `50` passes gave 2.3° vs 2.5° for `30` |
 | `mesh.texture` | bool | `true` | Also decimate, UV-unwrap and project the fused views into `<backend>/texture/` (`mesh.obj` + `mesh.mtl` + `albedo.png`). Needs a GPU |
-| `mesh.use_convex_hull` | bool | `true` | Trim the ragged outer edge and patch the ground out to a rounded convex hull before hole filling (`make_convex_hull`). Ground-dominated outdoor scenes only; a mesh without a dominant ground raises, so set it `false` indoors and for objects. See `docs/mesh.md` |
+| `mesh.use_convex_hull` | bool | `true` | Trim the ragged outer edge and patch the ground out to a rounded convex hull before hole filling (`make_convex_hull`). Ground-dominated outdoor scenes only; a mesh without a dominant ground raises, so set it `false` indoors and for objects. See `docs/source/api/mesh.rst` |
 | `splats.enabled` | bool | `false` | Train Gaussian splats on the `pointcloud.zarr` poses/points + `images/` (opt-in) |
 | `splats.primitive` | str | `3dgs` | `3dgs` (fast kernel, antialiased) or `2dgs` (surface-aligned) |
 | `splats.representation` | str | `vanilla` | `vanilla` (per-Gaussian) or `scaffold` (anchors + MLP; set `losses.opacity_reg` weight 0) |
@@ -503,7 +503,7 @@ the top `top_k` reference frames (`CameraLocalizer` default 8), or the caller pa
 cached features, so a model without vismatch `supports_batches` raises `ValueError` at
 construction time.
 
-Backend config blocks: [docs/pointcloud.md](../docs/pointcloud.md#backends).
+Backend config blocks: [docs/source/api/pointcloud.rst](../docs/source/api/pointcloud.rst#backends).
 
 ---
 

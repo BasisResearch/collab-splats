@@ -14,9 +14,12 @@ Flags, output layout, and the processed-scene contract: [../configs/README.md](.
 
 ## Module docs
 
-- [pointcloud.md](pointcloud.md) — depth alignment, bundle adjustment, backend config blocks
-- [mesh.md](mesh.md) — TSDF fusion, cleaning, texturing, vertex features
+Module docs live in the API reference, prose above each autodoc block (`docs/source/api/<package>.rst`):
 
-Splats docs live in the API reference (`docs/source/api/splats.rst`); loop-closure parity vs
+- [pointcloud.rst](source/api/pointcloud.rst) — depth alignment, bundle adjustment, backend config blocks
+- [mesh.rst](source/api/mesh.rst) — TSDF fusion, cleaning, texturing, vertex features
+- [splats.rst](source/api/splats.rst) — gsplat training
+
+Loop-closure parity vs
 VGGT-SLAM is decision 027. Tutorials and the API reference build with `make docs` from
 `docs/source/`.

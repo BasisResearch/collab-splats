@@ -437,7 +437,7 @@ def make_convex_hull(
         rim_max_edge: drop patch triangles touching the rim with a 3D edge over this, cells.
         bridge_radius: see bridge_mesh_edges (radius).
         min_piece_faces: pieces with fewer faces are dropped.
-        min_up_cos: smallest |plane normal . expected up| that counts as ground.
+        min_up_cos: smallest ``|plane normal . expected up|`` that counts as ground.
 
     Returns:
         New mesh: trimmed, patched out to the hull, manifold.

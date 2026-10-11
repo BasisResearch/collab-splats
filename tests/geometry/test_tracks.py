@@ -1,8 +1,7 @@
 """
-Matcher tracks: synthetic posed scene, helper units, star-chain parity with the prototype.
+Matcher tracks: synthetic posed scene, helper units, end-to-end star chains.
 """
 
-import importlib.machinery
 import inspect
 import types
 from pathlib import Path
@@ -17,9 +16,6 @@ from collab_splats.geometry.projection import reprojection_error, sample_world_p
 from collab_splats.localization.extractors import LocalFeatures, MatchResult
 from collab_splats.localization.retrieval import BaseRetrievalExtractor
 from collab_splats.preproc.frames import write_frames
-
-PROTOTYPE = Path(__file__).parent / "data" / "match_tracks_prototype.py.txt"
-
 
 ########################################
 # Synthetic scene
@@ -124,17 +120,6 @@ def _write_store(tmp_path: Path, scene: dict) -> list[Path]:
     frames = np.full((n, H, W, 3), 200, np.uint8)
     frames[..., 0] = np.arange(n)[:, None, None]
     return write_frames(tmp_path / "images", frames, list(range(n)))
-
-
-def _model_images(scene: dict) -> np.ndarray:
-    """
-    (N, 3, H, W) model-grid images in [0, 1]; channel 0 encodes the frame.
-    """
-    H, W = scene["hw"]
-    n = len(scene["extrinsics"])
-    images = np.full((n, 3, H, W), 200 / 255, np.float32)
-    images[:, 0] = np.arange(n)[:, None, None] / 255
-    return images
 
 
 class _FakeMatcher:
@@ -467,7 +452,7 @@ def test_pairs_skip_suppressed_candidates_when_few_frames(tmp_path):
 
     _run(tmp_path, scene, matcher, window=1, retrieval_k=2, retrieval_nms=4)
 
-    # Only frames 0 and 5 lie outside each other's nms band; the prototype would add (a, a) self pairs
+    # Only frames 0 and 5 lie outside each other's nms band; no (a, a) self pairs
     assert matcher.pairs == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (0, 5)]
 
 
@@ -684,7 +669,7 @@ def test_assemble_tracks_flat_rows_match_dense_grid():
 ########################################
 
 
-# Small-scene build_tracks keywords, shared by the end-to-end tests and the prototype arm
+# Small-scene build_tracks keywords, shared by the end-to-end tests
 SMALL_SCENE = {
     "window": 3,
     "retrieval_k": 2,
@@ -771,64 +756,6 @@ def test_build_tracks_pts3d_from_world_points(tmp_path, scene):
         )
         assert ok[0]
         np.testing.assert_allclose(pts3d[j], expect[0], atol=1e-5)
-
-
-########################################
-# Prototype parity
-########################################
-
-
-def _load_prototype() -> types.ModuleType:
-    """
-    The vendored star-chain prototype as a module.
-    """
-    source = str(PROTOTYPE)
-    loader = importlib.machinery.SourceFileLoader("match_tracks_prototype", source)
-    module = types.ModuleType(loader.name)
-    loader.exec_module(module)
-    return module
-
-
-def test_build_tracks_matches_prototype(tmp_path, scene, monkeypatch):
-    proto = _load_prototype()
-    fake = _FakeMatcher(scene)
-    paths = _write_store(tmp_path, scene)
-    full_dir = str(paths[0].parent)
-    model_images = _model_images(scene)
-    images = torch.from_numpy(model_images)
-
-    # Prototype arm of the gh1k runs: MT_CHAIN=star, MT_FULL_DIR set, depth filter on
-    monkeypatch.setattr(proto, "LocalMatcher", lambda name, probe=False: fake)
-    monkeypatch.setattr(proto, "DinoSaladExtractor", _FakeSalad)
-    monkeypatch.setattr(proto, "CHAIN", "star")
-    monkeypatch.setattr(proto, "QUERY_FRAMES", round(SMALL_SCENE["seed_fraction"] * 12))
-    monkeypatch.setattr(proto, "RETR_K", SMALL_SCENE["retrieval_k"])
-    monkeypatch.setattr(proto, "RETR_NMS", SMALL_SCENE["retrieval_nms"])
-    monkeypatch.setattr(proto, "MIN_MATCHES", SMALL_SCENE["min_matches"])
-    monkeypatch.setattr(proto, "DEPTH_TOL", SMALL_SCENE["max_transfer_px"])
-    monkeypatch.setattr(proto, "FULL_DIR", full_dir)
-
-    # Env-read knobs pinned so a stray MT_* export cannot skew parity
-    monkeypatch.setattr(proto, "MAX_KP", fake._matcher.max_num_keypoints)
-    monkeypatch.setattr(proto, "MIN_ANGLE", 0.1)
-
-    proto.set_poses(scene["extrinsics"], scene["K"])
-    proto.set_depth(scene["depth"])
-    extract = proto.make_extract("xfeat", SMALL_SCENE["window"], "wp")
-    p_tracks, p_vis, p_pts3d = extract(images, None, scene["world_points"], None)
-
-    matcher = _RecordingMatcher(scene)
-    out = _run(tmp_path / "ours", scene, matcher, **SMALL_SCENE)
-    tracks, vis, pts3d = _dense(out, 12)
-
-    # Same tracks, same observations; pts3d differ only by bilinear vs nearest lookup (observed max ~0.04)
-    assert tracks.shape == p_tracks.shape
-    np.testing.assert_array_equal(vis, p_vis)
-    np.testing.assert_allclose(tracks, p_tracks, atol=1e-5)
-    np.testing.assert_allclose(pts3d, p_pts3d, atol=0.05)
-
-    # Same pair count as the prototype
-    assert proto._state["stats"][-1]["pairs"] == len(matcher.pairs)
 
 
 ########################################

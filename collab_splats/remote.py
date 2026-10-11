@@ -7,14 +7,13 @@ Scene-level access to the curated and processed GCS buckets.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
 from pathlib import Path
 from typing import Any, Callable
 
-from collab_data.data_dashboard.rclone_client import STATS_ARGS, RcloneClient
+from collab_data.data_dashboard.rclone_client import RcloneClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +37,9 @@ PUSH_EXCLUDES = (
     "/*/colmap/colmap.db",
     "/*/colmap/hloc/**",
 )
+
+# rclone flags that log a one-line progress stat every 2s at NOTICE, so on_line sees it
+STATS_ARGS = ("--stats", "2s", "--stats-one-line", "--stats-log-level", "NOTICE")
 
 ########################################
 # Source
@@ -104,16 +106,6 @@ class SceneSource:
         remote = f"{self._require_client().remote_name}:{bucket}"
         return f"{remote}/{path.strip('/')}" if path else remote
 
-    def _lsjson(self, bucket: str, path: str = "") -> list[dict]:
-        """
-        Entries under a bucket path; [] when absent, RuntimeError when rclone fails.
-
-        - GCS prefixes are not directories, so an absent scene lists with exit 0 and []
-        - a non-zero exit, exit 3 included, means a missing bucket or a fault, never absence
-        """
-        out = self._require_client().run("lsjson", self._path(bucket, path)).strip()
-        return json.loads(out) if out else []
-
     def _cached(self, key: tuple, producer: Callable[[], Any]) -> Any:
         """
         Memoized listing for key, refreshed once the TTL has elapsed.
@@ -172,7 +164,7 @@ class SceneSource:
 
         # Catch-all on purpose: the probe must answer, never raise the fault it detects
         try:
-            self._lsjson(self.curated, "")
+            self._require_client().list_directory(self.curated, "", strict=True)
         except Exception as exc:
             logger.error(
                 "rclone liveness probe failed against %s: %s", self.curated, exc
@@ -197,7 +189,9 @@ class SceneSource:
         """
 
         def _produce() -> list[str]:
-            entries = self._lsjson(self.curated, "")
+            entries = self._require_client().list_directory(
+                self.curated, "", strict=True
+            )
 
             if not entries:
                 logger.info(
@@ -241,7 +235,9 @@ class SceneSource:
 
         def _produce() -> list[str]:
             # Video files in the scene dir, by name
-            entries = self._lsjson(self.curated, scene)
+            entries = self._require_client().list_directory(
+                self.curated, scene, strict=True
+            )
             videos = sorted(
                 e["Name"]
                 for e in entries
@@ -289,8 +285,8 @@ class SceneSource:
         # Copy the one remote file to its local path
         local = dest_dir / name
         remote = self._path(self.curated, f"{scene}/{name}")
-        self._require_client().run_streaming(
-            "copyto", remote, str(local), *STATS_ARGS, on_line=on_line
+        self._require_client().copy(
+            remote, str(local), extra=STATS_ARGS, on_line=on_line
         )
         return local
 
@@ -308,7 +304,9 @@ class SceneSource:
 
         # Every processed dir comes from push_outputs, so a non-matching name is a stray upload
         def _produce() -> list[str]:
-            entries = self._lsjson(self.processed, "")
+            entries = self._require_client().list_directory(
+                self.processed, "", strict=True
+            )
 
             if not entries:
                 logger.info("%s listed empty — nothing processed yet", self.processed)
@@ -334,7 +332,9 @@ class SceneSource:
         """
 
         def _produce() -> bool:
-            entries = self._lsjson(self.processed, scene)
+            entries = self._require_client().list_directory(
+                self.processed, scene, strict=True
+            )
 
             if not entries:
                 logger.info(
@@ -374,8 +374,8 @@ class SceneSource:
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         remote = self._path(self.processed, scene)
-        self._require_client().copy_dir(
-            remote, str(dest_dir), exclude=excludes, on_line=on_line
+        self._require_client().copy(
+            remote, str(dest_dir), exclude=excludes, extra=STATS_ARGS, on_line=on_line
         )
 
         return dest_dir
@@ -411,9 +411,9 @@ class SceneSource:
             "--retries",
             str(retries),
         ]
-        flags += ["--timeout", timeout, "--contimeout", contimeout]
+        flags += ["--timeout", timeout, "--contimeout", contimeout, *STATS_ARGS]
         remote = self._path(self.processed, scene)
-        self._require_client().copy_dir(
+        self._require_client().copy(
             str(local_dir), remote, exclude=PUSH_EXCLUDES, on_line=on_line, extra=flags
         )
 
@@ -442,7 +442,7 @@ class SceneSource:
         # Any fault answers False: cannot-verify must never read as verified
         try:
             remote = self._path(self.processed, scene)
-            matched = self._require_client().check(
+            matched = self._require_client().compare_checksums(
                 str(local_dir), remote, exclude=PUSH_EXCLUDES, extra=flags
             )
         except (RuntimeError, OSError) as exc:

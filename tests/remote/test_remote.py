@@ -1,7 +1,6 @@
 """SceneSource: flat scene ids, injectable buckets, verified push, caching."""
 
 import fnmatch
-import json
 import logging
 import shutil
 import subprocess
@@ -13,7 +12,7 @@ import pytest
 from collab_data.data_dashboard.rclone_client import RcloneClient
 
 import collab_splats.remote as remote
-from collab_splats.remote import PUSH_EXCLUDES, SCENE_ID_RE, SceneSource
+from collab_splats.remote import PUSH_EXCLUDES, SCENE_ID_RE, STATS_ARGS, SceneSource
 
 ########
 # Video-name case matrix
@@ -54,20 +53,23 @@ class FakeClient:
             raise self.fail
         raise RuntimeError(self.fail)
 
-    def run(self, *args):
-        self.calls.append(("run", args))
+    def list_directory(self, bucket, path="", strict=False):
+        assert strict, "remote listings must raise on a fault"
+        remote_path = f"{self.remote_name}:{bucket}" + (
+            f"/{path.strip('/')}" if path else ""
+        )
+        self.calls.append(("list_directory", remote_path))
         if self.fail:
             self._raise()
-        return json.dumps(self.listings.get(args[-1], []))
+        return self.listings.get(remote_path, [])
 
-    def run_streaming(self, *args, on_line=None):
-        self.calls.append(("run_streaming", args))
+    def copy(self, src, dst, *, include=(), exclude=(), extra=(), on_line=None):
+        self.calls.append(
+            ("copy", src, dst, tuple(include), tuple(exclude), tuple(extra))
+        )
 
-    def copy_dir(self, src, dst, exclude=(), on_line=None, extra=()):
-        self.calls.append(("copy_dir", src, dst, tuple(exclude), tuple(extra)))
-
-    def check(self, src, dst, exclude=(), extra=()):
-        self.calls.append(("check", src, dst, tuple(exclude)))
+    def compare_checksums(self, src, dst, exclude=(), extra=()):
+        self.calls.append(("compare_checksums", src, dst, tuple(exclude)))
         if self.fail:
             self._raise()
         return True
@@ -83,7 +85,7 @@ def _files(*names):
 
 def _runs(client):
     """The listing calls a client saw, transfers excluded."""
-    return [call for call in client.calls if call[0] == "run"]
+    return [call for call in client.calls if call[0] == "list_directory"]
 
 
 ########
@@ -107,7 +109,7 @@ _TRANSPORT_EXIT_CODES = (1, 2, 3, 4, 5, 7)
 
 
 def _exit_error(code, detail="403 forbidden"):
-    """The RuntimeError text RcloneClient.run raises for a non-zero exit."""
+    """The RuntimeError text RcloneClient.list_directory(strict=True) raises for a non-zero exit."""
     return f"rclone lsjson failed (exit {code}): {detail}"
 
 
@@ -450,16 +452,35 @@ def test_fetch_video_copies_to_dest(tmp_path):
     local = SceneSource(client).fetch_video("s", dest_dir=tmp_path)
     assert local == tmp_path / "C0043.MP4"
 
-    kind, args = client.calls[-1]
-    assert kind == "run_streaming"
-    assert args[:3] == ("copyto", "fake:environments-curated/s/C0043.MP4", str(local))
-    assert "--stats-one-line" in args
+    # copyto semantics: dst is the file itself, not its parent
+    kind, src, dst, *_ = client.calls[-1]
+    assert (kind, src, dst) == (
+        "copy",
+        "fake:environments-curated/s/C0043.MP4",
+        str(local),
+    )
+
+
+@pytest.mark.parametrize(
+    "transfer",
+    (
+        lambda src, d: src.fetch_video("s", d),
+        lambda src, d: src.pull_processed("s", d),
+        lambda src, d: src.push_outputs(d, "s"),
+    ),
+)
+def test_every_transfer_asks_rclone_for_progress_stats(transfer, tmp_path):
+    """The dashboard progress bar reads percent off the stats lines these flags make rclone log."""
+    client = FakeClient(listings={"fake:environments-curated/s": _files("C0043.MP4")})
+    transfer(SceneSource(client), tmp_path)
+    extra = client.calls[-1][-1]
+    assert extra[-len(STATS_ARGS) :] == STATS_ARGS
 
 
 def test_push_outputs_targets_scene_dir_with_excludes(tmp_path):
     client = FakeClient()
     SceneSource(client).push_outputs(tmp_path, "s")
-    _, src, dst, exclude, extra = client.calls[0]
+    _, src, dst, _, exclude, extra = client.calls[0]
     assert (src, dst) == (str(tmp_path), "fake:environments-processed/s")
     assert exclude == PUSH_EXCLUDES
     assert "--gcs-bucket-policy-only" in extra
@@ -538,7 +559,7 @@ def test_push_keeps_non_video_outputs(name):
 def test_pull_processed_copies_and_passes_exclude_flags(tmp_path):
     client = FakeClient()
     SceneSource(client).pull_processed("s", tmp_path, excludes=("/images/**",))
-    _, src, dst, exclude, _ = client.calls[0]
+    _, src, dst, _, exclude, _ = client.calls[0]
     assert (src, dst) == ("fake:environments-processed/s", str(tmp_path))
     assert exclude == ("/images/**",)
 
@@ -560,13 +581,13 @@ def test_verify_push_true_on_clean_check(tmp_path):
 
 def test_verify_push_false_on_mismatch(tmp_path):
     client = FakeClient()
-    client.check = lambda *a, **k: False
+    client.compare_checksums = lambda *a, **k: False
     assert SceneSource(client).verify_push(tmp_path, "s") is False
 
 
 def test_verify_push_logs_a_content_mismatch(tmp_path, caplog):
     client = FakeClient()
-    client.check = lambda *a, **k: False
+    client.compare_checksums = lambda *a, **k: False
     with caplog.at_level(logging.ERROR, logger="collab_splats.remote"):
         assert SceneSource(client).verify_push(tmp_path, "s") is False
     assert "content mismatch" in " ".join(r.getMessage() for r in caplog.records)
@@ -607,7 +628,7 @@ def test_verify_push_keeps_the_content_comparison(tmp_path):
     calls = []
 
     class _Client(FakeClient):
-        def check(self, src, dst, exclude=(), extra=()):
+        def compare_checksums(self, src, dst, exclude=(), extra=()):
             calls.append(list(extra))
             return True
 

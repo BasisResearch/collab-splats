@@ -9,11 +9,13 @@ from __future__ import annotations
 import contextlib
 import html
 import logging
+import re
 import threading
 import time
 from typing import Callable, Iterator
 
-from collab_data.data_dashboard.rclone_client import parse_percent
+# Transfer percent in an rclone --stats-one-line line, e.g. "1.2 GiB / 5.6 GiB, 21%, 45 MiB/s" -> 21
+_PERCENT_RE = re.compile(r",\s*(\d{1,3})%")
 
 ########
 # Logging bridge
@@ -156,10 +158,10 @@ class OperationLog:
         """
 
         def _on_line(line: str) -> None:
-            pct = parse_percent(line)
+            match = _PERCENT_RE.search(line)
 
-            if pct is not None:
-                self.update_progress(pct, label, log=False)
+            if match is not None:
+                self.update_progress(int(match.group(1)), label, log=False)
 
         return _on_line
 

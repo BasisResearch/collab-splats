@@ -4,7 +4,6 @@ Capture quality report: per-frame photometry and per-pair motion.
 - frames: blur, laplacian, exposure_{mean,median,std}, clipped_{low,high}_frac
 - pairs: n_matches, translation_px, parallax
 - report-only: thresholds live in preproc.sampling.filter_frame_quality
-- column evidence: docs/superpowers/specs/2026-08-20-video-quality-report-measured.md
 """
 
 import json

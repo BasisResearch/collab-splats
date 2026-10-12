@@ -684,7 +684,7 @@ def test_numeric_constant_check_flags_a_tunable_and_spares_a_fact():
 def test_banned_word_check_flags_lore_and_ignores_paths():
     src = (
         '"""\nSummary.\n\n- measured 3x faster on GH010229\n"""\n'
-        "# see docs/superpowers/specs/2026-08-20-video-quality-report-measured.md\n"
+        "# see docs/notes/video-quality-measured.md\n"
         "# HYPOTHESIS: the ffmpeg pipe\n"
     )
     hits = _banned_words(src)

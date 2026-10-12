@@ -1,10 +1,6 @@
-graphify-out/
 .DS_Store
 .env
 .worktrees/
-.superpowers/
-.claude/*
-!.claude/skills/
 third_party/*
 !third_party/README.md
 scratch/
@@ -14,9 +10,6 @@ tools/
 stage/
 vendor/
 evals/results/
-
-# Internal working docs (kept local, not tracked)
-docs/superpowers/
 
 # Eval benchmark data (downloaded on-demand via evals/data/download_datasets.py)
 data/

@@ -81,7 +81,7 @@ reconstruction = [
     "trimesh",
     "pydantic==2.10.6",
     # pycolmap-cuda12, pinned at 4.1.1
-    # - GPU SIFT wheel: replaces the colmap CLI (docs/superpowers/specs/2026-09-26-pycolmap-cuda-docker-design.md)
+    # - GPU SIFT wheel: replaces the colmap CLI
     # - not 4.2: shared-focal two-view estimator, ~14x verification CPU for single-camera scenes
     "pycolmap-cuda12==4.1.1",
     # BasisResearch fork, `basis` branch: batched extract + match() + match_batch() (spec 2026-10-03-vismatch-feature-matching)
@@ -294,8 +294,7 @@ override-dependencies = [
     # vismatch hard-pins uniception==0.1.1 (its ufm model) and lightning==2.3.3 (its edm
     # model). We need uniception 0.1.7 (MapAnything imports 15 symbols absent in 0.1.1)
     # and lightning>=2.6. Overrides replace vismatch's constraints during resolution;
-    # ufm/edm are blocklisted in LocalMatcher. Measured 2026-08-17 (see spec
-    # docs/superpowers/specs/2026-08-17-vismatch-local-matcher-design.md).
+    # ufm/edm are blocklisted in LocalMatcher. Measured 2026-08-17.
     "uniception==0.1.7",
     "lightning>=2.6",
     # vismatch requires setuptools>=83 (upstream 8c90e65, packaging only, no runtime import);

@@ -186,7 +186,7 @@ in ``PUSH_EXCLUDES`` and stay local.
 The ``colmap`` backend
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Classical incremental SfM (decision 018, ``docs/superpowers/decisions/018-sfm-backends.md``):
+Classical incremental SfM:
 
 - features + matches: the pycolmap SIFT database (see SIFT database and pairing)
 - mapping: ``pycolmap.incremental_mapping`` in a scratch ``colmap/mapper/`` dir; the largest model

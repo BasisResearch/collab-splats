@@ -3,22 +3,19 @@
 All pipelines start from default template `base.yaml` — this file holds the defaults for each stage. If a separate file is
 specified (e.g., `MYFILE.yaml`), the file only overrides what differs from `base.yaml`. Running the pipeline and its outputs are covered in the [main README](../README.md#quickstart).
 
-- [Overriding default arguments](#overriding-default-arguments)
+- [Overriding defaults](#overriding-defaults)
 - [Stages](#stages)
 - Options by stage: [`preproc`](#preproc) · [`pointcloud`](#pointcloud) ([SfM](#sfm-backends) · [`bundle_adjustment`](#bundle_adjustment) · [`loop_closure`](#loop_closure)) · [`mesh`](#mesh) · [`semantics`](#semantics) · [`splats`](#splats) · [`localization`](#localization) · [`reconstruction_quality_report`](#reconstruction_quality_report)
-- [Remote scenes](#remote-scenes)
 
 ---
 
-## Overriding default arguments
+## Overriding defaults
 
-We override options in three ways, applied in this order (later wins):
+Three layers, applied in order (later wins):
 
 1. `base.yaml`
 2. `--config MYFILE.yaml`: merged key by key over `base.yaml`
 3. `--set key=value`: one dotted key, repeatable
-
-An override file holds only what differs:
 
 ```yaml
 # configs/my_run.yaml: indoor scene, denser frames, no semantics
@@ -30,40 +27,8 @@ semantics:
   enabled: false
 ```
 
-```bash
-reconstruct local --config configs/my_run.yaml --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
-
-# One key from the command line
-reconstruct local --set splats.enabled=true --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
-```
-
-### Re-running after a config change
-
-We re-run only the stages a change affects with `--stages` and `--overwrite`:
-
-```bash
-# New mesh options on an existing scene
-reconstruct local --config configs/remesh.yaml --stages mesh --overwrite \
-  --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
-```
-
-- a named stage whose output exists is a `ValueError` without `--overwrite` (`preproc` / `pointcloud` just skip)
-- stages turned on by `enabled` flags skip when their output exists, so an interrupted run resumes
-- `localize` re-runs on its own after `refine`; re-run anything else that depends on the change (see [Stages](#stages))
-
-### Reproducing a run
-
-Every backend folder records its full merged config in `run_config.yaml`, rewritten on every run (so it holds the last command's config). We pass it back as `--config`:
-
-```bash
-reconstruct local --config /PATH/TO/OUTPUT/<name>/vggt_omega/run_config.yaml \
-  --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
-
-# Same run with another backend (writes its own <name>/vggtx/ folder)
-reconstruct local --config /PATH/TO/OUTPUT/<name>/vggt_omega/run_config.yaml \
-  --set pointcloud.backend=vggtx \
-  --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
-```
+- every backend folder saves its merged config as `<backend>/run_config.yaml`; pass it to `--config` to reproduce a run
+- after changing a config, re-run only the affected stages with `--stages <stage> --overwrite`
 
 ---
 
@@ -81,44 +46,26 @@ reconstruct local --config /PATH/TO/OUTPUT/<name>/vggt_omega/run_config.yaml \
 | `reconstruction_quality_report` | always | `pointcloud` |
 
 - `on` / `off` stages switch with their `enabled` key (`refine`: `pointcloud.bundle_adjustment.enabled`; `localize`: `localization.enabled`)
-- naming a stage in `--stages` runs it even when its flag is off
-- stages run in table order
-- `semantics` also lifts onto the mesh when `mesh.ply` exists, and re-lifts from its cached 2D codes when the mesh changes
+- stages run in table order; `--stages` runs a stage even when its flag is off
+- `enabled` stages skip when their output exists, so an interrupted run resumes; a stage named in `--stages` needs `--overwrite`
+- `semantics` re-lifts onto a new mesh from its cached 2D features
 
 ---
 
 ## `preproc`
 
-Preproc measures the video once, then selects keyframes from that measurement.
+Preproc measures every frame once (`video_quality_report.json`, reused; delete it to re-measure), then picks keyframes that pass `preproc.quality`.
 
-- **measure**: `video_quality_report.json` (per-frame blur, exposure, clipping; per-pair motion); reused if present, delete it to re-measure
-- **select**: a frame is eligible if it passes `preproc.quality`; changing the sampler never re-measures
-
-Each sampler has one density knob; `max_frames` is the count for `uniform` and a ceiling for the others:
-
-| `frame_selection` | Knob | Holds constant |
-|---|---|---|
-| `fps` | `fps` | time between frames, so the baseline is fixed; count floats |
-| `uniform` | `max_frames` | frame count; spacing floats |
-| `optical_flow` | `max_frames` (keeps the first N) | inter-frame motion; count and spacing float |
-
-We use `fps` for reconstruction: registration depends on the baseline between frames, which a count-based knob lets vary with video length.
-
-- `[min_frames, max_frames]` bounds the `fps` count; outside it, frames are re-spread over the eligible frames and the effective fps is logged
-- `max_frames: 300` binds past ~2.5 min at `fps: 2.0`; it is VGGT-Omega's GPU limit
-- keys for other samplers are ignored (e.g. `fps` under `uniform`)
+- `fps` (default): fixed time between frames, so the baseline between frames stays the same for any video length
+- `uniform`: exactly `max_frames`, evenly spaced
+- `optical_flow`: spaced by motion, up to `max_frames`
+- `max_frames: 300` is VGGT-Omega's GPU limit; it caps `fps` past ~2.5 min at `fps: 2.0`
 
 ```yaml
 # Fixed 150 frames, evenly spaced
 preproc:
   frame_selection: uniform
   max_frames: 150
-```
-
-```yaml
-# Undistort a wide-angle lens (existing scene: --stages preproc --overwrite)
-preproc:
-  undistort: true
 ```
 
 | Key | Type | Default | Description |
@@ -188,10 +135,7 @@ pointcloud:
 
 ### `bundle_adjustment`
 
-The `refine` stage refines the feedforward poses against feature tracks, rewrites them in place (COLMAP, `sparse_pc.ply`, `pointcloud.zarr`), then re-cleans the cloud, so the point count can change.
-
-- after `--stages refine`, re-run `semantics` with `--overwrite` (its rows index the old points), and `mesh` / `localize` / the report if they matter
-- `<backend>/colmap/refine.json` holds the last BA config and loss history
+The `refine` stage refines feedforward poses against feature tracks and rewrites the pointcloud in place, so the point count can change. After `--stages refine`, re-run `semantics` with `--overwrite`.
 
 ```yaml
 # Reprojection + depth only, no photometric term
@@ -258,12 +202,6 @@ pointcloud:
 We fuse depth into a TSDF volume, clean and smooth the mesh, then texture it. The voxel size follows the scene's depth, so the defaults hold across scales; the reasoning behind each knob is in [mesh.rst](../docs/source/api/mesh.rst).
 
 ```yaml
-# Finer surface
-mesh:
-  voxel_depth_px: 2.0
-```
-
-```yaml
 # Indoor scene or object: no ground hull
 mesh:
   use_convex_hull: false
@@ -311,6 +249,9 @@ semantics:
 
 `3dgs` keeps thin structure and trains faster; `2dgs` (surface-aligned) gives better surfaces.
 
+- no `losses` block: each primitive gets its preset: `depth`, `normal_consistency` (from step 7000), `appearance_reg`, plus `opacity_reg` + `scale_reg` (`3dgs`) or `distortion` (`2dgs`, from step 3000)
+- a `losses` block replaces the preset, so list every loss you want, each with a `weight`
+
 ```yaml
 # 2DGS as the mesh source
 splats:
@@ -338,11 +279,6 @@ mesh:
 | `splats.resolution_schedule` | int | `3000` | Steps per resolution doubling |
 | `splats.normalize_scene` | bool | `false` | Train in a normalized frame; outputs map back to world units |
 | `splats.log_every` | int | `500` | Steps between loss logs |
-
-### Learning rates
-
-| Key | Type | Default | Description |
-|---|---|---|---|
 | `splats.means_lr` | float | `1.6e-4` | Means (× scene scale) |
 | `splats.scales_lr` | float | `5.0e-3` | Scales |
 | `splats.quats_lr` | float | `1.0e-3` | Rotations |
@@ -351,25 +287,6 @@ mesh:
 | `splats.shN_lr` | float | `1.25e-4` | Higher-order SH |
 | `splats.pose_lr` | float | `1.0e-5` | Poses (× scene scale) |
 | `splats.appearance_lr` | float | `1.0e-3` | Appearance |
-
-### `losses`
-
-Without a `losses` block, each primitive gets its preset (`default_losses` in `splats/losses.py`): `depth`, `normal_consistency`, `appearance_reg`, plus `opacity_reg` + `scale_reg` for `3dgs` or `distortion` for `2dgs`. The preset starts `normal_consistency` at step 7000 and `distortion` at 3000. A `losses` block replaces the preset: list every loss you want, each with a `weight`.
-
-```yaml
-# 3DGS with a stronger depth loss (list every loss you want)
-splats:
-  enabled: true
-  losses:
-    depth: {weight: 0.05}
-    normal_consistency: {weight: 0.05, start: 7000}
-    appearance_reg: {weight: 1.0e-3}
-    opacity_reg: {weight: 0.01}
-    scale_reg: {weight: 0.01}
-```
-
-| Key | Type | Default | Description |
-|---|---|---|---|
 | `splats.losses.<name>.weight` | float | preset | `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`, `appearance_reg` |
 | `splats.losses.<name>.start` | int | `0` | Step the loss switches on |
 | `splats.losses.appearance_reg.weight` | float | `1.0e-3` | Regularizer on `appearance_opt` |
@@ -402,40 +319,3 @@ localization:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `reconstruction_quality_report.min_pair_overlap` | float | `0.0` | Skip pairs whose frustum overlap is below this; `0` = every pair |
-
----
-
-## Remote scenes
-
-`reconstruct remote` takes the same options as `local` (except `--keep-viewer`), plus `--all` and `--keep-local`. Commands are in the [main README](../README.md#remote-video-processing).
-
-- scene ids: any flat path-safe name (`YYYY_MM_DD-PARENTFOLDER-VIDEONAME` by convention)
-- a failed scene keeps its local dir and the batch goes on; the push only copies, so nothing remote is deleted
-- after any failure we re-probe rclone; if it is unreachable we stop and report the rest `SKIPPED`
-- credentials come from the `collab-data` rclone remote only
-
-| Exit | Meaning |
-|---|---|
-| 0 | every scene succeeded |
-| 1 | one or more scenes failed; the rest still ran |
-| 2 | nothing to do (`--all` on an empty bucket), or a usage error |
-| 3 | rclone unreachable (bucket listing or mid-batch); later scenes never ran (outranks 1) |
-
-### Changing options on processed scenes
-
-Naming only *leaf* stages in `--stages` (`refine`, `mesh`, `semantics`, `splats`, `localize`, `reconstruction_quality_report`) pulls the scene back from `environments-processed` instead of rebuilding it.
-
-- config = the pulled `<backend>/run_config.yaml`; the re-run stage's section (e.g. `mesh`) resets to `base.yaml`, then `--config` / `--set` apply on top
-- any set with `preproc` or `pointcloud` rebuilds from the curated video
-- `--all` lists `environments-processed` for a leaf re-run, `environments-curated` otherwise
-
-| Situation | Outcome |
-|---|---|
-| scene has no processed outputs | `FileNotFoundError` |
-| no `pointcloud.backend` override and not exactly one `<backend>/run_config.yaml` | `ValueError` listing the backends |
-| named backend has no `run_config.yaml` | `FileNotFoundError` |
-| named leaf stage's output exists | `ValueError`: pass `--overwrite` |
-
-### What we push
-
-Everything in the scene except videos, temporary full-width features (`semantics/*_features.zarr`) and the SfM match databases (`PUSH_EXCLUDES` in `remote.py`).

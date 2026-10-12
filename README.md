@@ -77,8 +77,6 @@ reconstruct remote --output-root /workspace/outputs \
   --stages mesh --overwrite --config configs/NEW_CONFIG.yaml --all
 ```
 
-Exit codes, leaf stages and failure handling are in [configs/README.md](configs/README.md#remote-scenes).
-
 ## Output Structure
 
 Each scene writes to `<output-root>/<name>/`. Frames and 2D caches are shared; each reconstruction backend gets its own folder:

@@ -12,6 +12,7 @@ import pytest
 # (module imported in a fresh process, top-level module that must stay unloaded)
 LAZY = [
     ("collab_splats.geometry", "bae"),
+    ("collab_splats.preproc", "pycolmap"),
 ]
 
 

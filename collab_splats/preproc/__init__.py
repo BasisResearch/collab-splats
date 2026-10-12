@@ -23,8 +23,32 @@ from collab_splats.preproc.sampling import (
     sample_optical_flow,
     sample_uniform,
 )
-from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.preproc.video import extract_frame, get_video_info, iter_frames
+
+
+def __getattr__(name: str) -> object:
+    """
+    Lazy calibrate_camera and undistort_frames.
+
+    - undistort imports pycolmap, which semantics-only installs do not carry
+
+    Args:
+        name: attribute requested from the package.
+
+    Returns:
+        The requested function.
+
+    Raises:
+        AttributeError: any other name.
+    """
+    if name in ("calibrate_camera", "undistort_frames"):
+        # Import on first access: keeps pycolmap out of `import collab_splats.preproc`
+        from collab_splats.preproc import undistort
+
+        return getattr(undistort, name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "analysis_gray",

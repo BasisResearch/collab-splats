@@ -59,9 +59,12 @@ torchvision, tqdm, transformers, zarr — plus open3d until `transforms.py` defe
   - `segmentation-models-pytorch==0.5.0` (unpinned resolves an old release needing
     `pretrainedmodels`)
   - `clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6`
-    as a PEP 508 direct URL, not a `[tool.uv.sources]` entry: consumers installing us as a git
-    dependency (collab-data) never read our `tool.uv` table, and bare `clip` resolves to an
-    unrelated PyPI package; CLIP itself needs `ftfy`, `regex`
+    as a PEP 508 direct URL, not a `[tool.uv.sources]` entry: pip and `--no-sources` consumers
+    never read our `tool.uv` table, and bare `clip` resolves to an unrelated PyPI package; CLIP
+    itself needs `ftfy`, `regex`
+  - correction (Task 11 proof): uv DOES apply our `[tool.uv.sources]` to uv consumers of a
+    path/git install (torch from the cu121 index on non-darwin); only `override-dependencies`
+    stay project-local. CPU-only consumers pass `--no-sources` (README documents it)
   - `einops`, `omegaconf` (Talk2DINOv3 remote code)
   - CLIP's own `ftfy` / `regex` / `packaging` arrive through its requires-dist — not listed
   - no pycolmap: the `pycolmap; sys_platform == 'never'` override strips it from any in-repo

@@ -110,12 +110,12 @@ cd collab-splats
 bash setup.sh
 ```
 
-`setup.sh` is safe to re-run; it only builds what is missing. On RunPod the `/workspace` network volume hides the image's own checkout: clone into `/workspace` (as above), then run `bash setup.sh` there. For a lighter install, sync extras individually:
+`setup.sh` is safe to re-run; it only builds what is missing. On RunPod, the `/workspace` volume hides the image's own checkout, so clone into `/workspace` and run `setup.sh` there. For a lighter install, sync extras individually:
 
 ```sh
-uv sync                                         # light core only (numpy, scipy, zarr, ...)
-uv sync --extra semantics                       # + 2D features and segmentation (CPU or GPU, no CUDA build)
-uv sync --extra reconstruction --extra remote   # + full pipeline and the reconstruct CLI (CUDA toolkit)
+uv sync                                         # core deps only
+uv sync --extra semantics                       # + features and segmentation (no CUDA build)
+uv sync --extra reconstruction --extra remote   # + full pipeline and CLI
 uv sync --extra feedforward                     # + feedforward models (VGGT-X, MapAnything, ...)
 uv sync --extra instantsfm                      # + InstantSfM backend (needs libsuitesparse-dev)
 uv sync --extra gpu                             # + CUDA wheels used to compile bae / gsplat
@@ -124,13 +124,30 @@ uv sync --extra dev                             # + lint / test tooling
 uv sync --all-extras                            # everything (what setup.sh does)
 ```
 
-**Semantics only** (another project, CPU or GPU, no CUDA toolkit): run this from outside this repo, so uv does not apply our cu121 overrides:
-
-    uv pip install 'collab_splats[semantics] @ git+https://github.com/BasisResearch/collab-splats@<commit>'
-
-> **Use `setup.sh`, not a bare `uv sync`, and never `uv pip install ... @ git+...`.**
+> **Use `setup.sh`, not a bare `uv sync`.**
 > - The CUDA extensions build from source and need `nvcc` + `build-essential`; `setup.sh` points the build at your CUDA toolkit and warns if `nvcc` is missing.
-> - Inside this repo, `uv pip install` applies our `[tool.uv]` overrides; outside it, git dependencies resolve without them (no cu121 torch, no pinned sources).
+> - `uv pip install` from outside this repo skips our dependency overrides, so it does not match `uv.lock`.
+
+#### Semantics only
+
+Other projects can install just the semantics stack. It needs no CUDA toolkit and skips `bae`, `pycolmap`, `open3d`, `gsplat` and `collab-data`:
+
+```sh
+uv pip install 'collab_splats[semantics] @ git+https://github.com/BasisResearch/collab-splats@<commit>'
+```
+
+uv still reads our package sources, so on Linux this pulls torch from the CUDA 12.1 index. To use your own torch (e.g. CPU-only), add `--no-sources` and pick torch yourself:
+
+```sh
+uv pip install --no-sources --index-strategy unsafe-best-match \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  'torch==2.5.1+cpu' 'torchvision==0.20.1+cpu' \
+  'collab_splats[semantics] @ git+https://github.com/BasisResearch/collab-splats@<commit>'
+```
+
+In another uv project, set `no-sources = true` under its `[tool.uv]` instead.
+
+This covers the `talk2dino` and `dinov2` features and the `insid3` and `skywater` segmenters. `maskclip` and `mobilesamv2` need the `reconstruction` extra, and `sam3` has its own install.
 
 All later commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`.
 
@@ -147,7 +164,7 @@ curl -fsSLo rclone.zip https://downloads.rclone.org/v1.75.2/rclone-v1.75.2-linux
   && sudo apt-get install -y jq                                         # Linux (apt's rclone is too old)
 ```
 
-The Docker image ships both, so skip this step there.
+The Docker image already has both.
 
 Save the GCS service-account key to `collab-data/config-local/collab-data.json`, then run the setup script from the collab-data repo:
 
@@ -254,6 +271,33 @@ python scripts/preprocess_gdrive_videos.py --only GH010234   # one clip
 ./scripts/push_curated.sh --dry-run
 ./scripts/push_curated.sh
 ```
+
+## Processing GCloud Data
+
+We process curated scenes straight from the `environments-curated` bucket with `reconstruct remote`. It needs the rclone remote (see [Private dependency](#3-private-dependency-collab-data)). For each scene it pulls the video, reconstructs it, pushes the outputs to `environments-processed/<scene>/`, verifies the push, then deletes the local copy:
+
+```bash
+# Named scenes (the curated directory names)
+reconstruct remote --output-root /workspace/outputs \
+  2026_07_20-birds-C0043 2026_07_21-rats-C0100
+
+# Everything in the bucket
+reconstruct remote --output-root /workspace/outputs --all
+
+# Keep the local copy for inspection
+reconstruct remote --output-root /workspace/outputs --all --keep-local
+```
+
+Re-run one stage on scenes we already processed by naming only that stage; it pulls the scene back from `environments-processed` instead of rebuilding it:
+
+```bash
+reconstruct remote --output-root /workspace/outputs \
+  --stages mesh --overwrite --config configs/my_run.yaml --all
+```
+
+- `--all` re-runs every curated scene and overwrites its processed outputs; nothing is skipped.
+- Nothing local is deleted until the push verifies, and the curated video stays in the bucket.
+- Exit codes, leaf stages and failure handling are in [configs/README.md](configs/README.md#remote-scenes).
 
 ## Evaluation
 

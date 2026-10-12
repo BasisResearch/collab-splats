@@ -402,10 +402,10 @@ parameter and raises.
 | `pointcloud.hloc.matcher_conf` | str | `superpoint+lightglue` | `hloc.match_features.confs` key. Conf keys are checked as non-empty strings only, not against hloc |
 | `pointcloud.hloc.num_threads` | int | `8` | Mapper thread cap |
 | `pointcloud.hloc.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
-| `pointcloud.bundle_adjustment.enabled` | bool | `false` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`); with `loop_closure` on, `strategy` picks where it runs; a bare bool sets this |
+| `pointcloud.bundle_adjustment.enabled` | bool | `true` | Run LM bundle adjustment after pointcloud (`ValueError` with `method: sfm`); with `loop_closure` on, `strategy` picks where it runs; a bare bool sets this |
 | `pointcloud.bundle_adjustment.strategy` | str | `global` | Read only with `loop_closure` on: `global` = one `refine` solve over every frame after LC; `window` = a solve inside each LC window (first window sets the focal, later windows hold it; no `refine` stage); `window+global` = both; anything else is a `ValueError` |
 | `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | Track source: `xfeat` / `loma` build matcher star tracks over the full-res `images/` frames (`geometry/tracks.py`), also inside each LC window; `vggsfm` predicts tracks on the model grid; anything else is a `ValueError` |
-| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{}` | Source-specific settings forwarded to `extract_tracks`; empty takes their defaults. `vggsfm`: `max_query_pts` (4096), `query_frame_num` (8), `fine_tracking` (false; true peaks at 34 GB RSS on 50 frames). `xfeat`/`loma`: `retrieval` (`dino-salad` / `megaloc`), `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction` (0.34, in (0, 1]), `window` (10) and `retrieval_k` (20; both sequential+retrieval only) and the other `build_tracks` keywords. A key the source does not take is a `TypeError`; bad values are a `ValueError` |
+| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{pairing: exhaustive, seed_fraction: 1.0}` | Source-specific settings forwarded to `extract_tracks`; empty takes their defaults. `vggsfm`: `max_query_pts` (4096), `query_frame_num` (8), `fine_tracking` (false; true peaks at 34 GB RSS on 50 frames). `xfeat`/`loma`: `retrieval` (`dino-salad` / `megaloc`), `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction` (in (0, 1]), `window` (10) and `retrieval_k` (20; both sequential+retrieval only) and the other `build_tracks` keywords. A key the source does not take is a `TypeError`; bad values are a `ValueError` |
 | `pointcloud.bundle_adjustment.vis_thresh` | float | `0.2` | Min track score for an observation (VGGSfM visibility; matcher tracks score 1.0) |
 | `pointcloud.bundle_adjustment.max_reproj_error` | float\|null | `4.0` | Pre-solve pixel reprojection gate; `null` skips the filter |
 | `pointcloud.bundle_adjustment.min_inliers_per_frame` | int | `64` | Frames below this inlier count sit out the solve |
@@ -484,9 +484,9 @@ parameter and raises.
 | `splats.losses.<name>.start` | int | `0` | Step at which that loss switches on |
 | `splats.losses.appearance_reg.weight` | float | `1.0e-3` | Regularizer on the `appearance_opt` color; no-op unless `appearance_opt` is on |
 | `splats.losses.normal_consistency.depth_ratio` | float | `0.0` | `2dgs` only: RaDe-GS blend weight on the median-depth normal — `(1-r)·d(n, dn_expected) + r·d(n, dn_median)`, `d = 1 - cos`. `0` = expected depth only. Rejected on `3dgs` and outside `[0, 1]` |
-| `localization.enabled` | bool | `false` | Build the localization database (opt-in) |
-| `localization.matcher` | str | `loma` | vismatch model name: `loma` or `xfeat`, the batch-capable models; anything else is a `ValueError` |
-| `localization.retrieval` | str | `dino-salad` | Retrieval registry name, `dino-salad` or `megaloc`; stored with the DB, so queries embed with the same model |
+| `localization.enabled` | bool | `true` | Build the localization database |
+| `localization.matcher` | str | `xfeat` | vismatch model name: `loma` or `xfeat`, the batch-capable models; anything else is a `ValueError` |
+| `localization.retrieval` | str | `megaloc` | Retrieval registry name, `dino-salad` or `megaloc`; stored with the DB, so queries embed with the same model |
 | `reconstruction_quality_report.min_pair_overlap` | float | `0.0` | `0` scores every ordered pair; `> 0` skips pairs whose frustum overlap is below it |
 
 ### Localization matchers

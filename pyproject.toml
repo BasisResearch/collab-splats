@@ -26,7 +26,7 @@ dependencies = [
 [project.optional-dependencies]
 # 2D features + segmentation: CPU or GPU, no CUDA build, no bae (collab-data mesh_semantics installs this)
 semantics = [
-    # Plain torch: in-repo syncs get cu121 from [tool.uv] overrides; consumers keep their own build
+    # Plain torch: uv consumers get the cu121 index from [tool.uv.sources] unless they pass --no-sources
     "torch",
     "torchvision",
     "transformers>=4.30,<5.0",
@@ -45,7 +45,7 @@ semantics = [
     # Pinned: unpinned resolves an old release that needs pretrainedmodels
     "segmentation-models-pytorch==0.5.0",
     # Talk2DINOv3 HF remote code imports clip, einops, omegaconf; transformers refuses the model without them
-    # clip as a PEP 508 direct URL: git-dependency consumers never read [tool.uv.sources], PyPI `clip` is unrelated
+    # clip as a PEP 508 direct URL: pip and --no-sources consumers skip [tool.uv.sources], PyPI `clip` is unrelated
     "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
     "einops",
     "omegaconf",

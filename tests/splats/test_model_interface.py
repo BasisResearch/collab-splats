@@ -84,7 +84,7 @@ def _members_read_off_the_model(path):
     """
     Every attribute the given module reads off a local named ``model``.
     """
-    tree = ast.parse(Path(path).read_text())
+    tree = ast.parse(Path(path).read_text(encoding="utf-8"))
     return {
         node.attr
         for node in ast.walk(tree)
@@ -101,7 +101,7 @@ def _classes_declaring(attribute):
     found = set()
 
     for path in sorted(Path(trainer.__file__).parent.glob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.ClassDef):
                 continue
 

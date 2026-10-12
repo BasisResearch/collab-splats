@@ -90,7 +90,7 @@ def test_gsplat_commit_constant_matches_pyproject():
     collab_splats.splats.GSPLAT_COMMIT must match the [tool.uv.sources] gsplat rev in pyproject.toml.
     """
     pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
-    pyproject = tomllib.loads(pyproject_path.read_text())
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     gsplat_source = pyproject["tool"]["uv"]["sources"]["gsplat"]
     assert gsplat_source["rev"] == GSPLAT_COMMIT
 

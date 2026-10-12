@@ -18,7 +18,7 @@ CONFIG = isort.Config(settings_path=str(REPO))
 
 @pytest.mark.parametrize("path", FILES, ids=lambda p: str(p.relative_to(REPO)))
 def test_no_relative_imports(path):
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     relative = [
         n.lineno for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.level
     ]

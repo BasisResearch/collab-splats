@@ -247,7 +247,7 @@ def test_talk2dino_forward_single_path():
 
 def test_talk2dino_no_dual_forward_methods():
     """_forward_max_size and _forward_square must not exist after refactor."""
-    src = open(t2d_mod.__file__).read()
+    src = open(t2d_mod.__file__, encoding="utf-8").read()
     assert "_forward_max_size" not in src
     assert "_forward_square" not in src
 

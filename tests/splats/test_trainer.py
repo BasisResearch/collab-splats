@@ -487,7 +487,7 @@ def test_trainer_has_no_representation_branches():
     """
     # Over the `train` AST node, not the text after the `def`
     # - a string denylist misses single quotes, `isinstance(model, Scaffold)`, and code above it
-    source = Path(trainer_module.__file__).read_text()
+    source = Path(trainer_module.__file__).read_text(encoding="utf-8")
     train_node = next(
         node
         for node in ast.walk(ast.parse(source))

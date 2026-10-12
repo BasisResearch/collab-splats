@@ -118,7 +118,7 @@ def _module_level_imports(path: Path) -> list[str]:
                 for handler in getattr(node, "handlers", []):
                     walk(handler.body)
 
-    walk(ast.parse(path.read_text()).body)
+    walk(ast.parse(path.read_text(encoding="utf-8")).body)
 
     return found
 
@@ -160,7 +160,7 @@ def _allowed_dists() -> set[str]:
     """
     Normalized distribution names in base dependencies plus the semantics extra.
     """
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     requirements = (
         project["dependencies"] + project["optional-dependencies"]["semantics"]
     )

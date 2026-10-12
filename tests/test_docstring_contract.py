@@ -87,7 +87,7 @@ def _documented_defs(path: pathlib.Path) -> list[tuple[ast.AST, str]]:
     Returns:
         (node, label) pairs; the label names the def for the assertion message.
     """
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     out: list[tuple[ast.AST, str]] = []
     for node in tree.body:
         if isinstance(
@@ -145,7 +145,7 @@ def _check_body(doc: str, where: str) -> list[str]:
 
 @pytest.mark.parametrize("path", SOURCES, ids=SOURCE_IDS)
 def test_module_docstring_is_a_bulleted_summary(path):
-    doc = ast.get_docstring(ast.parse(path.read_text()))
+    doc = ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")))
     assert doc, f"{path.name} has no module docstring"
     assert not _check_body(doc, path.name)
 
@@ -213,7 +213,7 @@ def test_public_defs_are_documented_and_annotated(path):
 
 @pytest.mark.parametrize("path", SOURCES, ids=SOURCE_IDS)
 def test_comment_runs_state_the_problem_then_bullet_it(path):
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     bad = []
 
     # Walk maximal runs of consecutive `#` lines; a run of MIN_RUN or more is a block
@@ -667,7 +667,7 @@ def _release_params() -> list:
 
 @pytest.mark.parametrize(("path", "check"), _release_params())
 def test_release_rules(path, check):
-    bad = RELEASE_CHECKS[check](path.read_text())
+    bad = RELEASE_CHECKS[check](path.read_text(encoding="utf-8"))
     assert not bad, "\n".join(bad)
 
 
@@ -787,7 +787,7 @@ ROUND3_CHECKS = {
     ],
 )
 def test_round3_rules(path, check):
-    bad = ROUND3_CHECKS[check](path.read_text())
+    bad = ROUND3_CHECKS[check](path.read_text(encoding="utf-8"))
     assert not bad, "\n".join(bad)
 
 

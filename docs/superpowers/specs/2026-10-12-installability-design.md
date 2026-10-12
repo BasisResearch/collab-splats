@@ -40,6 +40,12 @@ Clean CPU venv probe of `collab_splats.semantics` (torch 2.5.1+cpu + semantics-l
 | `segmentation/sky.py` | segmentation-models-pytorch, safetensors | no |
 | `store.py`, `sky.py` → `preproc/__init__` | av, scikit-image, pycolmap | no — PyPI wheels |
 | `lifting.py` → `geometry/__init__` → `bundle_adjustment` | pypose, bae | yes — CUDA extension |
+| `lifting.py` → `geometry/projection` → `transforms` | open3d | yes — no wheels past py3.12, 400 MB |
+
+AST reachability from every `collab_splats.semantics` module, with the §2 lazy imports applied
+(prototype run 2026-10-12): third-party set is exactly PIL, av, cv2, huggingface_hub, kornia,
+nltk, numpy, pyarrow, safetensors, scipy, segmentation_models_pytorch, skimage, sklearn, torch,
+torchvision, tqdm, transformers, zarr — plus open3d until `transforms.py` defers it.
 
 ## Design
 
@@ -57,12 +63,17 @@ Clean CPU venv probe of `collab_splats.semantics` (torch 2.5.1+cpu + semantics-l
     dependency (collab-data) never read our `tool.uv` table, and bare `clip` resolves to an
     unrelated PyPI package; CLIP itself needs `ftfy`, `regex`
   - `einops`, `omegaconf` (Talk2DINOv3 remote code)
+  - CLIP's own `ftfy` / `regex` / `packaging` arrive through its requires-dist — not listed
   - no pycolmap: the `pycolmap; sys_platform == 'never'` override strips it from any in-repo
     sync, and the lazy `preproc` init (§2) removes the need
-- `reconstruction`: everything else currently in base (setuptools<70, wheel, ninja, the cu121
-  torch pins, gsplat, fused-ssim, bae, pypose, nvdiffrast, nvidia-cudss, pycolmap-cuda12,
-  mobile_sam, maskclip_onnx, torchpack, vismatch, ultralytics, pyvista, viser, meshlib,
-  trimesh, pydantic, seaborn, ftfy) — contents unchanged, new location
+- `reconstruction`: `collab_splats[semantics]` (self-reference — av, transformers, kornia, cv2,
+  ... left base for `semantics`, and the pipeline still needs them) plus everything else
+  currently in base (setuptools<70, wheel, ninja, the cu121 torch pins, gsplat, fused-ssim, bae,
+  pypose, nvdiffrast, nvidia-cudss, pycolmap-cuda12, mobile_sam, maskclip_onnx, torchpack,
+  vismatch, ultralytics, pyvista, viser, meshlib, trimesh, pydantic, seaborn, ftfy, open3d) —
+  contents unchanged, new location
+  - the `+cu121` torch pins carry `; sys_platform == 'linux'`: the lock is universal, and an
+    unmarked `+cu121` pin has no darwin wheel to resolve
 - `remote`: collab-data (path dep) — base install no longer needs the private repo; the
   `reconstruct` CLI imports `remote.py` at top (`__main__.py:22`), so the CLI needs
   `[reconstruction,remote]` — `setup.sh` gets both via `--all-extras`
@@ -75,10 +86,12 @@ Clean CPU venv probe of `collab_splats.semantics` (torch 2.5.1+cpu + semantics-l
   complementary darwin entries (an override replaces the requirement outright, so a false
   marker alone would drop torch)
 - `requires-python` stays `>=3.11` (pinning `==3.11.*` would block 3.12 semantics consumers)
+- no `[tool.uv] environments` added: the markers above keep darwin resolvable; the plan's
+  first lock attempt proves it, and `environments` is the fallback if it does not
 - re-lock; gate: `uv sync --locked --all-extras --dry-run` reports no change on Linux except
   the InstantSfM packages entering the lock
 
-### 2. Code: three lazy imports, existing patterns only
+### 2. Code: four lazy imports, existing patterns only
 
 - `geometry/__init__.py`: `BundleAdjustment` / `BundleAdjustmentConfig` join the existing
   `__getattr__` (already lazy for `LoopClosure`); `import collab_splats.geometry` stops loading bae
@@ -87,6 +100,10 @@ Clean CPU venv probe of `collab_splats.semantics` (torch 2.5.1+cpu + semantics-l
   (`undistort.py` is its only pycolmap importer)
 - `segmentation/mobile_sam.py`: `mobile_sam` imported inside the auto strategy with a clear
   `ImportError` message — the CLAUDE.md optional-heavy-dep exception, as `sam3` / `maskclip` do
+- `geometry/transforms.py`: `open3d` imported inside `fit_dominant_plane`, its only user
+  (RANSAC floor plane), with the same `ImportError` message shape; `semantics.lifting` reaches
+  `transforms` via `projection`, and open3d ships no wheels past Python 3.12. open3d moves to
+  `reconstruction`
 - `tests/conftest.py`: the `pkg_resources.packaging` shim tolerates a missing `pkg_resources`
   (a semantics-only env may carry setuptools >= 81); `test_maskclip_onnx_importable` uses
   `pytest.importorskip` — both ported from `37f7af2d`
@@ -100,13 +117,21 @@ bae remains required by `bundle_adjustment`, `photometric`, `reconstructor`, loo
   vggt_omega, loger
 - `uv` from `PATH`, not `/root/.local/bin/uv`
 - InstantSfM block deleted; sync failure help names `libsuitesparse-dev`
-- WordNet to `NLTK_DATA=/workspace/models/nltk_data` (Dockerfile ENV + setup.sh)
+- WordNet to `NLTK_DATA=/workspace/models/nltk_data`: setup.sh runs
+  `"$PYTHON" -m nltk.downloader -d "$NLTK_DATA" wordnet` (`-d` explicit — the downloader's
+  default dir ignores the env var on some nltk versions); `ocr_lens` reads WordNet at runtime
 - Dockerfile: `jq` in the runtime apt list; uv pinned to 0.12.19 (the version in this image)
-  and rclone to 1.75.2 via `install.sh`'s version argument
+  via `https://astral.sh/uv/0.12.19/install.sh`; rclone 1.75.2 from
+  `https://downloads.rclone.org/v1.75.2/rclone-v1.75.2-linux-amd64.zip` — `install.sh` accepts
+  only `beta`, no version argument
 - `NLTK_DATA` also lands in the runtime Dockerfile `ENV` and the `.bashrc` block — the path
   must be visible to every process that reads WordNet, not only to setup.sh
 - README: on RunPod the `/workspace` volume shadows the image's checkout — clone into
-  `/workspace`, then `bash setup.sh`
+  `/workspace`, then `bash setup.sh`; new "semantics only" install line; drop the claim that
+  `uv pip install` ignores `[tool.uv]` (false from inside the repo cwd — the probe hit it); the
+  rclone line points at the pinned zip
+- `docs/source/api/pointcloud.rst` instantsfm **Install.** paragraph: locked `instantsfm`
+  extra, no `--no-deps` block
 - out of repo (user-applied): drop the `apt install rclone jq` line from
   `/workspace/setup_profile.sh`; rotate the tokens in `/workspace/profile.sh`
 
@@ -118,6 +143,8 @@ bae remains required by `bundle_adjustment`, `photometric`, `reconstructor`, loo
   allowlist; no network, no venv
   - skips `if TYPE_CHECKING:` bodies (`lifting.py:22` imports `pointcloud.base` there) and
     function bodies (the lazy imports)
+  - allowlist = top-level import names of base ∪ `semantics`; stdlib from
+    `sys.stdlib_module_names`
   - allowlist maps import names to dists (`cv2` → opencv-python, `skimage` → scikit-image,
     `sklearn` → scikit-learn, `PIL` → pillow, `yaml` → pyyaml, ...)
 - one-off proof recorded in the plan: `uv pip install '<repo>[semantics]'` into a clean CPU
@@ -133,10 +160,13 @@ bae remains required by `bundle_adjustment`, `photometric`, `reconstructor`, loo
   `libsuitesparse-dev` (was best-effort); the image ships it, setup.sh prints the hint
 - collab-data must re-pin `collab_splats[semantics]` from `@db-semantics-package` to the landed
   commit — a change in their repo
-
 - semantics consumers need Python >= 3.11 (collab-data declares >= 3.10)
 - the self-hosted GPU CI runner reuses the full image env; the semantics-only install is
   proven by the one-off clean venv plus the AST test, not by a CI job
+
+## Docs on completion
+
+- CLAUDE.md In-Flight entry while open; CHANGELOG entry and In-Flight removal on landing
 
 ## Out of scope
 

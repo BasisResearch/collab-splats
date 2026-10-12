@@ -4,19 +4,24 @@ requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
     "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 
 [manifest]
@@ -25,8 +30,10 @@ overrides = [
     { name = "numpy", specifier = ">=2,<2.2" },
     { name = "pycolmap", marker = "sys_platform == 'never'" },
     { name = "setuptools", specifier = "<70.0" },
-    { name = "torch", specifier = "==2.5.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
-    { name = "torchvision", specifier = "==0.20.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "torch", marker = "sys_platform != 'darwin'", specifier = "==2.5.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "torch", marker = "sys_platform == 'darwin'", specifier = "==2.5.1" },
+    { name = "torchvision", marker = "sys_platform != 'darwin'", specifier = "==0.20.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "torchvision", marker = "sys_platform == 'darwin'", specifier = "==0.20.1" },
     { name = "uniception", specifier = "==0.1.7" },
 ]
 
@@ -49,6 +56,10 @@ requires-dist = ["torch>=2.0.0"]
 name = "gsplat"
 version = "1.5.3"
 requires-dist = ["ninja", "numpy", "jaxtyping", "nvtx", "rich>=12", "torch>=2.0"]
+
+[[manifest.dependency-metadata]]
+name = "instantsfm"
+version = "0.3.0"
 
 [[manifest.dependency-metadata]]
 name = "nvdiffrast"
@@ -519,8 +530,10 @@ name = "bae"
 version = "0.2.5"
 source = { git = "https://github.com/pypose/bae.git?rev=0.2.5#765d787b8e3a6e217fa7feadd80b9a36903ab086" }
 dependencies = [
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "warp-lang" },
 ]
 
@@ -808,8 +821,10 @@ dependencies = [
     { name = "ftfy" },
     { name = "packaging" },
     { name = "regex" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
 
@@ -833,52 +848,15 @@ name = "collab-splats"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
-    { name = "av" },
-    { name = "bae" },
-    { name = "clip" },
-    { name = "collab-data" },
-    { name = "einops" },
-    { name = "ftfy" },
-    { name = "fused-ssim" },
-    { name = "gsplat" },
     { name = "huggingface-hub" },
-    { name = "kornia" },
-    { name = "maskclip-onnx" },
     { name = "matplotlib" },
     { name = "mergedeep" },
-    { name = "meshlib" },
-    { name = "mobile-sam" },
-    { name = "ninja" },
-    { name = "nltk" },
     { name = "numpy" },
-    { name = "nvdiffrast" },
-    { name = "nvidia-cudss-cu12" },
-    { name = "omegaconf" },
-    { name = "opencv-python" },
     { name = "pillow" },
-    { name = "pyarrow" },
-    { name = "pycolmap-cuda12" },
-    { name = "pydantic" },
-    { name = "pypose" },
     { name = "python-dotenv" },
-    { name = "pyvista", extra = ["jupyter"] },
     { name = "pyyaml" },
-    { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "seaborn" },
-    { name = "segmentation-models-pytorch" },
-    { name = "setuptools" },
-    { name = "timm" },
-    { name = "torch" },
-    { name = "torchpack" },
-    { name = "torchvision" },
     { name = "tqdm" },
-    { name = "transformers" },
-    { name = "trimesh" },
-    { name = "ultralytics" },
-    { name = "viser" },
-    { name = "vismatch" },
-    { name = "wheel" },
     { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "zarr", version = "3.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
@@ -938,33 +916,108 @@ gpu = [
 hloc = [
     { name = "hloc" },
 ]
+instantsfm = [
+    { name = "easydict" },
+    { name = "instantsfm" },
+    { name = "pyceres" },
+    { name = "scikit-sparse" },
+]
+reconstruction = [
+    { name = "av" },
+    { name = "bae" },
+    { name = "clip" },
+    { name = "einops" },
+    { name = "ftfy" },
+    { name = "fused-ssim" },
+    { name = "gsplat" },
+    { name = "kornia" },
+    { name = "maskclip-onnx" },
+    { name = "meshlib" },
+    { name = "mobile-sam" },
+    { name = "ninja" },
+    { name = "nltk" },
+    { name = "nvdiffrast" },
+    { name = "nvidia-cudss-cu12" },
+    { name = "omegaconf" },
+    { name = "open3d" },
+    { name = "opencv-python" },
+    { name = "pyarrow" },
+    { name = "pycolmap-cuda12" },
+    { name = "pydantic" },
+    { name = "pypose" },
+    { name = "pyvista", extra = ["jupyter"] },
+    { name = "safetensors" },
+    { name = "scikit-image" },
+    { name = "scikit-learn" },
+    { name = "seaborn" },
+    { name = "segmentation-models-pytorch" },
+    { name = "setuptools" },
+    { name = "timm" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchpack" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "transformers" },
+    { name = "trimesh" },
+    { name = "ultralytics" },
+    { name = "viser" },
+    { name = "vismatch" },
+    { name = "wheel" },
+]
+remote = [
+    { name = "collab-data" },
+]
+semantics = [
+    { name = "av" },
+    { name = "clip" },
+    { name = "einops" },
+    { name = "kornia" },
+    { name = "nltk" },
+    { name = "omegaconf" },
+    { name = "opencv-python" },
+    { name = "pyarrow" },
+    { name = "safetensors" },
+    { name = "scikit-image" },
+    { name = "scikit-learn" },
+    { name = "segmentation-models-pytorch" },
+    { name = "timm" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "transformers" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "av", specifier = ">=17.0" },
-    { name = "bae", git = "https://github.com/pypose/bae.git?rev=0.2.5" },
+    { name = "av", marker = "extra == 'semantics'", specifier = ">=17.0" },
+    { name = "bae", marker = "extra == 'reconstruction'", git = "https://github.com/pypose/bae.git?rev=0.2.5" },
     { name = "black", marker = "extra == 'dev'" },
-    { name = "clip", git = "https://github.com/openai/CLIP.git?rev=d05afc436d78f1c48dc0dbf8e5980a9d471f35f6" },
-    { name = "collab-data", directory = "/workspace/collab-data" },
+    { name = "clip", marker = "extra == 'semantics'", git = "https://github.com/openai/CLIP.git?rev=d05afc436d78f1c48dc0dbf8e5980a9d471f35f6" },
+    { name = "collab-data", marker = "extra == 'remote'", directory = "/workspace/collab-data" },
+    { name = "collab-splats", extras = ["semantics"], marker = "extra == 'reconstruction'" },
     { name = "cuda-toolkit", extras = ["all"], marker = "extra == 'gpu'", specifier = "==12.1.1" },
-    { name = "einops" },
+    { name = "easydict", marker = "extra == 'instantsfm'", specifier = "==1.13" },
+    { name = "einops", marker = "extra == 'semantics'" },
     { name = "evo", marker = "extra == 'feedforward'" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "ftfy" },
-    { name = "fused-ssim", git = "https://github.com/rahul-goel/fused-ssim.git?rev=a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" },
-    { name = "gsplat", git = "https://github.com/nerfstudio-project/gsplat.git?rev=d2f5c0f" },
+    { name = "ftfy", marker = "extra == 'reconstruction'" },
+    { name = "fused-ssim", marker = "extra == 'reconstruction'", git = "https://github.com/rahul-goel/fused-ssim.git?rev=a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" },
+    { name = "gsplat", marker = "extra == 'reconstruction'", git = "https://github.com/nerfstudio-project/gsplat.git?rev=d2f5c0f" },
     { name = "gtsam", marker = "extra == 'feedforward'", specifier = ">=4.3.0" },
     { name = "hloc", marker = "extra == 'hloc'", editable = "third_party/hloc" },
     { name = "huggingface-hub" },
+    { name = "instantsfm", marker = "extra == 'instantsfm'", git = "https://github.com/cre185/InstantSfM?rev=d3e599e1a42b4c5a806a84d9f383e1005d25f61b" },
     { name = "isort", marker = "extra == 'dev'" },
-    { name = "kornia" },
+    { name = "kornia", marker = "extra == 'semantics'" },
     { name = "lightglue", marker = "extra == 'feedforward'", git = "https://github.com/cvg/LightGlue.git" },
     { name = "mapanything", marker = "extra == 'feedforward'", git = "https://github.com/facebookresearch/map-anything.git" },
-    { name = "maskclip-onnx", git = "https://github.com/RogerQi/maskclip_onnx.git" },
+    { name = "maskclip-onnx", marker = "extra == 'reconstruction'", git = "https://github.com/RogerQi/maskclip_onnx.git" },
     { name = "matplotlib" },
     { name = "mergedeep" },
-    { name = "meshlib", specifier = "==3.1.4.297" },
-    { name = "mobile-sam", git = "https://github.com/ChaoningZhang/MobileSAM.git" },
+    { name = "meshlib", marker = "extra == 'reconstruction'", specifier = "==3.1.4.297" },
+    { name = "mobile-sam", marker = "extra == 'reconstruction'", git = "https://github.com/ChaoningZhang/MobileSAM.git" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "myst-parser", marker = "extra == 'dev'" },
     { name = "myst-parser", marker = "extra == 'docs'" },
@@ -972,64 +1025,73 @@ requires-dist = [
     { name = "nbsphinx", marker = "extra == 'dev'" },
     { name = "nbsphinx", marker = "extra == 'docs'" },
     { name = "nbval", marker = "extra == 'dev'" },
-    { name = "ninja" },
-    { name = "nltk", specifier = ">=3.8" },
+    { name = "ninja", marker = "extra == 'reconstruction'" },
+    { name = "nltk", marker = "extra == 'semantics'", specifier = ">=3.8" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "nvdiffrast", git = "https://github.com/NVlabs/nvdiffrast?rev=253ac4fcea7de5f396371124af597e6cc957bfae" },
-    { name = "nvidia-cudss-cu12", specifier = "==0.6.0.5" },
-    { name = "omegaconf" },
+    { name = "nvdiffrast", marker = "extra == 'reconstruction'", git = "https://github.com/NVlabs/nvdiffrast?rev=253ac4fcea7de5f396371124af597e6cc957bfae" },
+    { name = "nvidia-cudss-cu12", marker = "extra == 'reconstruction'", specifier = "==0.6.0.5" },
+    { name = "omegaconf", marker = "extra == 'semantics'" },
     { name = "open3d", marker = "extra == 'feedforward'" },
-    { name = "opencv-python" },
+    { name = "open3d", marker = "extra == 'reconstruction'" },
+    { name = "opencv-python", marker = "extra == 'semantics'" },
     { name = "panel", marker = "extra == 'dashboard'", specifier = ">=1.3.0" },
     { name = "param", marker = "extra == 'dashboard'", specifier = ">=2.0.0" },
     { name = "pillow" },
-    { name = "pyarrow" },
-    { name = "pycolmap-cuda12", specifier = "==4.1.1" },
-    { name = "pydantic", specifier = "==2.10.6" },
+    { name = "pyarrow", marker = "extra == 'semantics'" },
+    { name = "pyceres", marker = "extra == 'instantsfm'", specifier = "==2.3" },
+    { name = "pycolmap-cuda12", marker = "extra == 'reconstruction'", specifier = "==4.1.1" },
+    { name = "pydantic", marker = "extra == 'reconstruction'", specifier = "==2.10.6" },
     { name = "pydata-sphinx-theme", marker = "extra == 'dev'" },
     { name = "pydata-sphinx-theme", marker = "extra == 'docs'" },
-    { name = "pypose", specifier = "<0.9" },
+    { name = "pypose", marker = "extra == 'reconstruction'", specifier = "<0.9" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-benchmark", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
     { name = "python-dotenv" },
     { name = "pytorch-metric-learning", marker = "extra == 'feedforward'" },
-    { name = "pyvista", extras = ["jupyter"] },
+    { name = "pyvista", extras = ["jupyter"], marker = "extra == 'reconstruction'" },
     { name = "pyyaml" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "safetensors", marker = "extra == 'feedforward'" },
+    { name = "safetensors", marker = "extra == 'semantics'" },
     { name = "salad", marker = "extra == 'feedforward'", git = "https://github.com/Dominic101/salad.git" },
-    { name = "scikit-learn" },
+    { name = "scikit-image", marker = "extra == 'semantics'" },
+    { name = "scikit-learn", marker = "extra == 'semantics'" },
+    { name = "scikit-sparse", marker = "extra == 'instantsfm'", specifier = "==0.4.15" },
     { name = "scipy", specifier = ">=1.11" },
-    { name = "seaborn" },
-    { name = "segmentation-models-pytorch", specifier = "==0.5.0" },
-    { name = "setuptools", specifier = "<70.0" },
+    { name = "seaborn", marker = "extra == 'reconstruction'" },
+    { name = "segmentation-models-pytorch", marker = "extra == 'semantics'", specifier = "==0.5.0" },
     { name = "setuptools", marker = "extra == 'dev'" },
     { name = "setuptools", marker = "extra == 'docs'" },
+    { name = "setuptools", marker = "extra == 'reconstruction'", specifier = "<70.0" },
     { name = "sphinx", marker = "extra == 'dev'" },
     { name = "sphinx", marker = "extra == 'docs'" },
     { name = "sphinxcontrib-bibtex", marker = "extra == 'dev'" },
     { name = "sphinxcontrib-bibtex", marker = "extra == 'docs'" },
-    { name = "timm", specifier = ">=0.9,<2.0" },
-    { name = "torch", specifier = "==2.5.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
-    { name = "torchpack" },
-    { name = "torchvision", specifier = "==0.20.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "timm", marker = "extra == 'semantics'", specifier = ">=0.9,<2.0" },
+    { name = "torch", marker = "sys_platform == 'darwin' and extra == 'semantics'" },
+    { name = "torch", marker = "sys_platform != 'darwin' and extra == 'reconstruction'", specifier = "==2.5.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "torch", marker = "sys_platform != 'darwin' and extra == 'semantics'", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "torchpack", marker = "extra == 'reconstruction'" },
+    { name = "torchvision", marker = "sys_platform == 'darwin' and extra == 'semantics'" },
+    { name = "torchvision", marker = "sys_platform != 'darwin' and extra == 'reconstruction'", specifier = "==0.20.1+cu121", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "torchvision", marker = "sys_platform != 'darwin' and extra == 'semantics'", index = "https://download.pytorch.org/whl/cu121" },
     { name = "tqdm" },
-    { name = "transformers", specifier = ">=4.30,<5.0" },
-    { name = "trimesh" },
+    { name = "transformers", marker = "extra == 'semantics'", specifier = ">=4.30,<5.0" },
+    { name = "trimesh", marker = "extra == 'reconstruction'" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
-    { name = "ultralytics" },
+    { name = "ultralytics", marker = "extra == 'reconstruction'" },
     { name = "uniception", marker = "extra == 'feedforward'", specifier = "==0.1.7" },
     { name = "vggt", marker = "extra == 'feedforward'", git = "https://github.com/Linketic/VGGT-X.git?rev=26d1b956cfda6f83926adda9f5c2c53f75dda749" },
     { name = "vggt-omega", marker = "extra == 'feedforward'", git = "https://github.com/facebookresearch/vggt-omega.git?rev=39a0cb8" },
-    { name = "viser", specifier = ">=1.0" },
     { name = "viser", marker = "extra == 'feedforward'", specifier = ">=0.2.23" },
-    { name = "vismatch", git = "https://github.com/BasisResearch/vismatch?rev=865d91a52ff23f60096188e0e0a748911768535d" },
-    { name = "wheel" },
+    { name = "viser", marker = "extra == 'reconstruction'", specifier = ">=1.0" },
+    { name = "vismatch", marker = "extra == 'reconstruction'", git = "https://github.com/BasisResearch/vismatch?rev=865d91a52ff23f60096188e0e0a748911768535d" },
+    { name = "wheel", marker = "extra == 'reconstruction'" },
     { name = "zarr", specifier = ">=2.16" },
 ]
-provides-extras = ["feedforward", "hloc", "gpu", "dashboard", "docs", "dev"]
+provides-extras = ["semantics", "reconstruction", "remote", "instantsfm", "feedforward", "hloc", "gpu", "dashboard", "docs", "dev"]
 
 [[package]]
 name = "colorama"
@@ -1465,11 +1527,21 @@ dependencies = [
     { name = "numpy" },
     { name = "scipy" },
     { name = "sympy" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5f/a3/d52132d2ddc24920eb983dac21b0a2f1c10defdc9b76484ba2fabb5a8992/e2cnn-0.2.3.tar.gz", hash = "sha256:121cbf2b4ec16bf60a36d165c8eb6651947d1144aaabd6ad5efd2b93722b41f2", size = 149681, upload-time = "2023-02-02T21:35:35.67Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/4d/05b0dd45848e41c1b5e93755682a9e593f19a92e01aeb57b327f15881e3f/e2cnn-0.2.3-py3-none-any.whl", hash = "sha256:a4cb2a3bca8926c628abc41dc4921a05c8758f21c1e69b5d5e641699c12d4f7d", size = 225291, upload-time = "2023-02-02T21:35:33.329Z" },
+]
+
+[[package]]
+name = "easydict"
+version = "1.13"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/9f/d18d6b5e19244788a6d09c14a8406376b4f4bfcc008e6d17a4f4c15362e8/easydict-1.13.tar.gz", hash = "sha256:b1135dedbc41c8010e2bc1f77ec9744c7faa42bce1a1c87416791449d6c87780", size = 6809, upload-time = "2024-03-04T12:04:41.251Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/ec/fa6963f1198172c2b75c9ab6ecefb3045991f92f75f5eb41b6621b198123/easydict-1.13-py3-none-any.whl", hash = "sha256:6b787daf4dcaf6377b4ad9403a5cee5a86adbc0ca9a5bcf5410e9902002aeac2", size = 6804, upload-time = "2024-03-04T12:04:39.508Z" },
 ]
 
 [[package]]
@@ -1779,7 +1851,8 @@ name = "fused-ssim"
 version = "1.0.0"
 source = { git = "https://github.com/rahul-goel/fused-ssim.git?rev=a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38#a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" }
 dependencies = [
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 
 [[package]]
@@ -2060,7 +2133,8 @@ dependencies = [
     { name = "numpy" },
     { name = "nvtx" },
     { name = "rich" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 
 [[package]]
@@ -2184,8 +2258,10 @@ dependencies = [
     { name = "plotly" },
     { name = "pycolmap", marker = "sys_platform == 'never'" },
     { name = "scipy" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
 
@@ -2290,6 +2366,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
 ]
+
+[[package]]
+name = "instantsfm"
+version = "0.3.0"
+source = { git = "https://github.com/cre185/InstantSfM?rev=d3e599e1a42b4c5a806a84d9f383e1005d25f61b#d3e599e1a42b4c5a806a84d9f383e1005d25f61b" }
 
 [[package]]
 name = "ipykernel"
@@ -2555,7 +2636,7 @@ dependencies = [
     { name = "overrides", marker = "python_full_version < '3.12'" },
     { name = "packaging" },
     { name = "prometheus-client" },
-    { name = "pywinpty", marker = "os_name == 'nt'" },
+    { name = "pywinpty", marker = "os_name == 'nt' and sys_platform != 'darwin'" },
     { name = "pyzmq" },
     { name = "send2trash" },
     { name = "terminado" },
@@ -2589,7 +2670,7 @@ name = "jupyter-server-terminals"
 version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pywinpty", marker = "os_name == 'nt'" },
+    { name = "pywinpty", marker = "os_name == 'nt' and sys_platform != 'darwin'" },
     { name = "terminado" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f4/a7/bcd0a9b0cbba88986fe944aaaf91bfda603e5a50bda8ed15123f381a3b2f/jupyter_server_terminals-0.5.4.tar.gz", hash = "sha256:bbda128ed41d0be9020349f9f1f2a4ab9952a73ed5f5ac9f1419794761fb87f5", size = 31770, upload-time = "2026-01-14T16:53:20.213Z" }
@@ -2728,7 +2809,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "kornia-rs" },
     { name = "packaging" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c6/e6/45e757d4924176e4d4e111e10effaab7db382313243e0188a06805010073/kornia-0.8.2.tar.gz", hash = "sha256:5411b2ce0dd909d1608016308cd68faeef90f88c47f47e8ecd40553fd4d8b937", size = 667151, upload-time = "2025-11-08T12:10:03.042Z" }
 wheels = [
@@ -2743,7 +2825,8 @@ dependencies = [
     { name = "kornia" },
     { name = "matplotlib" },
     { name = "opencv-python" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/73/1b/27c36b53c67484cc0917dfea3b73884bc3d8d8bebcaa9866f331244be35f/kornia_moons-0.3.0.tar.gz", hash = "sha256:f607ac16debb03e62750b3efdb2398e70d8225dbe5431f358c07b0ff718eb3c0", size = 23525, upload-time = "2026-08-07T14:30:43.866Z" }
 wheels = [
@@ -2900,8 +2983,10 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "opencv-python" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 
 [[package]]
@@ -2914,7 +2999,8 @@ dependencies = [
     { name = "packaging" },
     { name = "pytorch-lightning" },
     { name = "pyyaml" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "torchmetrics" },
     { name = "tqdm" },
     { name = "typing-extensions" },
@@ -3132,7 +3218,8 @@ name = "maskclip-onnx"
 version = "1.0"
 source = { git = "https://github.com/RogerQi/maskclip_onnx.git#284f8581e8e6003aefd5caeac3bdcf0ea770d081" }
 dependencies = [
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 
 [[package]]
@@ -5150,6 +5237,24 @@ wheels = [
 ]
 
 [[package]]
+name = "pyceres"
+version = "2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/bc/3e32777cab3a01cd13a5a0681563230b1f6471644edb90b53a71d7a8dce2/pyceres-2.3-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:0b792c93f989cec46e645879fb0be9fe2e5005f45ae7eebf42af27676fc36ec7", size = 1722550, upload-time = "2024-08-02T09:49:52.375Z" },
+    { url = "https://files.pythonhosted.org/packages/98/00/1d2208fb6cbd43e6320dea58426152232b83123a66df2a38ee9a280e3039/pyceres-2.3-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:4e22d4fa25a89aaedf148760bb2e8f335b631d1652247a2464cefc7663ca3f98", size = 1419740, upload-time = "2024-08-02T09:49:53.89Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/66/cb7a91e6e7b268c0284b6bd88c8a4223cd6c1cc78ea3d30b86165b6b0165/pyceres-2.3-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:8670491f631850b1b7edfa23c48255e3b869d8494b66a5c590bcb3e4d7bcab9a", size = 3120928, upload-time = "2024-08-02T09:49:55.432Z" },
+    { url = "https://files.pythonhosted.org/packages/68/12/055c5647010fc6413a80ea2e06643334aca2e84d7f4d0a1bb2e7085398ad/pyceres-2.3-cp311-cp311-win_amd64.whl", hash = "sha256:95deb890c2d5344767a1d4480f11c67b0dc66c01267266f0e787003ceeab9453", size = 7260995, upload-time = "2024-08-02T09:49:56.655Z" },
+    { url = "https://files.pythonhosted.org/packages/47/f5/c8a97de838a0ce503cf368328e8a39ccf564c462abe7219b23fa0959a476/pyceres-2.3-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:5fdb31c19c6b9c80f5564f78dcb96a4c691d7031d5233380e9910f05c03e4c41", size = 1728079, upload-time = "2024-08-02T09:49:58.32Z" },
+    { url = "https://files.pythonhosted.org/packages/78/16/aa8724a09d81aae5e6884081a6625ee6c39f9346aa06aa996aa7175aff5c/pyceres-2.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1c277852f00f9ff0a0d2b9910046896b0de4ff8584c56c8e13f43dd4a2af275a", size = 1423359, upload-time = "2024-08-02T09:50:00.08Z" },
+    { url = "https://files.pythonhosted.org/packages/28/94/a39e341fe6cbc8abbdc52fa6d3b9d2b8b9b96d51f1aebe60006f5b376c07/pyceres-2.3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:5b06708c76f5e3d9f4501f6dc269814e02df27b4b837aa8a4b9f9049922632b1", size = 3117406, upload-time = "2024-08-02T09:50:01.813Z" },
+    { url = "https://files.pythonhosted.org/packages/52/28/56aa58f1b2cf5c6c6d3c422cb69cd04e8f8f6e5868e74de432e7dffff789/pyceres-2.3-cp312-cp312-win_amd64.whl", hash = "sha256:11f954480fdd94193a603cc3001535cd8003b0ad45fb427879d680bea8a19320", size = 7259605, upload-time = "2024-08-02T09:50:03.336Z" },
+]
+
+[[package]]
 name = "pycodestyle"
 version = "2.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5339,7 +5444,8 @@ version = "0.7.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ed/11/746f2d7c1efc09693a4772aedfabb21982fdcd2dcb069d0c26edd1a25d8b/pypose-0.7.5.tar.gz", hash = "sha256:c8f7f14a257e599a8b7c6cdb0ca6ba53a9de8284ef7d7b1026b610fdf7cd0cbc", size = 125603, upload-time = "2025-12-21T17:11:20.587Z" }
 wheels = [
@@ -5508,7 +5614,8 @@ dependencies = [
     { name = "lightning-utilities" },
     { name = "packaging" },
     { name = "pyyaml" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "torchmetrics" },
     { name = "tqdm" },
     { name = "typing-extensions" },
@@ -5525,7 +5632,8 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "scikit-learn" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9b/80/6e61b1a91debf4c1b47d441f9a9d7fe2aabcdd9575ed70b2811474eb95c3/pytorch-metric-learning-2.9.0.tar.gz", hash = "sha256:27a626caf5e2876a0fd666605a78cb67ef7597e25d7a68c18053dd503830701f", size = 84530, upload-time = "2025-08-17T17:11:19.501Z" }
@@ -6298,6 +6406,16 @@ wheels = [
 ]
 
 [[package]]
+name = "scikit-sparse"
+version = "0.4.15"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8e/d6/b8da5eba54ab7ca452e4ae3352d3ee05b8bc3102dddc039a358e9e6d3a5e/scikit_sparse-0.4.15.tar.gz", hash = "sha256:a0b1ef1bbe9e28e5c6d2838c63c62e094a8098d11a736771edac55ccc5f9eabe", size = 214398, upload-time = "2024-08-04T15:30:25.361Z" }
+
+[[package]]
 name = "scipy"
 version = "1.17.1"
 source = { registry = "https://pypi.org/simple" }
@@ -6401,8 +6519,10 @@ dependencies = [
     { name = "pillow" },
     { name = "safetensors" },
     { name = "timm" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/15/fa/d5a29d49240fb10bdead608b4d0c6805684a8f63b1f65863502be65b1ca4/segmentation_models_pytorch-0.5.0.tar.gz", hash = "sha256:cabba8aced6ef7bdcd6288dd9e1dc2840848aa819d539c455bd07aeceb2fdf96", size = 105150, upload-time = "2025-04-17T10:43:45.755Z" }
@@ -6471,7 +6591,8 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 dependencies = [
     { name = "alabaster" },
@@ -6504,16 +6625,20 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
 ]
 dependencies = [
     { name = "alabaster" },
@@ -6709,7 +6834,7 @@ version = "0.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ptyprocess", marker = "os_name != 'nt'" },
-    { name = "pywinpty", marker = "os_name == 'nt'" },
+    { name = "pywinpty", marker = "os_name == 'nt' and sys_platform != 'darwin'" },
     { name = "tornado" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8a/11/965c6fd8e5cc254f1fe142d547387da17a8ebfd75a3455f637c663fb38a0/terminado-0.18.1.tar.gz", hash = "sha256:de09f2c4b85de4765f7714688fff57d3e75bad1f909b589fde880460c753fd2e", size = 32701, upload-time = "2024-03-12T14:34:39.026Z" }
@@ -6733,7 +6858,8 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 dependencies = [
     { name = "numpy" },
@@ -6750,16 +6876,20 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
 ]
 dependencies = [
     { name = "numpy" },
@@ -6777,8 +6907,10 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/08/54/ece85b0eef3700c90db8271a43669b05a0ebbe2edb1962329c34374a297e/timm-1.0.27.tar.gz", hash = "sha256:315dfe63186ca9fb7ff941268941231fd5be259f2b4bb4afa28560ae1015cb9a", size = 2439861, upload-time = "2026-05-08T19:38:36.844Z" }
 wheels = [
@@ -6897,8 +7029,50 @@ wheels = [
 
 [[package]]
 name = "torch"
+version = "2.5.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
+    "python_full_version == '3.14.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
+    "python_full_version < '3.12' and sys_platform == 'darwin'",
+]
+dependencies = [
+    { name = "filelock" },
+    { name = "fsspec" },
+    { name = "jinja2" },
+    { name = "networkx" },
+    { name = "setuptools" },
+    { name = "sympy" },
+    { name = "typing-extensions" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/db/5d9cbfbc7968d79c5c09a0bc0bc3735da079f2fd07cc10498a62b320a480/torch-2.5.1-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:31f8c39660962f9ae4eeec995e3049b5492eb7360dd4f07377658ef4d728fa4c", size = 63884466, upload-time = "2024-10-29T17:33:02.899Z" },
+    { url = "https://files.pythonhosted.org/packages/57/6c/bf52ff061da33deb9f94f4121fde7ff3058812cb7d2036c97bc167793bd1/torch-2.5.1-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:8c712df61101964eb11910a846514011f0b6f5920c55dbf567bff8a34163d5b1", size = 63858109, upload-time = "2024-10-29T17:36:21.973Z" },
+]
+
+[[package]]
+name = "torch"
 version = "2.5.1+cu121"
 source = { registry = "https://download.pytorch.org/whl/cu121" }
+resolution-markers = [
+    "python_full_version >= '3.15' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
 dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
@@ -6967,7 +7141,8 @@ dependencies = [
     { name = "lightning-utilities" },
     { name = "numpy" },
     { name = "packaging" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/81/34/39b8b749333db56c0585d7a11fa62a283c087bb1dfc897d69fb8cedbefb1/torchmetrics-1.9.0.tar.gz", hash = "sha256:a488609948600df52d3db4fcdab02e62aab2a85ef34da67037dc3e65b8512faa", size = 581765, upload-time = "2026-03-09T17:41:22.443Z" }
 wheels = [
@@ -6988,8 +7163,10 @@ dependencies = [
     { name = "tensorboard" },
     { name = "tensorpack" },
     { name = "toml" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c2/11/cf4f9cd52533dfb5b0180b260ae796c7d757fac6ed9d730a75462300d8f2/torchpack-0.3.1.tar.gz", hash = "sha256:818cf345d07369c1dc9b111896db420511d660404953de62372893a107208669", size = 20086, upload-time = "2021-05-07T23:48:19.09Z" }
@@ -6999,12 +7176,50 @@ wheels = [
 
 [[package]]
 name = "torchvision"
-version = "0.20.1+cu121"
-source = { registry = "https://download.pytorch.org/whl/cu121" }
+version = "0.20.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
+    "python_full_version == '3.14.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
+    "python_full_version < '3.12' and sys_platform == 'darwin'",
+]
 dependencies = [
     { name = "numpy" },
     { name = "pillow" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" } },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/57/4d7ad90be612f5ac6c4bdafcb0ff13e818e14a340a88c8ca00d9ed8c2dad/torchvision-0.20.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:344b339e15e6bbb59ee0700772616d0afefd209920c762b1604368d8c3458322", size = 1787548, upload-time = "2024-10-29T17:40:55.292Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/eb/4ba19616378f2bc085999432fded2b7dfdbdccc6dd0fc293203452508100/torchvision-0.20.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1a31256ff945d64f006bb306813a7c95a531fe16bfb2535c837dd4c104533d7a", size = 1787553, upload-time = "2024-10-29T17:40:50.63Z" },
+]
+
+[[package]]
+name = "torchvision"
+version = "0.20.1+cu121"
+source = { registry = "https://download.pytorch.org/whl/cu121" }
+resolution-markers = [
+    "python_full_version >= '3.15' and sys_platform == 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'emscripten'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" } },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu121/torchvision-0.20.1%2Bcu121-cp311-cp311-linux_x86_64.whl", hash = "sha256:237609a3551c2b68f32bcd3f3875dca93836010d83922ef2f3bd3a7540caee58", upload-time = "2024-10-29T23:25:42Z" },
@@ -7233,8 +7448,10 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "scipy" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "ultralytics-thop" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/14/11/f8c8173388a91b3eef25028728985445fcb593bbc3db8b288af7e0fdc67d/ultralytics-8.4.60.tar.gz", hash = "sha256:cb38abbfc29a7b3c5d51c6e457fe37c20586cbc00f69639d5de700cda8003bce", size = 1071779, upload-time = "2026-06-01T16:03:08.63Z" }
@@ -7248,7 +7465,8 @@ version = "2.0.19"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/09/ab/1cc7edfd5241ed9abb2e8ee0d5088d2800c989df9baa43e05706a87f765b/ultralytics_thop-2.0.19.tar.gz", hash = "sha256:df547d93ebdec4c9d2a9375f2e21d483547a462c08814e8810dc73498dd29ba9", size = 34665, upload-time = "2026-04-24T12:21:23.844Z" }
 wheels = [
@@ -7270,10 +7488,12 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "termcolor" },
     { name = "timm" },
-    { name = "torch" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "torchaudio" },
     { name = "torchmetrics" },
-    { name = "torchvision" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/17/e0/7415baa9f08b32e64151293017c65e3cff13becc619c9a11190b4474425d/uniception-0.1.7.tar.gz", hash = "sha256:730413ef4901b820f52651323156df6288ebe653615798bb6ff1da589b9cb0aa", size = 154483, upload-time = "2026-03-22T23:35:42.199Z" }
 wheels = [
@@ -7374,8 +7594,10 @@ dependencies = [
     { name = "setuptools" },
     { name = "tensorboard" },
     { name = "timm" },
-    { name = "torch" },
-    { name = "torchvision" },
+    { name = "torch", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.5.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
+    { name = "torchvision", version = "0.20.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "torchvision", version = "0.20.1+cu121", source = { registry = "https://download.pytorch.org/whl/cu121" }, marker = "sys_platform != 'darwin'" },
     { name = "tqdm" },
     { name = "transforms3d" },
     { name = "trimesh" },
@@ -7715,7 +7937,8 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 dependencies = [
     { name = "donfig" },
@@ -7737,16 +7960,20 @@ source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.15' and sys_platform == 'darwin'",
     "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.14.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'darwin'",
     "python_full_version == '3.13.*' and sys_platform == 'win32'",
     "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'darwin'",
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.12.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.12.*' and sys_platform == 'darwin'",
 ]
 dependencies = [
     { name = "donfig" },

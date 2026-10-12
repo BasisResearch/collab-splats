@@ -11,6 +11,49 @@ authors = [
 ]
 
 dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pillow",
+    "pyyaml",
+    "tqdm",
+    "matplotlib",
+    "mergedeep",
+    "python-dotenv",
+    "zarr>=2.16",
+    "huggingface_hub",
+]
+
+[project.optional-dependencies]
+# 2D features + segmentation: CPU or GPU, no CUDA build, no bae (collab-data mesh_semantics installs this)
+semantics = [
+    # Plain torch: in-repo syncs get cu121 from [tool.uv] overrides; consumers keep their own build
+    "torch",
+    "torchvision",
+    "transformers>=4.30,<5.0",
+    "timm>=0.9,<2.0",
+    "opencv-python",
+    "scikit-learn",
+    "scikit-image",
+    "kornia",
+    "safetensors",
+    # av — PyAV, the decode path in preproc/video.py (semantics.store reaches preproc)
+    "av>=17.0",
+    # WordNet lemmas for the ocr_lens decode vocabulary
+    "nltk>=3.8",
+    # Parquet reader for score_ocr_heads' mini-imagenet backgrounds
+    "pyarrow",
+    # Pinned: unpinned resolves an old release that needs pretrainedmodels
+    "segmentation-models-pytorch==0.5.0",
+    # Talk2DINOv3 HF remote code imports clip, einops, omegaconf; transformers refuses the model without them
+    # clip as a PEP 508 direct URL: git-dependency consumers never read [tool.uv.sources], PyPI `clip` is unrelated
+    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+    "einops",
+    "omegaconf",
+]
+
+# Full pipeline: pointcloud, BA, splats, mesh, localization; needs the CUDA toolchain (setup.sh)
+reconstruction = [
+    "collab_splats[semantics]",
     # setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,
     # which setuptools 70+ removed. See [build-system] comment.
     "setuptools<70.0",
@@ -19,21 +62,12 @@ dependencies = [
     # setuptools<70 has no bdist_wheel command. ninja gives fast parallel CUDA compiles.
     "wheel",
     "ninja",
-    "torch==2.5.1+cu121",
-    "torchvision==0.20.1+cu121",
+    # cu121 wheels have no darwin build; darwin resolves plain torch through semantics
+    "torch==2.5.1+cu121; sys_platform != 'darwin'",
+    "torchvision==0.20.1+cu121; sys_platform != 'darwin'",
     # ftfy: maskclip_onnx imports it without declaring it
     "ftfy",
-    "matplotlib",
-"seaborn",
-    "mergedeep",
-    "numpy>=1.26",
-    "zarr>=2.16",
-    "scipy>=1.11",
-    # av — PyAV, the decode path in preproc/video.py (was transitive via other deps)
-    "av>=17.0",
-    "pillow",
-    "tqdm",
-    "huggingface_hub",
+    "seaborn",
     "ultralytics",
     "pyvista[jupyter]",
     # viser — websocket 3D viewer for live scene visualization (collab_splats/viewer.py)
@@ -44,29 +78,12 @@ dependencies = [
     # so it needs nvcc at build time only (see setup.sh) and no build isolation (below).
     "meshlib==3.1.4.297",
     "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast@253ac4fcea7de5f396371124af597e6cc957bfae",
-    "python-dotenv",
-    "segmentation-models-pytorch==0.5.0",
     "trimesh",
     "pydantic==2.10.6",
-    "pyyaml",
     # pycolmap-cuda12, pinned at 4.1.1
     # - GPU SIFT wheel: replaces the colmap CLI (docs/superpowers/specs/2026-09-26-pycolmap-cuda-docker-design.md)
     # - not 4.2: shared-focal two-view estimator, ~14x verification CPU for single-camera scenes
     "pycolmap-cuda12==4.1.1",
-    "transformers>=4.30,<5.0",
-    # WordNet lemmas for the ocr_lens decode vocabulary
-    "nltk>=3.8",
-    # Parquet reader for score_ocr_heads' mini-imagenet backgrounds (was transitive)
-    "pyarrow",
-    "timm>=0.9,<2.0",
-    # Talk2DINOv3 HF remote code imports clip, einops, omegaconf; transformers refuses the model without them
-    # clip as a PEP 508 direct URL: git-dependency consumers never read [tool.uv.sources], PyPI `clip` is unrelated
-    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
-    "einops",
-    "omegaconf",
-    "opencv-python",
-    "scikit-learn",
-    "kornia",
     # BasisResearch fork, `basis` branch: batched extract + match() + match_batch() (spec 2026-10-03-vismatch-feature-matching)
     "vismatch @ git+https://github.com/BasisResearch/vismatch@865d91a52ff23f60096188e0e0a748911768535d",
     "mobile_sam",
@@ -94,16 +111,27 @@ dependencies = [
     # nvcc — CUDA_HOME is wired to the venv's nvidia/cuda_nvcc dir in setup.sh.
     # USE_CUDSS defaults to "1" in bae 0.2.5.
     "bae",
+    # open3d: fit_dominant_plane (imported lazily by geometry.transforms)
+    "open3d",
+]
+
+# reconstruct CLI and dashboard GCS access: private collab-data (path dep at /workspace/collab-data)
+remote = [
     "collab_data @ file:///workspace/collab-data",
 ]
 
-[project.optional-dependencies]
+# InstantSfM sfm backend + VDA runtime dep; instantsfm's own requires-dist is blanked below
+instantsfm = [
+    "instantsfm",
+    "pyceres==2.3",
+    # scikit-sparse builds against libsuitesparse-dev (Dockerfile apt lists)
+    "scikit-sparse==0.4.15",
+    # easydict: Video-Depth-Anything's only runtime dep missing from the lock (dpt_temporal.py)
+    "easydict==1.13",
+]
 feedforward = [
     # vggt (VGGT-X), vggt-omega, mapanything, lightglue, salad — git deps from
     # [tool.uv.sources], installed by `uv sync` (setup.sh); lightglue is mapanything's colmap extra
-    # InstantSfM backend deps (instantsfm, pyceres, scikit-sparse, easydict, VDA clone) are
-    # installed by setup.sh with --no-deps — upstream pins numpy==1.26.4 which conflicts with
-    # the lock. Plain `uv sync` prunes them; rerun setup.sh (or its InstantSfM block) after.
     "uniception==0.1.7",
     "viser>=0.2.23",
     "evo",
@@ -258,8 +286,10 @@ known_models = [
 # Replaces the per-package `--no-deps` hacks in the old setup scripts:
 #   VGGT-X pinned torch==2.3.1; vggt-omega pinned numpy<2.
 override-dependencies = [
-    "torch==2.5.1+cu121",
-    "torchvision==0.20.1+cu121",
+    "torch==2.5.1+cu121; sys_platform != 'darwin'",
+    "torch==2.5.1; sys_platform == 'darwin'",
+    "torchvision==0.20.1+cu121; sys_platform != 'darwin'",
+    "torchvision==0.20.1; sys_platform == 'darwin'",
     "numpy>=2,<2.2",
     # vismatch hard-pins uniception==0.1.1 (its ufm model) and lightning==2.3.3 (its edm
     # model). We need uniception 0.1.7 (MapAnything imports 15 symbols absent in 0.1.1)
@@ -281,6 +311,7 @@ no-build-isolation-package = ["bae", "gsplat", "fused-ssim", "nvdiffrast"]
 # - the four CUDA extensions need torch at build time (no-build-isolation), so a fresh venv
 #   cannot answer uv's resolve-time metadata query
 # - collab-data's setup.py changes per commit; only its core deps matter here
+# - instantsfm: upstream pins numpy 1.26 / opencv / scipy / viser exactly; our lock owns those
 [[tool.uv.dependency-metadata]]
 name = "bae"
 version = "0.2.5"
@@ -306,14 +337,21 @@ name = "collab-data"
 version = "0.0.1"
 requires-dist = ["gcsfs", "loguru"]
 
+[[tool.uv.dependency-metadata]]
+name = "instantsfm"
+version = "0.3.0"
+requires-dist = []
+
 [[tool.uv.index]]
 name = "pytorch-cu121"
 url = "https://download.pytorch.org/whl/cu121"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu121" }
-torchvision = { index = "pytorch-cu121" }
+torch = [{ index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }]
+# InstantSfM pinned commit; upstream pins numpy==1.26.4 and more, so its requires-dist is blanked (dependency-metadata)
+instantsfm = { git = "https://github.com/cre185/InstantSfM", rev = "d3e599e1a42b4c5a806a84d9f383e1005d25f61b" }
 # Upstream gsplat, main @ 2026-07-09 (version string 1.5.3; the v1.5.3 TAG lacks gsplat.losses and
 # extra_signals). Newest rev that builds on torch 2.5.1+cu121: 4561ac4 (2026-06-01) needs CCCL
 # `cuda::ceil_div` (CUDA >= 12.3) and 31f5b3d (2026-06-08) needs `c10d::wait_tensor` (torch >= 2.7).

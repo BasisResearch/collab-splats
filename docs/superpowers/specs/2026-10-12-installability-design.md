@@ -22,6 +22,12 @@ Defects:
 - every `setup.sh` run uninstalls then reinstalls InstantSfM (outside the lock); a plain
   `uv sync` silently drops the backend
 - WordNet downloads to `/root/nltk_data`, ephemeral on RunPod — re-fetched every launch
+- **Talk2DINO (default extractor) cannot load**: `ImportError: This modeling file requires the
+  following packages that were not found in your environment: clip`. Regression from
+  `47633e39` (2026-10-08), which dropped `clip` as unused and `einops` / `omegaconf` as
+  upstream-covered; the Talk2DINOv3 HF remote code imports all three and transformers'
+  `check_imports` hard-fails on any missing. A repo grep cannot see these imports
+- runtime rclone is v1.58.1 (2022); `install.sh` serves 1.75.2 today
 - `setup.sh` hardcodes `/root/.local/bin/uv`; Dockerfile `uv` / `rclone` installers unpinned
 
 Clean CPU venv probe of `collab_splats.semantics` (torch 2.5.1+cpu + semantics-level deps):
@@ -39,18 +45,32 @@ Clean CPU venv probe of `collab_splats.semantics` (torch 2.5.1+cpu + semantics-l
 
 ### 1. pyproject extras
 
-- base `dependencies`: light cross-platform core only (numpy, scipy, pillow, pyyaml, tqdm,
-  requests, python-dotenv, mergedeep, matplotlib, hydra-core, omegaconf)
-- `semantics`: plain `torch` / `torchvision`, transformers, timm, huggingface_hub, zarr,
-  numcodecs, opencv-python, scikit-learn, kornia, nltk, pyarrow,
-  segmentation-models-pytorch==0.5.0 (unpinned resolves an old release needing
-  `pretrainedmodels`), safetensors, clip (git), einops, av, scikit-image — no pycolmap: the
-  `pycolmap; sys_platform == 'never'` override would strip it from any in-repo sync
-- `reconstruction`: everything else currently in base (gsplat, bae, nvdiffrast, fused-ssim,
-  pypose, mobile_sam, maskclip_onnx, ...) — unchanged contents, new location
-- `remote`: collab-data (path dep) — base install no longer needs the private repo
-- `instantsfm`: instantsfm (git), pyceres, scikit-sparse, easydict — now locked; the existing
-  `numpy>=2,<2.2` override neutralises upstream's `numpy==1.26.4` pin
+- base `dependencies`: light cross-platform core already in base today — numpy, scipy,
+  pillow, pyyaml, tqdm, matplotlib, mergedeep, python-dotenv, zarr, huggingface_hub
+- `semantics` — the probe's list plus Talk2DINO's remote-code imports:
+  - plain `torch` / `torchvision`, transformers, timm, opencv-python, scikit-learn, kornia,
+    nltk, pyarrow, safetensors, av, scikit-image
+  - `segmentation-models-pytorch==0.5.0` (unpinned resolves an old release needing
+    `pretrainedmodels`)
+  - `clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6`
+    as a PEP 508 direct URL, not a `[tool.uv.sources]` entry: consumers installing us as a git
+    dependency (collab-data) never read our `tool.uv` table, and bare `clip` resolves to an
+    unrelated PyPI package; CLIP itself needs `ftfy`, `regex`
+  - `einops`, `omegaconf` (Talk2DINOv3 remote code)
+  - no pycolmap: the `pycolmap; sys_platform == 'never'` override strips it from any in-repo
+    sync, and the lazy `preproc` init (§2) removes the need
+- `reconstruction`: everything else currently in base (setuptools<70, wheel, ninja, the cu121
+  torch pins, gsplat, fused-ssim, bae, pypose, nvdiffrast, nvidia-cudss, pycolmap-cuda12,
+  mobile_sam, maskclip_onnx, torchpack, vismatch, ultralytics, pyvista, viser, meshlib,
+  trimesh, pydantic, seaborn, ftfy) — contents unchanged, new location
+- `remote`: collab-data (path dep) — base install no longer needs the private repo; the
+  `reconstruct` CLI imports `remote.py` at top (`__main__.py:22`), so the CLI needs
+  `[reconstruction,remote]` — `setup.sh` gets both via `--all-extras`
+- `instantsfm`: instantsfm (git), pyceres, scikit-sparse, easydict — now locked
+  - upstream pins far more than numpy: `opencv-python==4.10.0.84`, `scipy==1.13.0`,
+    `tqdm==4.66.5`, `kornia==0.8.0`, `viser==0.2.11`, `torchmetrics[image]`, ...
+  - so a `[[tool.uv.dependency-metadata]]` entry (the pattern bae / gsplat already use)
+    declares instantsfm's requires-dist as empty — the lock equivalent of today's `--no-deps`
 - torch / torchvision cu121 overrides and `[tool.uv.sources]` gated to linux/win32, with
   complementary darwin entries (an override replaces the requirement outright, so a false
   marker alone would drop torch)
@@ -67,6 +87,9 @@ Clean CPU venv probe of `collab_splats.semantics` (torch 2.5.1+cpu + semantics-l
   (`undistort.py` is its only pycolmap importer)
 - `segmentation/mobile_sam.py`: `mobile_sam` imported inside the auto strategy with a clear
   `ImportError` message — the CLAUDE.md optional-heavy-dep exception, as `sam3` / `maskclip` do
+- `tests/conftest.py`: the `pkg_resources.packaging` shim tolerates a missing `pkg_resources`
+  (a semantics-only env may carry setuptools >= 81); `test_maskclip_onnx_importable` uses
+  `pytest.importorskip` — both ported from `37f7af2d`
 
 bae remains required by `bundle_adjustment`, `photometric`, `reconstructor`, loop-closure
 `wrapper` and InstantSfM (lazy) — all in the `reconstruction` path, which needs CUDA anyway.
@@ -78,7 +101,10 @@ bae remains required by `bundle_adjustment`, `photometric`, `reconstructor`, loo
 - `uv` from `PATH`, not `/root/.local/bin/uv`
 - InstantSfM block deleted; sync failure help names `libsuitesparse-dev`
 - WordNet to `NLTK_DATA=/workspace/models/nltk_data` (Dockerfile ENV + setup.sh)
-- Dockerfile: `jq` in the runtime apt list; uv and rclone installers version-pinned
+- Dockerfile: `jq` in the runtime apt list; uv pinned to 0.12.19 (the version in this image)
+  and rclone to 1.75.2 via `install.sh`'s version argument
+- `NLTK_DATA` also lands in the runtime Dockerfile `ENV` and the `.bashrc` block — the path
+  must be visible to every process that reads WordNet, not only to setup.sh
 - README: on RunPod the `/workspace` volume shadows the image's checkout — clone into
   `/workspace`, then `bash setup.sh`
 - out of repo (user-applied): drop the `apt install rclone jq` line from
@@ -90,8 +116,14 @@ bae remains required by `bundle_adjustment`, `photometric`, `reconstructor`, loo
   from `collab_splats.semantics` (following `collab_splats.*` edges, including package
   `__init__`s); fails if any third-party top-level module falls outside the `semantics` extra
   allowlist; no network, no venv
-- one-off proof recorded in the plan: `uv pip install '.[semantics]'` into a clean CPU venv from
-  a cwd outside the repo, then import every `collab_splats.semantics` module
+  - skips `if TYPE_CHECKING:` bodies (`lifting.py:22` imports `pointcloud.base` there) and
+    function bodies (the lazy imports)
+  - allowlist maps import names to dists (`cv2` → opencv-python, `skimage` → scikit-image,
+    `sklearn` → scikit-learn, `PIL` → pillow, `yaml` → pyyaml, ...)
+- one-off proof recorded in the plan: `uv pip install '<repo>[semantics]'` into a clean CPU
+  venv from a cwd outside the repo (inside it, uv applies our overrides — the probe hit this),
+  then import every `collab_splats.semantics` module and construct `Talk2DinoExtractor` on CPU
+- container: `Talk2DinoExtractor()` loads after the re-sync (regression check for `clip`)
 - full gate: `pytest tests/` in the container venv, plus a fresh `bash setup.sh` with exit 0 and
   no `[WARN]`
 
@@ -101,6 +133,10 @@ bae remains required by `bundle_adjustment`, `photometric`, `reconstructor`, loo
   `libsuitesparse-dev` (was best-effort); the image ships it, setup.sh prints the hint
 - collab-data must re-pin `collab_splats[semantics]` from `@db-semantics-package` to the landed
   commit — a change in their repo
+
+- semantics consumers need Python >= 3.11 (collab-data declares >= 3.10)
+- the self-hosted GPU CI runner reuses the full image env; the semantics-only install is
+  proven by the one-off clean venv plus the AST test, not by a CI job
 
 ## Out of scope
 

@@ -13,8 +13,6 @@ from typing import Any
 import numpy as np
 import torch
 
-from mobile_sam import SamAutomaticMaskGenerator
-
 from collab_splats.semantics.segmentation.base import BaseSegmentation
 from collab_splats.utils.torch_utils import (
     batch_iterator,
@@ -157,7 +155,19 @@ class MobileSAMSegmentation(BaseSegmentation):
 
         Returns:
             (masks, results), N = 0 when the generator finds nothing.
+
+        Raises:
+            ImportError: mobile_sam is not installed.
         """
+        # Imported here: mobile_sam is a git-only dep the semantics extra does not carry
+        try:
+            from mobile_sam import SamAutomaticMaskGenerator  # noqa: PLC0415
+        except ImportError as e:
+            raise ImportError(
+                "mobilesamv2 strategy 'auto' needs mobile_sam: "
+                "pip install 'git+https://github.com/ChaoningZhang/MobileSAM.git'"
+            ) from e
+
         mask_generator = SamAutomaticMaskGenerator(model=self.seg_model)
         results = mask_generator.generate(image)
 

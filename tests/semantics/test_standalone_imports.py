@@ -13,6 +13,7 @@ import pytest
 LAZY = [
     ("collab_splats.geometry", "bae"),
     ("collab_splats.preproc", "pycolmap"),
+    ("collab_splats.semantics.segmentation", "mobile_sam"),
 ]
 
 

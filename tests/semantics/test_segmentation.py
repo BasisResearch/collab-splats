@@ -230,7 +230,7 @@ def test_mobilesamv2_stack_masks_is_bool():
 def test_mobilesamv2_auto_empty_returns_empty_stack(monkeypatch):
     gen = MagicMock()
     gen.return_value.generate.return_value = []
-    monkeypatch.setattr(mobile_sam, "SamAutomaticMaskGenerator", gen)
+    monkeypatch.setattr("mobile_sam.SamAutomaticMaskGenerator", gen)
     seg = _mobilesam_stub(strategy="auto")
     masks, results = seg.segment(np.zeros((5, 7, 3), dtype=np.uint8))
     assert masks.shape == (0, 5, 7)

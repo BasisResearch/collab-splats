@@ -23,6 +23,7 @@ These tasks are started but not complete — do not assume their targets are don
 - **sky-mask** — smp SegFormer sky masks shipped (`semantics/segmentation/sky.py`) and `mesh.mask_sky: true` is the default; open: the GH010229 mesh A/B with the torch masks ([spec](docs/superpowers/specs/2026-09-07-sky-segmentation-design.md) · [plan](docs/superpowers/plans/2026-09-07-sky-segmentation.md))
 - **vismatch-fork** — collab-splats pins the `BasisResearch/vismatch` `basis` branch (batched extract, `match_batch`); open: the upstream batch + COLMAP-export PRs ([spec](docs/superpowers/specs/2026-09-25-vismatch-fork-design.md))
 - **consistency** — dedup audit; phase 1 + 1b (convention bugs) and phase 2 (utils/io.py) squashed onto `clean/final` from `clean/consistency`; phase 3 (utils/colmap.py, dedup) not started ([spec](docs/superpowers/specs/2026-09-26-consistency-design.md) · [plan](docs/superpowers/plans/2026-09-26-consistency-phase1.md) · [phase 2](docs/superpowers/plans/2026-09-26-consistency-phase2.md))
+- **installability** — container setup fixes + standalone `collab_splats[semantics]` extra (Talk2DINO `clip` regression fixed first) ([spec](docs/superpowers/specs/2026-10-12-installability-design.md) · [plan](docs/superpowers/plans/2026-10-12-installability.md))
 
 ## Recently Completed
 

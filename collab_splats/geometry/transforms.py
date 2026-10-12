@@ -13,7 +13,6 @@ from __future__ import annotations
 from contextlib import nullcontext
 
 import numpy as np
-import open3d as o3d
 from numpy.typing import ArrayLike
 from scipy.linalg import rq
 from torch import Tensor
@@ -388,7 +387,16 @@ def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Returns:
         R: (3, 3) rotation taking the floor normal onto [0, 0, 1].
         t: (3,) translation placing the floor at z=0 after that rotation.
+
+    Raises:
+        ImportError: open3d is not installed.
     """
+    # Imported here: open3d ships no wheels past Python 3.12 and only this fit needs it
+    try:
+        import open3d as o3d  # noqa: PLC0415
+    except ImportError as e:
+        raise ImportError("fit_dominant_plane needs open3d: pip install open3d") from e
+
     # RANSAC plane normal · x + d_norm = 0, with a unit normal
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))

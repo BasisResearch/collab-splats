@@ -72,13 +72,29 @@ preproc:
 |---|---|---|---|
 | `preproc.frame_selection` | str | `fps` | `fps`, `uniform` or `optical_flow` |
 | `preproc.fps` | float | `2.0` | `fps` only: samples per second |
-| `preproc.min_frames` | int\|null | `null` | `fps` only: floor on the count |
 | `preproc.max_frames` | int\|null | `300` | Count for `uniform`, ceiling otherwise; `null` = no ceiling (not for `uniform`) |
-| `preproc.on_empty_slot` | str | `rescue` | `fps` only: a slot with no eligible frame keeps its sharpest (`rescue`) or is skipped (`drop`) |
-| `preproc.quality.sharpness_k` | float | `2.0` | MAD z-score cut on `log(laplacian)`; larger keeps more |
-| `preproc.quality.max_clipped_frac` | float | `0.25` | Ceiling on clipped-pixel fraction; larger keeps more |
 | `preproc.undistort` | bool | `false` | Self-calibrate one OPENCV camera (pycolmap) and rewrite `images/` undistorted; frame size changes |
 | `preproc.n_workers` | int | `16` | Parallel decode ranges; never changes the selection. Set `1` during GPU runs |
+
+<details>
+<summary><code>fps</code> sampling</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `preproc.min_frames` | int\|null | `null` | `fps` only: floor on the count |
+| `preproc.on_empty_slot` | str | `rescue` | `fps` only: a slot with no eligible frame keeps its sharpest (`rescue`) or is skipped (`drop`) |
+
+</details>
+
+<details>
+<summary><code>preproc.quality</code>: keyframe gate</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `preproc.quality.sharpness_k` | float | `2.0` | MAD z-score cut on `log(laplacian)`; larger keeps more |
+| `preproc.quality.max_clipped_frac` | float | `0.25` | Ceiling on clipped-pixel fraction; larger keeps more |
+
+</details>
 
 ---
 
@@ -238,16 +254,40 @@ mesh:
 |---|---|---|---|
 | `mesh.enabled` | bool | `true` | Fuse a TSDF mesh into `<backend>/mesh.ply` |
 | `mesh.source` | str | `feedforward` | Fuse `pointcloud.zarr` depth, or `splats` rendered depth (needs the splats stage) |
-| `mesh.voxel_depth_px` | float | `4.0` | Voxel edge in depth pixels at the reference depth; smaller is finer |
-| `mesh.voxel_ref_percentile` | float | `50` | Depth percentile the voxel is sized at |
-| `mesh.sdf_trunc_mult` | float | `6.0` | Truncation band in voxels; must be `>= 1.0` |
+| `mesh.texture` | bool | `true` | UV-unwrap and texture into `<backend>/texture/`; needs a GPU, set `false` without one |
+
+<details>
+<summary>Depth filtering</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
 | `mesh.depth_trunc_percentile` | float | `99` | Zero depth beyond this percentile; required, in (0, 99] |
 | `mesh.conf_percentile` | float\|null | `10` | Drop depth below this confidence percentile; `null` = off |
 | `mesh.mask_sky` | bool | `true` | Zero sky depth before fusing |
-| `mesh.max_faces` | int\|null | `1500000` | Face budget before texturing; `null` = no cap |
-| `mesh.smooth_iterations` | int | `30` | Volume-keeping smoothing passes; `0` = off |
+
+</details>
+
+<details>
+<summary>TSDF fusion</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `mesh.voxel_depth_px` | float | `4.0` | Voxel edge in depth pixels at the reference depth; smaller is finer |
+| `mesh.voxel_ref_percentile` | float | `50` | Depth percentile the voxel is sized at |
+| `mesh.sdf_trunc_mult` | float | `6.0` | Truncation band in voxels; must be `>= 1.0` |
+
+</details>
+
+<details>
+<summary>Cleanup</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
 | `mesh.use_convex_hull` | bool | `true` | Patch the ground out to a convex hull; outdoor scenes only |
-| `mesh.texture` | bool | `true` | UV-unwrap and texture into `<backend>/texture/`; needs a GPU, set `false` without one |
+| `mesh.smooth_iterations` | int | `30` | Volume-keeping smoothing passes; `0` = off |
+| `mesh.max_faces` | int\|null | `1500000` | Face budget before texturing; `null` = no cap |
+
+</details>
 
 ---
 
@@ -274,12 +314,13 @@ semantics:
 
 ## `splats`
 
-`3dgs` keeps thin structure and trains faster; `2dgs` (surface-aligned) gives better surfaces.
+`3dgs` keeps thin structure and trains faster; `2dgs` (surface-aligned) gives better surfaces. For the best surfaces use `scaffold` + `2dgs` as the mesh source.
 
 ```yaml
-# 2DGS as the mesh source
+# Best surfaces: scaffold 2DGS as the mesh source
 splats:
   enabled: true
+  representation: scaffold
   primitive: 2dgs
 mesh:
   source: splats
@@ -294,15 +335,23 @@ mesh:
 | `splats.max_steps` | int | `30000` | Training iterations |
 | `splats.pose_opt` | bool | `true` | Refine camera poses jointly |
 | `splats.appearance_opt` | bool | `false` | Per-image affine color (train views only) |
+| `splats.normalize_scene` | bool | `false` | Train in a normalized frame; outputs map back to world units |
+
+<details>
+<summary>Schedule and densification</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `splats.init_opacity` | float | `0.1` | Initial opacity |
 | `splats.sh_degree` | int | `3` | Max spherical-harmonics degree |
 | `splats.sh_degree_interval` | int | `1000` | Steps between SH-degree increments |
-| `splats.init_opacity` | float | `0.1` | Initial opacity |
 | `splats.cap_max` | int | `1000000` | `3dgs` + `vanilla` only: Gaussian budget |
 | `splats.grow_grad2d` | float | `2.0e-4` | `2dgs` + `vanilla` only: densification threshold |
 | `splats.num_downscales` | int | `2` | Coarse-to-fine: start at `1/2^n` resolution; `0` = off |
 | `splats.resolution_schedule` | int | `3000` | Steps per resolution doubling |
-| `splats.normalize_scene` | bool | `false` | Train in a normalized frame; outputs map back to world units |
 | `splats.log_every` | int | `500` | Steps between loss logs |
+
+</details>
 
 <details>
 <summary>Learning rates</summary>

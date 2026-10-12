@@ -20,6 +20,5 @@ Module docs live in the API reference, prose above each autodoc block (`docs/sou
 - [mesh.rst](source/api/mesh.rst) — TSDF fusion, cleaning, texturing, vertex features
 - [splats.rst](source/api/splats.rst) — gsplat training
 
-Loop-closure parity vs
-VGGT-SLAM is decision 027. Tutorials and the API reference build with `make docs` from
+Tutorials and the API reference build with `make docs` from
 `docs/source/`.

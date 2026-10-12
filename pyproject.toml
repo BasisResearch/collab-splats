@@ -84,7 +84,7 @@ reconstruction = [
     # - GPU SIFT wheel: replaces the colmap CLI
     # - not 4.2: shared-focal two-view estimator, ~14x verification CPU for single-camera scenes
     "pycolmap-cuda12==4.1.1",
-    # BasisResearch fork, `basis` branch: batched extract + match() + match_batch() (spec 2026-10-03-vismatch-feature-matching)
+    # BasisResearch fork, `basis` branch: batched extract + match() + match_batch()
     "vismatch @ git+https://github.com/BasisResearch/vismatch@865d91a52ff23f60096188e0e0a748911768535d",
     "mobile_sam",
     # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).

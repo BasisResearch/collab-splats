@@ -238,7 +238,7 @@ def test_comment_runs_state_the_problem_then_bullet_it(path):
 
 
 ########################################################################
-# Release checks (decision 017) — fixtures prove each check can fail
+# Release checks — fixtures prove each check can fail
 ########################################################################
 
 # Packages that finished their release cleanup; the rest xfail the release checks
@@ -769,7 +769,7 @@ def test_silent_fallback_check_spares_only_named_owners():
     assert _silent_fallbacks(wrong_class) == ["5: except Exception without re-raise"]
 
 
-# Round-3 checks: enforced for geometry, mesh and localization; other packages are a changelog follow-up
+# Stricter checks: enforced for geometry, mesh and localization only
 ROUND3_CHECKS = {
     "nested-def": _nested_defs,
     "quote-line-docstring": _quote_line_docstrings,

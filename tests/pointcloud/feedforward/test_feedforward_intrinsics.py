@@ -180,7 +180,7 @@ def test_vggtx_crop_coords_cr_x_gt_target_size():
     assert coords[0, 2] > 518  # cr_x = 1080 > model_W = 518
 
 
-# ── LoGeR PINHOLE round-trip tests (added in Task 11) ──────────────────────────
+# ── LoGeR PINHOLE round-trip tests ──────────────────────────
 
 
 def _full_res_k(
@@ -259,7 +259,7 @@ def test_full_res_k_applies_the_crop_origin():
     coords = np.array([[11, 7, 59, 47, 70, 50]], dtype=np.float32)
     out = _full_res_k(K, coords, (12, 8))[0]
 
-    # Pixel-center principal point (ADR 024): (c + 0.5) * scale - 0.5 + origin
+    # Pixel-center principal point: (c + 0.5) * scale - 0.5 + origin
     np.testing.assert_allclose(
         [out[0, 0], out[1, 1], out[0, 2], out[1, 2]], [40, 50, 36.5, 29]
     )
@@ -271,7 +271,7 @@ def test_full_res_k_uses_each_images_own_crop_box():
     """
     s1, s2 = 518 / 1000, 518 / 1080
 
-    # Model-grid K from source K by the pixel-center rescale (ADR 024): (c + 0.5) * s - 0.5
+    # Model-grid K from source K by the pixel-center rescale: (c + 0.5) * s - 0.5
     params = [
         [1000 * s1, 1000 * s1, 500.5 * s1 - 0.5, 500.5 * s1 - 0.5],
         [900 * s2, 880 * s2, 470.5 * s2 - 0.5, 590.5 * s2 - 0.5],

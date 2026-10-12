@@ -52,7 +52,7 @@ conditions:                  # label -> override merged over base
 ```
 
 A flag under test (sky masking, BA, a backend) is one more condition, not a script.
-With `loop_closure` on, `bundle_adjustment` refines each window (decision 022); without it, a BA
+With `loop_closure` on, `bundle_adjustment` refines each window; without it, a BA
 condition runs single-pass and needs a `max_frames` the backend fits in one go.
 
 ## Run

@@ -317,7 +317,7 @@ def _to_pycolmap(
     """
     InstantSfM solve as an in-memory pycolmap model, matching upstream's sparse/0 export.
 
-    - keeps registered, rig-complete images; a split solve keeps cluster 0 only (ADR 018)
+    - keeps registered, rig-complete images; a split solve keeps cluster 0 only
     - ids are upstream array indices; every image keeps its full keypoint list
     - correspondences built for tracks of length 3 or more
     - a track keeps only observations that link back to it

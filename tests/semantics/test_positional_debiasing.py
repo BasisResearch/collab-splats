@@ -78,7 +78,7 @@ def _make_rgb_image(h: int = 64, w: int = 64, value: int = 100) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
-# Task 1: smoke test — base class state is initialized
+# Smoke test — base class state is initialized
 # ---------------------------------------------------------------------------
 
 
@@ -100,7 +100,7 @@ def test_forward_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# Task 2: debias() — SVD projection, shape, caching, warning
+# debias() — SVD projection, shape, caching, warning
 # ---------------------------------------------------------------------------
 
 
@@ -173,7 +173,7 @@ def test_unvalidated_extractor_warns_on_debias(caplog):
 
 
 # ---------------------------------------------------------------------------
-# Task 3: get_bias_visualization
+# get_bias_visualization
 # ---------------------------------------------------------------------------
 
 

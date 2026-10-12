@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.geometry.projection &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/geometry/projection';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.geometry.projection</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.geometry.projection</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Pinhole projection: unprojection, projection, world-point lookup, cross-view depth agreement.</span>
+
+<span class="sd">- tensor helpers work in the input dtype</span>
+<span class="sd">- unproject_frames and multiview_depth_confidence take numpy, run float32 on get_device()</span>
+<span class="sd">- sample_world_points: numpy bilinear lookup of a per-pixel world-point map</span>
+<span class="sd">- poses are w2c OpenCV, column vectors, `x_cam = R @ x_world + t`</span>
+<span class="sd">- K is on the depth map's own pixel grid</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">cast</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tensor</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">transform_points</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">batch_iterator</span><span class="p">,</span>
+    <span class="n">full_fp32_matmul</span><span class="p">,</span>
+    <span class="n">get_device</span><span class="p">,</span>
+    <span class="n">to_numpy</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Unprojection</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="unproject">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.unproject">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">unproject</span><span class="p">(</span><span class="n">depth</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    World point of every depth pixel, sampled at integer pixel coordinates.</span>
+
+<span class="sd">    - camera ray `((u - cx)/fx, (v - cy)/fy, 1)`, scaled by depth</span>
+<span class="sd">    - `x_world = R^T (d * ray - t)`, written as `(p - t) @ R`</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        depth: (..., H, W) z-depth.</span>
+<span class="sd">        extrinsics: (..., 4, 4) or (..., 3, 4) w2c.</span>
+<span class="sd">        intrinsics: (..., 3, 3) camera matrices.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (..., H, W, 3) world points.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Integer pixel grid in the intrinsics' dtype and device</span>
+    <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">],</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">u</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">intrinsics</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">intrinsics</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">height</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">intrinsics</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">intrinsics</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">grid_v</span><span class="p">,</span> <span class="n">grid_u</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">u</span><span class="p">,</span> <span class="n">indexing</span><span class="o">=</span><span class="s2">"ij"</span><span class="p">)</span>
+
+    <span class="c1"># Per-camera K broadcast over the grid: unit-z rays, scaled by depth</span>
+    <span class="n">fx</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">fy</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">cx</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">cy</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">ray_x</span> <span class="o">=</span> <span class="p">(</span><span class="n">grid_u</span> <span class="o">-</span> <span class="n">cx</span><span class="p">)</span> <span class="o">/</span> <span class="n">fx</span>
+    <span class="n">ray_y</span> <span class="o">=</span> <span class="p">(</span><span class="n">grid_v</span> <span class="o">-</span> <span class="n">cy</span><span class="p">)</span> <span class="o">/</span> <span class="n">fy</span>
+    <span class="n">rays</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">ray_x</span><span class="p">,</span> <span class="n">ray_y</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">ray_x</span><span class="p">)],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">points_cam</span> <span class="o">=</span> <span class="n">rays</span> <span class="o">*</span> <span class="n">depth</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+
+    <span class="c1"># Camera -&gt; world</span>
+    <span class="n">rotation</span> <span class="o">=</span> <span class="n">extrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">translation</span> <span class="o">=</span> <span class="n">extrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">points_cam</span> <span class="o">-</span> <span class="n">translation</span><span class="p">)</span> <span class="o">@</span> <span class="n">rotation</span></div>
+
+
+
+<div class="viewcode-block" id="unproject_frames">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.unproject_frames">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">unproject_frames</span><span class="p">(</span>
+    <span class="n">depth</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    World point of every depth pixel, unprojected batch by batch on get_device().</span>
+
+<span class="sd">    - batch_size bounds device memory</span>
+<span class="sd">    - full fp32 matmul: TF32, which a mapanything import enables, would round the rotation</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        depth: (N, H, W) z-depth.</span>
+<span class="sd">        extrinsics: (N, 4, 4) or (N, 3, 4) w2c.</span>
+<span class="sd">        intrinsics: (N, 3, 3) K on the depth grid.</span>
+<span class="sd">        batch_size: frames unprojected per device batch.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (N, H, W, 3) float32 world points.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Host output array and device</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
+    <span class="n">world_points</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="o">*</span><span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="c1"># Full fp32 matmul: each batch on device, copied back into the host array</span>
+    <span class="k">with</span> <span class="n">full_fp32_matmul</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">batch_depth</span><span class="p">,</span> <span class="n">batch_extrinsics</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">out</span> <span class="ow">in</span> <span class="n">batch_iterator</span><span class="p">(</span>
+            <span class="n">batch_size</span><span class="p">,</span> <span class="n">depth</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">,</span> <span class="n">world_points</span>
+        <span class="p">):</span>
+            <span class="n">batch_depth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span>
+                <span class="n">batch_depth</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+            <span class="p">)</span>
+            <span class="n">batch_extrinsics</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span>
+                <span class="n">batch_extrinsics</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+            <span class="p">)</span>
+            <span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">points</span> <span class="o">=</span> <span class="n">unproject</span><span class="p">(</span><span class="n">batch_depth</span><span class="p">,</span> <span class="n">batch_extrinsics</span><span class="p">,</span> <span class="n">K</span><span class="p">)</span>
+            <span class="n">out</span><span class="p">[:]</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">points</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">world_points</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Projection</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="project">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.project">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">project</span><span class="p">(</span>
+    <span class="n">points_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">min_depth</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pixel coordinates of world points in one camera, or in each camera of a batch.</span>
+
+<span class="sd">    - one (3, 3) K: 0-dim scalar terms, so a (3,) point returns (2,) and (P, 3) points keep their dtype</span>
+<span class="sd">    - a (B, 3, 3) batch must share the points' dtype and device: focal terms broadcast as (B, 1)</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points_world: (..., 3) world points; (P, 3) or (B, P, 3) with a pose batch.</span>
+<span class="sd">        extrinsics: (4, 4) or (3, 4) w2c, or a (B, 4, 4) batch.</span>
+<span class="sd">        intrinsics: (3, 3) camera matrix, or a (B, 3, 3) batch.</span>
+<span class="sd">        min_depth: perspective-divide floor; a point at or behind the camera divides by it.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (pixels (..., 2), camera-frame points (..., 3)); (B, P, 2) and (B, P, 3) for a batch.</span>
+<span class="sd">    """</span>
+    <span class="c1"># World -&gt; camera</span>
+    <span class="n">points_cam</span> <span class="o">=</span> <span class="n">transform_points</span><span class="p">(</span><span class="n">points_world</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">)</span>
+    <span class="n">points_cam</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">points_cam</span><span class="p">)</span>
+
+    <span class="c1"># One K: 0-dim scalars; a batch broadcasts (B, 1) over the points</span>
+    <span class="k">if</span> <span class="n">intrinsics</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">fx</span><span class="p">,</span> <span class="n">fy</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">intrinsics</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="n">intrinsics</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">fx</span><span class="p">,</span> <span class="n">fy</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">intrinsics</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+
+    <span class="c1"># Clamped divide: unclamped, a mask's 0 * inf poisons the backward</span>
+    <span class="n">depth</span> <span class="o">=</span> <span class="n">points_cam</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="n">min_depth</span><span class="p">)</span>
+    <span class="n">u</span> <span class="o">=</span> <span class="n">points_cam</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">fx</span> <span class="o">/</span> <span class="n">depth</span> <span class="o">+</span> <span class="n">cx</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">points_cam</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">fy</span> <span class="o">/</span> <span class="n">depth</span> <span class="o">+</span> <span class="n">cy</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">u</span><span class="p">,</span> <span class="n">v</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">),</span> <span class="n">points_cam</span></div>
+
+
+
+<div class="viewcode-block" id="reprojection_error">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.reprojection_error">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">reprojection_error</span><span class="p">(</span>
+    <span class="n">points</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">px</span><span class="p">:</span> <span class="n">Tensor</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pixel distance from projected world points to observed pixels; inf where undefined.</span>
+
+<span class="sd">    - one camera for all points, or one camera per point (leading M on both pose and K)</span>
+<span class="sd">    - inf behind the camera or where the point or pixel is NaN</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points: (M, 3) world points.</span>
+<span class="sd">        extrinsics: (4, 4) w2c, or (M, 4, 4) one per point.</span>
+<span class="sd">        intrinsics: (3, 3) K, or (M, 3, 3) one per point.</span>
+<span class="sd">        px: (M, 2) observed pixels.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (M,) distances in px, in the points' dtype.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Per-point cameras project each point as a one-point batch</span>
+    <span class="k">if</span> <span class="n">extrinsics</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="n">pixels</span><span class="p">,</span> <span class="n">points_cam</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">points</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">)</span>
+        <span class="n">pixels</span><span class="p">,</span> <span class="n">points_cam</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">points_cam</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">pixels</span><span class="p">,</span> <span class="n">points_cam</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">)</span>
+
+    <span class="c1"># Pixel distance to the observations</span>
+    <span class="n">err</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">pixels</span> <span class="o">-</span> <span class="n">px</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Behind-camera points and NaN never pass a threshold</span>
+    <span class="n">bad</span> <span class="o">=</span> <span class="o">~</span><span class="p">(</span><span class="n">points_cam</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">|</span> <span class="n">torch</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">err</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">err</span><span class="o">.</span><span class="n">masked_fill</span><span class="p">(</span><span class="n">bad</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="sample_world_points">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.sample_world_points">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">sample_world_points</span><span class="p">(</span>
+    <span class="n">world_points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">px</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Bilinear world points at pixel coordinates (hloc interpolate_scan analog).</span>
+
+<span class="sd">    - align_corners=True: pixel index i sits at coordinate i</span>
+<span class="sd">    - invalid where the sample touches NaN or px falls outside the map; never a zero check</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        world_points: (H, W, 3) per-pixel world points.</span>
+<span class="sd">        px: (K, 2) xy on that grid.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        pts3d (K, 3) float32 and valid (K,) bool.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Map size</span>
+    <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">world_points</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># Normalize to [-1, 1] for grid_sample</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="p">(</span><span class="n">px</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="n">W</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">H</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">float32</span>
+    <span class="p">)</span>
+    <span class="n">grid</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">norm</span><span class="p">)</span>
+    <span class="n">wp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">world_points</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">interp</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">grid_sample</span><span class="p">(</span>
+        <span class="n">wp</span><span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="n">grid</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">align_corners</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"bilinear"</span>
+    <span class="p">)[</span><span class="mi">0</span><span class="p">,</span> <span class="p">:,</span> <span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># NaN marks unmapped pixels; grid_sample pads out-of-bounds samples, so bounds are checked too</span>
+    <span class="n">in_bounds</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="p">(</span><span class="n">px</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">px</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">W</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">px</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">px</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">H</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">valid</span> <span class="o">=</span> <span class="o">~</span><span class="n">interp</span><span class="o">.</span><span class="n">isnan</span><span class="p">()</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span> <span class="o">&amp;</span> <span class="n">in_bounds</span>
+    <span class="k">return</span> <span class="n">interp</span><span class="o">.</span><span class="n">T</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">valid</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Cross-view depth residual</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="depth_residual">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.depth_residual">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">depth_residual</span><span class="p">(</span>
+    <span class="n">points_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">depth</span><span class="p">:</span> <span class="n">Tensor</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Camera depth of world points against another view's depth map at their projected pixels.</span>
+
+<span class="sd">    - the depth map is read nearest-neighbor: bilinear across a depth edge yields a depth on no surface</span>
+<span class="sd">    - in bounds means inside the pixel-center span [0, W-1] x [0, H-1]</span>
+<span class="sd">    - pixels returned, so callers need no second project</span>
+<span class="sd">    - no tolerance here: each caller applies its own to the returned depths</span>
+<span class="sd">    - a batch of B views returns each output with a leading B</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points_world: (P, 3) world points.</span>
+<span class="sd">        extrinsics: (4, 4) w2c of the view whose depth is read, or a (B, 4, 4) batch.</span>
+<span class="sd">        intrinsics: (3, 3) camera matrix on the depth map's pixel grid, or a (B, 3, 3) batch.</span>
+<span class="sd">        depth: (H, W) z-depth of that view, or a (B, H, W) batch; 0 marks no depth.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (residual = expected - sampled, expected z, sampled depth (0 outside), valid, pixels), each (P,)</span>
+<span class="sd">        but pixels (P, 2); a leading B for a batch.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Depth grid size; a batch shares one H, W</span>
+    <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span>
+
+    <span class="c1"># World -&gt; pixel; project's clamped divide keeps points behind the camera finite</span>
+    <span class="n">pixels</span><span class="p">,</span> <span class="n">points_cam</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">points_world</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">)</span>
+    <span class="n">expected</span> <span class="o">=</span> <span class="n">points_cam</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">in_front</span> <span class="o">=</span> <span class="n">expected</span> <span class="o">&gt;</span> <span class="mi">0</span>
+
+    <span class="c1"># Pixels -&gt; grid_sample's [-1, 1] frame, corners on the outer pixel centers</span>
+    <span class="n">grid_u</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="p">(</span><span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">grid_v</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="p">(</span><span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">grid</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">grid_u</span><span class="p">,</span> <span class="n">grid_v</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">in_bounds</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="p">(</span><span class="n">grid</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">grid</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">grid</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">grid</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Nearest read of each view's depth map at its projected pixels</span>
+    <span class="n">depth_map</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">)</span>
+    <span class="n">grid</span> <span class="o">=</span> <span class="n">grid</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">depth_map</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">sampled</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">grid_sample</span><span class="p">(</span>
+        <span class="n">depth_map</span><span class="p">,</span> <span class="n">grid</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"nearest"</span><span class="p">,</span> <span class="n">padding_mode</span><span class="o">=</span><span class="s2">"zeros"</span><span class="p">,</span> <span class="n">align_corners</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">sampled</span> <span class="o">=</span> <span class="n">sampled</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">expected</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+
+    <span class="c1"># Signed residual: positive when the point lies behind the observed surface</span>
+    <span class="n">residual</span> <span class="o">=</span> <span class="n">expected</span> <span class="o">-</span> <span class="n">sampled</span>
+    <span class="k">return</span> <span class="n">residual</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">sampled</span><span class="p">,</span> <span class="n">in_front</span> <span class="o">&amp;</span> <span class="n">in_bounds</span><span class="p">,</span> <span class="n">pixels</span></div>
+
+
+
+<div class="viewcode-block" id="depth_agreement">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.depth_agreement">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">depth_agreement</span><span class="p">(</span>
+    <span class="n">points_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">depth</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">rel_thresh</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Whether world points agree with another view's depth map, within a relative tolerance.</span>
+
+<span class="sd">    - occluded (the view sees a nearer surface) is no evidence: not seen</span>
+<span class="sd">    - a hole in the view's depth map is seen but cannot agree</span>
+<span class="sd">    - scale-free: tolerance is rel_thresh times the point's own depth</span>
+<span class="sd">    - a batch of B views returns each output with a leading B</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points_world: (P, 3) world points.</span>
+<span class="sd">        extrinsics: (4, 4) w2c of the view whose depth is read, or a (B, 4, 4) batch.</span>
+<span class="sd">        intrinsics: (3, 3) camera matrix on the depth map's pixel grid, or a (B, 3, 3) batch.</span>
+<span class="sd">        depth: (H, W) z-depth of that view, or a (B, H, W) batch; 0 marks no depth.</span>
+<span class="sd">        rel_thresh: tolerance as a fraction of the point's depth.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (agree, seen, rel_residual, expected), each (P,); (B, P) for a batch</span>
+<span class="sd">        - rel_residual: (sampled - expected) / expected; exactly -1 where sampled is 0</span>
+<span class="sd">        - expected: the point's z in the camera</span>
+<span class="sd">    """</span>
+    <span class="c1"># Residual, depths and validity against the view</span>
+    <span class="n">residual</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">sampled</span><span class="p">,</span> <span class="n">valid</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">depth_residual</span><span class="p">(</span>
+        <span class="n">points_world</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">,</span> <span class="n">depth</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Nearer sampled surface = occluded; farther = free-space violation, still seen</span>
+    <span class="n">tol</span> <span class="o">=</span> <span class="n">rel_thresh</span> <span class="o">*</span> <span class="n">expected</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span>
+    <span class="n">has_depth</span> <span class="o">=</span> <span class="n">sampled</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="n">occluded</span> <span class="o">=</span> <span class="p">(</span><span class="n">sampled</span> <span class="o">&lt;</span> <span class="n">expected</span> <span class="o">-</span> <span class="n">tol</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">has_depth</span>
+    <span class="n">seen</span> <span class="o">=</span> <span class="n">valid</span> <span class="o">&amp;</span> <span class="o">~</span><span class="n">occluded</span>
+    <span class="n">agree</span> <span class="o">=</span> <span class="n">seen</span> <span class="o">&amp;</span> <span class="n">has_depth</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">residual</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">tol</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">agree</span><span class="p">,</span> <span class="n">seen</span><span class="p">,</span> <span class="p">(</span><span class="n">sampled</span> <span class="o">-</span> <span class="n">expected</span><span class="p">)</span> <span class="o">/</span> <span class="n">expected</span><span class="p">,</span> <span class="n">expected</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Multiview depth confidence</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="multiview_depth_confidence">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.projection.multiview_depth_confidence">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">multiview_depth_confidence</span><span class="p">(</span>
+    <span class="n">depth</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">rel_thresh</span><span class="p">:</span> <span class="nb">float</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Per-pixel count of other views that see the pixel and that agree with its depth.</span>
+
+<span class="sd">    - port of mapanything/utils/multiview_confidence.py:125 (facebookresearch/map-anything)</span>
+<span class="sd">    - every ordered pair, O(N^2); pixels with no source depth count nothing</span>
+<span class="sd">    - depth, intrinsics and extrinsics on one pixel grid, OpenCV, +Z z-depth</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        depth: (N, H, W) z-depth per frame; 0 marks no depth.</span>
+<span class="sd">        intrinsics: (N, 3, 3) K on the depth grid.</span>
+<span class="sd">        extrinsics: (N, 4, 4) w2c.</span>
+<span class="sd">        rel_thresh: agreement tolerance as a fraction of depth.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (agree, seen), both (N, H, W) int32.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: N disagrees across the arrays, or the principal point lies outside the depth</span>
+<span class="sd">            grid (model-res depth paired with original-res intrinsics).</span>
+<span class="sd">    """</span>
+    <span class="c1"># Frame count and grid size</span>
+    <span class="n">n</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># Alignment contract: same N, K on the depth grid</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"length mismatch: depth has </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> frames, intrinsics </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">)</span><span class="si">}</span><span class="s2">, extrinsics </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># K must be on the depth grid: principal point inside it</span>
+    <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="mi">0</span> <span class="o">&lt;</span> <span class="n">cx</span> <span class="o">&lt;</span> <span class="n">w</span> <span class="ow">and</span> <span class="mi">0</span> <span class="o">&lt;</span> <span class="n">cy</span> <span class="o">&lt;</span> <span class="n">h</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"intrinsics/depth resolution mismatch: principal point (</span><span class="si">{</span><span class="n">cx</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">cy</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">) lies outside a "</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">w</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">h</span><span class="si">}</span><span class="s2"> depth grid; model-resolution depth was probably paired with original-resolution intrinsics"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Float32 tensors on one device; int32 accumulators over the flat pixel grid</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="n">get_device</span><span class="p">())</span>
+    <span class="n">depth_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">intrinsics_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">extrinsics_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">agree</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">h</span> <span class="o">*</span> <span class="n">w</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">seen</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">h</span> <span class="o">*</span> <span class="n">w</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Every source frame against every other frame</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">points</span> <span class="o">=</span> <span class="n">unproject</span><span class="p">(</span><span class="n">depth_t</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">extrinsics_t</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">intrinsics_t</span><span class="p">[</span><span class="n">i</span><span class="p">])</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">has_source</span> <span class="o">=</span> <span class="n">depth_t</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span>
+
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="n">j</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">agree_ij</span><span class="p">,</span> <span class="n">seen_ij</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">depth_agreement</span><span class="p">(</span>
+                <span class="n">points</span><span class="p">,</span> <span class="n">extrinsics_t</span><span class="p">[</span><span class="n">j</span><span class="p">],</span> <span class="n">intrinsics_t</span><span class="p">[</span><span class="n">j</span><span class="p">],</span> <span class="n">depth_t</span><span class="p">[</span><span class="n">j</span><span class="p">],</span> <span class="n">rel_thresh</span>
+            <span class="p">)</span>
+            <span class="n">seen_ij</span> <span class="o">&amp;=</span> <span class="n">has_source</span>
+            <span class="n">seen</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+=</span> <span class="n">seen_ij</span>
+            <span class="n">agree</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+=</span> <span class="n">agree_ij</span> <span class="o">&amp;</span> <span class="n">seen_ij</span>
+
+    <span class="k">return</span> <span class="n">agree</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">seen</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

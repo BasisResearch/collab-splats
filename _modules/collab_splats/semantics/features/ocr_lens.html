@@ -1,0 +1,1367 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.semantics.features.ocr_lens &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/semantics/features/ocr_lens';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.semantics.features.ocr_lens</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.semantics.features.ocr_lens</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">OCR-head verbalization lens: LLaVA-1.6 image-token states decoded to English words.</span>
+
+<span class="sd">- paper: Feucht, Krojer, Wang, Abrahamsen, Wallace, Bau (2026), "Using OCR Heads to Verbalize</span>
+<span class="sd">  Image Semantics", arXiv 2609.18823 — https://ocr.baulab.info/</span>
+<span class="sd">- code: ported from https://github.com/sfeucht/ocr @ 60868b7b (MIT):</span>
+<span class="sd">  src/sec2__score_heads.py, src/sec2__ocr.py, src/sec3__object_detection.py, src/sec3__lens.ipynb</span>
+<span class="sd">- ours, not upstream: LLaVA-1.6 AnyRes grid, WordNet vocabulary, RMS-normalized states</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">io</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Iterator</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pyarrow.parquet</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pq</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">huggingface_hub</span><span class="w"> </span><span class="kn">import</span> <span class="n">hf_hub_download</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nltk.corpus</span><span class="w"> </span><span class="kn">import</span> <span class="n">wordnet</span> <span class="k">as</span> <span class="n">wn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span><span class="p">,</span> <span class="n">ImageDraw</span><span class="p">,</span> <span class="n">ImageFont</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">safetensors</span><span class="w"> </span><span class="kn">import</span> <span class="n">safe_open</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.auto</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">AutoConfig</span><span class="p">,</span>
+    <span class="n">AutoProcessor</span><span class="p">,</span>
+    <span class="n">LlavaNextForConditionalGeneration</span><span class="p">,</span>
+    <span class="n">LlavaNextProcessor</span><span class="p">,</span>
+    <span class="n">PreTrainedTokenizerBase</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers.image_processing_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">select_best_resolution</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers.models.llama.modeling_llama</span><span class="w"> </span><span class="kn">import</span> <span class="n">LlamaRMSNorm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">transformers.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">cached_file</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">FeatureAutoencoder</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.features.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseFeatureExtractor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.image</span><span class="w"> </span><span class="kn">import</span> <span class="n">open_image</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">batch_iterator</span><span class="p">,</span> <span class="n">get_device</span><span class="p">,</span> <span class="n">pytorch_gc</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Classes</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="WordVocab">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.features.WordVocab">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">WordVocab</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Decode vocabulary: word-initial tokens grouped into words.</span>
+
+<span class="sd">    - token_ids[j] is a tokenizer id belonging to words[word_index[j]]</span>
+<span class="sd">    - " Tree", " tree", " trees" share one word</span>
+<span class="sd">    """</span>
+
+    <span class="n">words</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">token_ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>
+    <span class="n">word_index</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span></div>
+
+
+
+<div class="viewcode-block" id="OCRLensExtractor">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.features.OCRLensExtractor">[docs]</a>
+<span class="nd">@BaseFeatureExtractor</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">"ocr_lens"</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">OCRLensExtractor</span><span class="p">(</span><span class="n">BaseFeatureExtractor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    LLaVA-1.6 image-token states through the OCR-head verbalization lens, per token-grid cell.</span>
+
+<span class="sd">    - maps are rms_normalize(lens @ h); lifted maps are embedding averages, for similarity, not words</span>
+<span class="sd">    - word probabilities: decode per frame, then lift; the decoder's RMSNorm sharpens averaged states</span>
+<span class="sd">    - `decoder` + `word_vocabulary` turn states into words via `verbalize`</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model_id: LLaVA-1.6 hub id or local directory.</span>
+<span class="sd">        layer: decoder layer whose output is read, 0-based; the model is truncated after it.</span>
+<span class="sd">        n_heads: top-scoring OCR heads summed into the lens.</span>
+<span class="sd">        head_scores: (layers, heads) scores, a path to saved ones, or None for the packaged 7B scores.</span>
+<span class="sd">        dtype: torch dtype name for the model weights.</span>
+<span class="sd">        device: torch device; None picks one with get_device.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: `layer`, `n_heads` or `head_scores` out of range for the model.</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># AnyRes has no fixed pixel patch; nominal, recorded in the cache attrs only</span>
+    <span class="n">patch_size</span> <span class="o">=</span> <span class="mi">14</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"llava-hf/llava-v1.6-vicuna-7b-hf"</span><span class="p">,</span>
+        <span class="n">layer</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">17</span><span class="p">,</span>
+        <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">102</span><span class="p">,</span>
+        <span class="n">head_scores</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"float16"</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">resize_mode</span><span class="o">=</span><span class="s2">"max_size"</span><span class="p">,</span> <span class="n">image_resolution</span><span class="o">=</span><span class="mi">672</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_device</span> <span class="o">=</span> <span class="n">device</span> <span class="ow">or</span> <span class="n">get_device</span><span class="p">()</span>
+
+        <span class="c1"># Default to the packaged scores; load a path to a tensor</span>
+        <span class="k">if</span> <span class="n">head_scores</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">head_scores</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s2">"assets"</span> <span class="o">/</span> <span class="s2">"llava16_vicuna7b_ocr_head_scores.pt"</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">head_scores</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+            <span class="n">head_scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">head_scores</span><span class="p">,</span> <span class="n">weights_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">head_scores</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span>
+
+        <span class="c1"># Validate against the config before the (7B) weights load</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">AutoConfig</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>
+        <span class="n">text_config</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">text_config</span>
+        <span class="n">n_layers</span> <span class="o">=</span> <span class="n">text_config</span><span class="o">.</span><span class="n">num_hidden_layers</span>
+        <span class="n">n_query</span> <span class="o">=</span> <span class="n">text_config</span><span class="o">.</span><span class="n">num_attention_heads</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">layer</span> <span class="o">&lt;</span> <span class="n">n_layers</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"layer must be in [0, </span><span class="si">{</span><span class="n">n_layers</span><span class="si">}</span><span class="s2">), got </span><span class="si">{</span><span class="n">layer</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">head_scores</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span> <span class="o">!=</span> <span class="p">(</span><span class="n">n_layers</span><span class="p">,</span> <span class="n">n_query</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"head_scores must be </span><span class="si">{</span><span class="p">(</span><span class="n">n_layers</span><span class="p">,</span><span class="w"> </span><span class="n">n_query</span><span class="p">)</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">head_scores</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="mi">1</span> <span class="o">&lt;=</span> <span class="n">n_heads</span> <span class="o">&lt;=</span> <span class="n">n_layers</span> <span class="o">*</span> <span class="n">n_query</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"n_heads must be in [1, </span><span class="si">{</span><span class="n">n_layers</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">n_query</span><span class="si">}</span><span class="s2">], got </span><span class="si">{</span><span class="n">n_heads</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">layer</span> <span class="o">=</span> <span class="n">layer</span>
+
+        <span class="c1"># Load the model and processor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="n">_load_model</span><span class="p">(</span><span class="n">model_id</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">processor</span> <span class="o">=</span> <span class="n">load_processor</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>
+        <span class="n">lm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">language_model</span>
+
+        <span class="c1"># Lens from the full model's heads, then drop every layer after `layer`</span>
+        <span class="n">lens</span> <span class="o">=</span> <span class="n">_build_lens</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="n">head_scores</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">)</span>
+        <span class="n">lm</span><span class="o">.</span><span class="n">layers</span> <span class="o">=</span> <span class="n">lm</span><span class="o">.</span><span class="n">layers</span><span class="p">[:</span> <span class="n">layer</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+
+        <span class="c1"># Move to the device; the decoder shares the model's final norm and lm_head</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+        <span class="n">lens</span> <span class="o">=</span> <span class="n">lens</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">register_buffer</span><span class="p">(</span><span class="s2">"lens"</span><span class="p">,</span> <span class="n">lens</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">decoder</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span><span class="n">lm</span><span class="o">.</span><span class="n">norm</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">lm_head</span><span class="p">)</span>
+
+        <span class="c1"># Chat template with the image and an empty text turn, as upstream; same for every image</span>
+        <span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span>
+                <span class="s2">"content"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"image"</span><span class="p">},</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"text"</span><span class="p">,</span> <span class="s2">"text"</span><span class="p">:</span> <span class="s2">""</span><span class="p">}],</span>
+            <span class="p">}</span>
+        <span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prompt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">processor</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span>
+            <span class="n">messages</span><span class="p">,</span> <span class="n">tokenize</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_image_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">processor</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_tokens_to_ids</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">processor</span><span class="o">.</span><span class="n">image_token</span>
+        <span class="p">)</span>
+
+        <span class="c1"># The last kept layer's output lands here on every forward</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_hidden</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">lm</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="n">layer</span><span class="p">]</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_capture</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_capture</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">module</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span> <span class="n">output</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Forward hook: keep the hooked decoder layer's output hidden states.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_hidden</span> <span class="o">=</span> <span class="n">output</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)</span> <span class="k">else</span> <span class="n">output</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_lens_map</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        One image's (D, rows, cols) unit-RMS lens states, float32 on CPU.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Prompt built in __init__; one image per forward</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">processor</span><span class="p">(</span>
+            <span class="n">text</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_prompt</span><span class="p">],</span> <span class="n">images</span><span class="o">=</span><span class="p">[</span><span class="n">image</span><span class="p">],</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">"pt"</span>
+        <span class="p">)</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="n">inputs</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_device</span><span class="p">)</span>
+
+        <span class="c1"># Truncated forward; the hook keeps the layer output, logits only for the last token</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">logits_to_keep</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">_hidden</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="n">states</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_hidden</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">"input_ids"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_image_id</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_hidden</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># Unpadded high-res grid: the last rows * (cols + 1) tokens, one newline closing each row</span>
+        <span class="n">rows</span><span class="p">,</span> <span class="n">cols</span> <span class="o">=</span> <span class="n">_anyres_grid</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">processor</span><span class="p">,</span> <span class="n">inputs</span><span class="p">)</span>
+        <span class="n">grid</span> <span class="o">=</span> <span class="n">states</span><span class="p">[</span><span class="o">-</span><span class="p">(</span><span class="n">rows</span> <span class="o">*</span> <span class="p">(</span><span class="n">cols</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span> <span class="p">:]</span>
+        <span class="n">grid</span> <span class="o">=</span> <span class="n">grid</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">cols</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">grid</span> <span class="o">=</span> <span class="n">grid</span><span class="p">[:,</span> <span class="p">:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+        <span class="c1"># Lens, then unit RMS per state</span>
+        <span class="n">lensed</span> <span class="o">=</span> <span class="n">grid</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">@</span> <span class="bp">self</span><span class="o">.</span><span class="n">lens</span><span class="o">.</span><span class="n">T</span>
+        <span class="n">rms</span> <span class="o">=</span> <span class="n">lensed</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
+        <span class="n">rms</span> <span class="o">=</span> <span class="n">rms</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">finfo</span><span class="p">(</span><span class="n">rms</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span><span class="o">.</span><span class="n">tiny</span><span class="p">)</span>
+        <span class="n">lensed</span> <span class="o">=</span> <span class="n">lensed</span> <span class="o">/</span> <span class="n">rms</span>
+        <span class="n">lensed</span> <span class="o">=</span> <span class="n">lensed</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">lensed</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
+
+<div class="viewcode-block" id="OCRLensExtractor.forward">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.features.OCRLensExtractor.forward">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span><span class="p">:</span> <span class="nb">list</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Lens states on each image's unpadded AnyRes token grid.</span>
+
+<span class="sd">        - one forward per image: AnyRes grids differ in shape</span>
+<span class="sd">        - the 24x24 overview and row-newline tokens are dropped; the grid spans the full image</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            images: anything `open_image` accepts, one entry per frame.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            One (D, rows, cols) float32 CPU tensor per image.</span>
+<span class="sd">        """</span>
+        <span class="n">maps</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">image</span> <span class="ow">in</span> <span class="n">images</span><span class="p">:</span>
+            <span class="n">rgb</span> <span class="o">=</span> <span class="n">open_image</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+            <span class="n">rgb</span> <span class="o">=</span> <span class="n">rgb</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+            <span class="n">maps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_lens_map</span><span class="p">(</span><span class="n">rgb</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">maps</span></div>
+</div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Vocabulary</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_lemma</span><span class="p">(</span><span class="n">word</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Most frequent WordNet base form over noun / verb / adjective readings.</span>
+
+<span class="sd">    - usage count: SemCor tagged-corpus attestations of the form, summed over its senses</span>
+<span class="sd">    - None when unknown or never attested (usage count 0)</span>
+<span class="sd">    - was -&gt; be, has -&gt; have, trees -&gt; tree; ties go to the shorter form</span>
+<span class="sd">    - drops fragments ("gry", "les") and function words ("the")</span>
+<span class="sd">    """</span>
+    <span class="n">forms</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">form</span> <span class="k">for</span> <span class="n">pos</span> <span class="ow">in</span> <span class="p">(</span><span class="n">wn</span><span class="o">.</span><span class="n">NOUN</span><span class="p">,</span> <span class="n">wn</span><span class="o">.</span><span class="n">VERB</span><span class="p">,</span> <span class="n">wn</span><span class="o">.</span><span class="n">ADJ</span><span class="p">)</span> <span class="k">if</span> <span class="p">(</span><span class="n">form</span> <span class="o">:=</span> <span class="n">wn</span><span class="o">.</span><span class="n">morphy</span><span class="p">(</span><span class="n">word</span><span class="p">,</span> <span class="n">pos</span><span class="p">))</span>
+    <span class="p">}</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">forms</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="c1"># Usage count per form: WordNet sense-tagged corpus (SemCor) attestations, summed over its senses</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">form</span> <span class="ow">in</span> <span class="n">forms</span><span class="p">:</span>
+        <span class="n">lemmas</span> <span class="o">=</span> <span class="n">wn</span><span class="o">.</span><span class="n">lemmas</span><span class="p">(</span><span class="n">form</span><span class="p">)</span>
+        <span class="n">counts</span><span class="p">[</span><span class="n">form</span><span class="p">]</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">lemma</span><span class="o">.</span><span class="n">count</span><span class="p">()</span> <span class="k">for</span> <span class="n">lemma</span> <span class="ow">in</span> <span class="n">lemmas</span><span class="p">)</span>
+
+    <span class="n">best</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">forms</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">form</span><span class="p">:</span> <span class="p">(</span><span class="n">counts</span><span class="p">[</span><span class="n">form</span><span class="p">],</span> <span class="o">-</span><span class="nb">len</span><span class="p">(</span><span class="n">form</span><span class="p">),</span> <span class="n">form</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">counts</span><span class="p">[</span><span class="n">best</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">return</span> <span class="n">best</span>
+
+
+<div class="viewcode-block" id="word_vocabulary">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.features.word_vocabulary">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">word_vocabulary</span><span class="p">(</span>
+    <span class="n">tokenizer</span><span class="p">:</span> <span class="n">PreTrainedTokenizerBase</span><span class="p">,</span> <span class="n">words</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">WordVocab</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Decode vocabulary over the tokenizer's word-initial (`▁`) ASCII-letter tokens.</span>
+
+<span class="sd">    - default: tokens with a WordNet base form, merged by lemma (~3.5k for Llama-2)</span>
+<span class="sd">    - custom: each word collects tokens matching its lemma or lowercase text; no-token words dropped</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        tokenizer: the model tokenizer.</span>
+<span class="sd">        words: custom label set; None for the default vocabulary.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The WordVocab, in token order (default) or the given order (custom).</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        LookupError: WordNet corpus not installed.</span>
+<span class="sd">        ValueError: two custom words share a lemma or lowercase text.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Fail with the fix, not nltk's generic message</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">wn</span><span class="o">.</span><span class="n">ensure_loaded</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">LookupError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">LookupError</span><span class="p">(</span>
+            <span class="s2">"WordNet corpus missing: python -m nltk.downloader wordnet"</span>
+        <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+
+    <span class="c1"># Word-initial ASCII tokens with their lemma and lowercase text</span>
+    <span class="n">pattern</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^▁([A-Za-z]{2,})$"</span><span class="p">)</span>
+    <span class="n">keyed</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">token_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">tokenizer</span><span class="p">)):</span>
+        <span class="n">token</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_ids_to_tokens</span><span class="p">(</span><span class="n">token_id</span><span class="p">)</span>
+        <span class="n">match</span> <span class="o">=</span> <span class="n">pattern</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">match</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="n">text</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="n">lemma</span> <span class="o">=</span> <span class="n">_lemma</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+        <span class="n">keyed</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">token_id</span><span class="p">,</span> <span class="n">lemma</span><span class="p">,</span> <span class="n">text</span><span class="p">))</span>
+
+    <span class="c1"># Default: every WordNet lemma is a word</span>
+    <span class="k">if</span> <span class="n">words</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">pairs</span> <span class="o">=</span> <span class="p">[(</span><span class="n">token_id</span><span class="p">,</span> <span class="n">lemma</span><span class="p">)</span> <span class="k">for</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">lemma</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">keyed</span> <span class="k">if</span> <span class="n">lemma</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">dict</span><span class="o">.</span><span class="n">fromkeys</span><span class="p">(</span><span class="n">lemma</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">lemma</span> <span class="ow">in</span> <span class="n">pairs</span><span class="p">))</span>
+
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Custom: exact repeats collapse to one word, first occurrence kept</span>
+        <span class="n">words</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">dict</span><span class="o">.</span><span class="n">fromkeys</span><span class="p">(</span><span class="n">words</span><span class="p">))</span>
+
+        <span class="c1"># A token joins the word whose lemma or text equals its own lemma or text</span>
+        <span class="n">targets</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">for</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">words</span><span class="p">:</span>
+            <span class="n">text</span> <span class="o">=</span> <span class="n">word</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="n">lemma</span> <span class="o">=</span> <span class="n">_lemma</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+
+            <span class="c1"># Two words sharing a key would silently steal each other's tokens</span>
+            <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">lemma</span> <span class="ow">or</span> <span class="n">text</span><span class="p">):</span>
+                <span class="n">other</span> <span class="o">=</span> <span class="n">targets</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">word</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">other</span> <span class="o">!=</span> <span class="n">word</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">word</span><span class="si">!r}</span><span class="s2"> and </span><span class="si">{</span><span class="n">other</span><span class="si">!r}</span><span class="s2"> share lemma </span><span class="si">{</span><span class="n">key</span><span class="si">!r}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">lemma</span><span class="p">,</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">keyed</span><span class="p">:</span>
+            <span class="n">fallback</span> <span class="o">=</span> <span class="n">targets</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+            <span class="n">word</span> <span class="o">=</span> <span class="n">targets</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">lemma</span><span class="p">,</span> <span class="n">fallback</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">word</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">token_id</span><span class="p">,</span> <span class="n">word</span><span class="p">))</span>
+
+        <span class="c1"># Words no token reached are dropped, once, loudly</span>
+        <span class="n">found</span> <span class="o">=</span> <span class="p">{</span><span class="n">word</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">pairs</span><span class="p">}</span>
+        <span class="n">missing</span> <span class="o">=</span> <span class="p">[</span><span class="n">word</span> <span class="k">for</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">words</span> <span class="k">if</span> <span class="n">word</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">found</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"word_vocabulary: no single-token form for </span><span class="si">%s</span><span class="s2">, dropped"</span><span class="p">,</span> <span class="n">missing</span>
+            <span class="p">)</span>
+
+        <span class="n">labels</span> <span class="o">=</span> <span class="p">[</span><span class="n">word</span> <span class="k">for</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">words</span> <span class="k">if</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">found</span><span class="p">]</span>
+
+    <span class="c1"># Index each token to its word's row</span>
+    <span class="n">row_of</span> <span class="o">=</span> <span class="p">{</span><span class="n">word</span><span class="p">:</span> <span class="n">row</span> <span class="k">for</span> <span class="n">row</span><span class="p">,</span> <span class="n">word</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">labels</span><span class="p">)}</span>
+    <span class="n">token_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">token_id</span> <span class="k">for</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">pairs</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+    <span class="n">word_index</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">row_of</span><span class="p">[</span><span class="n">word</span><span class="p">]</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">pairs</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">WordVocab</span><span class="p">(</span><span class="n">words</span><span class="o">=</span><span class="n">labels</span><span class="p">,</span> <span class="n">token_ids</span><span class="o">=</span><span class="n">token_ids</span><span class="p">,</span> <span class="n">word_index</span><span class="o">=</span><span class="n">word_index</span><span class="p">)</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Decoding</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">word_probabilities</span><span class="p">(</span>
+    <span class="n">features</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">decoder</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">vocab</span><span class="p">:</span> <span class="n">WordVocab</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">chunk</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4096</span><span class="p">,</span>
+    <span class="n">ae</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">FeatureAutoencoder</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterator</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Per-word probabilities of lens states, one block of rows at a time.</span>
+
+<span class="sd">    - decoder softmax over the full token vocabulary, token probs summed per word, renormalized</span>
+<span class="sd">    - ae: codes are decoded one chunk at a time, so (P, D) states never sit in memory</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        features: (P, D) lens states, or (P, latent) codes when ae is given.</span>
+<span class="sd">        decoder: final norm + lm_head, from `OCRLensExtractor.decoder` or `load_decoder`.</span>
+<span class="sd">        vocab: from `word_vocabulary`.</span>
+<span class="sd">        chunk: rows per softmax block.</span>
+<span class="sd">        ae: autoencoder that decodes point codes to lens states, or None when features are states.</span>
+
+<span class="sd">    Yields:</span>
+<span class="sd">        (probs, vocab_mass) per block on the decoder's device: (c, n_words) word probabilities</span>
+<span class="sd">        summing to 1, and (c,) full-vocab probability landing on the vocabulary.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Move the vocabulary index onto the decoder's device</span>
+    <span class="n">param</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">decoder</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+    <span class="n">token_ids</span> <span class="o">=</span> <span class="n">vocab</span><span class="o">.</span><span class="n">token_ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">param</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">word_index</span> <span class="o">=</span> <span class="n">vocab</span><span class="o">.</span><span class="n">word_index</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">param</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">n_words</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">vocab</span><span class="o">.</span><span class="n">words</span><span class="p">)</span>
+    <span class="n">tiny</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">finfo</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">tiny</span>
+
+    <span class="c1"># Blocks of lens states; codes are decoded one block at a time</span>
+    <span class="k">if</span> <span class="n">ae</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">blocks</span> <span class="o">=</span> <span class="n">ae</span><span class="o">.</span><span class="n">iter_decode</span><span class="p">(</span><span class="n">features</span><span class="p">,</span> <span class="n">chunk</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">blocks</span> <span class="o">=</span> <span class="p">(</span><span class="n">block</span> <span class="k">for</span> <span class="p">(</span><span class="n">block</span><span class="p">,)</span> <span class="ow">in</span> <span class="n">batch_iterator</span><span class="p">(</span><span class="n">chunk</span><span class="p">,</span> <span class="n">features</span><span class="p">))</span>
+
+    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">blocks</span><span class="p">:</span>
+        <span class="c1"># Decode one block of states to full-vocabulary token probabilities</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">param</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">param</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">decoder</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Sum token probabilities into words, then renormalize over the vocabulary</span>
+        <span class="n">per_word</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="p">),</span> <span class="n">n_words</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">per_word</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">word_index</span><span class="p">,</span> <span class="n">p</span><span class="p">[:,</span> <span class="n">token_ids</span><span class="p">])</span>
+        <span class="n">in_vocab</span> <span class="o">=</span> <span class="n">per_word</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">denominator</span> <span class="o">=</span> <span class="n">in_vocab</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="n">tiny</span><span class="p">)</span>
+        <span class="k">yield</span> <span class="n">per_word</span> <span class="o">/</span> <span class="n">denominator</span><span class="p">,</span> <span class="n">in_vocab</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">verbalize</span><span class="p">(</span>
+    <span class="n">features</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">decoder</span><span class="p">:</span> <span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span>
+    <span class="n">vocab</span><span class="p">:</span> <span class="n">WordVocab</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+    <span class="n">chunk</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4096</span><span class="p">,</span>
+    <span class="n">ae</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">FeatureAutoencoder</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Top-k vocabulary words per lens state.</span>
+
+<span class="sd">    - top-k of `word_probabilities`; a (D, H, W) map is flattened row-major first</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        features: (P, D) lens states, (P, latent) codes when ae is given, or a (D, H, W) map.</span>
+<span class="sd">        decoder: final norm + lm_head.</span>
+<span class="sd">        vocab: from `word_vocabulary`.</span>
+<span class="sd">        k: words per row, capped at the vocabulary size.</span>
+<span class="sd">        chunk: rows per softmax block.</span>
+<span class="sd">        ae: decodes point codes to lens states; None when features are states.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (words, probs, vocab_mass): P lists of k words, (P, k) probs, (P,) mass on the vocabulary.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: empty vocabulary.</span>
+<span class="sd">    """</span>
+    <span class="c1"># An empty vocabulary has nothing to rank</span>
+    <span class="n">n_words</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">vocab</span><span class="o">.</span><span class="n">words</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">n_words</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"verbalize: vocabulary has no words"</span><span class="p">)</span>
+
+    <span class="n">k</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">n_words</span><span class="p">)</span>
+
+    <span class="c1"># Flatten a (D, H, W) map to row-major (H * W, D) states</span>
+    <span class="k">if</span> <span class="n">features</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="n">features</span> <span class="o">=</span> <span class="n">features</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+
+    <span class="c1"># No rows: empty outputs with the capped k width</span>
+    <span class="k">if</span> <span class="n">features</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[],</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="n">k</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="c1"># Top-k words of each block's word probabilities, collected on the CPU</span>
+    <span class="n">words</span><span class="p">,</span> <span class="n">probs</span><span class="p">,</span> <span class="n">mass</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+    <span class="n">blocks</span> <span class="o">=</span> <span class="n">word_probabilities</span><span class="p">(</span><span class="n">features</span><span class="p">,</span> <span class="n">decoder</span><span class="p">,</span> <span class="n">vocab</span><span class="p">,</span> <span class="n">chunk</span><span class="o">=</span><span class="n">chunk</span><span class="p">,</span> <span class="n">ae</span><span class="o">=</span><span class="n">ae</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">normalized</span><span class="p">,</span> <span class="n">in_vocab</span> <span class="ow">in</span> <span class="n">blocks</span><span class="p">:</span>
+        <span class="n">top_p</span><span class="p">,</span> <span class="n">top_i</span> <span class="o">=</span> <span class="n">normalized</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">words</span> <span class="o">+=</span> <span class="p">[[</span><span class="n">vocab</span><span class="o">.</span><span class="n">words</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">row</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">top_i</span><span class="o">.</span><span class="n">tolist</span><span class="p">()]</span>
+        <span class="n">top_p</span> <span class="o">=</span> <span class="n">top_p</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
+        <span class="n">probs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">top_p</span><span class="o">.</span><span class="n">numpy</span><span class="p">())</span>
+        <span class="n">in_vocab</span> <span class="o">=</span> <span class="n">in_vocab</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
+        <span class="n">mass</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">in_vocab</span><span class="o">.</span><span class="n">numpy</span><span class="p">())</span>
+
+    <span class="k">return</span> <span class="n">words</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">probs</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">mass</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="load_decoder">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.features.load_decoder">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_decoder</span><span class="p">(</span>
+    <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"llava-hf/llava-v1.6-vicuna-7b-hf"</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"float16"</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Final norm + lm_head of a LLaVA-1.6 checkpoint, without loading the rest of the model.</span>
+
+<span class="sd">    - reads only the two tensors from the safetensors shards (~260 MB at fp16)</span>
+<span class="sd">    - hub id or local `save_pretrained` dir; old and new checkpoint key layouts</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model_id: hub id or local directory.</span>
+<span class="sd">        dtype: torch dtype name.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        nn.Sequential(norm, lm_head), eval mode, on the default device.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        KeyError: when the checkpoint has no final-norm or lm_head weight.</span>
+<span class="sd">    """</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">AutoConfig</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">text_config</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">LlamaRMSNorm</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="n">hidden_size</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="n">text</span><span class="o">.</span><span class="n">rms_norm_eps</span><span class="p">)</span>
+    <span class="n">lm_head</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">text</span><span class="o">.</span><span class="n">hidden_size</span><span class="p">,</span> <span class="n">text</span><span class="o">.</span><span class="n">vocab_size</span><span class="p">,</span> <span class="n">bias</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="c1"># Key -&gt; shard file, from the sharded index or a single model.safetensors</span>
+    <span class="n">index_path</span> <span class="o">=</span> <span class="n">cached_file</span><span class="p">(</span>
+        <span class="n">model_id</span><span class="p">,</span>
+        <span class="s2">"model.safetensors.index.json"</span><span class="p">,</span>
+        <span class="n">_raise_exceptions_for_missing_entries</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">index_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">index_text</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">index_path</span><span class="p">)</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+        <span class="n">weight_map</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">index_text</span><span class="p">)[</span><span class="s2">"weight_map"</span><span class="p">]</span>
+
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">single</span> <span class="o">=</span> <span class="n">cached_file</span><span class="p">(</span><span class="n">model_id</span><span class="p">,</span> <span class="s2">"model.safetensors"</span><span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">safe_open</span><span class="p">(</span><span class="n">single</span><span class="p">,</span> <span class="n">framework</span><span class="o">=</span><span class="s2">"pt"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">weight_map</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="s2">"model.safetensors"</span> <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">f</span><span class="o">.</span><span class="n">keys</span><span class="p">()}</span>
+
+    <span class="c1"># Find the two keys: `language_model.model.norm` (hub) or `model.language_model.norm` (new saves)</span>
+    <span class="n">keys</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">pattern</span> <span class="ow">in</span> <span class="p">(</span><span class="sa">r</span><span class="s2">"language_model\.(model\.)?norm\.weight$"</span><span class="p">,</span> <span class="sa">r</span><span class="s2">"lm_head\.weight$"</span><span class="p">):</span>
+        <span class="n">compiled</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span>
+        <span class="n">matches</span> <span class="o">=</span> <span class="p">(</span><span class="n">key</span> <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">weight_map</span> <span class="k">if</span> <span class="n">compiled</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">key</span><span class="p">))</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">matches</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"load_decoder: no checkpoint key matches </span><span class="si">{</span><span class="n">pattern</span><span class="si">!r}</span><span class="s2"> in </span><span class="si">{</span><span class="n">model_id</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="n">keys</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+
+    <span class="c1"># Copy each tensor out of its shard</span>
+    <span class="k">for</span> <span class="n">module</span><span class="p">,</span> <span class="n">key</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">((</span><span class="n">norm</span><span class="p">,</span> <span class="n">lm_head</span><span class="p">),</span> <span class="n">keys</span><span class="p">):</span>
+        <span class="n">shard</span> <span class="o">=</span> <span class="n">cached_file</span><span class="p">(</span><span class="n">model_id</span><span class="p">,</span> <span class="n">weight_map</span><span class="p">[</span><span class="n">key</span><span class="p">])</span>
+
+        <span class="k">with</span> <span class="n">safe_open</span><span class="p">(</span><span class="n">shard</span><span class="p">,</span> <span class="n">framework</span><span class="o">=</span><span class="s2">"pt"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">weight</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">get_tensor</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">module</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">copy_</span><span class="p">(</span><span class="n">weight</span><span class="p">)</span>
+
+    <span class="c1"># Cast and place the decoder</span>
+    <span class="n">decoder</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span><span class="n">norm</span><span class="p">,</span> <span class="n">lm_head</span><span class="p">)</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
+    <span class="n">torch_dtype</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+    <span class="n">decoder</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch_dtype</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">decoder</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Model and lens</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_processor</span><span class="p">(</span>
+    <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"llava-hf/llava-v1.6-vicuna-7b-hf"</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LlavaNextProcessor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    LLaVA-1.6 processor with the fast tokenizer.</span>
+
+<span class="sd">    - its `.tokenizer` feeds `word_vocabulary`; `AutoTokenizer` needs sentencepiece for this checkpoint</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model_id: hub id or local directory.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The checkpoint's processor.</span>
+<span class="sd">    """</span>
+    <span class="c1"># add_prefix_space=None: the hub config forces a slow-tokenizer rebuild needing sentencepiece</span>
+    <span class="k">return</span> <span class="n">AutoProcessor</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">model_id</span><span class="p">,</span> <span class="n">add_prefix_space</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_load_model</span><span class="p">(</span><span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">dtype</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LlavaNextForConditionalGeneration</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Full LLaVA-1.6 model in `dtype`, still on the CPU.</span>
+<span class="sd">    """</span>
+    <span class="n">torch_dtype</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">torch</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">LlavaNextForConditionalGeneration</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span>
+        <span class="n">model_id</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch_dtype</span>
+    <span class="p">)</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_build_lens</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">LlavaNextForConditionalGeneration</span><span class="p">,</span> <span class="n">head_scores</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Sum of W_O W_V over the top-scoring heads: the (D, D) verbalization lens, float32 on CPU.</span>
+
+<span class="sd">    - GQA-aware: each kv head serves n_heads / n_kv_heads query heads (Vicuna has no GQA)</span>
+<span class="sd">    - accumulated in float32 on CPU, before truncation, so heads above `layer` count</span>
+<span class="sd">    - `head_scores` shape is validated by the caller, before the model loads</span>
+<span class="sd">    """</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">text_config</span>
+    <span class="n">layers</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">language_model</span><span class="o">.</span><span class="n">layers</span>
+    <span class="n">n_query</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">num_attention_heads</span>
+    <span class="n">head_dim</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">cfg</span><span class="p">,</span> <span class="s2">"head_dim"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">cfg</span><span class="o">.</span><span class="n">hidden_size</span> <span class="o">//</span> <span class="n">n_query</span>
+    <span class="n">n_rep</span> <span class="o">=</span> <span class="n">n_query</span> <span class="o">//</span> <span class="n">cfg</span><span class="o">.</span><span class="n">num_key_value_heads</span>
+    <span class="n">hidden</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">hidden_size</span>
+
+    <span class="c1"># Top heads over the flattened (layer, head) scores</span>
+    <span class="n">lens</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">hidden</span><span class="p">,</span> <span class="n">hidden</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">flat</span> <span class="o">=</span> <span class="n">head_scores</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">top</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">topk</span><span class="p">(</span><span class="n">flat</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">)</span><span class="o">.</span><span class="n">indices</span>
+
+    <span class="c1"># Accumulate W_O W_V of each top head, slicing its kv head for GQA</span>
+    <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="n">top</span><span class="o">.</span><span class="n">tolist</span><span class="p">():</span>
+        <span class="n">layer</span><span class="p">,</span> <span class="n">head</span> <span class="o">=</span> <span class="nb">divmod</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">n_query</span><span class="p">)</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="n">layers</span><span class="p">[</span><span class="n">layer</span><span class="p">]</span><span class="o">.</span><span class="n">self_attn</span>
+        <span class="n">w_o</span> <span class="o">=</span> <span class="n">attn</span><span class="o">.</span><span class="n">o_proj</span><span class="o">.</span><span class="n">weight</span><span class="p">[:,</span> <span class="n">head</span> <span class="o">*</span> <span class="n">head_dim</span> <span class="p">:</span> <span class="p">(</span><span class="n">head</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">head_dim</span><span class="p">]</span>
+        <span class="n">w_v</span> <span class="o">=</span> <span class="n">attn</span><span class="o">.</span><span class="n">v_proj</span><span class="o">.</span><span class="n">weight</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">,</span> <span class="n">hidden</span><span class="p">)[</span><span class="n">head</span> <span class="o">//</span> <span class="n">n_rep</span><span class="p">]</span>
+        <span class="n">lens</span> <span class="o">+=</span> <span class="n">w_o</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">@</span> <span class="n">w_v</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">lens</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_anyres_grid</span><span class="p">(</span>
+    <span class="n">processor</span><span class="p">:</span> <span class="n">LlavaNextProcessor</span><span class="p">,</span> <span class="n">inputs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    (rows, cols) of LLaVA-1.6's unpadded high-res token grid for one processed image.</span>
+
+<span class="sd">    - uses the processor's own token-count math (private `_get_unpadded_features`, transformers 4.57)</span>
+<span class="sd">    """</span>
+    <span class="n">orig_h</span><span class="p">,</span> <span class="n">orig_w</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">"image_sizes"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="n">tile_h</span><span class="p">,</span> <span class="n">tile_w</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="s2">"pixel_values"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span>
+    <span class="n">pinpoints</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="n">image_processor</span><span class="o">.</span><span class="n">image_grid_pinpoints</span>
+    <span class="n">best_h</span><span class="p">,</span> <span class="n">best_w</span> <span class="o">=</span> <span class="n">select_best_resolution</span><span class="p">([</span><span class="n">orig_h</span><span class="p">,</span> <span class="n">orig_w</span><span class="p">],</span> <span class="n">pinpoints</span><span class="p">)</span>
+
+    <span class="c1"># High-res token count and row count (one newline per row) for this image</span>
+    <span class="n">n_high_res</span><span class="p">,</span> <span class="n">rows</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="n">_get_unpadded_features</span><span class="p">(</span>
+        <span class="n">orig_h</span><span class="p">,</span>
+        <span class="n">orig_w</span><span class="p">,</span>
+        <span class="n">tile_h</span> <span class="o">//</span> <span class="n">processor</span><span class="o">.</span><span class="n">patch_size</span><span class="p">,</span>
+        <span class="n">tile_w</span> <span class="o">//</span> <span class="n">processor</span><span class="o">.</span><span class="n">patch_size</span><span class="p">,</span>
+        <span class="n">best_h</span> <span class="o">//</span> <span class="n">tile_h</span><span class="p">,</span>
+        <span class="n">best_w</span> <span class="o">//</span> <span class="n">tile_w</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">rows</span><span class="p">,</span> <span class="n">n_high_res</span> <span class="o">//</span> <span class="n">rows</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Head scoring</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_load_backgrounds</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    One mini-imagenet train shard as decoded images (upstream's word-image backgrounds).</span>
+<span class="sd">    """</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">hf_hub_download</span><span class="p">(</span>
+        <span class="s2">"timm/mini-imagenet"</span><span class="p">,</span> <span class="s2">"data/train-00000-of-00013.parquet"</span><span class="p">,</span> <span class="n">repo_type</span><span class="o">=</span><span class="s2">"dataset"</span>
+    <span class="p">)</span>
+    <span class="n">table</span> <span class="o">=</span> <span class="n">pq</span><span class="o">.</span><span class="n">read_table</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">"image"</span><span class="p">])</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="n">table</span><span class="o">.</span><span class="n">column</span><span class="p">(</span><span class="s2">"image"</span><span class="p">)</span><span class="o">.</span><span class="n">to_pylist</span><span class="p">()</span>
+    <span class="n">images</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">:</span>
+        <span class="n">buffer</span> <span class="o">=</span> <span class="n">io</span><span class="o">.</span><span class="n">BytesIO</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="s2">"bytes"</span><span class="p">])</span>
+        <span class="n">images</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">buffer</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">images</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_contrasting_color</span><span class="p">(</span><span class="n">patch</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">,</span> <span class="n">rng</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Random color at least 90 luminance units from the patch mean; black or white as a fallback.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Rec. 601 luma, averaged over the patch</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.299</span><span class="p">,</span> <span class="mf">0.587</span><span class="p">,</span> <span class="mf">0.114</span><span class="p">])</span>
+    <span class="n">pixels</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">patch</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">lum</span> <span class="o">=</span> <span class="nb">float</span><span class="p">((</span><span class="n">pixels</span> <span class="o">@</span> <span class="n">weights</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">20</span><span class="p">):</span>
+        <span class="n">color</span> <span class="o">=</span> <span class="p">(</span><span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">255</span><span class="p">),</span> <span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">255</span><span class="p">),</span> <span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">255</span><span class="p">))</span>
+        <span class="n">color_lum</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">color</span><span class="p">,</span> <span class="n">weights</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">color_lum</span> <span class="o">-</span> <span class="n">lum</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">90</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">color</span>
+
+    <span class="k">return</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="k">if</span> <span class="n">lum</span> <span class="o">&gt;</span> <span class="mi">127</span> <span class="k">else</span> <span class="p">(</span><span class="mi">255</span><span class="p">,</span> <span class="mi">255</span><span class="p">,</span> <span class="mi">255</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_word_image</span><span class="p">(</span>
+    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">backgrounds</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span>
+    <span class="n">font</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">rng</span><span class="p">:</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">,</span>
+    <span class="n">size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    The word drawn at a random size and position on a random center-cropped background.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Random background, center-cropped square and resized</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">backgrounds</span><span class="p">)</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span>
+    <span class="n">w</span><span class="p">,</span> <span class="n">h</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span>
+    <span class="n">side</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">h</span><span class="p">)</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">crop</span><span class="p">(</span>
+        <span class="p">((</span><span class="n">w</span> <span class="o">-</span> <span class="n">side</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="p">(</span><span class="n">h</span> <span class="o">-</span> <span class="n">side</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="p">(</span><span class="n">w</span> <span class="o">+</span> <span class="n">side</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="p">(</span><span class="n">h</span> <span class="o">+</span> <span class="n">side</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="n">size</span><span class="p">,</span> <span class="n">size</span><span class="p">),</span> <span class="n">Image</span><span class="o">.</span><span class="n">LANCZOS</span><span class="p">)</span>
+
+    <span class="c1"># Random font size and in-bounds position</span>
+    <span class="n">draw</span> <span class="o">=</span> <span class="n">ImageDraw</span><span class="o">.</span><span class="n">Draw</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="n">font_size</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">size</span> <span class="o">*</span> <span class="mf">0.10</span><span class="p">),</span> <span class="nb">int</span><span class="p">(</span><span class="n">size</span> <span class="o">*</span> <span class="mf">0.22</span><span class="p">))</span>
+    <span class="n">face</span> <span class="o">=</span> <span class="n">ImageFont</span><span class="o">.</span><span class="n">truetype</span><span class="p">(</span><span class="n">font</span><span class="p">,</span> <span class="n">font_size</span><span class="p">)</span>
+    <span class="n">left</span><span class="p">,</span> <span class="n">top</span><span class="p">,</span> <span class="n">right</span><span class="p">,</span> <span class="n">bottom</span> <span class="o">=</span> <span class="n">draw</span><span class="o">.</span><span class="n">textbbox</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">text</span><span class="p">,</span> <span class="n">font</span><span class="o">=</span><span class="n">face</span><span class="p">)</span>
+    <span class="n">tw</span><span class="p">,</span> <span class="n">th</span> <span class="o">=</span> <span class="n">right</span> <span class="o">-</span> <span class="n">left</span><span class="p">,</span> <span class="n">bottom</span> <span class="o">-</span> <span class="n">top</span>
+    <span class="n">margin</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">size</span> <span class="o">*</span> <span class="mf">0.02</span><span class="p">)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">margin</span> <span class="o">-</span> <span class="n">left</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="n">margin</span> <span class="o">-</span> <span class="n">left</span><span class="p">,</span> <span class="n">size</span> <span class="o">-</span> <span class="n">tw</span> <span class="o">-</span> <span class="n">margin</span> <span class="o">-</span> <span class="n">left</span><span class="p">))</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="n">margin</span> <span class="o">-</span> <span class="n">top</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="n">margin</span> <span class="o">-</span> <span class="n">top</span><span class="p">,</span> <span class="n">size</span> <span class="o">-</span> <span class="n">th</span> <span class="o">-</span> <span class="n">margin</span> <span class="o">-</span> <span class="n">top</span><span class="p">))</span>
+
+    <span class="c1"># Color contrasting with the region under the text</span>
+    <span class="n">box</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">x</span> <span class="o">+</span> <span class="n">left</span><span class="p">),</span>
+        <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">y</span> <span class="o">+</span> <span class="n">top</span><span class="p">),</span>
+        <span class="nb">min</span><span class="p">(</span><span class="n">size</span><span class="p">,</span> <span class="n">x</span> <span class="o">+</span> <span class="n">left</span> <span class="o">+</span> <span class="n">tw</span><span class="p">),</span>
+        <span class="nb">min</span><span class="p">(</span><span class="n">size</span><span class="p">,</span> <span class="n">y</span> <span class="o">+</span> <span class="n">top</span> <span class="o">+</span> <span class="n">th</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">region</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">crop</span><span class="p">(</span><span class="n">box</span><span class="p">)</span>
+    <span class="n">fill</span> <span class="o">=</span> <span class="n">_contrasting_color</span><span class="p">(</span><span class="n">region</span><span class="p">,</span> <span class="n">rng</span><span class="p">)</span>
+    <span class="n">draw</span><span class="o">.</span><span class="n">text</span><span class="p">((</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">),</span> <span class="n">text</span><span class="p">,</span> <span class="n">fill</span><span class="o">=</span><span class="n">fill</span><span class="p">,</span> <span class="n">font</span><span class="o">=</span><span class="n">face</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">image</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_head_probs</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">LlavaNextForConditionalGeneration</span><span class="p">,</span>
+    <span class="n">processor</span><span class="p">:</span> <span class="n">LlavaNextProcessor</span><span class="p">,</span>
+    <span class="n">prompt</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">token_ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">images</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Per-head P(word) summed over a batch, (layers, heads).</span>
+
+<span class="sd">    - o_proj input at the last position, split per head, through its O slice and the logit lens</span>
+<span class="sd">    - prompt: chat-templated transcription text, shared by every image in the batch</span>
+<span class="sd">    """</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">text_config</span>
+    <span class="n">lm</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">language_model</span>
+    <span class="n">n_heads</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">num_attention_heads</span>
+    <span class="n">head_dim</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">cfg</span><span class="p">,</span> <span class="s2">"head_dim"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">cfg</span><span class="o">.</span><span class="n">hidden_size</span> <span class="o">//</span> <span class="n">n_heads</span>
+
+    <span class="c1"># One prompt row per image</span>
+    <span class="n">inputs</span> <span class="o">=</span> <span class="n">processor</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="p">[</span><span class="n">prompt</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">images</span><span class="p">),</span> <span class="n">images</span><span class="o">=</span><span class="n">images</span><span class="p">,</span> <span class="n">return_tensors</span><span class="o">=</span><span class="s2">"pt"</span><span class="p">)</span>
+    <span class="n">inputs</span> <span class="o">=</span> <span class="n">inputs</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Capture every layer's o_proj input at the last position</span>
+    <span class="n">captured</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">hooks</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">layer</span><span class="o">.</span><span class="n">self_attn</span><span class="o">.</span><span class="n">o_proj</span><span class="o">.</span><span class="n">register_forward_pre_hook</span><span class="p">(</span>
+            <span class="k">lambda</span> <span class="n">module</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="n">captured</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">][:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">clone</span><span class="p">())</span>
+        <span class="p">)</span>
+        <span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="n">lm</span><span class="o">.</span><span class="n">layers</span>
+    <span class="p">]</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">model</span><span class="p">(</span><span class="o">**</span><span class="n">inputs</span><span class="p">,</span> <span class="n">use_cache</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">logits_to_keep</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">hook</span> <span class="ow">in</span> <span class="n">hooks</span><span class="p">:</span>
+            <span class="n">hook</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+    <span class="c1"># Per layer: head outputs -&gt; residual space -&gt; P(target token)</span>
+    <span class="n">batch</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">token_ids</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">lm</span><span class="o">.</span><span class="n">layers</span><span class="p">),</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">lm</span><span class="o">.</span><span class="n">layers</span><span class="p">):</span>
+        <span class="n">w_o</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">self_attn</span><span class="o">.</span><span class="n">o_proj</span><span class="o">.</span><span class="n">weight</span>
+        <span class="n">w_o</span> <span class="o">=</span> <span class="n">w_o</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">w_o</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">heads</span> <span class="o">=</span> <span class="n">captured</span><span class="p">[</span><span class="n">index</span><span class="p">]</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">n_heads</span><span class="p">,</span> <span class="n">head_dim</span><span class="p">)</span>
+        <span class="n">projected</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"bnh,dnh-&gt;bnd"</span><span class="p">,</span> <span class="n">heads</span><span class="p">,</span> <span class="n">w_o</span><span class="p">)</span>
+        <span class="n">normed</span> <span class="o">=</span> <span class="n">lm</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">projected</span><span class="p">)</span>
+        <span class="n">logits</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">lm_head</span><span class="p">(</span><span class="n">normed</span><span class="p">)</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">logits</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">softmax</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">=</span> <span class="n">probs</span><span class="p">[</span><span class="n">rows</span><span class="p">,</span> <span class="p">:,</span> <span class="n">ids</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<div class="viewcode-block" id="score_ocr_heads">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.features.score_ocr_heads">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">score_ocr_heads</span><span class="p">(</span>
+    <span class="n">model_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"llava-hf/llava-v1.6-vicuna-7b-hf"</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1024</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+    <span class="n">seed</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">177</span><span class="p">,</span>
+    <span class="n">dtype</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"float16"</span><span class="p">,</span>
+    <span class="n">font</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"DejaVuSans.ttf"</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Mean OCR score per attention head: how strongly each head writes the word shown in an image.</span>
+
+<span class="sd">    - score: P(word) from the head's O-projected output at the last prompt position</span>
+<span class="sd">    - loads its own full model; batch_size 16 OOMs the 7B in 46 GB</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        model_id: LLaVA-1.6 hub id or local directory.</span>
+<span class="sd">        n: number of word images.</span>
+<span class="sd">        batch_size: images per forward.</span>
+<span class="sd">        seed: seeds a local RNG for word sampling and rendering.</span>
+<span class="sd">        dtype: torch dtype name for the model weights.</span>
+<span class="sd">        font: TrueType font for the words.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (layers, heads) float32 CPU mean scores, usable as `head_scores`.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: `n` not in [1, number of eligible words].</span>
+<span class="sd">        OSError: `font` cannot be opened.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Local RNG for word sampling and rendering; same draws as seeding the global one</span>
+    <span class="n">rng</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">Random</span><span class="p">(</span><span class="n">seed</span><span class="p">)</span>
+
+    <span class="c1"># Words whose exact lowercase `▁word` token exists, 2-8 letters, as upstream</span>
+    <span class="n">processor</span> <span class="o">=</span> <span class="n">load_processor</span><span class="p">(</span><span class="n">model_id</span><span class="p">)</span>
+    <span class="n">vocab</span> <span class="o">=</span> <span class="n">word_vocabulary</span><span class="p">(</span><span class="n">processor</span><span class="o">.</span><span class="n">tokenizer</span><span class="p">)</span>
+    <span class="n">token_ids</span> <span class="o">=</span> <span class="n">vocab</span><span class="o">.</span><span class="n">token_ids</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="n">tokens</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="n">tokenizer</span><span class="o">.</span><span class="n">convert_ids_to_tokens</span><span class="p">(</span><span class="n">token_ids</span><span class="p">)</span>
+    <span class="n">pairs</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">token</span><span class="p">,</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">row</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">token_ids</span><span class="p">,</span> <span class="n">vocab</span><span class="o">.</span><span class="n">word_index</span><span class="o">.</span><span class="n">tolist</span><span class="p">()):</span>
+        <span class="n">word</span> <span class="o">=</span> <span class="n">token</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+
+        <span class="k">if</span> <span class="n">word</span> <span class="o">==</span> <span class="n">vocab</span><span class="o">.</span><span class="n">words</span><span class="p">[</span><span class="n">row</span><span class="p">]</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">word</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">8</span><span class="p">:</span>
+            <span class="n">pairs</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">word</span><span class="p">,</span> <span class="n">token_id</span><span class="p">))</span>
+
+    <span class="c1"># Check n and the font before the backgrounds and (7B) weights load</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="mi">1</span> <span class="o">&lt;=</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">pairs</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"n must be in [1, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pairs</span><span class="p">)</span><span class="si">}</span><span class="s2">], got </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="n">ImageFont</span><span class="o">.</span><span class="n">truetype</span><span class="p">(</span><span class="n">font</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
+
+    <span class="n">pairs</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">pairs</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">backgrounds</span> <span class="o">=</span> <span class="n">_load_backgrounds</span><span class="p">()</span>
+
+    <span class="c1"># Full model: the lens needs every layer's heads</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">_load_model</span><span class="p">(</span><span class="n">model_id</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+    <span class="c1"># Transcription prompt with the answer prefilled; same text for every batch</span>
+    <span class="n">request</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"text"</span><span class="p">,</span> <span class="s2">"text"</span><span class="p">:</span> <span class="s2">"Transcribe the word in this image."</span><span class="p">}</span>
+    <span class="n">messages</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">"role"</span><span class="p">:</span> <span class="s2">"user"</span><span class="p">,</span> <span class="s2">"content"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"image"</span><span class="p">},</span> <span class="n">request</span><span class="p">]}]</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span>
+        <span class="n">messages</span><span class="p">,</span> <span class="n">tokenize</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="n">prompt</span> <span class="o">+</span> <span class="s2">"Word:"</span>
+
+    <span class="c1"># Accumulate per-head P(word) over batches</span>
+    <span class="n">cfg</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">text_config</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+        <span class="n">cfg</span><span class="o">.</span><span class="n">num_hidden_layers</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">num_attention_heads</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">model</span><span class="o">.</span><span class="n">device</span>
+    <span class="p">)</span>
+    <span class="n">starts</span> <span class="o">=</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">start</span> <span class="ow">in</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">starts</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"score OCR heads"</span><span class="p">):</span>
+            <span class="n">batch</span> <span class="o">=</span> <span class="n">pairs</span><span class="p">[</span><span class="n">start</span> <span class="p">:</span> <span class="n">start</span> <span class="o">+</span> <span class="n">batch_size</span><span class="p">]</span>
+            <span class="n">images</span> <span class="o">=</span> <span class="p">[</span><span class="n">_word_image</span><span class="p">(</span><span class="n">word</span><span class="p">,</span> <span class="n">backgrounds</span><span class="p">,</span> <span class="n">font</span><span class="p">,</span> <span class="n">rng</span><span class="p">)</span> <span class="k">for</span> <span class="n">word</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">]</span>
+            <span class="n">batch_ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">token_id</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">token_id</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">]</span>
+            <span class="n">total</span> <span class="o">+=</span> <span class="n">_head_probs</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">processor</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span> <span class="n">batch_ids</span><span class="p">,</span> <span class="n">images</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="c1"># Free the model's GPU memory, also when a batch fails</span>
+        <span class="k">del</span> <span class="n">model</span>
+        <span class="n">pytorch_gc</span><span class="p">()</span>
+
+    <span class="c1"># Mean on the CPU</span>
+    <span class="n">mean</span> <span class="o">=</span> <span class="n">total</span> <span class="o">/</span> <span class="n">n</span>
+    <span class="k">return</span> <span class="n">mean</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.pointcloud.feedforward.mapanything &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/pointcloud/feedforward/mapanything';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.pointcloud.feedforward.mapanything</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.pointcloud.feedforward.mapanything</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">MapAnything feedforward backend: metric depth and camera poses in one forward pass.</span>
+
+<span class="sd">- crop box and mask follow https://github.com/facebookresearch/map-anything @ c845b8f</span>
+<span class="sd">- crop box: mapanything/utils/cropping.py:193, 231-240, 441-447</span>
+<span class="sd">- upstream mask: mapanything/utils/inference.py:401-402</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">ClassVar</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torchvision</span><span class="w"> </span><span class="kn">import</span> <span class="n">transforms</span> <span class="k">as</span> <span class="n">TF</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">mapanything.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">MapAnything</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">mapanything.utils.cropping</span><span class="w"> </span><span class="kn">import</span> <span class="n">crop_resize_if_necessary</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">mapanything.utils.image</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">IMAGE_NORMALIZATION_DICT</span><span class="p">,</span>
+    <span class="n">find_closest_aspect_ratio</span><span class="p">,</span>
+    <span class="n">load_images</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">mapanything.utils.inference</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">postprocess_model_outputs_for_inference</span><span class="p">,</span>
+    <span class="n">preprocess_input_views_for_inference</span><span class="p">,</span>
+    <span class="n">validate_input_views_for_inference</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">invert_poses</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.feedforward.base</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BaseFeedforwardCreator</span><span class="p">,</span>
+    <span class="n">_frame_sizes</span><span class="p">,</span>
+    <span class="n">capture_qk</span><span class="p">,</span>
+    <span class="n">center_crop_coords</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Constants</span>
+<span class="c1">########################################################################</span>
+
+<span class="c1"># Map our resize_mode names to the names MapAnything's image loader uses</span>
+<span class="n">_MA_RESIZE_MODE_MAP</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"fixed"</span><span class="p">:</span> <span class="s2">"fixed_mapping"</span><span class="p">,</span>
+    <span class="s2">"longest_side"</span><span class="p">:</span> <span class="s2">"longest_side"</span><span class="p">,</span>
+    <span class="s2">"square"</span><span class="p">:</span> <span class="s2">"square"</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Creator</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="MapAnythingCreator">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.mapanything.MapAnythingCreator">[docs]</a>
+<span class="nd">@BaseFeedforwardCreator</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">"mapanything"</span><span class="p">)</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MapAnythingCreator</span><span class="p">(</span><span class="n">BaseFeedforwardCreator</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pointcloud from MapAnything's per-image metric depth and camera poses.</span>
+
+<span class="sd">    - one forward pass predicts depth and poses for all frames jointly</span>
+<span class="sd">    - the multiview mask is ANDed with upstream's confidence mask, never swapped for it</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        model_name: HuggingFace id for MapAnything.from_pretrained.</span>
+<span class="sd">        conf_percentile: learned-confidence percentile cutoff (0-100), applied by upstream's mask.</span>
+<span class="sd">        min_views: other views that must agree to keep a pixel; 0 is off.</span>
+<span class="sd">        mv_rel_thresh: depth tolerance as a fraction of the expected depth.</span>
+<span class="sd">        minibatch_size: views per inference step; lower it on OOM.</span>
+<span class="sd">        resize_mode: "fixed" (aspect-ratio lookup table), "longest_side" or "square".</span>
+<span class="sd">        resolution: lookup-table size for "fixed" (518 or 512); target px otherwise.</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># MapAnything adds no extra tokens before the image tokens in its attention blocks</span>
+    <span class="n">_lc_token_offset</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="c1"># Loop-closure settings tuned for this model</span>
+    <span class="n">default_verify_match_ratio</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.46</span>
+    <span class="n">_lc_layer_index</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">4</span>
+
+    <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"facebook/map-anything"</span>
+    <span class="n">conf_percentile</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">35.0</span>
+    <span class="n">minibatch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">resize_mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"fixed"</span>  <span class="c1"># "fixed" (aspect-ratio lookup table), "longest_side", "square"</span>
+    <span class="p">)</span>
+    <span class="n">resolution</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="mi">518</span>  <span class="c1"># lookup-table size for "fixed", target size in pixels otherwise</span>
+    <span class="p">)</span>
+
+    <span class="c1"># The full sequence of views, prepared for the model by _preprocess</span>
+    <span class="n">_processed_views</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Reject an unknown resize_mode.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_MA_RESIZE_MODE_MAP</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"resize_mode must be one of </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_MA_RESIZE_MODE_MAP</span><span class="p">)</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span><span class="si">!r}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_load_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Load the pretrained HuggingFace model in eval mode.</span>
+<span class="sd">        """</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="n">MapAnything</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model_name</span><span class="p">)</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">model</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Load frames as MapAnything view dicts and keep a model-ready copy on CPU.</span>
+
+<span class="sd">        - crop boxes ignore EXIF orientation; frame-store PNGs carry none</span>
+<span class="sd">        - returns (views, original_coords): view dicts and (N, 6) float32 crop boxes</span>
+<span class="sd">        """</span>
+        <span class="c1"># Take the handed-off arrays only when they cover every path</span>
+        <span class="n">arrays</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_path_frames</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+
+        <span class="c1"># Read the files when nothing was handed off, else preprocess the arrays</span>
+        <span class="k">if</span> <span class="n">arrays</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">views</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_preprocess_files</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">views</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_preprocess_arrays</span><span class="p">(</span><span class="n">arrays</span><span class="p">)</span>
+
+        <span class="c1"># Each frame's crop box from its original size and the model grid</span>
+        <span class="n">model_h</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">views</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"img"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">model_w</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">views</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"img"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">sizes</span> <span class="o">=</span> <span class="n">_frame_sizes</span><span class="p">(</span><span class="n">paths</span><span class="p">,</span> <span class="n">arrays</span><span class="p">)</span>
+        <span class="n">original_coords</span> <span class="o">=</span> <span class="n">_crop_boxes</span><span class="p">(</span><span class="n">sizes</span><span class="p">,</span> <span class="n">model_w</span><span class="p">,</span> <span class="n">model_h</span><span class="p">)</span>
+
+        <span class="c1"># Check the views and convert them to the model's input format, leaving them on the CPU</span>
+        <span class="n">validated</span> <span class="o">=</span> <span class="n">validate_input_views_for_inference</span><span class="p">(</span><span class="n">views</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_processed_views</span> <span class="o">=</span> <span class="n">preprocess_input_views_for_inference</span><span class="p">(</span><span class="n">validated</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">views</span><span class="p">,</span> <span class="n">original_coords</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess_files</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Frame files as view dicts through MapAnything's own loader.</span>
+<span class="sd">        """</span>
+        <span class="n">loader_paths</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">]</span>
+        <span class="n">upstream_mode</span> <span class="o">=</span> <span class="n">_MA_RESIZE_MODE_MAP</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span><span class="p">]</span>
+
+        <span class="c1"># The fixed mode picks from a lookup table; the others take a target size</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span> <span class="o">==</span> <span class="s2">"fixed"</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">load_images</span><span class="p">(</span>
+                <span class="n">loader_paths</span><span class="p">,</span> <span class="n">resize_mode</span><span class="o">=</span><span class="n">upstream_mode</span><span class="p">,</span> <span class="n">resolution_set</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">resolution</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">load_images</span><span class="p">(</span>
+            <span class="n">loader_paths</span><span class="p">,</span> <span class="n">resize_mode</span><span class="o">=</span><span class="n">upstream_mode</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">resolution</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess_arrays</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">arrays</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span> <span class="n">workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        RGB arrays as load_images view dicts, resized on a thread pool, minus the file open.</span>
+
+<span class="sd">        - mirrors mapanything.utils.image.load_images for fixed_mapping, square and longest_side</span>
+<span class="sd">        - upstream's exif_transpose and RGB convert are no-ops on (H, W, 3) uint8 arrays</span>
+<span class="sd">        - patch size 14 and dinov2 normalization, load_images' defaults</span>
+<span class="sd">        - the target-size step is inline upstream; the bit-exact test guards drift</span>
+<span class="sd">        """</span>
+        <span class="c1"># One target size for every frame, from the mean aspect ratio</span>
+        <span class="n">aspect_ratios</span> <span class="o">=</span> <span class="p">[</span><span class="n">rgb</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="n">rgb</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">rgb</span> <span class="ow">in</span> <span class="n">arrays</span><span class="p">]</span>
+        <span class="n">average</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">aspect_ratios</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">aspect_ratios</span><span class="p">)</span>
+        <span class="n">size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">resolution</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span> <span class="o">==</span> <span class="s2">"fixed"</span><span class="p">:</span>
+            <span class="n">target_size</span> <span class="o">=</span> <span class="n">find_closest_aspect_ratio</span><span class="p">(</span><span class="n">average</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span> <span class="o">==</span> <span class="s2">"square"</span><span class="p">:</span>
+            <span class="n">target_size</span> <span class="o">=</span> <span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">size</span> <span class="o">//</span> <span class="mi">14</span><span class="p">)</span> <span class="o">*</span> <span class="mi">14</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">size</span> <span class="o">//</span> <span class="mi">14</span><span class="p">)</span> <span class="o">*</span> <span class="mi">14</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">average</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">target_size</span> <span class="o">=</span> <span class="p">(</span><span class="n">size</span><span class="p">,</span> <span class="nb">round</span><span class="p">((</span><span class="n">size</span> <span class="o">//</span> <span class="mi">14</span><span class="p">)</span> <span class="o">/</span> <span class="n">average</span><span class="p">)</span> <span class="o">*</span> <span class="mi">14</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">target_size</span> <span class="o">=</span> <span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="n">size</span> <span class="o">//</span> <span class="mi">14</span><span class="p">)</span> <span class="o">*</span> <span class="n">average</span><span class="p">)</span> <span class="o">*</span> <span class="mi">14</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span>
+
+        <span class="c1"># Normalize the way load_images does for dinov2</span>
+        <span class="n">norm</span> <span class="o">=</span> <span class="n">IMAGE_NORMALIZATION_DICT</span><span class="p">[</span><span class="s2">"dinov2"</span><span class="p">]</span>
+        <span class="n">to_tensor</span> <span class="o">=</span> <span class="n">TF</span><span class="o">.</span><span class="n">ToTensor</span><span class="p">()</span>
+        <span class="n">normalize</span> <span class="o">=</span> <span class="n">TF</span><span class="o">.</span><span class="n">Normalize</span><span class="p">(</span><span class="n">mean</span><span class="o">=</span><span class="n">norm</span><span class="o">.</span><span class="n">mean</span><span class="p">,</span> <span class="n">std</span><span class="o">=</span><span class="n">norm</span><span class="o">.</span><span class="n">std</span><span class="p">)</span>
+        <span class="n">img_norm</span> <span class="o">=</span> <span class="n">TF</span><span class="o">.</span><span class="n">Compose</span><span class="p">([</span><span class="n">to_tensor</span><span class="p">,</span> <span class="n">normalize</span><span class="p">])</span>
+
+        <span class="c1"># Resize and normalize every frame</span>
+        <span class="n">preprocess</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+            <span class="n">_preprocess_frame</span><span class="p">,</span> <span class="n">target_size</span><span class="o">=</span><span class="n">target_size</span><span class="p">,</span> <span class="n">img_norm</span><span class="o">=</span><span class="n">img_norm</span>
+        <span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+            <span class="n">processed</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">preprocess</span><span class="p">,</span> <span class="n">arrays</span><span class="p">))</span>
+
+        <span class="c1"># One view dict per frame, keyed as load_images keys them</span>
+        <span class="k">return</span> <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">"img"</span><span class="p">:</span> <span class="n">img</span><span class="p">,</span>
+                <span class="s2">"true_shape"</span><span class="p">:</span> <span class="n">true_shape</span><span class="p">,</span>
+                <span class="s2">"idx"</span><span class="p">:</span> <span class="n">i</span><span class="p">,</span>
+                <span class="s2">"instance"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">),</span>
+                <span class="s2">"data_norm_type"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"dinov2"</span><span class="p">],</span>
+            <span class="p">}</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="n">true_shape</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">processed</span><span class="p">)</span>
+        <span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">views</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        One MapAnything forward pass, stacked into the base raw dict.</span>
+
+<span class="sd">        - full sequence: reuses the preprocessed views, upstream mask applied</span>
+<span class="sd">        - loop-closure window: preprocessed here, unmasked</span>
+<span class="sd">        """</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">device_type</span> <span class="o">=</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span>
+
+        <span class="c1"># Use the cached full-sequence views, or prepare a loop-closure window of views here</span>
+        <span class="n">masked</span> <span class="o">=</span> <span class="n">views</span> <span class="ow">is</span> <span class="bp">self</span><span class="o">.</span><span class="n">views</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_processed_views</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">masked</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_processed_views</span> <span class="o">=</span> <span class="n">_views_to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_processed_views</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+            <span class="n">forward_views</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_processed_views</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                <span class="s2">"  → </span><span class="si">%d</span><span class="s2"> images, minibatch_size=</span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span>
+                <span class="nb">len</span><span class="p">(</span><span class="n">forward_views</span><span class="p">),</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">minibatch_size</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">window</span> <span class="o">=</span> <span class="n">preprocess_input_views_for_inference</span><span class="p">(</span>
+                <span class="n">validate_input_views_for_inference</span><span class="p">(</span><span class="n">views</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="n">forward_views</span> <span class="o">=</span> <span class="n">_views_to</span><span class="p">(</span><span class="n">window</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                <span class="s2">"  → </span><span class="si">%d</span><span class="s2"> images (LC window), minibatch_size=</span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span>
+                <span class="nb">len</span><span class="p">(</span><span class="n">forward_views</span><span class="p">),</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">minibatch_size</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Run the model in bfloat16 on the GPU, while postprocessing later stays in float32</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">autocast</span><span class="p">(</span>
+                <span class="n">device_type</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span> <span class="n">enabled</span><span class="o">=</span><span class="p">(</span><span class="n">device_type</span> <span class="o">==</span> <span class="s2">"cuda"</span><span class="p">)</span>
+            <span class="p">):</span>
+                <span class="n">preds</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span>
+                    <span class="n">forward_views</span><span class="p">,</span>
+                    <span class="n">memory_efficient_inference</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                    <span class="n">minibatch_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">minibatch_size</span><span class="p">,</span>
+                <span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stack_predictions</span><span class="p">(</span><span class="n">preds</span><span class="p">,</span> <span class="n">forward_views</span><span class="p">,</span> <span class="n">masked</span><span class="o">=</span><span class="n">masked</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_stack_predictions</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">preds</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="n">views</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span> <span class="n">masked</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Postprocess predictions upstream's way, then stack them into the base raw dict.</span>
+
+<span class="sd">        - masked: upstream's edge and confidence mask is stored under "mask"</span>
+<span class="sd">        - extrinsic is (N, 3, 4) w2c; images are (N, 3, H, W) RGB in [0, 1]</span>
+<span class="sd">        """</span>
+        <span class="c1"># Convert the bfloat16 pointmaps to float32 so MapAnything's postprocessing can use them</span>
+        <span class="k">for</span> <span class="n">pred</span> <span class="ow">in</span> <span class="n">preds</span><span class="p">:</span>
+            <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d_cam"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d_cam"</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+            <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d"</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+        <span class="c1"># Let MapAnything's postprocessing compute camera poses and intrinsics</span>
+        <span class="k">if</span> <span class="n">masked</span><span class="p">:</span>
+            <span class="n">processed</span> <span class="o">=</span> <span class="n">postprocess_model_outputs_for_inference</span><span class="p">(</span>
+                <span class="n">preds</span><span class="p">,</span>
+                <span class="n">views</span><span class="p">,</span>
+                <span class="n">apply_mask</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">mask_edges</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">apply_confidence_mask</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+                <span class="n">confidence_percentile</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">conf_percentile</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">processed</span> <span class="o">=</span> <span class="n">postprocess_model_outputs_for_inference</span><span class="p">(</span>
+                <span class="n">preds</span><span class="p">,</span> <span class="n">views</span><span class="p">,</span> <span class="n">apply_mask</span><span class="o">=</span><span class="kc">False</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Stack each view's outputs into arrays, turning camera-to-world poses into world-to-camera</span>
+        <span class="n">raw</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"extrinsic"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">invert_poses</span><span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="s2">"camera_poses"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">())[:</span><span class="mi">3</span><span class="p">]</span>
+                    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span>
+                <span class="p">]</span>
+            <span class="p">),</span>
+            <span class="s2">"intrinsics"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">p</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span><span class="p">]</span>
+            <span class="p">),</span>
+            <span class="s2">"depth"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">p</span><span class="p">[</span><span class="s2">"depth_z"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span><span class="p">]</span>
+            <span class="p">),</span>
+            <span class="s2">"depth_conf"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">p</span><span class="p">[</span><span class="s2">"conf"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span><span class="p">]</span>
+            <span class="p">),</span>
+            <span class="s2">"images"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">p</span><span class="p">[</span><span class="s2">"img_no_norm"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+                    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span>
+                <span class="p">]</span>
+            <span class="p">),</span>
+        <span class="p">}</span>
+
+        <span class="c1"># Keep MapAnything's valid-pixel mask, but only for the full sequence</span>
+        <span class="k">if</span> <span class="n">masked</span><span class="p">:</span>
+            <span class="n">raw</span><span class="p">[</span><span class="s2">"mask"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">p</span><span class="p">[</span><span class="s2">"mask"</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">bool</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span><span class="p">]</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">raw</span>
+
+<div class="viewcode-block" id="MapAnythingCreator.extract_intermediate_features">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.mapanything.MapAnythingCreator.extract_intermediate_features">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">extract_intermediate_features</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">frames</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">layer_index</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Attention q/k from one cross-frame block, plus poses and pointmaps, for a frame pair.</span>
+
+<span class="sd">        - one forward pass gives both the attention and the predictions</span>
+<span class="sd">        - poses are w2c; frame 0 sits at identity</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            frames: (2, C, H, W) preprocessed frames on CPU or GPU.</span>
+<span class="sd">            layer_index: info_sharing self-attention block to tap; -1 = last.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            {"q", "k": (B, heads, N_tokens, head_dim), "poses": (2, 4, 4) float32 w2c,</span>
+<span class="sd">            "world_points": (2, H, W, 3), "conf": (2, H, W)}.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Record the attention queries and keys of the chosen block during one forward pass</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">info_sharing</span><span class="o">.</span><span class="n">self_attention_blocks</span><span class="p">[</span><span class="n">layer_index</span><span class="p">]</span><span class="o">.</span><span class="n">attn</span>
+
+        <span class="k">with</span> <span class="n">capture_qk</span><span class="p">(</span><span class="n">attn</span><span class="o">.</span><span class="n">qkv</span><span class="p">,</span> <span class="n">attn</span><span class="o">.</span><span class="n">num_heads</span><span class="p">)</span> <span class="k">as</span> <span class="n">captured</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="c1"># Wrap each frame as a MapAnything view dict using the loader's dinov2 normalization</span>
+            <span class="n">raw_views</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="p">{</span><span class="s2">"img"</span><span class="p">:</span> <span class="n">f</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="s2">"data_norm_type"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"dinov2"</span><span class="p">]}</span>
+                <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">frames</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
+            <span class="p">]</span>
+
+            <span class="c1"># Views are built from CPU frames, so move them to the model device</span>
+            <span class="n">views</span> <span class="o">=</span> <span class="n">_views_to</span><span class="p">(</span>
+                <span class="n">preprocess_input_views_for_inference</span><span class="p">(</span><span class="n">raw_views</span><span class="p">),</span>
+                <span class="nb">next</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">preds</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span>
+                <span class="n">views</span><span class="p">,</span> <span class="n">memory_efficient_inference</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">minibatch_size</span><span class="o">=</span><span class="mi">1</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Convert pointmaps to float32 and postprocess them, the same as _stack_predictions</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">pred</span> <span class="ow">in</span> <span class="n">preds</span><span class="p">:</span>
+                <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d_cam"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d_cam"</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+                <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d"</span><span class="p">]</span> <span class="o">=</span> <span class="n">pred</span><span class="p">[</span><span class="s2">"pts3d"</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+            <span class="n">processed</span> <span class="o">=</span> <span class="n">postprocess_model_outputs_for_inference</span><span class="p">(</span>
+                <span class="n">preds</span><span class="p">,</span> <span class="n">views</span><span class="p">,</span> <span class="n">apply_mask</span><span class="o">=</span><span class="kc">False</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Turn camera-to-world poses into world-to-camera</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">"poses"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">invert_poses</span><span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="s2">"camera_poses"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">())</span>
+                <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Pointmaps and confidence for loop-closure scale estimation</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">"world_points"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">p</span><span class="p">[</span><span class="s2">"pts3d"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span><span class="p">]</span>
+        <span class="p">)</span>  <span class="c1"># (2, H, W, 3)</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">"conf"</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">p</span><span class="p">[</span><span class="s2">"conf"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processed</span><span class="p">]</span>
+        <span class="p">)</span>  <span class="c1"># (2, H, W)</span>
+
+        <span class="k">return</span> <span class="n">captured</span></div>
+</div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Helpers</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_views_to</span><span class="p">(</span>
+    <span class="n">views</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span> <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">|</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Move every tensor in a list of MapAnything view dicts to `device`.</span>
+
+<span class="sd">    - returns new view dicts; non-tensor values pass through</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="p">[</span>
+        <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="k">else</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">view</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+        <span class="k">for</span> <span class="n">view</span> <span class="ow">in</span> <span class="n">views</span>
+    <span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_crop_boxes</span><span class="p">(</span><span class="n">sizes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span> <span class="n">model_w</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">model_h</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    (N, 6) float32 crop boxes for (w, h) frames, the way MapAnything's loader resizes and crops.</span>
+<span class="sd">    """</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">w</span><span class="p">,</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">sizes</span><span class="p">:</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="nb">max</span><span class="p">(</span><span class="n">model_w</span> <span class="o">/</span> <span class="n">w</span><span class="p">,</span> <span class="n">model_h</span> <span class="o">/</span> <span class="n">h</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-8</span>
+        <span class="p">)</span>  <span class="c1"># same scale formula as MapAnything's loader</span>
+        <span class="n">resized_wh</span> <span class="o">=</span> <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">w</span> <span class="o">*</span> <span class="n">s</span><span class="p">),</span> <span class="nb">int</span><span class="p">(</span><span class="n">h</span> <span class="o">*</span> <span class="n">s</span><span class="p">))</span>
+        <span class="n">box</span> <span class="o">=</span> <span class="n">center_crop_coords</span><span class="p">((</span><span class="n">w</span><span class="p">,</span> <span class="n">h</span><span class="p">),</span> <span class="n">resized_wh</span><span class="p">,</span> <span class="p">(</span><span class="n">model_w</span><span class="p">,</span> <span class="n">model_h</span><span class="p">),</span> <span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">s</span><span class="p">))</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">box</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_preprocess_frame</span><span class="p">(</span>
+    <span class="n">rgb</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">target_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">img_norm</span><span class="p">:</span> <span class="n">TF</span><span class="o">.</span><span class="n">Compose</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    One frame through upstream's Lanczos resize and center crop, then normalized.</span>
+
+<span class="sd">    - returns the (1, 3, H, W) image and its (1, 2) int32 true_shape</span>
+<span class="sd">    """</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">fromarray</span><span class="p">(</span><span class="n">rgb</span><span class="p">)</span>
+    <span class="n">resized</span> <span class="o">=</span> <span class="n">crop_resize_if_necessary</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="n">target_size</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">normalized</span> <span class="o">=</span> <span class="n">img_norm</span><span class="p">(</span><span class="n">resized</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">normalized</span><span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">resized</span><span class="o">.</span><span class="n">size</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

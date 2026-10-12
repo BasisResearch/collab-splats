@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.semantics.segmentation.insid3 &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/semantics/segmentation/insid3';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.semantics.segmentation.insid3</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.semantics.segmentation.insid3</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">INSID3 in-context segmentation backend ("insid3").</span>
+
+<span class="sd">- training-free: frozen DINOv2 features, one reference image and mask per category</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.cluster</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgglomerativeClustering</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.features.dino</span><span class="w"> </span><span class="kn">import</span> <span class="n">DINOFeatureExtractor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.segmentation.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseSegmentation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_uint8_hwc</span>
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Clustering utilities ########################</span>
+<span class="c1">########################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_agglomerative_clustering</span><span class="p">(</span><span class="n">X</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">tau</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Partition N patches into clusters via cosine-distance agglomerative clustering.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        X: (N, D) L2-normalized patch features.</span>
+<span class="sd">        tau: similarity threshold — clusters are merged above this cosine similarity.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (N,) long tensor of integer cluster labels on the same device as X.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Compute cosine similarity matrix; clamp for numerical stability</span>
+    <span class="n">S</span> <span class="o">=</span> <span class="p">(</span><span class="n">X</span> <span class="o">@</span> <span class="n">X</span><span class="o">.</span><span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">S</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+    <span class="n">ac</span> <span class="o">=</span> <span class="n">AgglomerativeClustering</span><span class="p">(</span>
+        <span class="n">n_clusters</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+        <span class="n">metric</span><span class="o">=</span><span class="s2">"precomputed"</span><span class="p">,</span>
+        <span class="n">linkage</span><span class="o">=</span><span class="s2">"average"</span><span class="p">,</span>
+        <span class="n">distance_threshold</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">tau</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">ac</span><span class="o">.</span><span class="n">fit_predict</span><span class="p">(</span><span class="n">D</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span><span class="o">.</span><span class="n">long</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">X</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_cluster_means</span><span class="p">(</span><span class="n">X</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">K</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Mean row of X per cluster, one scatter-add instead of a loop over clusters.</span>
+
+<span class="sd">    - (N, C) X and (N,) labels in 0..K-1 give (K, C)</span>
+<span class="sd">    - an empty cluster is NaN, as a mean over nothing</span>
+<span class="sd">    """</span>
+    <span class="n">sums</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">K</span><span class="p">,</span> <span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">X</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">X</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">sums</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">X</span><span class="p">)</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">labels</span><span class="p">,</span> <span class="n">minlength</span><span class="o">=</span><span class="n">K</span><span class="p">)</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">X</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">sums</span> <span class="o">/</span> <span class="n">counts</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_cluster_prototypes</span><span class="p">(</span><span class="n">X</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">K</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Compute an L2-normalized prototype (mean) for each cluster.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        X: (N, D) patch features.</span>
+<span class="sd">        labels: (N,) integer cluster assignments.</span>
+<span class="sd">        K: number of clusters.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (K, D) L2-normalized prototypes.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Unit-norm mean per cluster; every id 0..K-1 has members</span>
+    <span class="n">means</span> <span class="o">=</span> <span class="n">_cluster_means</span><span class="p">(</span><span class="n">X</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">K</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">means</span><span class="p">,</span> <span class="n">p</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Mask and image helpers ######################</span>
+<span class="c1">########################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_downsample_mask</span><span class="p">(</span><span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">h</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">w</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Downsample a (H, W) bool mask to (h, w), keeping a tiny mask non-empty.</span>
+
+<span class="sd">    - bilinear, then nearest, then the patch under the mask's centroid</span>
+<span class="sd">    - each step covers a smaller mask than the last; an empty mask stays empty</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        mask: (H, W) bool.</span>
+<span class="sd">        h: output rows.</span>
+<span class="sd">        w: output columns.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (h, w) bool.</span>
+<span class="sd">    """</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">mask</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># (1, 1, H, W)</span>
+    <span class="c1"># Bilinear downsample — works for masks covering multiple patches</span>
+    <span class="n">down</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">F</span><span class="o">.</span><span class="n">interpolate</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"bilinear"</span><span class="p">,</span> <span class="n">align_corners</span><span class="o">=</span><span class="kc">False</span><span class="p">)[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.5</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">down</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># Nearest fallback for masks smaller than one patch</span>
+        <span class="n">down</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">interpolate</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"nearest"</span><span class="p">)[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.5</span>
+    <span class="k">if</span> <span class="n">down</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># Centroid fallback for masks both interpolations miss; an empty mask stays empty</span>
+        <span class="k">if</span> <span class="n">mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="n">center</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">argwhere</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+            <span class="n">scale</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">h</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">w</span> <span class="o">/</span> <span class="n">mask</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]],</span> <span class="n">device</span><span class="o">=</span><span class="n">mask</span><span class="o">.</span><span class="n">device</span>
+            <span class="p">)</span>
+            <span class="n">cy</span><span class="p">,</span> <span class="n">cx</span> <span class="o">=</span> <span class="p">(</span><span class="n">center</span> <span class="o">*</span> <span class="n">scale</span><span class="p">)</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+            <span class="n">cy</span> <span class="o">=</span> <span class="n">cy</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">h</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">cx</span> <span class="o">=</span> <span class="n">cx</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">w</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">down</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">mask</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">down</span><span class="p">[</span><span class="n">cy</span><span class="p">,</span> <span class="n">cx</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">down</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">mask</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">down</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_upsample_mask</span><span class="p">(</span><span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">H</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">W</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Bilinear upsample of a bool mask.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        mask: (h, w) bool.</span>
+<span class="sd">        H: output rows.</span>
+<span class="sd">        W: output columns.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (H, W) bool, thresholded at 0.5.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">F</span><span class="o">.</span><span class="n">interpolate</span><span class="p">(</span>
+            <span class="n">mask</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+            <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">),</span>
+            <span class="n">mode</span><span class="o">=</span><span class="s2">"bilinear"</span><span class="p">,</span>
+            <span class="n">align_corners</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="p">)[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+        <span class="o">&gt;</span> <span class="mf">0.5</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_tensor_to_pil</span><span class="p">(</span><span class="n">t</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    (C, H, W) float tensor in [0, 1] to a PIL image.</span>
+
+<span class="sd">    - rounds to the nearest level via to_uint8_hwc</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        t: (C, H, W) float tensor in [0, 1].</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        uint8 PIL image.</span>
+<span class="sd">    """</span>
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">to_uint8_hwc</span><span class="p">(</span><span class="n">arr</span><span class="p">,</span> <span class="n">channels_first</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">Image</span><span class="o">.</span><span class="n">fromarray</span><span class="p">(</span><span class="n">arr</span><span class="p">)</span>
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Candidate localization ######################</span>
+<span class="c1">########################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_locate_candidates</span><span class="p">(</span>
+    <span class="n">tgt_feat_deb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">ref_feat_deb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">ref_mask_down</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">prototype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">fallback_quantile</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Target patches that match the reference both ways.</span>
+
+<span class="sd">    - forward: positive cosine to the prototype (else the top (1 - fallback_quantile) share)</span>
+<span class="sd">    - backward: the patch's nearest reference patch lies inside the reference mask</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        tgt_feat_deb: (D, Ht, Wt) debiased target features.</span>
+<span class="sd">        ref_feat_deb: (D, Hr, Wr) debiased reference features.</span>
+<span class="sd">        ref_mask_down: (Hr, Wr) bool reference mask at patch resolution.</span>
+<span class="sd">        prototype: (D,) unit-norm reference prototype.</span>
+<span class="sd">        fallback_quantile: share of patches below the fallback cut when no patch is positive.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (Ht, Wt) bool candidate mask.</span>
+<span class="sd">    """</span>
+    <span class="n">D</span><span class="p">,</span> <span class="n">Ht</span><span class="p">,</span> <span class="n">Wt</span> <span class="o">=</span> <span class="n">tgt_feat_deb</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">Hr</span><span class="p">,</span> <span class="n">Wr</span> <span class="o">=</span> <span class="n">ref_feat_deb</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># Forward: cosine similarity of each target patch to the ref prototype</span>
+    <span class="n">sim_fwd</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"dhw,d-&gt;hw"</span><span class="p">,</span> <span class="n">tgt_feat_deb</span><span class="p">,</span> <span class="n">prototype</span><span class="p">)</span>  <span class="c1"># (Ht, Wt)</span>
+    <span class="n">forward_mask</span> <span class="o">=</span> <span class="n">sim_fwd</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="k">if</span> <span class="n">forward_mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># Fallback: top (1 - fallback_quantile) share by prototype similarity</span>
+        <span class="n">thresh</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">quantile</span><span class="p">(</span><span class="n">sim_fwd</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">fallback_quantile</span><span class="p">))</span>
+        <span class="n">forward_mask</span> <span class="o">=</span> <span class="n">sim_fwd</span> <span class="o">&gt;</span> <span class="n">thresh</span>
+
+    <span class="c1"># Backward: for each target patch, find its nearest ref patch; check if inside mask</span>
+    <span class="n">tgt_flat</span> <span class="o">=</span> <span class="n">tgt_feat_deb</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>  <span class="c1"># (Ht*Wt, D)</span>
+    <span class="n">ref_flat</span> <span class="o">=</span> <span class="n">ref_feat_deb</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>  <span class="c1"># (Hr*Wr, D)</span>
+    <span class="n">sim_t_to_r</span> <span class="o">=</span> <span class="n">tgt_flat</span> <span class="o">@</span> <span class="n">ref_flat</span><span class="o">.</span><span class="n">T</span>  <span class="c1"># (Ht*Wt, Hr*Wr)</span>
+    <span class="n">best_idx</span> <span class="o">=</span> <span class="n">sim_t_to_r</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (Ht*Wt,)</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">(</span><span class="n">best_idx</span> <span class="o">//</span> <span class="n">Wr</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">Hr</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">cols</span> <span class="o">=</span> <span class="p">(</span><span class="n">best_idx</span> <span class="o">%</span> <span class="n">Wr</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">Wr</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">backward_mask</span> <span class="o">=</span> <span class="n">ref_mask_down</span><span class="p">[</span><span class="n">rows</span><span class="p">,</span> <span class="n">cols</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">Ht</span><span class="p">,</span> <span class="n">Wt</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">forward_mask</span> <span class="o">&amp;</span> <span class="n">backward_mask</span>
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Seed selection and cluster aggregation ######</span>
+<span class="c1">########################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_seed_and_aggregate</span><span class="p">(</span>
+    <span class="n">candidate_mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">tgt_feat</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">tgt_feat_deb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">prototype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cluster_labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">K</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">merge_threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pick the seed cluster, then merge clusters whose combined score clears the threshold.</span>
+
+<span class="sd">    - seed: the candidate-overlapping cluster most similar to the reference prototype</span>
+<span class="sd">    - score: cross-image similarity x similarity to the seed x candidate overlap share</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        candidate_mask: (H_p, W_p) bool from `_locate_candidates`.</span>
+<span class="sd">        tgt_feat: (D, H_p, W_p) target features, not debiased.</span>
+<span class="sd">        tgt_feat_deb: (D, H_p, W_p) debiased target features.</span>
+<span class="sd">        prototype: (D,) debiased reference prototype.</span>
+<span class="sd">        cluster_labels: (H_p, W_p) cluster id per patch.</span>
+<span class="sd">        K: number of clusters.</span>
+<span class="sd">        merge_threshold: minimum combined score to join the mask.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (H_p, W_p) bool; empty when candidate_mask is empty or no cluster clears merge_threshold.</span>
+<span class="sd">    """</span>
+    <span class="n">D</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">tgt_feat</span><span class="o">.</span><span class="n">shape</span>
+    <span class="k">if</span> <span class="n">candidate_mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">candidate_mask</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">matched_ids</span><span class="p">,</span> <span class="n">n_pixels</span> <span class="o">=</span> <span class="n">cluster_labels</span><span class="p">[</span><span class="n">candidate_mask</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">return_counts</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># Build per-cluster area weights from candidate pixel overlap</span>
+    <span class="n">all_unique</span><span class="p">,</span> <span class="n">all_counts</span> <span class="o">=</span> <span class="n">cluster_labels</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">return_counts</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">all_areas</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cluster_labels</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">all_areas</span><span class="p">[</span><span class="n">all_unique</span><span class="p">]</span> <span class="o">=</span> <span class="n">all_counts</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">area_weights</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cluster_labels</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">area_weights</span><span class="p">[</span><span class="n">matched_ids</span><span class="p">]</span> <span class="o">=</span> <span class="n">n_pixels</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="n">all_areas</span><span class="p">[</span><span class="n">matched_ids</span><span class="p">]</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Cluster prototypes in debiased space for cross-image similarity</span>
+    <span class="n">tgt_deb_flat</span> <span class="o">=</span> <span class="n">tgt_feat_deb</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>  <span class="c1"># (N, D)</span>
+    <span class="n">deb_protos</span> <span class="o">=</span> <span class="n">_cluster_prototypes</span><span class="p">(</span><span class="n">tgt_deb_flat</span><span class="p">,</span> <span class="n">cluster_labels</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">K</span><span class="p">)</span>  <span class="c1"># (K, D)</span>
+
+    <span class="c1"># Seed: matched cluster with highest cross-image similarity to ref prototype</span>
+    <span class="n">cross_sim_matched</span> <span class="o">=</span> <span class="n">deb_protos</span><span class="p">[</span><span class="n">matched_ids</span><span class="p">]</span> <span class="o">@</span> <span class="n">prototype</span>  <span class="c1"># (n_matched,)</span>
+    <span class="n">seed_idx</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">cross_sim_matched</span><span class="p">)</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="n">seed_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">matched_ids</span><span class="p">[</span><span class="n">seed_idx</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+
+    <span class="c1"># Raw cluster prototypes for intra-image similarity to seed</span>
+    <span class="n">tgt_flat</span> <span class="o">=</span> <span class="n">tgt_feat</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>  <span class="c1"># (N, D)</span>
+    <span class="n">raw_protos</span> <span class="o">=</span> <span class="n">_cluster_prototypes</span><span class="p">(</span><span class="n">tgt_flat</span><span class="p">,</span> <span class="n">cluster_labels</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">K</span><span class="p">)</span>  <span class="c1"># (K, D)</span>
+    <span class="n">intra_sim</span> <span class="o">=</span> <span class="n">raw_protos</span> <span class="o">@</span> <span class="n">raw_protos</span><span class="p">[</span><span class="n">seed_id</span><span class="p">]</span>  <span class="c1"># (K,)</span>
+
+    <span class="c1"># Per-patch cross-image similarity map</span>
+    <span class="n">fg_sim</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"dhw,d-&gt;hw"</span><span class="p">,</span> <span class="n">tgt_feat_deb</span><span class="p">,</span> <span class="n">prototype</span><span class="p">)</span>  <span class="c1"># (H_p, W_p)</span>
+    <span class="n">fg_flat</span> <span class="o">=</span> <span class="n">fg_sim</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">cross_sim</span> <span class="o">=</span> <span class="n">_cluster_means</span><span class="p">(</span><span class="n">fg_flat</span><span class="p">,</span> <span class="n">cluster_labels</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">K</span><span class="p">)</span>
+    <span class="n">cross_sim</span> <span class="o">=</span> <span class="n">cross_sim</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Combined score; the seed's area weight is 1, but it too must clear merge_threshold</span>
+    <span class="n">combined</span> <span class="o">=</span> <span class="n">cross_sim</span> <span class="o">*</span> <span class="n">intra_sim</span>
+    <span class="n">area_weights</span><span class="p">[</span><span class="n">seed_id</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="n">combined</span> <span class="o">=</span> <span class="n">combined</span> <span class="o">*</span> <span class="n">area_weights</span>
+
+    <span class="k">return</span> <span class="n">combined</span><span class="p">[</span><span class="n">cluster_labels</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">merge_threshold</span>
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## INSID3Segmentation ##########################</span>
+<span class="c1">########################################################</span>
+
+
+<div class="viewcode-block" id="INSID3Segmentation">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.segmentation.INSID3Segmentation">[docs]</a>
+<span class="nd">@BaseSegmentation</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">"insid3"</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">INSID3Segmentation</span><span class="p">(</span><span class="n">BaseSegmentation</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Training-free in-context segmentation using frozen DINOv2 features.</span>
+
+<span class="sd">    - call set_context(ref_image, ref_mask) once per semantic category, then segment()</span>
+<span class="sd">      for each target frame</span>
+<span class="sd">    - context is cached: reference features are extracted only once</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        svd_components: SVD rank for positional debiasing. 500 matches INSID3.</span>
+<span class="sd">        tau: agglomerative clustering similarity threshold.</span>
+<span class="sd">        merge_threshold: minimum combined score for a cluster to be included.</span>
+<span class="sd">        fallback_quantile: forwarded to candidate localization; see _locate_candidates.</span>
+<span class="sd">        device: torch device; None picks one with get_device.</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">svd_components</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span>
+        <span class="n">tau</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.6</span><span class="p">,</span>
+        <span class="n">merge_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.2</span><span class="p">,</span>
+        <span class="n">fallback_quantile</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.9</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span> <span class="o">=</span> <span class="n">DINOFeatureExtractor</span><span class="p">(</span>
+            <span class="n">svd_components</span><span class="o">=</span><span class="n">svd_components</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_tau</span> <span class="o">=</span> <span class="n">tau</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_merge_threshold</span> <span class="o">=</span> <span class="n">merge_threshold</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_fallback_quantile</span> <span class="o">=</span> <span class="n">fallback_quantile</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prototype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ref_feat_deb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ref_mask_down</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+<div class="viewcode-block" id="INSID3Segmentation.set_context">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.segmentation.INSID3Segmentation.set_context">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_context</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">ref_image</span><span class="p">:</span> <span class="s2">"Image.Image | torch.Tensor"</span><span class="p">,</span>
+        <span class="n">ref_mask</span><span class="p">:</span> <span class="s2">"np.ndarray | torch.Tensor"</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Cache the reference features and prototype; call before segment().</span>
+
+<span class="sd">        - a mask with no True pixel clears any earlier context, then raises</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            ref_image: reference image as PIL Image or (C, H, W) float tensor in [0, 1].</span>
+<span class="sd">            ref_mask: binary context mask as numpy bool array or torch bool tensor, (H, W).</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: when ref_mask has no True pixel.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ref_image</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+            <span class="n">ref_image</span> <span class="o">=</span> <span class="n">_tensor_to_pil</span><span class="p">(</span><span class="n">ref_image</span><span class="p">)</span>
+
+        <span class="c1"># Mask to bool tensor; an empty one has no prototype, so reject it before the backbone runs</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ref_mask</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">):</span>
+            <span class="n">ref_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">ref_mask</span><span class="p">)</span>
+        <span class="n">ref_mask</span> <span class="o">=</span> <span class="n">ref_mask</span><span class="o">.</span><span class="n">bool</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">ref_mask</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">clear_context</span><span class="p">()</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"set_context: ref_mask has no True pixel"</span><span class="p">)</span>
+
+        <span class="c1"># Extract and debias ref features</span>
+        <span class="p">[</span><span class="n">feat</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">forward</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">ref_image</span><span class="p">]</span>
+        <span class="p">)</span>  <span class="c1"># (D, H_p, W_p), unit-norm per patch</span>
+        <span class="p">[</span><span class="n">feat_deb</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">debias</span><span class="p">([</span><span class="n">feat</span><span class="p">])</span>  <span class="c1"># (D, H_p, W_p)</span>
+        <span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span> <span class="o">=</span> <span class="n">feat_deb</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+
+        <span class="c1"># Downsample mask to patch resolution; the small-mask fallback keeps it non-empty</span>
+        <span class="n">mask_down</span> <span class="o">=</span> <span class="n">_downsample_mask</span><span class="p">(</span><span class="n">ref_mask</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">feat_deb</span><span class="o">.</span><span class="n">device</span><span class="p">),</span> <span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span><span class="p">)</span>
+
+        <span class="c1"># Prototype: L2-normalized mean of debiased features inside the masked region</span>
+        <span class="n">fg</span> <span class="o">=</span> <span class="n">feat_deb</span><span class="p">[:,</span> <span class="n">mask_down</span><span class="p">]</span>  <span class="c1"># (D, N_fg)</span>
+        <span class="n">prototype</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">fg</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span> <span class="n">p</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># (D,)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prototype</span> <span class="o">=</span> <span class="n">prototype</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ref_feat_deb</span> <span class="o">=</span> <span class="n">feat_deb</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ref_mask_down</span> <span class="o">=</span> <span class="n">mask_down</span></div>
+
+
+<div class="viewcode-block" id="INSID3Segmentation.clear_context">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.segmentation.INSID3Segmentation.clear_context">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">clear_context</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Reset cached context state.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prototype</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ref_feat_deb</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ref_mask_down</span> <span class="o">=</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="INSID3Segmentation.segment">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.segmentation.INSID3Segmentation.segment">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">segment</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="s2">"Image.Image | torch.Tensor"</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Segment an image against the cached context.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            image: the frame to segment, resized by the extractor.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (pred_mask, metadata) — pred_mask (H, W) bool at the input resolution; metadata</span>
+<span class="sd">            carries candidate_mask (H_p, W_p), cluster_labels (H_p, W_p) and n_clusters.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            RuntimeError: when no context is set — call set_context() first.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_prototype</span> <span class="ow">is</span> <span class="kc">None</span>
+            <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ref_feat_deb</span> <span class="ow">is</span> <span class="kc">None</span>
+            <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ref_mask_down</span> <span class="ow">is</span> <span class="kc">None</span>
+        <span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="s2">"No context set. Call set_context(ref_image, ref_mask) before segment()."</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Capture original size before the extractor resizes the image</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+            <span class="n">orig_H</span><span class="p">,</span> <span class="n">orig_W</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]),</span> <span class="nb">int</span><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+            <span class="n">image</span> <span class="o">=</span> <span class="n">_tensor_to_pil</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">orig_H</span><span class="p">,</span> <span class="n">orig_W</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">height</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">width</span>
+
+        <span class="c1"># Extract and debias target features</span>
+        <span class="p">[</span><span class="n">feat</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">forward</span><span class="p">([</span><span class="n">image</span><span class="p">])</span>  <span class="c1"># (D, H_p, W_p), unit-norm per patch</span>
+        <span class="n">D</span><span class="p">,</span> <span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span> <span class="o">=</span> <span class="n">feat</span><span class="o">.</span><span class="n">shape</span>
+        <span class="p">[</span><span class="n">feat_deb</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">debias</span><span class="p">([</span><span class="n">feat</span><span class="p">])</span>  <span class="c1"># (D, H_p, W_p)</span>
+
+        <span class="c1"># Candidate localization: forward similarity + backward NN matching</span>
+        <span class="n">candidate_mask</span> <span class="o">=</span> <span class="n">_locate_candidates</span><span class="p">(</span>
+            <span class="n">feat_deb</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_ref_feat_deb</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_ref_mask_down</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_prototype</span><span class="p">,</span>
+            <span class="n">fallback_quantile</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_fallback_quantile</span><span class="p">,</span>
+        <span class="p">)</span>  <span class="c1"># (H_p, W_p) bool</span>
+
+        <span class="c1"># Early exit: no candidates — return empty mask</span>
+        <span class="k">if</span> <span class="n">candidate_mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">empty</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">feat</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">_upsample_mask</span><span class="p">(</span><span class="n">empty</span><span class="p">,</span> <span class="n">orig_H</span><span class="p">,</span> <span class="n">orig_W</span><span class="p">),</span> <span class="p">{</span>
+                <span class="s2">"candidate_mask"</span><span class="p">:</span> <span class="n">candidate_mask</span><span class="p">,</span>
+                <span class="s2">"cluster_labels"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">),</span>
+                <span class="s2">"n_clusters"</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="p">}</span>
+
+        <span class="c1"># Agglomerative clustering on raw (non-debiased) L2-normalized target features</span>
+        <span class="n">feat_flat</span> <span class="o">=</span> <span class="n">feat</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>  <span class="c1"># (H_p*W_p, D)</span>
+        <span class="n">cluster_labels</span> <span class="o">=</span> <span class="n">_agglomerative_clustering</span><span class="p">(</span><span class="n">feat_flat</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tau</span><span class="p">)</span>  <span class="c1"># (H_p*W_p,)</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">cluster_labels</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="n">cluster_labels_2d</span> <span class="o">=</span> <span class="n">cluster_labels</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span><span class="p">)</span>
+
+        <span class="c1"># Seed cluster selection and cluster aggregation</span>
+        <span class="n">pred_mask</span> <span class="o">=</span> <span class="n">_seed_and_aggregate</span><span class="p">(</span>
+            <span class="n">candidate_mask</span><span class="p">,</span>
+            <span class="n">feat</span><span class="p">,</span>
+            <span class="n">feat_deb</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_prototype</span><span class="p">,</span>
+            <span class="n">cluster_labels_2d</span><span class="p">,</span>
+            <span class="n">K</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_merge_threshold</span><span class="p">,</span>
+        <span class="p">)</span>  <span class="c1"># (H_p, W_p) bool</span>
+
+        <span class="n">pred_mask_up</span> <span class="o">=</span> <span class="n">_upsample_mask</span><span class="p">(</span><span class="n">pred_mask</span><span class="p">,</span> <span class="n">orig_H</span><span class="p">,</span> <span class="n">orig_W</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">pred_mask_up</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s2">"candidate_mask"</span><span class="p">:</span> <span class="n">candidate_mask</span><span class="p">,</span>
+            <span class="s2">"cluster_labels"</span><span class="p">:</span> <span class="n">cluster_labels_2d</span><span class="p">,</span>
+            <span class="s2">"n_clusters"</span><span class="p">:</span> <span class="n">K</span><span class="p">,</span>
+        <span class="p">}</span></div>
+
+
+<div class="viewcode-block" id="INSID3Segmentation.segment_with_mask">
+<a class="viewcode-back" href="../../../../api/semantics.html#collab_splats.semantics.segmentation.INSID3Segmentation.segment_with_mask">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">segment_with_mask</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">image</span><span class="p">:</span> <span class="s2">"Image.Image | torch.Tensor"</span><span class="p">,</span>
+        <span class="n">ref_image</span><span class="p">:</span> <span class="s2">"Image.Image | torch.Tensor"</span><span class="p">,</span>
+        <span class="n">ref_mask</span><span class="p">:</span> <span class="s2">"np.ndarray | torch.Tensor"</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        One-shot segmentation: set_context, segment, clear_context.</span>
+
+<span class="sd">        - context is cleared on return and when segment() raises</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            image: target image to segment.</span>
+<span class="sd">            ref_image: reference image containing the context category.</span>
+<span class="sd">            ref_mask: binary mask on ref_image indicating the context region.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (pred_mask (H, W) bool, metadata dict) — same as segment().</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: when ref_mask has no True pixel.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Context lives for this call only, even when segment() raises</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">set_context</span><span class="p">(</span><span class="n">ref_image</span><span class="p">,</span> <span class="n">ref_mask</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">segment</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">clear_context</span><span class="p">()</span></div>
+</div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

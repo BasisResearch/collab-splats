@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.pointcloud.feedforward.vggt_omega &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/pointcloud/feedforward/vggt_omega';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.pointcloud.feedforward.vggt_omega</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.pointcloud.feedforward.vggt_omega</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">VGGT-Omega feedforward backend: pose and depth from Omega checkpoints.</span>
+
+<span class="sd">- default checkpoint: VGGT_OMEGA_DEFAULT_FILENAME (512-res) from VGGT_OMEGA_HF_REPO</span>
+<span class="sd">- crop box follows https://github.com/facebookresearch/vggt-omega @ 39a0cb8, vggt_omega/utils/load_fn.py:68-82</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">ClassVar</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_tensor</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">vggt_omega.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">VGGTOmega</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vggt_omega.utils.load_fn</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_balanced_target_shape</span><span class="p">,</span>
+    <span class="n">_crop_to_supported_aspect_ratio</span><span class="p">,</span>
+    <span class="n">_max_size_target_shape</span><span class="p">,</span>
+    <span class="n">_pad_images_to_common_size</span><span class="p">,</span>
+    <span class="n">load_and_preprocess_images</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">vggt_omega.utils.pose_enc</span><span class="w"> </span><span class="kn">import</span> <span class="n">encoding_to_camera</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.feedforward.base</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BaseFeedforwardCreator</span><span class="p">,</span>
+    <span class="n">_decode_depth_head</span><span class="p">,</span>
+    <span class="n">_frame_sizes</span><span class="p">,</span>
+    <span class="n">center_crop_coords</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_hf_weights</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Constants</span>
+<span class="c1">########################################################################</span>
+
+<span class="n">VGGT_OMEGA_HF_REPO</span> <span class="o">=</span> <span class="s2">"facebook/VGGT-Omega"</span>
+<span class="n">VGGT_OMEGA_DEFAULT_FILENAME</span> <span class="o">=</span> <span class="s2">"vggt_omega_1b_512.pt"</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Helpers</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_crop_boxes</span><span class="p">(</span><span class="n">sizes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    (N, 6) float32 crop boxes for (w, h) frames, upstream's center crop of h / w into [0.5, 2.0].</span>
+<span class="sd">    """</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">w</span><span class="p">,</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">sizes</span><span class="p">:</span>
+        <span class="n">crop_w</span><span class="p">,</span> <span class="n">crop_h</span> <span class="o">=</span> <span class="n">w</span><span class="p">,</span> <span class="n">h</span>
+
+        <span class="k">if</span> <span class="n">h</span> <span class="o">/</span> <span class="n">w</span> <span class="o">&lt;</span> <span class="mf">0.5</span><span class="p">:</span>
+            <span class="n">crop_w</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">h</span>
+        <span class="k">elif</span> <span class="n">h</span> <span class="o">/</span> <span class="n">w</span> <span class="o">&gt;</span> <span class="mf">2.0</span><span class="p">:</span>
+            <span class="n">crop_h</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">w</span>
+
+        <span class="n">box</span> <span class="o">=</span> <span class="n">center_crop_coords</span><span class="p">((</span><span class="n">w</span><span class="p">,</span> <span class="n">h</span><span class="p">),</span> <span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">h</span><span class="p">),</span> <span class="p">(</span><span class="n">crop_w</span><span class="p">,</span> <span class="n">crop_h</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">box</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_preprocess_frame</span><span class="p">(</span>
+    <span class="n">rgb</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">target_shape</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span>
+    <span class="n">resolution</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    One frame through upstream's aspect-ratio crop and bicubic resize, as a [0, 1] tensor.</span>
+
+<span class="sd">    - target_shape is upstream's balanced or max_size (h, w) rule at patch size 16</span>
+<span class="sd">    """</span>
+    <span class="c1"># Upstream aspect-ratio crop, then bicubic resize to the target grid</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">fromarray</span><span class="p">(</span><span class="n">rgb</span><span class="p">)</span>
+    <span class="n">image</span> <span class="o">=</span> <span class="n">_crop_to_supported_aspect_ratio</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="n">width</span><span class="p">,</span> <span class="n">height</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span>
+    <span class="n">aspect</span> <span class="o">=</span> <span class="n">height</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">target_h</span><span class="p">,</span> <span class="n">target_w</span> <span class="o">=</span> <span class="n">target_shape</span><span class="p">(</span><span class="n">aspect</span><span class="p">,</span> <span class="n">resolution</span><span class="p">,</span> <span class="mi">16</span><span class="p">)</span>
+    <span class="n">resized</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="n">target_w</span><span class="p">,</span> <span class="n">target_h</span><span class="p">),</span> <span class="n">Image</span><span class="o">.</span><span class="n">Resampling</span><span class="o">.</span><span class="n">BICUBIC</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">to_tensor</span><span class="p">(</span><span class="n">resized</span><span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Creator</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="VGGTOmegaCreator">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.vggt_omega.VGGTOmegaCreator">[docs]</a>
+<span class="nd">@BaseFeedforwardCreator</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">"vggt_omega"</span><span class="p">)</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">VGGTOmegaCreator</span><span class="p">(</span><span class="n">BaseFeedforwardCreator</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pointcloud via VGGT-Omega feedforward pose + depth estimation.</span>
+
+<span class="sd">    - predicts camera poses and per-frame depth jointly, then unprojects to a cloud</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        model_path: local checkpoint file; None downloads the default from HuggingFace.</span>
+<span class="sd">        resolution: target image resolution; 512 matches the default checkpoint.</span>
+<span class="sd">        resize_mode: "balanced" (token count near resolution^2) or "max_size" (longest side = resolution).</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># Loop-closure settings calibrated for VGGT-Omega</span>
+    <span class="n">_lc_layer_index</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="mi">13</span>
+    <span class="n">default_verify_match_ratio</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.55</span>
+    <span class="n">_lc_token_offset</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="mi">5</span>  <span class="c1"># VGGT's 5 leading tokens work better here than Omega's own 17</span>
+    <span class="p">)</span>
+
+    <span class="n">model_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">resolution</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">512</span>
+    <span class="n">resize_mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"balanced"</span>  <span class="c1"># resize mode passed to load_and_preprocess_images</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Reject an unknown resize_mode.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">"balanced"</span><span class="p">,</span> <span class="s2">"max_size"</span><span class="p">}:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"resize_mode must be one of </span><span class="se">{{</span><span class="s2">'balanced', 'max_size'</span><span class="se">}}</span><span class="s2">, got </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span><span class="si">!r}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_load_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        VGGT-Omega from model_path or HuggingFace, in eval mode with fp32 params.</span>
+
+<span class="sd">        - params stay fp32; the aggregator autocasts internally</span>
+<span class="sd">        - bf16 params would crash the heads' fp32 LayerNorms</span>
+<span class="sd">        """</span>
+        <span class="c1"># Use the local checkpoint if given, otherwise download it from HuggingFace</span>
+        <span class="n">ckpt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_path</span> <span class="ow">or</span> <span class="n">load_hf_weights</span><span class="p">(</span>
+            <span class="n">VGGT_OMEGA_HF_REPO</span><span class="p">,</span> <span class="n">VGGT_OMEGA_DEFAULT_FILENAME</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Build the model on the device, skipping CPU random init</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="n">device</span><span class="p">):</span>
+            <span class="n">model</span> <span class="o">=</span> <span class="n">VGGTOmega</span><span class="p">()</span>
+
+        <span class="c1"># Load the weights memory-mapped from the checkpoint</span>
+        <span class="n">state_dict</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">ckpt</span><span class="p">,</span> <span class="n">map_location</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">mmap</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">weights_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">state_dict</span><span class="p">)</span>
+
+        <span class="c1"># Move the legacy-constructor buffers that ignore the device context; a no-op for the rest</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">model</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Frames through Omega's crop and resize, plus each frame's crop box.</span>
+
+<span class="sd">        - both resize modes first center-crop h / w into [0.5, 2.0]</span>
+<span class="sd">        - returns (N, 3, H, W) images and (N, 6) original_coords</span>
+<span class="sd">        """</span>
+        <span class="c1"># Take the handed-off arrays only when they cover every path</span>
+        <span class="n">arrays</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_path_frames</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+
+        <span class="c1"># Read the files when nothing was handed off, else preprocess the arrays</span>
+        <span class="k">if</span> <span class="n">arrays</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">images</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_preprocess_files</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">images</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_preprocess_arrays</span><span class="p">(</span><span class="n">arrays</span><span class="p">)</span>
+
+        <span class="c1"># Each frame's aspect-ratio crop box from its original size</span>
+        <span class="n">sizes</span> <span class="o">=</span> <span class="n">_frame_sizes</span><span class="p">(</span><span class="n">paths</span><span class="p">,</span> <span class="n">arrays</span><span class="p">)</span>
+        <span class="n">original_coords</span> <span class="o">=</span> <span class="n">_crop_boxes</span><span class="p">(</span><span class="n">sizes</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">images</span><span class="p">,</span> <span class="n">original_coords</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess_files</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span> <span class="n">workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Frame files through upstream's loader, on contiguous path chunks in a thread pool.</span>
+
+<span class="sd">        - PIL releases the GIL in decode and resize, so threads scale</span>
+<span class="sd">        - chunks of differing shapes redo one upstream call, which pads them like upstream does</span>
+<span class="sd">        """</span>
+        <span class="c1"># Split the paths into one contiguous chunk per worker</span>
+        <span class="n">files</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">]</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">files</span><span class="p">)</span>
+        <span class="n">size</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="o">-</span><span class="n">n</span> <span class="o">//</span> <span class="n">workers</span><span class="p">)</span>
+        <span class="n">chunks</span> <span class="o">=</span> <span class="p">[</span><span class="n">files</span><span class="p">[</span><span class="n">i</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="n">size</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">size</span><span class="p">)]</span>
+
+        <span class="c1"># Crop and resize each chunk with upstream's own preprocessing</span>
+        <span class="n">load</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+            <span class="n">load_and_preprocess_images</span><span class="p">,</span>
+            <span class="n">image_resolution</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">resolution</span><span class="p">,</span>
+            <span class="n">mode</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+            <span class="n">parts</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">load</span><span class="p">,</span> <span class="n">chunks</span><span class="p">))</span>
+
+        <span class="c1"># Mixed shapes need upstream's list-wide padding</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">({</span><span class="n">part</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">})</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">load</span><span class="p">(</span><span class="n">files</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess_arrays</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">arrays</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span> <span class="n">workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        RGB arrays through upstream's per-image crop, resize and padding, on a thread pool.</span>
+
+<span class="sd">        - mirrors load_and_preprocess_images step for step, minus the file open</span>
+<span class="sd">        - upstream's _load_rgb_image is a no-op on (H, W, 3) uint8: no alpha, already RGB, no EXIF</span>
+<span class="sd">        - patch size 16, upstream's default</span>
+<span class="sd">        - imports upstream's private load_fn helpers; the bit-exact test guards drift</span>
+<span class="sd">        """</span>
+        <span class="c1"># Crop, resize and tensorize every frame</span>
+        <span class="n">target_shape</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">_balanced_target_shape</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">resize_mode</span> <span class="o">==</span> <span class="s2">"balanced"</span>
+            <span class="k">else</span> <span class="n">_max_size_target_shape</span>
+        <span class="p">)</span>
+        <span class="n">preprocess</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+            <span class="n">_preprocess_frame</span><span class="p">,</span> <span class="n">target_shape</span><span class="o">=</span><span class="n">target_shape</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">resolution</span>
+        <span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+            <span class="n">images</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">preprocess</span><span class="p">,</span> <span class="n">arrays</span><span class="p">))</span>
+
+        <span class="c1"># Mixed shapes get upstream's padding to a common size</span>
+        <span class="n">shapes</span> <span class="o">=</span> <span class="p">{(</span><span class="n">im</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">im</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span> <span class="k">for</span> <span class="n">im</span> <span class="ow">in</span> <span class="n">images</span><span class="p">}</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">shapes</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">images</span> <span class="o">=</span> <span class="n">_pad_images_to_common_size</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">shapes</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">views</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        One VGGT-Omega forward, decoded to CPU float32 arrays.</span>
+
+<span class="sd">        - views: (N, 3, H, W) images from _preprocess</span>
+<span class="sd">        - raw keys: 'images', 'extrinsic' (N, 3, 4) w2c, model-res 'intrinsics', 'depth', 'depth_conf'</span>
+<span class="sd">        """</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
+
+        <span class="c1"># Move the images to the model's device (the model adds the batch dimension itself)</span>
+        <span class="n">images</span> <span class="o">=</span> <span class="n">views</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Run the model, which handles mixed precision internally</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">predictions</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+
+        <span class="c1"># Convert the predictions into poses, intrinsics and depth maps, as upstream's demo does</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"images"</span><span class="p">:</span> <span class="n">images</span><span class="p">,</span>
+            <span class="o">**</span><span class="n">_decode_depth_head</span><span class="p">(</span><span class="n">predictions</span><span class="p">,</span> <span class="n">views</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:],</span> <span class="n">encoding_to_camera</span><span class="p">),</span>
+        <span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_lc_attn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">layer_index</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Attention of aggregator.inter_frame_blocks[layer_index], the block loop closure taps.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">aggregator</span><span class="o">.</span><span class="n">inter_frame_blocks</span><span class="p">[</span><span class="n">layer_index</span><span class="p">]</span><span class="o">.</span><span class="n">attn</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

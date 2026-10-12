@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.pointcloud.base &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/pointcloud/base';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.pointcloud.base</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.pointcloud.base</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">The reconstruction contract every pointcloud backend returns.</span>
+
+<span class="sd">- PointcloudResult: points, cameras and dense per-frame arrays, saved to and loaded from zarr</span>
+<span class="sd">- two Ks per frame: `intrinsics` on the full-res frame, `model_intrinsics` on the model grid</span>
+<span class="sd">- COLMAP is export-only (to_colmap), never loaded</span>
+<span class="sd">- BasePointcloudCreator: create_pointcloud template; subclasses implement _reconstruct</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span><span class="p">,</span> <span class="n">replace</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">open3d</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">o3d</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pycolmap</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">zarr</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="n">unproject_frames</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">extract_intrinsics</span><span class="p">,</span>
+    <span class="n">rescale_intrinsics</span><span class="p">,</span>
+    <span class="n">shift_intrinsics</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">clean_pointcloud</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.preproc</span><span class="w"> </span><span class="kn">import</span> <span class="n">frames</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.colmap</span><span class="w"> </span><span class="kn">import</span> <span class="n">write_colmap_reconstruction</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">LZ4</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_numpy</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Result type</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="PointcloudResult">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.PointcloudResult">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">PointcloudResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Typed output of every pointcloud backend, grouped by what each field describes.</span>
+
+<span class="sd">    - P points, N images; each image has one pose and two Ks</span>
+<span class="sd">    - model grid: the crop + resize from each original frame to the H x W model grid</span>
+<span class="sd">    - dense: optional per-pixel maps on the model grid</span>
+<span class="sd">    - arrays are float32 unless an entry says otherwise</span>
+<span class="sd">    - `intrinsics=None` derives the full-res K from `model_intrinsics`</span>
+<span class="sd">    - a `replace` that changes `model_intrinsics` must also pass `intrinsics=None`</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points: (P, 3) world-space XYZ.</span>
+<span class="sd">        colors: (P, 3) uint8 RGB in [0, 255].</span>
+<span class="sd">        extrinsics: (N, 4, 4) w2c poses, OpenCV axes.</span>
+<span class="sd">        intrinsics: (N, 3, 3) pixel-center K (pixel i at coordinate i) on the full-res original frame.</span>
+<span class="sd">        model_intrinsics: (N, 3, 3) pixel-center K on the model grid; matches depth, world_points, pixel_indices.</span>
+<span class="sd">        image_paths: N source image paths, in extrinsics order.</span>
+<span class="sd">        original_coords: (N, 6) [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], crop box in original pixels.</span>
+<span class="sd">        model_width: model grid width W in pixels.</span>
+<span class="sd">        model_height: model grid height H in pixels.</span>
+<span class="sd">        images: (N, 3, H, W) RGB in [0, 1].</span>
+<span class="sd">        confidence: (N, H, W) per-pixel confidence.</span>
+<span class="sd">        world_points: (N, H, W, 3) world point per pixel.</span>
+<span class="sd">        depth: (N, H, W) z-depth.</span>
+<span class="sd">        pixel_indices: (P, 3) int32 [frame, row, col] source pixel of each point.</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># The point cloud</span>
+    <span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+    <span class="n">colors</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+
+    <span class="c1"># Camera poses, intrinsics and image paths</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+    <span class="n">intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">model_intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+    <span class="n">image_paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span>
+
+    <span class="c1"># How the model's input grid maps back to the full-res frames</span>
+    <span class="n">original_coords</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+    <span class="n">model_width</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">model_height</span><span class="p">:</span> <span class="nb">int</span>
+
+    <span class="c1"># Optional per-pixel outputs</span>
+    <span class="n">images</span><span class="p">:</span> <span class="s2">"torch.Tensor | None"</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">confidence</span><span class="p">:</span> <span class="s2">"torch.Tensor | None"</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">world_points</span><span class="p">:</span> <span class="s2">"np.ndarray | None"</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">depth</span><span class="p">:</span> <span class="s2">"np.ndarray | None"</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">pixel_indices</span><span class="p">:</span> <span class="s2">"np.ndarray | None"</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># Path of the zarr store this result was loaded from</span>
+    <span class="n">_zarr_path</span><span class="p">:</span> <span class="s2">"Path | None"</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span>
+        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">compare</span><span class="o">=</span><span class="kc">False</span>
+    <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Full-res K from the model grid, when the caller did not supply it.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">intrinsics</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Get each frame's crop size on the full-res frame</span>
+        <span class="n">box</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">original_coords</span><span class="p">)</span>
+        <span class="n">crop_hw</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">box</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">-</span> <span class="n">box</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">box</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">box</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]],</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Scale pixel-center K up to the crop size via the corner convention, then shift by the crop's top-left</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="n">shift_intrinsics</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model_intrinsics</span><span class="p">,</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">))</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="n">rescale_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model_height</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_width</span><span class="p">),</span> <span class="n">crop_hw</span><span class="p">)</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="n">shift_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">box</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">intrinsics</span> <span class="o">=</span> <span class="n">K</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+<div class="viewcode-block" id="PointcloudResult.save_zarr">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.PointcloudResult.save_zarr">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_zarr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">extra_attrs</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Save to a zarr v3 store with lz4 compression.</span>
+
+<span class="sd">        - dense arrays are chunked by frame</span>
+<span class="sd">        - images are written, but load_zarr skips them by default</span>
+<span class="sd">        - world_points are not written: load_zarr unprojects them from depth</span>
+<span class="sd">        - written to a hidden sibling, then swapped in: a killed write never sits at path</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            path: directory for the zarr store, created if absent.</span>
+<span class="sd">            extra_attrs: provenance, e.g. method and backend, merged into store.attrs.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Write a fresh hidden sibling; a failure removes it</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">tmp</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="sa">f</span><span class="s2">".</span><span class="si">{</span><span class="n">path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">.tmp"</span><span class="p">)</span>
+        <span class="n">old</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="sa">f</span><span class="s2">".</span><span class="si">{</span><span class="n">path</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">.old"</span><span class="p">)</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_write_zarr</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="n">extra_attrs</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">BaseException</span><span class="p">:</span>
+            <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">raise</span>
+
+        <span class="c1"># Move the old store aside, rename the new one in, drop the old</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">old</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="n">path</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">old</span><span class="p">)</span>
+
+        <span class="n">tmp</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">old</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_write_zarr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">extra_attrs</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Every array and attr of this result into a new zarr store at path.</span>
+<span class="sd">        """</span>
+        <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"w"</span><span class="p">)</span>
+
+        <span class="c1"># Store sizes, image paths and extra metadata as attributes</span>
+        <span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"image_paths"</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">image_paths</span><span class="p">]</span>
+        <span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"model_width"</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_width</span>
+        <span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"model_height"</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_height</span>
+
+        <span class="c1"># Record which method and backend made this store</span>
+        <span class="k">if</span> <span class="n">extra_attrs</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">extra_attrs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+        <span class="c1"># Write the required arrays, including both intrinsics</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">arr</span> <span class="ow">in</span> <span class="p">(</span>
+            <span class="p">(</span><span class="s2">"points"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">"colors"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">colors</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">"extrinsics"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">"intrinsics"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">"model_intrinsics"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_intrinsics</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">"original_coords"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">original_coords</span><span class="p">),</span>
+        <span class="p">):</span>
+            <span class="k">assert</span> <span class="n">arr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span> <span class="n">name</span>
+            <span class="n">store</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">arr</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span><span class="p">)</span>
+
+        <span class="c1"># Write the optional point-to-pixel map as one chunk</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_indices</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">store</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span>
+                <span class="s2">"pixel_indices"</span><span class="p">,</span>
+                <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_indices</span><span class="p">,</span>
+                <span class="n">chunks</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_indices</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+                <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Write the optional per-pixel arrays as numpy, one chunk per frame</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">arr</span> <span class="ow">in</span> <span class="p">(</span>
+            <span class="p">(</span><span class="s2">"depth"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">"confidence"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">confidence</span><span class="p">),</span>
+            <span class="p">(</span><span class="s2">"images"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">images</span><span class="p">),</span>
+        <span class="p">):</span>
+            <span class="k">if</span> <span class="n">arr</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">arr</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">arr</span><span class="p">)</span>
+            <span class="n">store</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span>
+                <span class="n">name</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">arr</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:]),</span> <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span>
+            <span class="p">)</span>
+
+<div class="viewcode-block" id="PointcloudResult.load_zarr">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.PointcloudResult.load_zarr">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_zarr</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+        <span class="n">load_images</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">load_depth</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">load_world_points</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">load_confidence</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="n">load_pixel_indices</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Load from a zarr v3 store written by save_zarr().</span>
+
+<span class="sd">        - dense arrays load by default; skip the ones you do not read, they are large</span>
+<span class="sd">        - world_points are unprojected from depth under the stored extrinsics and model-grid K</span>
+<span class="sd">        - confidence and images come back as torch tensors</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            path: directory of the zarr store.</span>
+<span class="sd">            load_images: restore the (N, 3, H, W) images, needed to lift features after a load.</span>
+<span class="sd">            load_depth: decode the depth maps.</span>
+<span class="sd">            load_world_points: unproject the per-pixel world points; needs depth in the store.</span>
+<span class="sd">            load_confidence: decode the confidence maps.</span>
+<span class="sd">            load_pixel_indices: decode the per-point source pixels.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            PointcloudResult; skipped or absent fields are None.</span>
+<span class="sd">        """</span>
+        <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+        <span class="n">attrs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">)</span>
+
+        <span class="c1"># Read the required arrays</span>
+        <span class="n">pts3d</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="s2">"points"</span><span class="p">][:]</span>
+        <span class="n">colors</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="s2">"colors"</span><span class="p">][:]</span>
+        <span class="n">extrinsics</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="s2">"extrinsics"</span><span class="p">][:]</span>
+        <span class="n">intrinsics</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">][:]</span>
+        <span class="n">model_intrinsics</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="s2">"model_intrinsics"</span><span class="p">][:]</span>
+        <span class="n">original_coords</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="s2">"original_coords"</span><span class="p">][:]</span>
+        <span class="n">image_paths</span> <span class="o">=</span> <span class="p">[</span><span class="n">Path</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">attrs</span><span class="p">[</span><span class="s2">"image_paths"</span><span class="p">]]</span>
+        <span class="n">model_width</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"model_width"</span><span class="p">])</span>
+        <span class="n">model_height</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"model_height"</span><span class="p">])</span>
+
+        <span class="c1"># Read the optional arrays, or None when missing or not requested</span>
+        <span class="n">pixel_indices</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">store</span><span class="p">[</span><span class="s2">"pixel_indices"</span><span class="p">][:]</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">load_pixel_indices</span> <span class="ow">and</span> <span class="s2">"pixel_indices"</span> <span class="ow">in</span> <span class="n">store</span><span class="p">)</span>
+            <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span>
+        <span class="n">depth</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">store</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">][:]</span>
+            <span class="k">if</span> <span class="p">((</span><span class="n">load_depth</span> <span class="ow">or</span> <span class="n">load_world_points</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">"depth"</span> <span class="ow">in</span> <span class="n">store</span><span class="p">)</span>
+            <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span>
+        <span class="n">confidence</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">store</span><span class="p">[</span><span class="s2">"confidence"</span><span class="p">][:])</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">load_confidence</span> <span class="ow">and</span> <span class="s2">"confidence"</span> <span class="ow">in</span> <span class="n">store</span><span class="p">)</span>
+            <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Rebuild world points from depth, then drop depth if it was read only for them</span>
+        <span class="n">world_points</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">load_world_points</span> <span class="ow">and</span> <span class="n">depth</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">world_points</span> <span class="o">=</span> <span class="n">unproject_frames</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">model_intrinsics</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">load_depth</span><span class="p">:</span>
+            <span class="n">depth</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># Load images only when asked, since they are large</span>
+        <span class="n">images</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">store</span><span class="p">[</span><span class="s2">"images"</span><span class="p">][:])</span>
+            <span class="k">if</span> <span class="n">load_images</span> <span class="ow">and</span> <span class="s2">"images"</span> <span class="ow">in</span> <span class="n">store</span>
+            <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span>
+
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span>
+            <span class="n">points</span><span class="o">=</span><span class="n">pts3d</span><span class="p">,</span>
+            <span class="n">colors</span><span class="o">=</span><span class="n">colors</span><span class="p">,</span>
+            <span class="n">extrinsics</span><span class="o">=</span><span class="n">extrinsics</span><span class="p">,</span>
+            <span class="n">intrinsics</span><span class="o">=</span><span class="n">intrinsics</span><span class="p">,</span>
+            <span class="n">model_intrinsics</span><span class="o">=</span><span class="n">model_intrinsics</span><span class="p">,</span>
+            <span class="n">original_coords</span><span class="o">=</span><span class="n">original_coords</span><span class="p">,</span>
+            <span class="n">image_paths</span><span class="o">=</span><span class="n">image_paths</span><span class="p">,</span>
+            <span class="n">model_width</span><span class="o">=</span><span class="n">model_width</span><span class="p">,</span>
+            <span class="n">model_height</span><span class="o">=</span><span class="n">model_height</span><span class="p">,</span>
+            <span class="n">pixel_indices</span><span class="o">=</span><span class="n">pixel_indices</span><span class="p">,</span>
+            <span class="n">world_points</span><span class="o">=</span><span class="n">world_points</span><span class="p">,</span>
+            <span class="n">depth</span><span class="o">=</span><span class="n">depth</span><span class="p">,</span>
+            <span class="n">images</span><span class="o">=</span><span class="n">images</span><span class="p">,</span>
+            <span class="n">confidence</span><span class="o">=</span><span class="n">confidence</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">result</span><span class="o">.</span><span class="n">_zarr_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">result</span></div>
+
+
+<div class="viewcode-block" id="PointcloudResult.reproject">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.PointcloudResult.reproject">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">reproject</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Points and world_points recomputed from depth and source pixels under the current extrinsics.</span>
+
+<span class="sd">        - uses model_intrinsics: depth and pixel_indices are on the model grid too</span>
+<span class="sd">        - points stay row-aligned with colors</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A new PointcloudResult with points and world_points replaced.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: depth or pixel_indices is absent, or depth is not (N, H, W).</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_indices</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">"reproject() requires depth and pixel_indices; load via load_zarr() "</span>
+                <span class="s2">"or ensure the creator's _postprocess populated both fields."</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"depth must be (N, H, W), got </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="c1"># Unproject every frame under the current poses, then read each point's source pixel</span>
+        <span class="n">world_points</span> <span class="o">=</span> <span class="n">unproject_frames</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_intrinsics</span>
+        <span class="p">)</span>
+        <span class="n">frame</span><span class="p">,</span> <span class="n">row</span><span class="p">,</span> <span class="n">col</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_indices</span><span class="o">.</span><span class="n">T</span>
+        <span class="n">points</span> <span class="o">=</span> <span class="n">world_points</span><span class="p">[</span><span class="n">frame</span><span class="p">,</span> <span class="n">row</span><span class="p">,</span> <span class="n">col</span><span class="p">]</span>
+
+        <span class="k">return</span> <span class="n">replace</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">points</span><span class="p">,</span> <span class="n">world_points</span><span class="o">=</span><span class="n">world_points</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="PointcloudResult.select_points">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.PointcloudResult.select_points">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">select_points</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mask</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Subset of the points; per-frame fields are untouched.</span>
+
+<span class="sd">        - one mask selects points, colors and pixel_indices, so they stay row-aligned</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            mask: (P,) bool, True for the points kept.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A new PointcloudResult holding the kept points.</span>
+<span class="sd">        """</span>
+        <span class="n">pixel_indices</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_indices</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_indices</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span>
+
+        <span class="k">return</span> <span class="n">replace</span><span class="p">(</span>
+            <span class="bp">self</span><span class="p">,</span>
+            <span class="n">points</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="p">[</span><span class="n">mask</span><span class="p">],</span>
+            <span class="n">colors</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">colors</span><span class="p">[</span><span class="n">mask</span><span class="p">],</span>
+            <span class="n">pixel_indices</span><span class="o">=</span><span class="n">pixel_indices</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="PointcloudResult.to_colmap">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.PointcloudResult.to_colmap">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_colmap</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Reconstruction</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        In-memory pycolmap model of this result on the full-res frames.</span>
+
+<span class="sd">        - one PINHOLE camera and one image per frame, K from `intrinsics` shifted to COLMAP's pixel-corner convention</span>
+<span class="sd">        - points have empty tracks: no 2D-3D matches, so not usable for COLMAP BA</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            pycolmap.Reconstruction with cameras, images and 3D points.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            TypeError: colors is not uint8.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">colors</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"colors must be uint8, got </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">colors</span><span class="o">.</span><span class="n">dtype</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="n">recon</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Reconstruction</span><span class="p">()</span>
+
+        <span class="c1"># Take the world-to-camera rotation and translation rows from each pose</span>
+        <span class="n">exts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:]</span>
+
+        <span class="c1"># Add every point without any observations</span>
+        <span class="k">for</span> <span class="n">xyz</span><span class="p">,</span> <span class="n">rgb</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">colors</span><span class="p">):</span>
+            <span class="n">recon</span><span class="o">.</span><span class="n">add_point3D</span><span class="p">(</span><span class="n">xyz</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Track</span><span class="p">(),</span> <span class="n">rgb</span><span class="p">)</span>
+
+        <span class="c1"># COLMAP puts pixel i's center at i + 0.5</span>
+        <span class="n">colmap_intrinsics</span> <span class="o">=</span> <span class="n">shift_intrinsics</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">,</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">))</span>
+
+        <span class="c1"># Add one camera and one image per frame at full resolution</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">path</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">image_paths</span><span class="p">):</span>
+            <span class="n">camera_id</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="n">image_id</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span>
+
+            <span class="n">camera</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Camera</span><span class="p">(</span>
+                <span class="n">model</span><span class="o">=</span><span class="s2">"PINHOLE"</span><span class="p">,</span>
+                <span class="n">width</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">original_coords</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">4</span><span class="p">]),</span>
+                <span class="n">height</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">original_coords</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">5</span><span class="p">]),</span>
+                <span class="n">params</span><span class="o">=</span><span class="n">extract_intrinsics</span><span class="p">(</span><span class="n">colmap_intrinsics</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span>
+                <span class="n">camera_id</span><span class="o">=</span><span class="n">camera_id</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="c1"># Register the camera with its own rig, which pycolmap 4 requires before adding an image</span>
+            <span class="n">recon</span><span class="o">.</span><span class="n">add_camera_with_trivial_rig</span><span class="p">(</span><span class="n">camera</span><span class="p">)</span>
+
+            <span class="c1"># Build the world-to-camera pose</span>
+            <span class="n">cam_from_world</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Rigid3d</span><span class="p">(</span><span class="n">exts</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+
+            <span class="c1"># Add the image together with its pose</span>
+            <span class="n">image</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Image</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">path</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">camera_id</span><span class="o">=</span><span class="n">camera_id</span><span class="p">,</span> <span class="n">image_id</span><span class="o">=</span><span class="n">image_id</span>
+            <span class="p">)</span>
+            <span class="n">recon</span><span class="o">.</span><span class="n">add_image_with_trivial_frame</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">cam_from_world</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">recon</span></div>
+
+
+<div class="viewcode-block" id="PointcloudResult.write_ply">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.PointcloudResult.write_ply">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">write_ply</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Points and colors as a binary PLY file.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            path: destination file; parent directories are created.</span>
+<span class="sd">        """</span>
+        <span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># Write points and 0-255 colors through Open3D, which stores colors in [0, 1]</span>
+        <span class="n">pcd</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">PointCloud</span><span class="p">(</span>
+            <span class="n">o3d</span><span class="o">.</span><span class="n">utility</span><span class="o">.</span><span class="n">Vector3dVector</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+        <span class="p">)</span>
+        <span class="n">pcd</span><span class="o">.</span><span class="n">colors</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">utility</span><span class="o">.</span><span class="n">Vector3dVector</span><span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">colors</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">/</span> <span class="mf">255.0</span>
+        <span class="p">)</span>
+        <span class="n">o3d</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">write_point_cloud</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">pcd</span><span class="p">)</span>
+
+        <span class="c1"># Log the output file and point count</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"wrote </span><span class="si">%s</span><span class="s2"> (</span><span class="si">%d</span><span class="s2"> points)"</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="p">))</span></div>
+</div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Creator contract</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="BasePointcloudCreator">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.BasePointcloudCreator">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">BasePointcloudCreator</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Images directory to a cleaned PointcloudResult and an optional COLMAP model.</span>
+
+<span class="sd">    - subclasses implement _reconstruct; one with its own COLMAP model overrides _colmap_model</span>
+<span class="sd">    - every result gets outlier removal when clean, then the max_points cap</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        max_points: point cap, drawn at random after outlier removal.</span>
+<span class="sd">        clean: run statistical outlier removal before the cap.</span>
+<span class="sd">    """</span>
+
+    <span class="n">max_points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500_000</span>
+    <span class="n">clean</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+
+<div class="viewcode-block" id="BasePointcloudCreator.create_pointcloud">
+<a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.base.BasePointcloudCreator.create_pointcloud">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">create_pointcloud</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">images_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">model_dir</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Reconstruct the frames in images_dir, clean and cap, and optionally export a COLMAP model.</span>
+
+<span class="sd">        - a previous model at model_dir is deleted first, so a failed run leaves none behind</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            images_dir: directory of keyframe images.</span>
+<span class="sd">            out_dir: run directory, created if absent.</span>
+<span class="sd">            model_dir: COLMAP model directory; None skips the export.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The cleaned and capped PointcloudResult.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            FileNotFoundError: no frames to reconstruct, handed off or in images_dir.</span>
+<span class="sd">        """</span>
+        <span class="n">paths</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_list_frames</span><span class="p">(</span><span class="n">images_dir</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">paths</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"no images in </span><span class="si">{</span><span class="n">images_dir</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="c1"># Delete the old COLMAP model</span>
+        <span class="k">if</span> <span class="n">model_dir</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">model_dir</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># Run the reconstruction into the output directory</span>
+        <span class="n">out_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">out_dir</span><span class="p">)</span>
+        <span class="n">out_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reconstruct</span><span class="p">(</span><span class="n">paths</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">)</span>
+
+        <span class="c1"># Remove outliers and cap the number of points</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">clean_pointcloud</span><span class="p">(</span>
+            <span class="n">result</span><span class="p">,</span> <span class="n">remove_outliers</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">clean</span><span class="p">,</span> <span class="n">max_points</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_points</span>
+        <span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"pointcloud: </span><span class="si">%d</span><span class="s2"> pts after clean + cap"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">points</span><span class="p">))</span>
+
+        <span class="c1"># Export a COLMAP model if a directory was given</span>
+        <span class="k">if</span> <span class="n">model_dir</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">write_colmap_reconstruction</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_colmap_model</span><span class="p">(</span><span class="n">result</span><span class="p">),</span> <span class="n">Path</span><span class="p">(</span><span class="n">model_dir</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">result</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_list_frames</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Frame image paths to reconstruct, in filename order, listed from images_dir.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="n">frames</span><span class="o">.</span><span class="n">frame_paths</span><span class="p">(</span><span class="n">images_dir</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_colmap_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">PointcloudResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Reconstruction</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        COLMAP model exported for the cleaned result: the result itself, trackless.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="n">result</span><span class="o">.</span><span class="n">to_colmap</span><span class="p">()</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_reconstruct</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">],</span> <span class="n">out_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Frames to a PointcloudResult before the clean and cap.</span>
+<span class="sd">        """</span>
+        <span class="o">...</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

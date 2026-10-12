@@ -1,0 +1,1641 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Reconstruction Pipeline Configs &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="_static/documentation_options.js?v=01f34227"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'configuration';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Tutorials" href="tutorials/index.html" />
+    <link rel="prev" title="Usage" href="usage.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="#" aria-current="page">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button type="button" class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="#" aria-current="page">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item pst-sidebar-collapse"><button type="button" id="pst-collapse-sidebar-button" aria-expanded="true" aria-controls="pst-primary-sidebar">
+  <svg class="pst-icon" role="img" aria-hidden="true" focusable="false" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <path fill="currentColor" d="M3 15.5C2.36232 15.5 1.74874 15.2564 1.28478 14.8189C0.820828 14.3815 0.541576 13.7832 0.504167 13.1467L0.5 13L0.5 3C0.499965 2.36232 0.743605 1.74874 1.18107 1.28478C1.61854 0.820828 2.21676 0.541576 2.85333 0.504167L3 0.5L13 0.5C13.6377 0.499965 14.2513 0.743605 14.7152 1.18107C15.1792 1.61854 15.4584 2.21676 15.4958 2.85333L15.5 3L15.5 13C15.5 13.6377 15.2564 14.2513 14.8189 14.7152C14.3815 15.1792 13.7832 15.4584 13.1467 15.4958L13 15.5L3 15.5ZM3 13.8333L10.5 13.8333L10.5 2.16667L3 2.16667C2.79589 2.16669 2.59889 2.24163 2.44636 2.37726C2.29383 2.5129 2.19638 2.69979 2.1725 2.9025L2.16667 3L2.16667 13C2.16669 13.2041 2.24163 13.4011 2.37726 13.5536C2.5129 13.7062 2.69979 13.8036 2.9025 13.8275L3 13.8333ZM6.65583 10.325L6.5775 10.2558L4.91083 8.58917C4.76735 8.44567 4.68116 8.25476 4.66843 8.05223C4.65569 7.84971 4.71729 7.6495 4.84167 7.48917L4.91083 7.41083L6.5775 5.74417C6.72747 5.59471 6.9287 5.50794 7.14032 5.50148C7.35194 5.49502 7.55809 5.56935 7.7169 5.70937C7.8757 5.8494 7.97525 6.04463 7.99533 6.25539C8.01541 6.46616 7.95451 6.67667 7.825 6.84417L7.75583 6.9225L6.67917 8L7.75583 9.0775C7.89931 9.22099 7.98551 9.41191 7.99824 9.61443C8.01097 9.81695 7.94938 10.0172 7.825 10.1775L7.75583 10.2558C7.61234 10.3993 7.42142 10.4855 7.2189 10.4982C7.01638 10.511 6.81617 10.4494 6.65583 10.325Z"/>
+  </svg>
+  <span class="pst-collapse-sidebar-label">Collapse Sidebar</span>
+  <span class="pst-expand-sidebar-label">Expand Sidebar</span>
+</button></div>
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"></div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Reconstruction Pipeline Configs</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="reconstruction-pipeline-configs">
+<h1>Reconstruction Pipeline Configs<a class="headerlink" href="#reconstruction-pipeline-configs" title="Link to this heading">#</a></h1>
+<p>All pipelines start from default template <code class="docutils literal notranslate"><span class="pre">base.yaml</span></code> — this file holds the defaults for each stage. If a separate file is
+specified (e.g., <code class="docutils literal notranslate"><span class="pre">MYFILE.yaml</span></code>), the file only overrides what differs from <code class="docutils literal notranslate"><span class="pre">base.yaml</span></code>. Running the pipeline and its outputs are covered in the <a class="reference external" href="https://github.com/BasisResearch/collab-splats#quickstart">main README</a>.</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#overriding-defaults"><span class="std std-ref">Overriding defaults</span></a></p></li>
+<li><p><a class="reference internal" href="#stages"><span class="std std-ref">Stages</span></a></p></li>
+<li><p>Options by stage: <a class="reference internal" href="#preproc"><span class="std std-ref">preproc</span></a> · <a class="reference internal" href="#pointcloud"><span class="std std-ref">pointcloud</span></a> · <a class="reference internal" href="#mesh"><span class="std std-ref">mesh</span></a> · <a class="reference internal" href="#semantics"><span class="std std-ref">semantics</span></a> · <a class="reference internal" href="#splats"><span class="std std-ref">splats</span></a> · <a class="reference internal" href="#localization"><span class="std std-ref">localization</span></a> · <a class="reference internal" href="#reconstruction-quality-report"><span class="std std-ref">reconstruction_quality_report</span></a></p></li>
+</ul>
+<hr class="docutils" />
+<section id="overriding-defaults">
+<h2>Overriding defaults<a class="headerlink" href="#overriding-defaults" title="Link to this heading">#</a></h2>
+<p>Three layers, applied in order (later wins):</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">base.yaml</span></code>, or <code class="docutils literal notranslate"><span class="pre">--base-config</span> <span class="pre">FILE.yaml</span></code> in its place</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--config</span> <span class="pre">MYFILE.yaml</span></code>: merged key by key over <code class="docutils literal notranslate"><span class="pre">base.yaml</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--set</span> <span class="pre">key=value</span></code>: one dotted key, repeatable</p></li>
+</ol>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># configs/my_run.yaml: indoor scene, denser frames, no semantics</span>
+<span class="nt">preproc</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">fps</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3.0</span>
+<span class="nt">mesh</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">use_convex_hull</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<span class="nt">semantics</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">input_path</span></code> and <code class="docutils literal notranslate"><span class="pre">output_path</span></code> are required; the CLI sets them from each input and <code class="docutils literal notranslate"><span class="pre">&lt;output-root&gt;/&lt;scene&gt;</span></code>, overriding any config value</p></li>
+<li><p>every backend folder saves its merged config as <code class="docutils literal notranslate"><span class="pre">&lt;backend&gt;/run_config.yaml</span></code>; pass it to <code class="docutils literal notranslate"><span class="pre">--config</span></code> to reproduce a run</p></li>
+<li><p>after changing a config, re-run only the affected stages with <code class="docutils literal notranslate"><span class="pre">--stages</span> <span class="pre">&lt;stage&gt;</span> <span class="pre">--overwrite</span></code></p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="stages">
+<h2>Stages<a class="headerlink" href="#stages" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Stage</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Requires</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">preproc</span></code></p></td>
+<td><p>always</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code></p></td>
+<td><p>always</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">preproc</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">refine</span></code></p></td>
+<td><p>on (feedforward only; off under loop closure with <code class="docutils literal notranslate"><span class="pre">strategy:</span> <span class="pre">window</span></code>)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats</span></code></p></td>
+<td><p>off</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh</span></code></p></td>
+<td><p>on</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code> (<code class="docutils literal notranslate"><span class="pre">splats</span></code> too with <code class="docutils literal notranslate"><span class="pre">mesh.source:</span> <span class="pre">splats</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">semantics</span></code></p></td>
+<td><p>on</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">localize</span></code></p></td>
+<td><p>on</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">reconstruction_quality_report</span></code></p></td>
+<td><p>always</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">on</span></code> / <code class="docutils literal notranslate"><span class="pre">off</span></code> stages switch with their <code class="docutils literal notranslate"><span class="pre">enabled</span></code> key (<code class="docutils literal notranslate"><span class="pre">refine</span></code>: <code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.enabled</span></code>; <code class="docutils literal notranslate"><span class="pre">localize</span></code>: <code class="docutils literal notranslate"><span class="pre">localization.enabled</span></code>)</p></li>
+<li><p>stages run in table order; <code class="docutils literal notranslate"><span class="pre">--stages</span></code> runs a stage even when its flag is off</p></li>
+<li><p>a stage whose output exists is skipped, so an interrupted run resumes; <code class="docutils literal notranslate"><span class="pre">--overwrite</span></code> rebuilds it</p></li>
+<li><p>in <code class="docutils literal notranslate"><span class="pre">--stages</span></code>, a done leaf stage (any but <code class="docutils literal notranslate"><span class="pre">preproc</span></code> and <code class="docutils literal notranslate"><span class="pre">pointcloud</span></code>) is a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> without <code class="docutils literal notranslate"><span class="pre">--overwrite</span></code>; a done <code class="docutils literal notranslate"><span class="pre">preproc</span></code> or <code class="docutils literal notranslate"><span class="pre">pointcloud</span></code> is skipped</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">semantics</span></code> re-lifts onto a new mesh from its cached 2D features</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="preproc">
+<h2><code class="docutils literal notranslate"><span class="pre">preproc</span></code><a class="headerlink" href="#preproc" title="Link to this heading">#</a></h2>
+<p>Preproc measures every frame once (<code class="docutils literal notranslate"><span class="pre">video_quality_report.json</span></code>, reused; delete it to re-measure), then picks keyframes that pass <code class="docutils literal notranslate"><span class="pre">preproc.quality</span></code>.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">fps</span></code> (default): fixed time between frames, so the baseline between frames stays the same for any video length</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">uniform</span></code>: exactly <code class="docutils literal notranslate"><span class="pre">max_frames</span></code>, evenly spaced; fewer when fewer frames pass the gate</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">optical_flow</span></code>: spaced by motion, up to <code class="docutils literal notranslate"><span class="pre">max_frames</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max_frames:</span> <span class="pre">300</span></code> is VGGT-Omega’s GPU limit; it caps <code class="docutils literal notranslate"><span class="pre">fps</span></code> past ~2.5 min at <code class="docutils literal notranslate"><span class="pre">fps:</span> <span class="pre">2.0</span></code></p></li>
+<li><p>a directory input takes every image in filename order; only <code class="docutils literal notranslate"><span class="pre">undistort</span></code> applies</p></li>
+</ul>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Fixed 150 frames, evenly spaced</span>
+<span class="nt">preproc</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">frame_selection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">uniform</span>
+<span class="w">  </span><span class="nt">max_frames</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">150</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.frame_selection</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">fps</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">fps</span></code>, <code class="docutils literal notranslate"><span class="pre">uniform</span></code> or <code class="docutils literal notranslate"><span class="pre">optical_flow</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.fps</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2.0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">fps</span></code> only: samples per second</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.max_frames</span></code></p></td>
+<td><p>int|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">300</span></code></p></td>
+<td><p>Count for <code class="docutils literal notranslate"><span class="pre">uniform</span></code>, ceiling otherwise; <code class="docutils literal notranslate"><span class="pre">null</span></code> = no ceiling (not for <code class="docutils literal notranslate"><span class="pre">uniform</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.undistort</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Self-calibrate one OPENCV camera (pycolmap) and rewrite <code class="docutils literal notranslate"><span class="pre">images/</span></code> undistorted; frame size changes</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.n_workers</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">16</span></code></p></td>
+<td><p>Parallel decode ranges; never changes the selection. Set <code class="docutils literal notranslate"><span class="pre">1</span></code> during GPU runs</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<details>
+<summary><code>fps</code> sampling</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.min_frames</span></code></p></td>
+<td><p>int|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">null</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">fps</span></code> only: floor on the count</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.on_empty_slot</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rescue</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">fps</span></code> only: a slot with no eligible frame keeps its sharpest (<code class="docutils literal notranslate"><span class="pre">rescue</span></code>) or is skipped (<code class="docutils literal notranslate"><span class="pre">drop</span></code>)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary><code>preproc.quality</code>: keyframe gate</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.quality.sharpness_k</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2.0</span></code></p></td>
+<td><p>MAD z-score cut on <code class="docutils literal notranslate"><span class="pre">log(laplacian)</span></code>; larger keeps more</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">preproc.quality.max_clipped_frac</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.25</span></code></p></td>
+<td><p>Ceiling on clipped-pixel fraction; larger keeps more</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+</section>
+<hr class="docutils" />
+<section id="pointcloud">
+<h2><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code><a class="headerlink" href="#pointcloud" title="Link to this heading">#</a></h2>
+<p>We pick a method (<code class="docutils literal notranslate"><span class="pre">feedforward</span></code> or <code class="docutils literal notranslate"><span class="pre">sfm</span></code>) and a backend. Each backend’s kwargs go under its own name and apply only when it is selected; backend details are in the <a class="reference external" href="https://basisresearch.github.io/collab-splats/api/pointcloud.html">pointcloud API docs</a>.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Another feedforward model</span>
+<span class="nt">pointcloud</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mapanything</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.method</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">feedforward</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">feedforward</span></code> or <code class="docutils literal notranslate"><span class="pre">sfm</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.backend</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vggt_omega</span></code></p></td>
+<td><p>feedforward: <code class="docutils literal notranslate"><span class="pre">vggt_omega</span></code>, <code class="docutils literal notranslate"><span class="pre">vggtx</span></code>, <code class="docutils literal notranslate"><span class="pre">mapanything</span></code>, <code class="docutils literal notranslate"><span class="pre">loger</span></code>; sfm: <code class="docutils literal notranslate"><span class="pre">instantsfm</span></code>, <code class="docutils literal notranslate"><span class="pre">colmap</span></code>, <code class="docutils literal notranslate"><span class="pre">hloc</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.&lt;backend&gt;</span></code></p></td>
+<td><p>dict</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{}</span></code></p></td>
+<td><p>Kwargs for the selected backend only; unknown keys are a <code class="docutils literal notranslate"><span class="pre">TypeError</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.max_points</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">500000</span></code></p></td>
+<td><p>Final point cap after cleaning; lower it on small machines</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.&lt;backend&gt;.conf_percentile</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">50</span></code> (<code class="docutils literal notranslate"><span class="pre">vggtx</span></code>, <code class="docutils literal notranslate"><span class="pre">mapanything</span></code>: <code class="docutils literal notranslate"><span class="pre">35</span></code>)</p></td>
+<td><p>Feedforward only: drop depth at or below this confidence percentile</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.&lt;backend&gt;.min_views</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Feedforward only: cross-view depth filter; <code class="docutils literal notranslate"><span class="pre">0</span></code> = off</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.&lt;backend&gt;.mv_rel_thresh</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.01</span></code></p></td>
+<td><p>Feedforward only: cross-view agreement tolerance, as a fraction of depth</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.clean.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Remove outlier points (sfm also drops them from the COLMAP export)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>SfM backends, refinement and loop closure each have their own options:</p>
+<details>
+<summary><code>pointcloud.colmap</code>: classic incremental SfM</summary>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Classic SfM (refine is skipped; loop closure is feedforward only)</span>
+<span class="nt">pointcloud</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">method</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sfm</span>
+<span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">colmap</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.colmap.pairing</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sequential+retrieval</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sequential</span></code>, <code class="docutils literal notranslate"><span class="pre">retrieval</span></code>, <code class="docutils literal notranslate"><span class="pre">sequential+retrieval</span></code> or <code class="docutils literal notranslate"><span class="pre">exhaustive</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.colmap.overlap</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">10</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sequential*</span></code>: pair each frame with the next N</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.colmap.num_retrieved</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">20</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">*retrieval</span></code>: vocab-tree neighbors per image</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.colmap.num_threads</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">8</span></code></p></td>
+<td><p>SIFT + mapper threads (colmap’s default OOMs)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.colmap.min_registered_frac</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.5</span></code></p></td>
+<td><p>Below this share registered: <code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>; above: keep the registered frames</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary><code>pointcloud.hloc</code>: incremental SfM with learned features</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.pairing</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sequential+retrieval</span></code></p></td>
+<td><p>As <code class="docutils literal notranslate"><span class="pre">colmap.pairing</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.overlap</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">10</span></code></p></td>
+<td><p>As <code class="docutils literal notranslate"><span class="pre">colmap.overlap</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.num_retrieved</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">20</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">*retrieval</span></code>: global-descriptor neighbors per image</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.retrieval_conf</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">netvlad</span></code></p></td>
+<td><p>hloc global-descriptor conf</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.feature_conf</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">superpoint_max</span></code></p></td>
+<td><p>hloc local-feature conf</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.matcher_conf</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">superpoint+lightglue</span></code></p></td>
+<td><p>hloc matcher conf</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.num_threads</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">8</span></code></p></td>
+<td><p>Mapper threads</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.hloc.min_registered_frac</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.5</span></code></p></td>
+<td><p>As <code class="docutils literal notranslate"><span class="pre">colmap.min_registered_frac</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary><code>pointcloud.instantsfm</code>: global SfM</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.pairing</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">exhaustive</span></code></p></td>
+<td><p>As <code class="docutils literal notranslate"><span class="pre">colmap.pairing</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.overlap</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">10</span></code></p></td>
+<td><p>As <code class="docutils literal notranslate"><span class="pre">colmap.overlap</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.num_retrieved</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">20</span></code></p></td>
+<td><p>As <code class="docutils literal notranslate"><span class="pre">colmap.num_retrieved</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.min_registered_frac</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.5</span></code></p></td>
+<td><p>As <code class="docutils literal notranslate"><span class="pre">colmap.min_registered_frac</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.num_threads</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">8</span></code></p></td>
+<td><p>CPU SIFT threads</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.random_seed</span></code></p></td>
+<td><p>int|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">null</span></code></p></td>
+<td><p>Seed InstantSfM’s random init; <code class="docutils literal notranslate"><span class="pre">null</span></code> = upstream (unseeded)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.retriangulation</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Retriangulate and re-run BA after the global solve</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.instantsfm.min_num_view_per_track</span></code></p></td>
+<td><p>int|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">null</span></code></p></td>
+<td><p>Drop tracks seen in fewer views (<code class="docutils literal notranslate"><span class="pre">&gt;=</span> <span class="pre">2</span></code>); <code class="docutils literal notranslate"><span class="pre">null</span></code> = upstream’s 3</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary><code>pointcloud.bundle_adjustment</code>: the <code>refine</code> stage</summary>
+<p>The <code class="docutils literal notranslate"><span class="pre">refine</span></code> stage refines feedforward poses against feature tracks and rewrites the pointcloud in place, so the point count can change. The zarr is rewritten whole, which drops the localization database; after <code class="docutils literal notranslate"><span class="pre">--stages</span> <span class="pre">refine</span></code>, re-run every later stage that ran (<code class="docutils literal notranslate"><span class="pre">splats</span></code>, <code class="docutils literal notranslate"><span class="pre">mesh</span></code>, <code class="docutils literal notranslate"><span class="pre">semantics</span></code>, <code class="docutils literal notranslate"><span class="pre">localize</span></code>, <code class="docutils literal notranslate"><span class="pre">reconstruction_quality_report</span></code>) with <code class="docutils literal notranslate"><span class="pre">--overwrite</span></code>.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Reprojection + depth only, no photometric term</span>
+<span class="nt">pointcloud</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">bundle_adjustment</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">use_photometric</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Run <code class="docutils literal notranslate"><span class="pre">refine</span></code>; skipped for <code class="docutils literal notranslate"><span class="pre">method:</span> <span class="pre">sfm</span></code> and under loop closure with <code class="docutils literal notranslate"><span class="pre">strategy:</span> <span class="pre">window</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.strategy</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">global</span></code></p></td>
+<td><p>With loop closure only: <code class="docutils literal notranslate"><span class="pre">global</span></code>, <code class="docutils literal notranslate"><span class="pre">window</span></code> (inside each LC window) or <code class="docutils literal notranslate"><span class="pre">window+global</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.track_source</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">xfeat</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">xfeat</span></code> or <code class="docutils literal notranslate"><span class="pre">loma</span></code> matcher tracks on full-res frames, or <code class="docutils literal notranslate"><span class="pre">vggsfm</span></code> (set <code class="docutils literal notranslate"><span class="pre">track_kwargs:</span> <span class="pre">{}</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.track_kwargs</span></code></p></td>
+<td><p>dict</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{pairing:</span> <span class="pre">exhaustive,</span> <span class="pre">seed_fraction:</span> <span class="pre">1.0}</span></code></p></td>
+<td><p>Passed to <code class="docutils literal notranslate"><span class="pre">extract_tracks</span></code>; matchers: <code class="docutils literal notranslate"><span class="pre">pairing</span></code> (<code class="docutils literal notranslate"><span class="pre">exhaustive</span></code> / <code class="docutils literal notranslate"><span class="pre">sequential+retrieval</span></code>), <code class="docutils literal notranslate"><span class="pre">seed_fraction</span></code>, <code class="docutils literal notranslate"><span class="pre">min_matches</span></code>, <code class="docutils literal notranslate"><span class="pre">max_transfer_px</span></code>, with <code class="docutils literal notranslate"><span class="pre">sequential+retrieval</span></code> also <code class="docutils literal notranslate"><span class="pre">window</span></code>, <code class="docutils literal notranslate"><span class="pre">retrieval</span></code>, <code class="docutils literal notranslate"><span class="pre">retrieval_k</span></code>, <code class="docutils literal notranslate"><span class="pre">retrieval_nms</span></code>; <code class="docutils literal notranslate"><span class="pre">vggsfm</span></code>: <code class="docutils literal notranslate"><span class="pre">max_query_pts</span></code>, <code class="docutils literal notranslate"><span class="pre">query_frame_num</span></code>, <code class="docutils literal notranslate"><span class="pre">fine_tracking</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.tracks_cache_dir</span></code></p></td>
+<td><p>str|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">null</span></code></p></td>
+<td><p>Track-cache directory, reused while frames, points and track settings match; <code class="docutils literal notranslate"><span class="pre">null</span></code> = always extract</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.vis_thresh</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.2</span></code></p></td>
+<td><p>Min track score per observation</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.max_reproj_error</span></code></p></td>
+<td><p>float|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">4.0</span></code></p></td>
+<td><p>Pre-solve reprojection gate in px; <code class="docutils literal notranslate"><span class="pre">null</span></code> = off</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.min_inliers_per_frame</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">64</span></code></p></td>
+<td><p>Frames below this sit out the solve</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.solver</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">schur</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">schur</span></code> (camera-only, less GPU) or <code class="docutils literal notranslate"><span class="pre">lm</span></code> (joint); <code class="docutils literal notranslate"><span class="pre">schur</span></code> + <code class="docutils literal notranslate"><span class="pre">refine_focal</span></code> + <code class="docutils literal notranslate"><span class="pre">shared_camera</span></code> is a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.dtype</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float32</span></code> or <code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.lm_steps</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">40</span></code></p></td>
+<td><p>Max LM steps (photometric runs its own fixed schedule)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.lm_tol</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0e-4</span></code></p></td>
+<td><p>Relative loss drop that counts as stalled</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.lm_patience</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+<td><p>Stalled steps that end the solve</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.increment_size</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code> = one global solve; <code class="docutils literal notranslate"><span class="pre">N</span></code> = frames per incremental solve</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.shared_camera</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>One focal per scene; <code class="docutils literal notranslate"><span class="pre">false</span></code> = per frame</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.refine_focal</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Solve for focal</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.use_depth</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Track camera z against feedforward depth</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.depth_sigma</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.01</span></code></p></td>
+<td><p>Relative depth error weighted like 1 px</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.use_photometric</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Brightness matching between overlapping frames; <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> with <code class="docutils literal notranslate"><span class="pre">increment_size</span> <span class="pre">&gt;</span> <span class="pre">0</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.bundle_adjustment.device</span></code></p></td>
+<td><p>str|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">null</span></code></p></td>
+<td><p>CUDA device; <code class="docutils literal notranslate"><span class="pre">null</span></code> = auto</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary><code>pointcloud.loop_closure</code>: long videos</summary>
+<p>Loop closure splits a long video into windows, reconstructs each, and joins them through a pose graph with loop edges between revisited places. <code class="docutils literal notranslate"><span class="pre">true</span></code> turns it on with the defaults below; a dict sets keys.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Long video: windows of 50 frames, no loop retrieval</span>
+<span class="nt">pointcloud</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">loop_closure</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">submap_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
+<span class="w">    </span><span class="nt">lc_retrieval_threshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure</span></code></p></td>
+<td><p>bool|dict</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Run loop closure (<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> with <code class="docutils literal notranslate"><span class="pre">method:</span> <span class="pre">sfm</span></code> or <code class="docutils literal notranslate"><span class="pre">backend:</span> <span class="pre">loger</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>In a dict: <code class="docutils literal notranslate"><span class="pre">false</span></code> keeps the keys but turns loop closure off</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.retrieval</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dino-salad</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dino-salad</span></code> or <code class="docutils literal notranslate"><span class="pre">megaloc</span></code> (<code class="docutils literal notranslate"><span class="pre">megaloc</span></code> needs its own threshold)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.submap_size</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">20</span></code></p></td>
+<td><p>Window stride; shorter scenes skip windowing</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.submap_overlap</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Frames shared by consecutive windows</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.lc_retrieval_threshold</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.95</span></code></p></td>
+<td><p>Max descriptor L2 in [0, 2] (tuned for dino-salad); <code class="docutils literal notranslate"><span class="pre">&lt;=</span> <span class="pre">0</span></code> skips retrieval</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.max_loops_per_submap</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">5</span></code></p></td>
+<td><p>Loop candidates per submap, before NMS</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.verify_match_ratio</span></code></p></td>
+<td><p>float|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">null</span></code></p></td>
+<td><p>Loop verification threshold; <code class="docutils literal notranslate"><span class="pre">null</span></code> = the creator’s default</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.nms_frame_distance</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">25</span></code></p></td>
+<td><p>Suppression radius in frames</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.min_submap_gap</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Newest submaps left out of retrieval</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.conf_percentile</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">25.0</span></code></p></td>
+<td><p>Confidence percentile gating scale points</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.loop_edge_timing</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">deferred</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">deferred</span></code> (after the window loop) or <code class="docutils literal notranslate"><span class="pre">live</span></code>; <code class="docutils literal notranslate"><span class="pre">viz.enabled</span></code> forces <code class="docutils literal notranslate"><span class="pre">live</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.loop_closure.viz_max_points</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">50000</span></code></p></td>
+<td><p>Viewer point cap per submap</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.viz.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Live viser viewer during loop closure; ignored without it</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pointcloud.viz.port</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">8080</span></code></p></td>
+<td><p>Viewer port</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+</section>
+<hr class="docutils" />
+<section id="mesh">
+<h2><code class="docutils literal notranslate"><span class="pre">mesh</span></code><a class="headerlink" href="#mesh" title="Link to this heading">#</a></h2>
+<p>We fuse depth into a TSDF volume, clean and smooth the mesh, then texture it. The voxel size follows the scene’s depth, so the defaults hold across scales; the reasoning behind each knob is in the <a class="reference external" href="https://basisresearch.github.io/collab-splats/api/mesh.html">mesh API docs</a>.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Indoor scene or object: no ground hull</span>
+<span class="nt">mesh</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">use_convex_hull</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Fuse a TSDF mesh into <code class="docutils literal notranslate"><span class="pre">&lt;backend&gt;/mesh.ply</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.source</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">feedforward</span></code></p></td>
+<td><p>Fuse <code class="docutils literal notranslate"><span class="pre">pointcloud.zarr</span></code> depth, or <code class="docutils literal notranslate"><span class="pre">splats</span></code> rendered depth (needs the splats stage)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.texture</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>UV-unwrap and texture into <code class="docutils literal notranslate"><span class="pre">&lt;backend&gt;/texture/</span></code>; needs a GPU, set <code class="docutils literal notranslate"><span class="pre">false</span></code> without one</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<details>
+<summary>Depth filtering</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.depth_trunc_percentile</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">99</span></code></p></td>
+<td><p>Zero depth beyond this percentile; required, in (0, 99]</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.conf_percentile</span></code></p></td>
+<td><p>float|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">10</span></code></p></td>
+<td><p>Drop depth below this confidence percentile; <code class="docutils literal notranslate"><span class="pre">null</span></code> = off. Also masks the splats depth targets</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.mask_sky</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Zero sky depth before fusing</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary>TSDF fusion</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.voxel_depth_px</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">4.0</span></code></p></td>
+<td><p>Voxel edge in depth pixels at the reference depth; smaller is finer</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.voxel_ref_percentile</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">50</span></code></p></td>
+<td><p>Depth percentile the voxel is sized at</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.sdf_trunc_mult</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">6.0</span></code></p></td>
+<td><p>Truncation band in voxels; must be <code class="docutils literal notranslate"><span class="pre">&gt;=</span> <span class="pre">1.0</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary>Cleanup</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.use_convex_hull</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Patch the ground out to a convex hull; outdoor scenes only</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.smooth_iterations</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">30</span></code></p></td>
+<td><p>Volume-keeping smoothing passes; <code class="docutils literal notranslate"><span class="pre">0</span></code> = off</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mesh.max_faces</span></code></p></td>
+<td><p>int|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1500000</span></code></p></td>
+<td><p>Face budget before texturing; <code class="docutils literal notranslate"><span class="pre">null</span></code> = no cap</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+</section>
+<hr class="docutils" />
+<section id="semantics">
+<h2><code class="docutils literal notranslate"><span class="pre">semantics</span></code><a class="headerlink" href="#semantics" title="Link to this heading">#</a></h2>
+<p>We extract 2D features per frame, compress them with an autoencoder, and lift them onto the points; with a mesh, <code class="docutils literal notranslate"><span class="pre">talk2dino</span></code>, <code class="docutils literal notranslate"><span class="pre">maskclip</span></code> and <code class="docutils literal notranslate"><span class="pre">ocr_lens</span></code> also lift onto its vertices. Extractors run in order and each writes its own store, so they coexist. Details in the <a class="reference external" href="https://basisresearch.github.io/collab-splats/api/semantics.html">semantics API docs</a>.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Talk2DINO only, uncompressed</span>
+<span class="nt">semantics</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">extractors</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">talk2dino</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">n_components</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">semantics.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Extract and lift features</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">semantics.extractors</span></code></p></td>
+<td><p>list[str]</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[talk2dino,</span> <span class="pre">ocr_lens]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">talk2dino</span></code>, <code class="docutils literal notranslate"><span class="pre">dinov2</span></code>, <code class="docutils literal notranslate"><span class="pre">maskclip</span></code>, <code class="docutils literal notranslate"><span class="pre">ocr_lens</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">semantics.n_components</span></code></p></td>
+<td><p>int|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">128</span></code></p></td>
+<td><p>Autoencoder latent dim; <code class="docutils literal notranslate"><span class="pre">null</span></code> = no compression</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">semantics.target_cosine</span></code></p></td>
+<td><p>float|null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">null</span></code></p></td>
+<td><p>Stop training at this mean reconstruction cosine; <code class="docutils literal notranslate"><span class="pre">null</span></code> = run <code class="docutils literal notranslate"><span class="pre">max_epochs</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">semantics.max_epochs</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">30</span></code></p></td>
+<td><p>Autoencoder epochs</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<hr class="docutils" />
+<section id="splats">
+<h2><code class="docutils literal notranslate"><span class="pre">splats</span></code><a class="headerlink" href="#splats" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">3dgs</span></code> keeps thin structure and trains faster; <code class="docutils literal notranslate"><span class="pre">2dgs</span></code> (surface-aligned) gives better surfaces. For the best surfaces use <code class="docutils literal notranslate"><span class="pre">scaffold</span></code> + <code class="docutils literal notranslate"><span class="pre">2dgs</span></code> as the mesh source.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># Best surfaces: scaffold 2DGS as the mesh source</span>
+<span class="nt">splats</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">  </span><span class="nt">representation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scaffold</span>
+<span class="w">  </span><span class="nt">primitive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2dgs</span>
+<span class="nt">mesh</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">splats</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Train Gaussian splats</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.primitive</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3dgs</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3dgs</span></code> or <code class="docutils literal notranslate"><span class="pre">2dgs</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.representation</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vanilla</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vanilla</span></code> or <code class="docutils literal notranslate"><span class="pre">scaffold</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.scaffold</span></code></p></td>
+<td><p>dict</p></td>
+<td><p>absent</p></td>
+<td><p>Scaffold overrides: <code class="docutils literal notranslate"><span class="pre">n_offsets</span></code>, <code class="docutils literal notranslate"><span class="pre">feat_dim</span></code>, <code class="docutils literal notranslate"><span class="pre">voxel_multiplier</span></code>, <code class="docutils literal notranslate"><span class="pre">update_from</span></code>, <code class="docutils literal notranslate"><span class="pre">update_until</span></code>, <code class="docutils literal notranslate"><span class="pre">refine_every</span></code>, <code class="docutils literal notranslate"><span class="pre">grad_threshold</span></code>, <code class="docutils literal notranslate"><span class="pre">min_opacity</span></code>, <code class="docutils literal notranslate"><span class="pre">update_init_factor</span></code>, <code class="docutils literal notranslate"><span class="pre">success_threshold</span></code>, <code class="docutils literal notranslate"><span class="pre">appearance_dim</span></code>, <code class="docutils literal notranslate"><span class="pre">mlp_bf16</span></code>; also <code class="docutils literal notranslate"><span class="pre">voxel_size</span></code>, <code class="docutils literal notranslate"><span class="pre">start_stat</span></code>, <code class="docutils literal notranslate"><span class="pre">update_depth</span></code>, <code class="docutils literal notranslate"><span class="pre">update_hierarchy_factor</span></code>, <code class="docutils literal notranslate"><span class="pre">lr_max_steps</span></code> and learning rates (<code class="docutils literal notranslate"><span class="pre">*_lr</span></code>, <code class="docutils literal notranslate"><span class="pre">*_lr_final</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.max_steps</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">30000</span></code></p></td>
+<td><p>Training iterations</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.pose_opt</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Refine camera poses jointly</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.appearance_opt</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Per-image affine color (train views only)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.normalize_scene</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Train in a normalized frame; outputs map back to world units</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<details>
+<summary>Schedule and densification</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.init_opacity</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.1</span></code></p></td>
+<td><p>Initial opacity</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.sh_degree</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vanilla</span></code> only (a non-default value is a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> under <code class="docutils literal notranslate"><span class="pre">scaffold</span></code>): max spherical-harmonics degree</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.sh_degree_interval</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1000</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vanilla</span></code> only: steps between SH-degree increments</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.cap_max</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1000000</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3dgs</span></code> + <code class="docutils literal notranslate"><span class="pre">vanilla</span></code> only: Gaussian budget</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.grow_grad2d</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2.0e-4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2dgs</span></code> + <code class="docutils literal notranslate"><span class="pre">vanilla</span></code> only: densification threshold</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.num_downscales</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+<td><p>Coarse-to-fine: start at <code class="docutils literal notranslate"><span class="pre">1/2^n</span></code> resolution; <code class="docutils literal notranslate"><span class="pre">0</span></code> = off</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.resolution_schedule</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3000</span></code></p></td>
+<td><p>Steps per resolution doubling</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.log_every</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">500</span></code></p></td>
+<td><p>Steps between loss logs</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary>Learning rates</summary>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.means_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.6e-4</span></code></p></td>
+<td><p>Means (× scene scale)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.scales_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">5.0e-3</span></code></p></td>
+<td><p>Scales</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.quats_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0e-3</span></code></p></td>
+<td><p>Rotations</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.opacities_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">5.0e-2</span></code></p></td>
+<td><p>Opacities</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.sh0_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2.5e-3</span></code></p></td>
+<td><p>DC color</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.shN_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.25e-4</span></code></p></td>
+<td><p>Higher-order SH</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.pose_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0e-5</span></code></p></td>
+<td><p>Poses (× scene scale)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.appearance_lr</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0e-3</span></code></p></td>
+<td><p>Appearance</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+<details>
+<summary><code>splats.losses</code></summary>
+<ul class="simple">
+<li><p>no <code class="docutils literal notranslate"><span class="pre">losses</span></code> block: each primitive gets its preset: <code class="docutils literal notranslate"><span class="pre">depth</span></code>, <code class="docutils literal notranslate"><span class="pre">normal_consistency</span></code> (from step 7000), <code class="docutils literal notranslate"><span class="pre">appearance_reg</span></code>, plus <code class="docutils literal notranslate"><span class="pre">opacity_reg</span></code> + <code class="docutils literal notranslate"><span class="pre">scale_reg</span></code> (<code class="docutils literal notranslate"><span class="pre">3dgs</span></code>) or <code class="docutils literal notranslate"><span class="pre">distortion</span></code> (<code class="docutils literal notranslate"><span class="pre">2dgs</span></code>, from step 3000)</p></li>
+<li><p>a <code class="docutils literal notranslate"><span class="pre">losses</span></code> block replaces the preset, so list every loss you want, each with a <code class="docutils literal notranslate"><span class="pre">weight</span></code></p></li>
+</ul>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.losses.&lt;name&gt;.weight</span></code></p></td>
+<td><p>float</p></td>
+<td><p>preset</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">depth</span></code>, <code class="docutils literal notranslate"><span class="pre">normal_consistency</span></code>, <code class="docutils literal notranslate"><span class="pre">distortion</span></code>, <code class="docutils literal notranslate"><span class="pre">opacity_reg</span></code>, <code class="docutils literal notranslate"><span class="pre">scale_reg</span></code>, <code class="docutils literal notranslate"><span class="pre">appearance_reg</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.losses.&lt;name&gt;.start</span></code></p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Step the loss switches on</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.losses.&lt;name&gt;.end</span></code></p></td>
+<td><p>int</p></td>
+<td><p>absent</p></td>
+<td><p>Decay the weight log-linearly from <code class="docutils literal notranslate"><span class="pre">start</span></code> to <code class="docutils literal notranslate"><span class="pre">end</span></code>, then hold; needs <code class="docutils literal notranslate"><span class="pre">end_weight</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.losses.&lt;name&gt;.end_weight</span></code></p></td>
+<td><p>float</p></td>
+<td><p>absent</p></td>
+<td><p>Weight from <code class="docutils literal notranslate"><span class="pre">end</span></code> on; <code class="docutils literal notranslate"><span class="pre">&gt;</span> <span class="pre">0</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">splats.losses.appearance_reg.weight</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0e-3</span></code></p></td>
+<td><p>Regularizer on <code class="docutils literal notranslate"><span class="pre">appearance_opt</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">splats.losses.normal_consistency.depth_ratio</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2dgs</span></code> only: median-depth normal blend, in [0, 1]</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</details>
+</section>
+<hr class="docutils" />
+<section id="localization">
+<h2><code class="docutils literal notranslate"><span class="pre">localization</span></code><a class="headerlink" href="#localization" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">localize</span></code> stage caches per-frame features so query images can be located in the scene later. The retrieval model is stored with the cache, so queries always match it.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="c1"># LoMa matcher instead of XFeat</span>
+<span class="nt">localization</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">matcher</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">loma</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">localization.enabled</span></code></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Build the localization database</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">localization.matcher</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">xfeat</span></code></p></td>
+<td><p>A batch-capable vismatch model, e.g. <code class="docutils literal notranslate"><span class="pre">xfeat</span></code> or <code class="docutils literal notranslate"><span class="pre">loma</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">localization.retrieval</span></code></p></td>
+<td><p>str</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">megaloc</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">megaloc</span></code> or <code class="docutils literal notranslate"><span class="pre">dino-salad</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<hr class="docutils" />
+<section id="reconstruction-quality-report">
+<h2>Reconstruction quality report<a class="headerlink" href="#reconstruction-quality-report" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">reconstruction_quality_report.json</span></code> scores the reconstruction without ground truth. It is report-only: nothing in it feeds back into the pipeline. Tables and columns are in the <a class="reference external" href="https://basisresearch.github.io/collab-splats/api/geometry.html#report-columns">geometry API docs</a>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">reconstruction_quality_report.min_pair_overlap</span></code></p></td>
+<td><p>float</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Skip pairs whose frustum overlap is below this; <code class="docutils literal notranslate"><span class="pre">0</span></code> = every pair</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="usage.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Usage</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="tutorials/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Tutorials</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overriding-defaults">Overriding defaults</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#stages">Stages</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#preproc"><code class="docutils literal notranslate"><span class="pre">preproc</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pointcloud"><code class="docutils literal notranslate"><span class="pre">pointcloud</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#mesh"><code class="docutils literal notranslate"><span class="pre">mesh</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#semantics"><code class="docutils literal notranslate"><span class="pre">semantics</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#splats"><code class="docutils literal notranslate"><span class="pre">splats</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#localization"><code class="docutils literal notranslate"><span class="pre">localization</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reconstruction-quality-report">Reconstruction quality report</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="_sources/configuration.md.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

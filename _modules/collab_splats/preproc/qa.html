@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.preproc.qa &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/preproc/qa';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.preproc.qa</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.preproc.qa</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Capture quality report: per-frame photometry and per-pair motion.</span>
+
+<span class="sd">- frames: blur, laplacian, exposure_{mean,median,std}, clipped_{low,high}_frac</span>
+<span class="sd">- pairs: n_matches, translation_px, parallax</span>
+<span class="sd">- report-only: thresholds live in preproc.sampling.filter_frame_quality</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProcessPoolExecutor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">skimage.measure</span><span class="w"> </span><span class="kn">import</span> <span class="n">blur_effect</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.preproc.video</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_video_info</span><span class="p">,</span> <span class="n">iter_frames</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_json_safe</span><span class="p">,</span> <span class="n">write_json</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Shared by the frame and the pair measurements</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="analysis_gray">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.analysis_gray">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">analysis_gray</span><span class="p">(</span><span class="n">frame_bgr</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">480</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Grayscale copy downscaled to `width` for scoring.</span>
+
+<span class="sd">    - bounds LK flow and Laplacian cost regardless of source resolution</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        frame_bgr: (H, W, 3) uint8 BGR frame.</span>
+<span class="sd">        width: target width in pixels; a narrower frame is passed through untouched.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (h, w) uint8 grayscale, aspect ratio preserved, w &lt;= width.</span>
+<span class="sd">    """</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">width</span> <span class="o">/</span> <span class="n">frame_bgr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">small</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">cv2</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">frame_bgr</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">fx</span><span class="o">=</span><span class="n">scale</span><span class="p">,</span> <span class="n">fy</span><span class="o">=</span><span class="n">scale</span><span class="p">)</span> <span class="k">if</span> <span class="n">scale</span> <span class="o">&lt;</span> <span class="mf">1.0</span> <span class="k">else</span> <span class="n">frame_bgr</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">cv2</span><span class="o">.</span><span class="n">cvtColor</span><span class="p">(</span><span class="n">small</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">COLOR_BGR2GRAY</span><span class="p">)</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Per frame</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="compute_blur">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.compute_blur">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_blur</span><span class="p">(</span><span class="n">gray</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">h_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">11</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Blur two ways: Crete-Roffet perceptual blur and Laplacian variance.</span>
+
+<span class="sd">    - opposite directions on purpose: blur higher = blurrier, laplacian higher = sharper</span>
+<span class="sd">    - blur SATURATES at 1.0 wherever high-frequency content is sparse — flat field, smooth</span>
+<span class="sd">      gradient and one perfectly sharp edge all score exactly 1.0</span>
+<span class="sd">    - so high blur beside high laplacian = sparse detail, NOT a soft frame</span>
+<span class="sd">    - that is why laplacian ships next to blur, not instead of it</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        gray: (h, w) uint8 single-channel frame.</span>
+<span class="sd">        h_size: re-blur kernel width Crete-Roffet compares against; larger reports less</span>
+<span class="sd">            blur. 11 is skimage's default.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        {'blur': float in [0, 1], 'laplacian': float unbounded}.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: when `gray` is not 2-D.</span>
+<span class="sd">    """</span>
+    <span class="c1"># A color frame is a caller mistake, not a measurement</span>
+    <span class="c1"># - skimage reads the channel axis as spatial and returns nan</span>
+    <span class="c1"># - cv2.Laplacian returns a perfectly plausible number anyway</span>
+    <span class="c1"># - so the row would read as a failed capture</span>
+    <span class="k">if</span> <span class="n">gray</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"compute_blur expects a 2-D single-channel frame, got shape </span><span class="si">{</span><span class="n">gray</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Crete-Roffet re-blurs the image and measures how little changes. A frame</span>
+    <span class="c1"># that is already blurred barely moves, so its score rises toward 1.</span>
+    <span class="n">perceptual</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">blur_effect</span><span class="p">(</span><span class="n">gray</span><span class="p">,</span> <span class="n">h_size</span><span class="o">=</span><span class="n">h_size</span><span class="p">))</span>
+
+    <span class="c1"># Laplacian variance: unbounded, higher = sharper. Runs in the opposite</span>
+    <span class="c1"># direction to `blur` on purpose — see the docstring.</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"blur"</span><span class="p">:</span> <span class="n">perceptual</span><span class="p">,</span>
+        <span class="s2">"laplacian"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">cv2</span><span class="o">.</span><span class="n">Laplacian</span><span class="p">(</span><span class="n">gray</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">CV_64F</span><span class="p">)</span><span class="o">.</span><span class="n">var</span><span class="p">()),</span>
+    <span class="p">}</span></div>
+
+
+
+<div class="viewcode-block" id="compute_exposure">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.compute_exposure">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_exposure</span><span class="p">(</span><span class="n">gray</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Brightness distribution plus the fraction of pixels pinned at either end.</span>
+
+<span class="sd">    - one 256-bin histogram serves all five numbers</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        gray: (h, w) uint8 single-channel frame, NATIVE resolution — see compute_frame_quality.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        {'exposure_mean', 'exposure_median', 'exposure_std', 'clipped_low_frac',</span>
+<span class="sd">        'clipped_high_frac'}, all float.</span>
+<span class="sd">    """</span>
+    <span class="c1"># float64: cv2.calcHist returns float32, and a 1080x1920 frame's 2.07M counts</span>
+    <span class="c1"># do not survive it — the clipping fractions come out ~3e-8 off.</span>
+    <span class="n">hist</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">calcHist</span><span class="p">([</span><span class="n">gray</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="kc">None</span><span class="p">,</span> <span class="p">[</span><span class="mi">256</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">256</span><span class="p">])</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">hist</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+    <span class="n">levels</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mf">256.0</span><span class="p">)</span>
+    <span class="n">cumulative</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">hist</span><span class="p">)</span>
+
+    <span class="c1"># Mean and median together: they separate when a small bright region</span>
+    <span class="c1"># (a window, a lamp) drags the mean while most of the scene stays dark.</span>
+    <span class="n">exposure_mean</span> <span class="o">=</span> <span class="nb">float</span><span class="p">((</span><span class="n">hist</span> <span class="o">*</span> <span class="n">levels</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">n</span><span class="p">)</span>
+
+    <span class="c1"># Histogram median must match np.median on an even pixel count</span>
+    <span class="c1"># - np.median averages the two central values; searchsorted alone gives the lower</span>
+    <span class="n">k_lo</span><span class="p">,</span> <span class="n">k_hi</span> <span class="o">=</span> <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">exposure_median</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span>
+        <span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">searchsorted</span><span class="p">(</span><span class="n">cumulative</span><span class="p">,</span> <span class="n">k_lo</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">)</span>
+            <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">searchsorted</span><span class="p">(</span><span class="n">cumulative</span><span class="p">,</span> <span class="n">k_hi</span><span class="p">,</span> <span class="n">side</span><span class="o">=</span><span class="s2">"right"</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="o">/</span> <span class="mi">2</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Contrast. A low std is a flat, textureless frame regardless of brightness.</span>
+    <span class="n">exposure_std</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">((</span><span class="n">hist</span> <span class="o">*</span> <span class="p">(</span><span class="n">levels</span> <span class="o">-</span> <span class="n">exposure_mean</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="n">n</span><span class="p">))</span>
+
+    <span class="c1"># Clipped pixels are destroyed data, not merely dark or bright data: 0 and 255</span>
+    <span class="c1"># are the two values where the sensor recorded nothing recoverable.</span>
+    <span class="n">clipped_low_frac</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">hist</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="n">n</span><span class="p">)</span>
+    <span class="n">clipped_high_frac</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">hist</span><span class="p">[</span><span class="mi">255</span><span class="p">]</span> <span class="o">/</span> <span class="n">n</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"exposure_mean"</span><span class="p">:</span> <span class="n">exposure_mean</span><span class="p">,</span>
+        <span class="s2">"exposure_median"</span><span class="p">:</span> <span class="n">exposure_median</span><span class="p">,</span>
+        <span class="s2">"exposure_std"</span><span class="p">:</span> <span class="n">exposure_std</span><span class="p">,</span>
+        <span class="s2">"clipped_low_frac"</span><span class="p">:</span> <span class="n">clipped_low_frac</span><span class="p">,</span>
+        <span class="s2">"clipped_high_frac"</span><span class="p">:</span> <span class="n">clipped_high_frac</span><span class="p">,</span>
+    <span class="p">}</span></div>
+
+
+
+<div class="viewcode-block" id="compute_frame_quality">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.compute_frame_quality">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_frame_quality</span><span class="p">(</span>
+    <span class="n">bgr</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">analysis_width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">480</span><span class="p">,</span> <span class="n">blur_h_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">11</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Photometry for one BGR frame: blur and exposure together.</span>
+
+<span class="sd">    - blur and laplacian read a gray downscaled to analysis_width; exposure reads native</span>
+<span class="sd">    - so blur and laplacian are not comparable across videos whose width straddles it</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        bgr: (H, W, 3) uint8 BGR frame.</span>
+<span class="sd">        analysis_width: width blur and laplacian are computed at; exposure ignores it.</span>
+<span class="sd">        blur_h_size: forwarded to compute_blur as `h_size`.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        compute_blur's keys merged with compute_exposure's, one flat dict.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Exposure reads the NATIVE gray: downscaling averages scattered saturated</span>
+    <span class="c1"># pixels out of existence, so clipping fractions read 0.0 on a blown capture.</span>
+    <span class="n">gray_native</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">cvtColor</span><span class="p">(</span><span class="n">bgr</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">COLOR_BGR2GRAY</span><span class="p">)</span>
+    <span class="n">exposure</span> <span class="o">=</span> <span class="n">compute_exposure</span><span class="p">(</span><span class="n">gray_native</span><span class="p">)</span>
+
+    <span class="c1"># Blur and laplacian read the analysis-width gray: cheaper, tied to analysis_width</span>
+    <span class="n">gray_small</span> <span class="o">=</span> <span class="n">analysis_gray</span><span class="p">(</span><span class="n">bgr</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="n">analysis_width</span><span class="p">)</span>
+    <span class="n">blur</span> <span class="o">=</span> <span class="n">compute_blur</span><span class="p">(</span><span class="n">gray_small</span><span class="p">,</span> <span class="n">h_size</span><span class="o">=</span><span class="n">blur_h_size</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="n">blur</span><span class="p">,</span> <span class="o">**</span><span class="n">exposure</span><span class="p">}</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Per pair</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="detect_orb">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.detect_orb">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">detect_orb</span><span class="p">(</span>
+    <span class="n">gray</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">n_features</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">tuple</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    ORB keypoints and descriptors for one grayscale frame.</span>
+
+<span class="sd">    - split from matching so a video run detects each frame once</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        gray: (h, w) uint8 single-channel frame.</span>
+<span class="sd">        n_features: ORB feature cap.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (keypoints, descriptors). descriptors is None on a frame with no detectable</span>
+<span class="sd">        features — a fact about the frame, not an error.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="n">cv2</span><span class="o">.</span><span class="n">ORB_create</span><span class="p">(</span><span class="n">nfeatures</span><span class="o">=</span><span class="n">n_features</span><span class="p">)</span><span class="o">.</span><span class="n">detectAndCompute</span><span class="p">(</span><span class="n">gray</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>  <span class="c1"># type: ignore[attr-defined]</span></div>
+
+
+
+<div class="viewcode-block" id="compute_pair_motion">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.compute_pair_motion">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_pair_motion</span><span class="p">(</span>
+    <span class="n">feat_a</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span> <span class="n">feat_b</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">ransac_thresh_px</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.0</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Match two frames' ORB features and measure the motion between them.</span>
+
+<span class="sd">    - pixels are those of the grid detect_orb ran on (analysis_gray in the report)</span>
+<span class="sd">    - unmeasurable is nan, never 0.0, which would read as a still camera</span>
+<span class="sd">    - parallax in [0, 1]: one minus the homography/fundamental inlier ratio; ~0 = no depth</span>
+<span class="sd">    - crossCheck cannot detect unrelated frames: a scene cut reads as large motion</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        feat_a: (keypoints, descriptors) from detect_orb for the earlier frame.</span>
+<span class="sd">        feat_b: (keypoints, descriptors) for the later frame.</span>
+<span class="sd">        ransac_thresh_px: inlier threshold for both fits; looser lowers parallax.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        {'n_matches': int, 'translation_px': float, 'parallax': float}. translation_px is the</span>
+<span class="sd">        median match displacement, nan with no matches; parallax is nan below 8 matches or</span>
+<span class="sd">        when either fit fails.</span>
+<span class="sd">    """</span>
+    <span class="n">kp_a</span><span class="p">,</span> <span class="n">desc_a</span> <span class="o">=</span> <span class="n">feat_a</span>
+    <span class="n">kp_b</span><span class="p">,</span> <span class="n">desc_b</span> <span class="o">=</span> <span class="n">feat_b</span>
+
+    <span class="c1"># A featureless frame yields no descriptors at all. Report zero matches rather</span>
+    <span class="c1"># than raise: an unmatchable pair is a fact about the video, not an error.</span>
+    <span class="n">unmeasured</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"n_matches"</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+        <span class="s2">"translation_px"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="s2">"nan"</span><span class="p">),</span>
+        <span class="s2">"parallax"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="s2">"nan"</span><span class="p">),</span>
+    <span class="p">}</span>
+    <span class="k">if</span> <span class="n">desc_a</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">desc_b</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">desc_a</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">desc_b</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">unmeasured</span>
+
+    <span class="c1"># ORB descriptors are binary, hence Hamming. crossCheck keeps only mutual best</span>
+    <span class="c1"># matches, which removes the need for a Lowe ratio test.</span>
+    <span class="n">matches</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">BFMatcher</span><span class="p">(</span><span class="n">cv2</span><span class="o">.</span><span class="n">NORM_HAMMING</span><span class="p">,</span> <span class="n">crossCheck</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">desc_a</span><span class="p">,</span> <span class="n">desc_b</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">matches</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">unmeasured</span>
+
+    <span class="c1"># Pull the pixel coordinates behind each match into two aligned Nx2 arrays</span>
+    <span class="n">pts_a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">kp_a</span><span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">queryIdx</span><span class="p">]</span><span class="o">.</span><span class="n">pt</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">matches</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">pts_b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">kp_b</span><span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">trainIdx</span><span class="p">]</span><span class="o">.</span><span class="n">pt</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">matches</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+    <span class="c1"># Robust translation, fail-closed parallax</span>
+    <span class="c1"># - translation is a median over per-match displacement, so bad matches cannot drag it</span>
+    <span class="c1"># - parallax starts nan, filled in only if every fit below succeeds</span>
+    <span class="n">row</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"n_matches"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">matches</span><span class="p">),</span>
+        <span class="s2">"translation_px"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">pts_b</span> <span class="o">-</span> <span class="n">pts_a</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">))),</span>
+        <span class="s2">"parallax"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="s2">"nan"</span><span class="p">),</span>
+    <span class="p">}</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">pts_a</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">8</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">row</span>
+
+    <span class="c1"># Fit both models to the same correspondences</span>
+    <span class="c1"># - H can only explain a plane or a pure rotation</span>
+    <span class="c1"># - F can additionally explain translation through depth</span>
+    <span class="c1"># - so the gap between their inlier counts IS the depth information in the pair</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">h_inliers</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">findHomography</span><span class="p">(</span>
+            <span class="n">pts_a</span><span class="p">,</span> <span class="n">pts_b</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">USAC_MAGSAC</span><span class="p">,</span> <span class="n">ransac_thresh_px</span>
+        <span class="p">)</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">f_inliers</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">findFundamentalMat</span><span class="p">(</span>
+            <span class="n">pts_a</span><span class="p">,</span> <span class="n">pts_b</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">USAC_MAGSAC</span><span class="p">,</span> <span class="n">ransac_thresh_px</span>
+        <span class="p">)</span>
+    <span class="k">except</span> <span class="n">cv2</span><span class="o">.</span><span class="n">error</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">row</span>
+
+    <span class="n">n_h</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">h_inliers</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span> <span class="k">if</span> <span class="n">h_inliers</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">0</span>
+    <span class="n">n_f</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">f_inliers</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span> <span class="k">if</span> <span class="n">f_inliers</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="mi">0</span>
+
+    <span class="c1"># A degenerate pair must not produce negative parallax</span>
+    <span class="c1"># - no F inliers = the pair is unexplained by any two-view geometry</span>
+    <span class="c1"># - min() guards the case where H out-fits F on a degenerate pair</span>
+    <span class="k">if</span> <span class="n">n_f</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">row</span>
+
+    <span class="n">row</span><span class="p">[</span><span class="s2">"parallax"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">n_h</span> <span class="o">/</span> <span class="n">n_f</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">row</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Whole video</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_measure_photometry_and_motion</span><span class="p">(</span>
+    <span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">analysis_width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">blur_h_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">n_features</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">ransac_thresh_px</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Measure one contiguous frame range; returns (frame rows, pair rows).</span>
+
+<span class="sd">    - decodes `stride` lead-in frames before `emit_from` so boundary pairs have a partner</span>
+<span class="sd">    - pairs tile the video: (b - stride, b) for b on the global stride grid, so ORB runs on grid frames only</span>
+<span class="sd">    - emits rows from `emit_from` on only, so ranges tile the video exactly once</span>
+<span class="sd">    - module-level so ProcessPoolExecutor can pickle it</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        args: (video_path, start, count, emit_from, stride) for this range.</span>
+<span class="sd">        analysis_width: width blur, laplacian and ORB run at.</span>
+<span class="sd">        blur_h_size: Crete-Roffet re-blur kernel width.</span>
+<span class="sd">        n_features: ORB feature cap per frame.</span>
+<span class="sd">        ransac_thresh_px: inlier threshold for the parallax fits.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (frame rows, pair rows) for the frames this range owns.</span>
+<span class="sd">    """</span>
+    <span class="n">video_path</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">count</span><span class="p">,</span> <span class="n">emit_from</span><span class="p">,</span> <span class="n">stride</span> <span class="o">=</span> <span class="n">args</span>
+
+    <span class="c1"># Pin cv2, BLAS and PyAV decode to one thread per worker; unpinned fan-out oversubscribes</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"OMP_NUM_THREADS"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"1"</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"OPENBLAS_NUM_THREADS"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"1"</span>
+    <span class="n">cv2</span><span class="o">.</span><span class="n">setNumThreads</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">frame_rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">pair_rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="c1"># ORB features of the last grid frame, owed to the next pair</span>
+    <span class="n">pending</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">bgr</span> <span class="ow">in</span> <span class="n">iter_frames</span><span class="p">(</span><span class="n">video_path</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">start</span><span class="p">,</span> <span class="n">count</span><span class="o">=</span><span class="n">count</span><span class="p">,</span> <span class="n">threads</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="c1"># Lead-in frames belong to the previous range</span>
+        <span class="c1"># - that range is already measuring them</span>
+        <span class="c1"># - decoded here only to be somebody's partner</span>
+        <span class="c1"># - so skip the photometry rather than compute a row and drop it</span>
+        <span class="k">if</span> <span class="n">idx</span> <span class="o">&gt;=</span> <span class="n">emit_from</span><span class="p">:</span>
+            <span class="n">frame_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="s2">"frame_idx"</span><span class="p">:</span> <span class="n">idx</span><span class="p">,</span>
+                    <span class="o">**</span><span class="n">compute_frame_quality</span><span class="p">(</span>
+                        <span class="n">bgr</span><span class="p">,</span> <span class="n">analysis_width</span><span class="o">=</span><span class="n">analysis_width</span><span class="p">,</span> <span class="n">blur_h_size</span><span class="o">=</span><span class="n">blur_h_size</span>
+                    <span class="p">),</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Off-grid frames take no part in motion</span>
+        <span class="k">if</span> <span class="n">idx</span> <span class="o">%</span> <span class="n">stride</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="c1"># Motion against the grid frame one stride back; lead-in supplies the partner, so no pair repeats</span>
+        <span class="n">gray_small</span> <span class="o">=</span> <span class="n">analysis_gray</span><span class="p">(</span><span class="n">bgr</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="n">analysis_width</span><span class="p">)</span>
+        <span class="n">pending</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">detect_orb</span><span class="p">(</span><span class="n">gray_small</span><span class="p">,</span> <span class="n">n_features</span><span class="o">=</span><span class="n">n_features</span><span class="p">)</span>
+        <span class="n">partner</span> <span class="o">=</span> <span class="n">idx</span> <span class="o">-</span> <span class="n">stride</span>
+
+        <span class="k">if</span> <span class="n">partner</span> <span class="ow">in</span> <span class="n">pending</span><span class="p">:</span>
+            <span class="n">pair_rows</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="s2">"frame_idx_a"</span><span class="p">:</span> <span class="n">partner</span><span class="p">,</span>
+                    <span class="s2">"frame_idx_b"</span><span class="p">:</span> <span class="n">idx</span><span class="p">,</span>
+                    <span class="o">**</span><span class="n">compute_pair_motion</span><span class="p">(</span>
+                        <span class="n">pending</span><span class="p">[</span><span class="n">partner</span><span class="p">],</span>
+                        <span class="n">pending</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span>
+                        <span class="n">ransac_thresh_px</span><span class="o">=</span><span class="n">ransac_thresh_px</span><span class="p">,</span>
+                    <span class="p">),</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+
+            <span class="k">del</span> <span class="n">pending</span><span class="p">[</span><span class="n">partner</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">frame_rows</span><span class="p">,</span> <span class="n">pair_rows</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_ranges</span><span class="p">(</span>
+    <span class="n">total</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">workers</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">stride</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    (start, count, emit_from) per worker; each range decodes a stride-frame lead-in.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        total: frames in the video.</span>
+<span class="sd">        workers: ranges wanted; a short video gets one.</span>
+<span class="sd">        stride: pair spacing, the lead-in length.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Ascending ranges that tile [0, total) exactly once by emit_from.</span>
+<span class="sd">        count is None on the single whole-video range: decode to the end.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">workers</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">or</span> <span class="n">total</span> <span class="o">&lt;=</span> <span class="n">stride</span> <span class="o">*</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[(</span><span class="mi">0</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="mi">0</span><span class="p">)]</span>
+
+    <span class="n">per</span> <span class="o">=</span> <span class="n">total</span> <span class="o">//</span> <span class="n">workers</span>
+    <span class="n">out</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">workers</span><span class="p">):</span>
+        <span class="n">emit_from</span> <span class="o">=</span> <span class="n">k</span> <span class="o">*</span> <span class="n">per</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">emit_from</span> <span class="o">-</span> <span class="n">stride</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">total</span> <span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="n">workers</span> <span class="o">-</span> <span class="mi">1</span> <span class="k">else</span> <span class="p">(</span><span class="n">k</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">per</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">,</span> <span class="n">emit_from</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+
+<div class="viewcode-block" id="compute_video_quality">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.compute_video_quality">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_video_quality</span><span class="p">(</span>
+    <span class="n">video_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">motion_stride</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">analysis_width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">480</span><span class="p">,</span>
+    <span class="n">blur_h_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">11</span><span class="p">,</span>
+    <span class="n">n_features</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span><span class="p">,</span>
+    <span class="n">ransac_thresh_px</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Per-frame photometry and per-pair motion across a whole video.</span>
+
+<span class="sd">    - report-only: filter_frame_quality turns these columns into a keep mask</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        video_path: source video; every frame is decoded and scored.</span>
+<span class="sd">        motion_stride: frames between the two members of each pair, which tile the video; None = round(fps).</span>
+<span class="sd">        workers: contiguous frame ranges processed in parallel; 1 is serial.</span>
+<span class="sd">        analysis_width: width blur, laplacian and ORB run at.</span>
+<span class="sd">        blur_h_size: Crete-Roffet re-blur kernel width.</span>
+<span class="sd">        n_features: ORB feature cap per frame.</span>
+<span class="sd">        ransac_thresh_px: inlier threshold for the parallax fits.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Report dict: ``video`` (path, mtime and the get_video_info fields), ``params``</span>
+<span class="sd">        (motion_stride and the four tuning kwargs), ``frames`` (column -&gt; per-frame list)</span>
+<span class="sd">        and ``pairs`` (column -&gt; per-pair list).</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        FileNotFoundError: the video does not exist.</span>
+<span class="sd">        ValueError: the video cannot be probed or decodes no frames.</span>
+<span class="sd">    """</span>
+    <span class="c1"># `is not None`, not truthiness</span>
+    <span class="c1"># - 0 is an explicit value; truthiness falls through to the fps default, stride 30</span>
+    <span class="c1"># - a negative stride is worse than wrong: the partner index runs forward</span>
+    <span class="c1"># - nothing is ever retired from `pending`, so it grows with the video</span>
+    <span class="k">if</span> <span class="n">motion_stride</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">motion_stride</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"motion_stride must be &gt;= 1, got </span><span class="si">{</span><span class="n">motion_stride</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">workers</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"workers must be &gt;= 1, got </span><span class="si">{</span><span class="n">workers</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="n">video_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">video_path</span><span class="p">)</span>
+    <span class="n">info</span> <span class="o">=</span> <span class="n">get_video_info</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">video_path</span><span class="p">))</span>
+    <span class="n">stride</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">motion_stride</span><span class="p">)</span> <span class="k">if</span> <span class="n">motion_stride</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">"fps"</span><span class="p">]))</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Announce the work before the first decode</span>
+    <span class="c1"># - a multi-minute silent run is indistinguishable from a hung one</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">"video quality: </span><span class="si">%s</span><span class="s2"> — </span><span class="si">%s</span><span class="s2"> frames @ </span><span class="si">%.2f</span><span class="s2"> fps, </span><span class="si">%s</span><span class="s2">x</span><span class="si">%s</span><span class="s2">, stride </span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">video_path</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+        <span class="n">info</span><span class="p">[</span><span class="s2">"total_frames"</span><span class="p">],</span>
+        <span class="n">info</span><span class="p">[</span><span class="s2">"fps"</span><span class="p">],</span>
+        <span class="n">info</span><span class="p">[</span><span class="s2">"width"</span><span class="p">],</span>
+        <span class="n">info</span><span class="p">[</span><span class="s2">"height"</span><span class="p">],</span>
+        <span class="n">stride</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="c1"># One range per worker</span>
+    <span class="c1"># - ranges tile the video exactly once</span>
+    <span class="c1"># - each decodes a `stride`-frame lead-in from its predecessor for the boundary pairs</span>
+    <span class="c1"># - nothing is emitted from the lead-in</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="n">info</span><span class="p">[</span><span class="s2">"total_frames"</span><span class="p">]</span>
+    <span class="n">ranges</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">video_path</span><span class="p">),</span> <span class="n">start</span><span class="p">,</span> <span class="n">count</span><span class="p">,</span> <span class="n">emit_from</span><span class="p">,</span> <span class="n">stride</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">start</span><span class="p">,</span> <span class="n">count</span><span class="p">,</span> <span class="n">emit_from</span> <span class="ow">in</span> <span class="n">_ranges</span><span class="p">(</span><span class="n">total</span><span class="p">,</span> <span class="n">workers</span><span class="o">=</span><span class="n">workers</span><span class="p">,</span> <span class="n">stride</span><span class="o">=</span><span class="n">stride</span><span class="p">)</span>
+    <span class="p">]</span>
+
+    <span class="c1"># Bind the tuning once; partial of a module-level function still pickles</span>
+    <span class="n">tuning</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"analysis_width"</span><span class="p">:</span> <span class="n">analysis_width</span><span class="p">,</span>
+        <span class="s2">"blur_h_size"</span><span class="p">:</span> <span class="n">blur_h_size</span><span class="p">,</span>
+        <span class="s2">"n_features"</span><span class="p">:</span> <span class="n">n_features</span><span class="p">,</span>
+        <span class="s2">"ransac_thresh_px"</span><span class="p">:</span> <span class="n">ransac_thresh_px</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="n">measure</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">tuple</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]]]</span> <span class="o">=</span> <span class="n">partial</span><span class="p">(</span>
+        <span class="n">_measure_photometry_and_motion</span><span class="p">,</span> <span class="o">**</span><span class="n">tuning</span>
+    <span class="p">)</span>
+
+    <span class="n">started</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">ranges</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[</span><span class="n">measure</span><span class="p">(</span><span class="n">ranges</span><span class="p">[</span><span class="mi">0</span><span class="p">])]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">with</span> <span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">ranges</span><span class="p">))</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+            <span class="n">results</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">measure</span><span class="p">,</span> <span class="n">ranges</span><span class="p">))</span>
+
+    <span class="c1"># pool.map yields in submission order, and the ranges were built in ascending</span>
+    <span class="c1"># order, so concatenating is the whole merge.</span>
+    <span class="n">frame_rows</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span> <span class="k">for</span> <span class="n">rows</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">]</span>
+    <span class="n">pair_rows</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">rows</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">rows</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">frame_rows</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"video quality: no frames decoded from </span><span class="si">{</span><span class="n">video_path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="c1"># Contiguity check: a bad seek silently shifts every index</span>
+    <span class="c1"># - int comparison, so rounding cannot false-alarm</span>
+    <span class="n">idxs</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"frame_idx"</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">frame_rows</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">ranges</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">idxs</span> <span class="o">!=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">idxs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">idxs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">idxs</span><span class="p">))):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"video quality: frame indices are not contiguous across ranges "</span>
+            <span class="sa">f</span><span class="s2">"(</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">idxs</span><span class="p">)</span><span class="si">}</span><span class="s2"> rows spanning </span><span class="si">{</span><span class="n">idxs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">..</span><span class="si">{</span><span class="n">idxs</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">) — input seek is "</span>
+            <span class="s2">"unreliable on this file. Re-run with workers=1."</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Columnar report: one list per measurement, aligned by row order</span>
+    <span class="n">frame_keys</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"frame_idx"</span><span class="p">,</span>
+        <span class="s2">"blur"</span><span class="p">,</span>
+        <span class="s2">"laplacian"</span><span class="p">,</span>
+        <span class="s2">"exposure_mean"</span><span class="p">,</span>
+        <span class="s2">"exposure_median"</span><span class="p">,</span>
+        <span class="s2">"exposure_std"</span><span class="p">,</span>
+        <span class="s2">"clipped_low_frac"</span><span class="p">,</span>
+        <span class="s2">"clipped_high_frac"</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">frames</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">frame_rows</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">frame_keys</span><span class="p">}</span>
+
+    <span class="c1"># Pair columns; translation_px and parallax are nan for an unmatched pair</span>
+    <span class="c1"># - to_json_safe nulls them here, so the returned dict equals the written file</span>
+    <span class="c1"># - np.nan_to_num is not the fix: its 0.0 fill reads as "no motion"</span>
+    <span class="n">pair_keys</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"frame_idx_a"</span><span class="p">,</span>
+        <span class="s2">"frame_idx_b"</span><span class="p">,</span>
+        <span class="s2">"n_matches"</span><span class="p">,</span>
+        <span class="s2">"translation_px"</span><span class="p">,</span>
+        <span class="s2">"parallax"</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">pairs</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="p">[</span><span class="n">r</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">pair_rows</span><span class="p">]</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">pair_keys</span><span class="p">}</span>
+
+    <span class="n">report</span> <span class="o">=</span> <span class="n">to_json_safe</span><span class="p">(</span>
+        <span class="p">{</span>
+            <span class="s2">"video"</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">"path"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">video_path</span><span class="p">),</span>
+                <span class="s2">"mtime"</span><span class="p">:</span> <span class="n">video_path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_mtime</span><span class="p">,</span>
+                <span class="o">**</span><span class="n">info</span><span class="p">,</span>
+            <span class="p">},</span>
+            <span class="s2">"params"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"motion_stride"</span><span class="p">:</span> <span class="n">stride</span><span class="p">,</span> <span class="o">**</span><span class="n">tuning</span><span class="p">},</span>
+            <span class="s2">"frames"</span><span class="p">:</span> <span class="n">frames</span><span class="p">,</span>
+            <span class="s2">"pairs"</span><span class="p">:</span> <span class="n">pairs</span><span class="p">,</span>
+        <span class="p">}</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Throughput, not just a count: it is the number that tells a reader</span>
+    <span class="c1"># whether a long run is progressing or degrading.</span>
+    <span class="n">elapsed</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">started</span><span class="p">,</span> <span class="mf">1e-9</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">"video quality: </span><span class="si">%d</span><span class="s2"> frames, </span><span class="si">%d</span><span class="s2"> pairs, stride </span><span class="si">%d</span><span class="s2"> — </span><span class="si">%.1f</span><span class="s2">s (</span><span class="si">%.1f</span><span class="s2"> frames/s)"</span><span class="p">,</span>
+        <span class="nb">len</span><span class="p">(</span><span class="n">frames</span><span class="p">[</span><span class="s2">"frame_idx"</span><span class="p">]),</span>
+        <span class="nb">len</span><span class="p">(</span><span class="n">pair_rows</span><span class="p">),</span>
+        <span class="n">stride</span><span class="p">,</span>
+        <span class="n">elapsed</span><span class="p">,</span>
+        <span class="nb">len</span><span class="p">(</span><span class="n">frames</span><span class="p">[</span><span class="s2">"frame_idx"</span><span class="p">])</span> <span class="o">/</span> <span class="n">elapsed</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">report</span></div>
+
+
+
+<div class="viewcode-block" id="load_video_quality">
+<a class="viewcode-back" href="../../../api/preproc.html#collab_splats.preproc.qa.load_video_quality">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_video_quality</span><span class="p">(</span>
+    <span class="n">video_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="n">report_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">motion_stride</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    The quality report at report_path, measuring and writing it first if absent.</span>
+
+<span class="sd">    - reuse is by existence, the same rule images/ follows</span>
+<span class="sd">    - an existing file is reused, never recomputed; one without "frames" raises</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        video_path: source video, used only when report_path is missing.</span>
+<span class="sd">        report_path: the JSON report; read as-is when it already exists.</span>
+<span class="sd">        workers: parallel decode ranges, forwarded to compute_video_quality.</span>
+<span class="sd">        motion_stride: pair spacing, forwarded to compute_video_quality.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The report dict compute_video_quality produces.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        FileNotFoundError: no cached report and the video does not exist.</span>
+<span class="sd">        ValueError: compute_video_quality rejects the input.</span>
+<span class="sd">    """</span>
+    <span class="n">report_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">report_path</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">report_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"video quality: reusing </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">report_path</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">report_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+
+    <span class="n">report</span> <span class="o">=</span> <span class="n">compute_video_quality</span><span class="p">(</span>
+        <span class="n">video_path</span><span class="p">,</span> <span class="n">motion_stride</span><span class="o">=</span><span class="n">motion_stride</span><span class="p">,</span> <span class="n">workers</span><span class="o">=</span><span class="n">workers</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Atomic write: an interrupted run leaves no partial report</span>
+    <span class="n">report_path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">write_json</span><span class="p">(</span><span class="n">report_path</span><span class="p">,</span> <span class="n">report</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">"video quality: wrote </span><span class="si">%s</span><span class="s2"> (</span><span class="si">%.1f</span><span class="s2"> kB)"</span><span class="p">,</span>
+        <span class="n">report_path</span><span class="p">,</span>
+        <span class="n">report_path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">report</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

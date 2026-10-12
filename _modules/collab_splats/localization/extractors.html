@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.localization.extractors &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/localization/extractors';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.localization.extractors</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.localization.extractors</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Stage 2 local matching: vismatch features, cached once, matched in batches of pairs.</span>
+
+<span class="sd">- xfeat and loma only: vismatch supports_batches, so match() reads cached features</span>
+<span class="sd">- LocalFeatures is one cache row; MatchResult carries native keypoint-table indices</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">replace</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">vismatch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_device</span><span class="p">,</span> <span class="n">to_numpy</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Containers</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="LocalFeatures">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.extractors.LocalFeatures">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LocalFeatures</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Keypoints and descriptors of one image, as the feature cache stores them.</span>
+
+<span class="sd">    - keypoints_normalized: loma's model-grid coords, which its matcher consumes</span>
+<span class="sd">    - image_size: (W, H) of the image the keypoints were detected in</span>
+<span class="sd">    """</span>
+
+    <span class="n">keypoints</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>  <span class="c1"># (N, 2) float32 pixel xy</span>
+    <span class="n">descriptors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>  <span class="c1"># (N, D) float32</span>
+    <span class="n">keypoints_normalized</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (N, 2)</span>
+    <span class="n">image_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (W, H)</span></div>
+
+
+
+<div class="viewcode-block" id="MatchResult">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.extractors.MatchResult">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MatchResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Matched pixels between a query and one reference image, with their keypoint rows.</span>
+
+<span class="sd">    - idx_q / idx_db index the two keypoint tables, COLMAP's match format</span>
+<span class="sd">    """</span>
+
+    <span class="n">query_px</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>  <span class="c1"># (K, 2) float32 xy in the query image</span>
+    <span class="n">ref_px</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>  <span class="c1"># (K, 2) float32 xy in the reference image</span>
+    <span class="n">idx_q</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>  <span class="c1"># (K,) int64 into the query keypoint table</span>
+    <span class="n">idx_db</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>  <span class="c1"># (K,) int64 into the reference keypoint table</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Number of matches.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">query_px</span><span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_empty_match</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">MatchResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Zero-length MatchResult with empty index arrays.</span>
+<span class="sd">    """</span>
+    <span class="n">query_px</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">ref_px</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">idx_q</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+    <span class="n">idx_db</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">MatchResult</span><span class="p">(</span><span class="n">query_px</span><span class="o">=</span><span class="n">query_px</span><span class="p">,</span> <span class="n">ref_px</span><span class="o">=</span><span class="n">ref_px</span><span class="p">,</span> <span class="n">idx_q</span><span class="o">=</span><span class="n">idx_q</span><span class="p">,</span> <span class="n">idx_db</span><span class="o">=</span><span class="n">idx_db</span><span class="p">)</span>
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Matcher</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="LocalMatcher">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.extractors.LocalMatcher">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">LocalMatcher</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    One vismatch model: extract() fills the feature cache, match() pairs two cached frames.</span>
+
+<span class="sd">    - the model name is data, not a subclass</span>
+<span class="sd">    - models without vismatch supports_batches are refused: they cannot match cached features</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">max_num_keypoints</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2048</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Load the vismatch model; refuse one that cannot match cached features.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            model_name: vismatch model name, "xfeat" or "loma".</span>
+<span class="sd">            device: torch device; None picks CUDA when available.</span>
+<span class="sd">            max_num_keypoints: per-image keypoint cap, forwarded to vismatch unchanged.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: the model lacks vismatch supports_batches.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_model_name</span> <span class="o">=</span> <span class="n">model_name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_device</span> <span class="o">=</span> <span class="n">device</span> <span class="ow">or</span> <span class="n">get_device</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_max_num_keypoints</span> <span class="o">=</span> <span class="n">max_num_keypoints</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_matcher</span> <span class="o">=</span> <span class="n">vismatch</span><span class="o">.</span><span class="n">get_matcher</span><span class="p">(</span>
+            <span class="n">model_name</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_device</span><span class="p">,</span> <span class="n">max_num_keypoints</span><span class="o">=</span><span class="n">max_num_keypoints</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Cached-feature matching runs on vismatch's batch path only</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_matcher</span><span class="o">.</span><span class="n">supports_batches</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"LocalMatcher: vismatch '</span><span class="si">{</span><span class="n">model_name</span><span class="si">}</span><span class="s2">' cannot match cached features "</span>
+                <span class="s2">"(supports_batches is False); use xfeat or loma"</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Callers verify geometry with pycolmap; vismatch's homography RANSAC is wasted work</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_matcher</span><span class="o">.</span><span class="n">skip_ransac</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">model_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        vismatch model name; also the feature-cache key.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The name passed at construction.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_model_name</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">max_num_keypoints</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Per-image keypoint cap; stamped into the feature cache so a changed cap rebuilds it.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The cap passed at construction.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_max_num_keypoints</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_to_tensor</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        HxWx3 RGB to (3, H, W) on device, dtype kept; vismatch scales uint8 itself.</span>
+<span class="sd">        """</span>
+        <span class="n">array</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">array</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_device</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">tensor</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_check_pixel_frame</span><span class="p">(</span><span class="n">kpts</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">what</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Refuse keypoints outside the input image's pixel frame.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">kpts</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span>
+            <span class="n">kpts</span><span class="o">.</span><span class="n">min</span><span class="p">()</span> <span class="o">&lt;</span> <span class="o">-</span><span class="mf">0.5</span>
+            <span class="ow">or</span> <span class="n">kpts</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">&gt;</span> <span class="n">hw</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mf">0.5</span>
+            <span class="ow">or</span> <span class="n">kpts</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">&gt;</span> <span class="n">hw</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mf">0.5</span>
+        <span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"vismatch '</span><span class="si">{</span><span class="n">what</span><span class="si">}</span><span class="s2">' keypoints outside input pixel frame </span><span class="si">{</span><span class="n">hw</span><span class="si">}</span><span class="s2">: "</span>
+                <span class="sa">f</span><span class="s2">"x range [</span><span class="si">{</span><span class="n">kpts</span><span class="p">[:,</span><span class="w"> </span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">kpts</span><span class="p">[:,</span><span class="w"> </span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">], "</span>
+                <span class="sa">f</span><span class="s2">"y range [</span><span class="si">{</span><span class="n">kpts</span><span class="p">[:,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">kpts</span><span class="p">[:,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">] — "</span>
+                <span class="s2">"model likely returns coords at its internal resolution"</span>
+            <span class="p">)</span>
+
+<div class="viewcode-block" id="LocalMatcher.extract">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.extractors.LocalMatcher.extract">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">extract</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">images</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LocalFeatures</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">LocalFeatures</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Keypoints and descriptors for one image, or for every image of a list in one vismatch call.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            images: HxWx3 RGB uint8 (or float in [0, 1]), or a list of them.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            One LocalFeatures for one image; a list, in order, for a list. Tensors on CPU.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: the model returned keypoints outside an input image.</span>
+<span class="sd">        """</span>
+        <span class="n">batch</span> <span class="o">=</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span>
+        <span class="n">images</span> <span class="o">=</span> <span class="n">images</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">images</span><span class="p">]</span>
+        <span class="n">tensors</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_to_tensor</span><span class="p">(</span><span class="n">image</span><span class="p">)</span> <span class="k">for</span> <span class="n">image</span> <span class="ow">in</span> <span class="n">images</span><span class="p">]</span>
+
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">inference_mode</span><span class="p">():</span>
+            <span class="n">outs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_matcher</span><span class="o">.</span><span class="n">extract</span><span class="p">(</span><span class="n">tensors</span><span class="p">)</span>
+
+        <span class="c1"># vismatch returns numpy; to_numpy also tolerates tensors</span>
+        <span class="n">feats</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">image</span><span class="p">,</span> <span class="n">out</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">outs</span><span class="p">):</span>
+            <span class="n">kpts</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="s2">"all_kpts0"</span><span class="p">])</span>
+            <span class="n">kpts</span> <span class="o">=</span> <span class="n">kpts</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_check_pixel_frame</span><span class="p">(</span><span class="n">kpts</span><span class="p">,</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">_model_name</span><span class="p">)</span>
+            <span class="n">desc</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="s2">"all_desc0"</span><span class="p">])</span>
+            <span class="n">desc</span> <span class="o">=</span> <span class="n">desc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="n">norm</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"kpts_normalized"</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">norm</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">norm</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">norm</span><span class="p">)</span>
+                <span class="n">norm</span> <span class="o">=</span> <span class="n">norm</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+                <span class="n">norm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">norm</span><span class="p">)</span>
+
+            <span class="n">feats</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">LocalFeatures</span><span class="p">(</span>
+                    <span class="n">keypoints</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">kpts</span><span class="p">),</span>
+                    <span class="n">descriptors</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">desc</span><span class="p">),</span>
+                    <span class="n">keypoints_normalized</span><span class="o">=</span><span class="n">norm</span><span class="p">,</span>
+                    <span class="n">image_size</span><span class="o">=</span><span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">feats</span> <span class="k">if</span> <span class="n">batch</span> <span class="k">else</span> <span class="n">feats</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="LocalMatcher.to_device">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.extractors.LocalMatcher.to_device">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_device</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">features</span><span class="p">:</span> <span class="n">LocalFeatures</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LocalFeatures</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        The same features on the matcher's device, so vismatch's per-match upload is a no-op.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            features: features from extract() or the cache.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A copy whose tensors sit on the matcher's device.</span>
+<span class="sd">        """</span>
+        <span class="n">moved</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"keypoints"</span><span class="p">,</span> <span class="s2">"descriptors"</span><span class="p">,</span> <span class="s2">"keypoints_normalized"</span><span class="p">):</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">features</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+            <span class="n">moved</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">value</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_device</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">replace</span><span class="p">(</span><span class="n">features</span><span class="p">,</span> <span class="o">**</span><span class="n">moved</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="LocalMatcher.match">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.extractors.LocalMatcher.match">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">match</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query</span><span class="p">:</span> <span class="n">LocalFeatures</span><span class="p">,</span> <span class="n">db</span><span class="p">:</span> <span class="n">LocalFeatures</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">MatchResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Match two cached frames; index rows are native keypoint-table indices.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            query: query image features.</span>
+<span class="sd">            db: reference image features.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Pre-RANSAC matches; empty when either side has no keypoints.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">match_batch</span><span class="p">([(</span><span class="n">query</span><span class="p">,</span> <span class="n">db</span><span class="p">)])[</span><span class="mi">0</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="LocalMatcher.match_batch">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.extractors.LocalMatcher.match_batch">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">match_batch</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="n">LocalFeatures</span><span class="p">,</span> <span class="n">LocalFeatures</span><span class="p">]]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">MatchResult</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Match many cached frame pairs in one vismatch match_batch call.</span>
+
+<span class="sd">        - xfeat matches every pair in one forward; loma loops pairs inside vismatch</span>
+<span class="sd">        - caller sizes the batch: xfeat holds two B x N x N similarity tensors</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            pairs: (query, db) feature pairs.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            One match() result per pair, in order; empty where either side has no keypoints.</span>
+<span class="sd">        """</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[</span><span class="n">_empty_match</span><span class="p">()</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">pairs</span><span class="p">]</span>
+        <span class="n">live</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">i</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">q</span><span class="p">,</span> <span class="n">d</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">pairs</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">descriptors</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">descriptors</span><span class="p">)</span>
+        <span class="p">]</span>
+        <span class="n">inputs</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_vismatch_features</span><span class="p">(</span><span class="n">pairs</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_vismatch_features</span><span class="p">(</span><span class="n">pairs</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">1</span><span class="p">]))</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">live</span>
+        <span class="p">]</span>
+
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">inference_mode</span><span class="p">():</span>
+            <span class="n">outs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_matcher</span><span class="o">.</span><span class="n">match_batch</span><span class="p">(</span><span class="n">inputs</span><span class="p">)</span>
+
+        <span class="c1"># MatchResult dtypes: float32 pixels, int64 keypoint indices</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">out</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">live</span><span class="p">,</span> <span class="n">outs</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="s2">"matched_idxs0"</span><span class="p">])</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">query_px</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="s2">"matched_kpts0"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="n">ref_px</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="s2">"matched_kpts1"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="n">idx_q</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="s2">"matched_idxs0"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="n">idx_db</span> <span class="o">=</span> <span class="n">out</span><span class="p">[</span><span class="s2">"matched_idxs1"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">,</span> <span class="n">copy</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="n">results</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">MatchResult</span><span class="p">(</span>
+                <span class="n">query_px</span><span class="o">=</span><span class="n">query_px</span><span class="p">,</span> <span class="n">ref_px</span><span class="o">=</span><span class="n">ref_px</span><span class="p">,</span> <span class="n">idx_q</span><span class="o">=</span><span class="n">idx_q</span><span class="p">,</span> <span class="n">idx_db</span><span class="o">=</span><span class="n">idx_db</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">results</span></div>
+
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_vismatch_features</span><span class="p">(</span><span class="n">feats</span><span class="p">:</span> <span class="n">LocalFeatures</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        LocalFeatures as a vismatch extract() dict; keypoints_normalized feeds loma.</span>
+<span class="sd">        """</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"all_kpts0"</span><span class="p">:</span> <span class="n">feats</span><span class="o">.</span><span class="n">keypoints</span><span class="p">,</span>
+            <span class="s2">"all_desc0"</span><span class="p">:</span> <span class="n">feats</span><span class="o">.</span><span class="n">descriptors</span><span class="p">,</span>
+            <span class="s2">"image_size"</span><span class="p">:</span> <span class="n">feats</span><span class="o">.</span><span class="n">image_size</span><span class="p">,</span>
+        <span class="p">}</span>
+
+        <span class="k">if</span> <span class="n">feats</span><span class="o">.</span><span class="n">keypoints_normalized</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">out</span><span class="p">[</span><span class="s2">"kpts_normalized"</span><span class="p">]</span> <span class="o">=</span> <span class="n">feats</span><span class="o">.</span><span class="n">keypoints_normalized</span>
+
+        <span class="k">return</span> <span class="n">out</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

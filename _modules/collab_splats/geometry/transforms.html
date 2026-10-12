@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.geometry.transforms &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/geometry/transforms';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.geometry.transforms</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.geometry.transforms</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">NumPy/SciPy camera geometry shared across the pipeline.</span>
+
+<span class="sd">- pose algebra: extrinsics_to_homogeneous, invert_poses, transform_points, project_to_so3</span>
+<span class="sd">- intrinsics: intrinsics_4x4, rescale_intrinsics, shift_intrinsics, decompose_camera</span>
+<span class="sd">- fits: estimate_intrinsics_from_points, fit_dominant_plane</span>
+<span class="sd">- point-set alignment: umeyama_se3, umeyama_sim3</span>
+<span class="sd">- OpenCV camera axes throughout: X right, Y down, Z forward (COLMAP, VGGT-X, BA)</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">nullcontext</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">numpy.typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">ArrayLike</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.linalg</span><span class="w"> </span><span class="kn">import</span> <span class="n">rq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tensor</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">full_fp32_matmul</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Geometry helpers</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="extrinsics_to_homogeneous">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.extrinsics_to_homogeneous">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extrinsics_to_homogeneous</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Append a [0, 0, 0, 1] row: (N, 3, 4) -&gt; (N, 4, 4) or (3, 4) -&gt; (4, 4).</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        extrinsics: (N, 3, 4) or (3, 4) pose matrices.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (N, 4, 4) or (4, 4) homogeneous poses, same dtype as the input.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Broadcast [0, 0, 0, 1] row stacked under the poses</span>
+    <span class="n">bottom</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="o">*</span><span class="n">extrinsics</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">2</span><span class="p">],</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">extrinsics</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">bottom</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">extrinsics</span><span class="p">,</span> <span class="n">bottom</span><span class="p">],</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">2</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="invert_poses">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.invert_poses">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">invert_poses</span><span class="p">(</span><span class="n">poses</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Closed-form SE(3) inverse via R^T and -R^T t.</span>
+
+<span class="sd">    - a rotation's inverse is its transpose, so [R|t]^-1 = [R^T | -R^T t]</span>
+<span class="sd">    - any leading batch shape: (4, 4), (N, 4, 4), (B, N, 4, 4)</span>
+<span class="sd">    - assumes valid rigid-body transforms; no general matrix inverse</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        poses: (..., 4, 4) rigid-body transforms.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (..., 4, 4) inverse transforms.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Invert rotation and translation blocks, then reassemble the 4x4</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">poses</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">poses</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">:]</span>
+    <span class="n">R_inv</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">swapaxes</span><span class="p">(</span><span class="n">R</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># R^T</span>
+    <span class="n">t_inv</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">R_inv</span> <span class="o">@</span> <span class="n">t</span><span class="p">)</span>  <span class="c1"># -R^T t</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">poses</span><span class="p">)</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">R_inv</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">:]</span> <span class="o">=</span> <span class="n">t_inv</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<div class="viewcode-block" id="transform_points">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.transform_points">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">transform_points</span><span class="p">(</span>
+    <span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">T</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="n">Tensor</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Points moved by a rigid transform: R @ p + t.</span>
+
+<span class="sd">    - reads only the 3x4 block; a (B, 4, 4) batch maps (P, 3) or (B, P, 3) points to (B, P, 3)</span>
+<span class="sd">    - numpy or torch, not mixed; torch is differentiable and runs in full fp32, as TF32 would round R @ p</span>
+<span class="sd">    - the TF32 toggle waits while another thread holds hold_matmul_precision</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points: (..., 3) points, or (P, 3) / (B, P, 3) with a pose batch.</span>
+<span class="sd">        T: (4, 4) or (3, 4) rigid transform, or a (B, 4, 4) / (B, 3, 4) batch of them.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (..., 3) transformed points; (B, P, 3) for a pose batch.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Full fp32 for torch: TF32, which a mapanything import enables, rounds the matmul; numpy ignores it</span>
+    <span class="n">precision</span> <span class="o">=</span> <span class="n">nullcontext</span><span class="p">()</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="k">else</span> <span class="n">full_fp32_matmul</span><span class="p">()</span>
+
+    <span class="k">with</span> <span class="n">precision</span><span class="p">:</span>
+        <span class="c1"># One pose: apply its 3x4 block directly</span>
+        <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">points</span> <span class="o">@</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">T</span> <span class="o">+</span> <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+
+        <span class="c1"># Pose batch: one matmul per pose, translation broadcast over the points</span>
+        <span class="k">return</span> <span class="n">points</span> <span class="o">@</span> <span class="n">T</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">swapaxes</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">)</span> <span class="o">+</span> <span class="n">T</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span></div>
+
+
+
+<div class="viewcode-block" id="extract_intrinsics">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.extract_intrinsics">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Focal lengths and principal point as Python floats.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        K: (3, 3) camera intrinsics matrix.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (fx, fy, cx, cy) in pixels.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">K</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">K</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">K</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span> <span class="nb">float</span><span class="p">(</span><span class="n">K</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span></div>
+
+
+
+<div class="viewcode-block" id="intrinsics_4x4">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.intrinsics_4x4">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">intrinsics_4x4</span><span class="p">(</span><span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Embed (..., 3, 3) K in the top-left of (..., 4, 4) identities.</span>
+
+<span class="sd">    - output dtype follows K; cast K first to pick it</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        K: (..., 3, 3) intrinsics.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (..., 4, 4) with K top-left and 1 at [3, 3].</span>
+<span class="sd">    """</span>
+    <span class="c1"># Identities tiled over K's batch dims, K written top-left</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">K</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span> <span class="n">K</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">K</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<div class="viewcode-block" id="rescale_intrinsics">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.rescale_intrinsics">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">rescale_intrinsics</span><span class="p">(</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">src_hw</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">dst_hw</span><span class="p">:</span> <span class="n">ArrayLike</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Map K from one pixel grid to another of a different size, as an image resize does.</span>
+
+<span class="sd">    - row 0 (fx, skew, cx) scales by dst_w / src_w, row 1 (fy, cy) by dst_h / src_h</span>
+<span class="sd">    - pixel-corner convention (cx = W / 2 is the center), as COLMAP and gsplat use</span>
+<span class="sd">    - pixel-center K (as PointcloudResult stores): shift by +0.5, rescale, shift by -0.5</span>
+<span class="sd">    - a crop is a separate shift_intrinsics call; K follows the image ops in the same order</span>
+<span class="sd">    - output takes K's shape; the hw leading dims broadcast into K's: (2,) for any K, (N, 2) with (N, 3, 3)</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        K: (..., 3, 3) intrinsics on the source grid.</span>
+<span class="sd">        src_hw: (..., 2) source grid (height, width).</span>
+<span class="sd">        dst_hw: (..., 2) destination grid (height, width).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (..., 3, 3) float64 K on the destination grid.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: an hw's leading dims don't broadcast into K's, or a height or width is</span>
+<span class="sd">            non-positive or NaN.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Output always takes K's shape; a bad hw shape fails the in-place multiply below</span>
+    <span class="n">src</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">src_hw</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">dst</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">dst_hw</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="c1"># Positive-form check so a NaN size is rejected too: any comparison against NaN is False</span>
+    <span class="n">bad</span> <span class="o">=</span> <span class="o">~</span><span class="p">(</span><span class="n">src</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">|</span> <span class="o">~</span><span class="p">(</span><span class="n">dst</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">bad</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"grid sizes must be positive, got src_hw </span><span class="si">{</span><span class="n">src</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span><span class="si">}</span><span class="s2"> dst_hw </span><span class="si">{</span><span class="n">dst</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Per-axis dst / src scale on the x and y rows</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">dst</span> <span class="o">/</span> <span class="n">src</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">:]</span> <span class="o">*=</span> <span class="n">scale</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="p">:]</span> <span class="o">*=</span> <span class="n">scale</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<div class="viewcode-block" id="shift_intrinsics">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.shift_intrinsics">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">shift_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">offset_xy</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Move K's principal point by a pixel offset, as a crop or its undo does.</span>
+
+<span class="sd">    - crop at top-left (tl_x, tl_y): shift by -tl; undo the crop: shift by +tl</span>
+<span class="sd">    - focal lengths and skew are unchanged</span>
+<span class="sd">    - output takes K's shape; offset_xy's leading dims broadcast into K's</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        K: (..., 3, 3) intrinsics.</span>
+<span class="sd">        offset_xy: (..., 2) (dx, dy) added to (cx, cy).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (..., 3, 3) float64 K with the shifted principal point.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: offset_xy's leading dims don't broadcast into K's.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Output always takes K's shape; a bad offset shape fails the in-place add below</span>
+    <span class="n">offset</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">offset_xy</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">+=</span> <span class="n">offset</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">out</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">+=</span> <span class="n">offset</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<div class="viewcode-block" id="project_to_so3">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.project_to_so3">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">project_to_so3</span><span class="p">(</span><span class="n">R</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Nearest rotation to each 3x3 matrix, by SVD, with the reflection case flipped.</span>
+
+<span class="sd">    - U @ Vt is orthogonal but may have det -1; negating U's last column fixes it</span>
+<span class="sd">    - bit-identical to U @ Vt when det is already +1</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        R: (..., 3, 3) near-rotation matrices.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (..., 3, 3) rotations, det +1.</span>
+<span class="sd">    """</span>
+    <span class="c1"># SVD projection, flipping U's last column wherever det(U @ Vt) is -1</span>
+    <span class="n">U</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">Vt</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">R</span><span class="p">)</span>
+    <span class="n">U</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="p">:,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">*=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">U</span> <span class="o">@</span> <span class="n">Vt</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">U</span> <span class="o">@</span> <span class="n">Vt</span></div>
+
+
+
+<div class="viewcode-block" id="decompose_camera">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.decompose_camera">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">decompose_camera</span><span class="p">(</span><span class="n">P</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    RQ-decompose a 3x4 or 4x4 projection matrix into (K, R, t, scale).</span>
+
+<span class="sd">    - port of MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/slam_utils.py:45-83; no orthogonal snap</span>
+<span class="sd">    - R is camera-to-world (upstream default), t is world-to-camera (upstream no_inverse); C = -R @ t</span>
+<span class="sd">    - callers store [R.T | t] as a world-to-cam pose; see Submap.get_all_poses_world</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        P: 3x4 projection matrix, or 4x4 (divided by P[-1, -1], last row dropped).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (K with K[2, 2] = 1, camera-to-world R, world-to-cam t, scale = K[2, 2] before normalizing).</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: P is not (3, 4) after the 4x4 strip.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Normalize a 4x4 by P[-1, -1] and drop its last row</span>
+    <span class="n">P</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">P</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">P</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="n">P</span> <span class="o">=</span> <span class="n">P</span> <span class="o">/</span> <span class="n">P</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">P</span> <span class="o">=</span> <span class="n">P</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:]</span>
+
+    <span class="k">if</span> <span class="n">P</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"expected (3,4) after strip, got </span><span class="si">{</span><span class="n">P</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="c1"># RQ-split the left 3x3 into upper-triangular K and rotation R</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="n">P</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">K</span><span class="p">,</span> <span class="n">R</span> <span class="o">=</span> <span class="n">rq</span><span class="p">(</span><span class="n">M</span><span class="p">)</span>
+
+    <span class="c1"># Positive diagonal on K: flip each negative column of K with the matching row of R</span>
+    <span class="k">for</span> <span class="n">axis</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">K</span><span class="p">[</span><span class="n">axis</span><span class="p">,</span> <span class="n">axis</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">K</span><span class="p">[:,</span> <span class="n">axis</span><span class="p">]</span> <span class="o">*=</span> <span class="o">-</span><span class="mi">1</span>
+            <span class="n">R</span><span class="p">[</span><span class="n">axis</span><span class="p">,</span> <span class="p">:]</span> <span class="o">*=</span> <span class="o">-</span><span class="mi">1</span>
+
+    <span class="n">scale</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">K</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>
+
+    <span class="c1"># Default branch's camera-to-world R, no_inverse branch's world-to-cam t; see the docstring</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">R</span><span class="p">)</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K</span><span class="p">)</span> <span class="o">@</span> <span class="n">P</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">K</span> <span class="o">/</span> <span class="n">scale</span>
+    <span class="k">return</span> <span class="n">K</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">t</span><span class="p">,</span> <span class="n">scale</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Intrinsics and floor-plane fits</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_compute_weighted_median</span><span class="p">(</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">weights</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">max_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50_000</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Confidence-weighted median, subsampled above `max_n` with a seeded RNG.</span>
+
+<span class="sd">    - values must be finite; a non-finite entry skews the result without showing</span>
+<span class="sd">    - prior art: github.com/PolyCam/LoGeR @ 5d7c1a7, `run_loger.py:167`</span>
+<span class="sd">    - values, weights: (M,); weights non-negative</span>
+<span class="sd">    - None for empty input or zero total weight</span>
+<span class="sd">    """</span>
+    <span class="c1"># Empty input has no median</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="c1"># Cap the argsort over the pooled H*W*N population; fixed seed keeps the subsample reproducible</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_n</span><span class="p">:</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">),</span> <span class="n">max_n</span><span class="p">,</span> <span class="n">replace</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">values</span><span class="p">,</span> <span class="n">weights</span> <span class="o">=</span> <span class="n">values</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="n">weights</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+
+    <span class="c1"># Sort by value, then walk the cumulative weight to the halfway mass</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
+    <span class="n">values</span><span class="p">,</span> <span class="n">weights</span> <span class="o">=</span> <span class="n">values</span><span class="p">[</span><span class="n">order</span><span class="p">],</span> <span class="n">weights</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+    <span class="n">cumw</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">weights</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="c1"># Zero total weight has no midpoint; report no estimate</span>
+    <span class="k">if</span> <span class="n">cumw</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">values</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">searchsorted</span><span class="p">(</span><span class="n">cumw</span><span class="p">,</span> <span class="n">cumw</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">)])</span>
+
+
+<div class="viewcode-block" id="estimate_intrinsics_from_points">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.estimate_intrinsics_from_points">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_intrinsics_from_points</span><span class="p">(</span>
+    <span class="n">local_points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">conf</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">conf_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Fit one shared pinhole K to a camera-frame pointmap by confidence-weighted median.</span>
+
+<span class="sd">    - for backends with no intrinsics head; per pixel fx = u_c * Z / X (fy likewise), pooled over all frames</span>
+<span class="sd">    - one K per batch, fx and fy distinct, principal point centered</span>
+<span class="sd">    - ported from PolyCam/LoGeR @ 5d7c1a7, run_loger.py:180-254, without its _snap_square_pixels (:195)</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        local_points: (N, H, W, 3) camera-frame points, channel 2 being depth.</span>
+<span class="sd">        conf: (N, H, W) or (N, H, W, 1) confidence already activated into [0, 1], not logits.</span>
+<span class="sd">        conf_threshold: minimum confidence for a pixel to contribute; lower admits more pixels.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (3, 3) float32 K with principal point ((W - 1) / 2, (H - 1) / 2).</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        RuntimeError: too few pixels survive to fit either focal; there is no fallback.</span>
+<span class="sd">    """</span>
+    <span class="n">n</span><span class="p">,</span> <span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">local_points</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># Drop a trailing singleton confidence channel</span>
+    <span class="k">if</span> <span class="n">conf</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
+        <span class="n">conf</span> <span class="o">=</span> <span class="n">conf</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Centered pixel grid: fixes the principal point, so return K, not (fx, fy)</span>
+    <span class="n">uu</span><span class="p">,</span> <span class="n">vv</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span> <span class="o">-</span> <span class="p">(</span><span class="n">w</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span> <span class="o">-</span> <span class="p">(</span><span class="n">h</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Invert the pinhole model per pixel: u_c = fx * X / Z  =&gt;  fx = u_c * Z / X</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span> <span class="o">=</span> <span class="n">local_points</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">local_points</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">local_points</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">valid</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="p">(</span><span class="n">z</span> <span class="o">&gt;</span> <span class="mf">1e-3</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">1e-6</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">y</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">1e-6</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">conf</span> <span class="o">&gt;</span> <span class="n">conf_threshold</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="k">with</span> <span class="n">np</span><span class="o">.</span><span class="n">errstate</span><span class="p">(</span><span class="n">divide</span><span class="o">=</span><span class="s2">"ignore"</span><span class="p">,</span> <span class="n">invalid</span><span class="o">=</span><span class="s2">"ignore"</span><span class="p">):</span>
+        <span class="n">fx_per_pixel</span> <span class="o">=</span> <span class="n">uu</span> <span class="o">*</span> <span class="n">z</span> <span class="o">/</span> <span class="n">x</span>
+        <span class="n">fy_per_pixel</span> <span class="o">=</span> <span class="n">vv</span> <span class="o">*</span> <span class="n">z</span> <span class="o">/</span> <span class="n">y</span>
+
+    <span class="c1"># Valid per-pixel focals and their confidence weights</span>
+    <span class="n">fx_vals</span><span class="p">,</span> <span class="n">fy_vals</span> <span class="o">=</span> <span class="n">fx_per_pixel</span><span class="p">[</span><span class="n">valid</span><span class="p">],</span> <span class="n">fy_per_pixel</span><span class="p">[</span><span class="n">valid</span><span class="p">]</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="n">conf</span><span class="p">[</span><span class="n">valid</span><span class="p">]</span>
+
+    <span class="c1"># Focal bounds (157-6 degree FOV): upper drops +inf, lower drops -inf, NaN fails both</span>
+    <span class="n">ok_fx</span> <span class="o">=</span> <span class="p">(</span><span class="n">fx_vals</span> <span class="o">&gt;</span> <span class="n">w</span> <span class="o">*</span> <span class="mf">0.1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">fx_vals</span> <span class="o">&lt;</span> <span class="n">w</span> <span class="o">*</span> <span class="mi">10</span><span class="p">)</span>
+    <span class="n">ok_fy</span> <span class="o">=</span> <span class="p">(</span><span class="n">fy_vals</span> <span class="o">&gt;</span> <span class="n">h</span> <span class="o">*</span> <span class="mf">0.1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">fy_vals</span> <span class="o">&lt;</span> <span class="n">h</span> <span class="o">*</span> <span class="mi">10</span><span class="p">)</span>
+    <span class="n">fx</span> <span class="o">=</span> <span class="n">_compute_weighted_median</span><span class="p">(</span><span class="n">fx_vals</span><span class="p">[</span><span class="n">ok_fx</span><span class="p">],</span> <span class="n">weights</span><span class="p">[</span><span class="n">ok_fx</span><span class="p">])</span>
+    <span class="n">fy</span> <span class="o">=</span> <span class="n">_compute_weighted_median</span><span class="p">(</span><span class="n">fy_vals</span><span class="p">[</span><span class="n">ok_fy</span><span class="p">],</span> <span class="n">weights</span><span class="p">[</span><span class="n">ok_fy</span><span class="p">])</span>
+
+    <span class="c1"># Fail loudly: a plausible-but-wrong fallback K fails silently downstream</span>
+    <span class="k">if</span> <span class="p">(</span>
+        <span class="n">fx</span> <span class="ow">is</span> <span class="kc">None</span>
+        <span class="ow">or</span> <span class="n">fy</span> <span class="ow">is</span> <span class="kc">None</span>
+        <span class="ow">or</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">fx</span><span class="p">)</span>
+        <span class="ow">or</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">fy</span><span class="p">)</span>
+        <span class="ow">or</span> <span class="n">fx</span> <span class="o">&lt;=</span> <span class="mi">0</span>
+        <span class="ow">or</span> <span class="n">fy</span> <span class="o">&lt;=</span> <span class="mi">0</span>
+    <span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"Pinhole intrinsics fit failed over </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> frames: "</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">valid</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">valid</span><span class="o">.</span><span class="n">size</span><span class="si">}</span><span class="s2"> pixels passed the validity mask "</span>
+            <span class="sa">f</span><span class="s2">"(</span><span class="si">{</span><span class="nb">int</span><span class="p">((</span><span class="n">conf</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">conf_threshold</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> cleared conf_threshold=</span><span class="si">{</span><span class="n">conf_threshold</span><span class="si">}</span><span class="s2">), "</span>
+            <span class="sa">f</span><span class="s2">"of which </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">ok_fx</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> survived the fx bounds and </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><span class="n">ok_fy</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="si">}</span><span class="s2"> the fy bounds "</span>
+            <span class="sa">f</span><span class="s2">"(fx=</span><span class="si">{</span><span class="n">fx</span><span class="si">}</span><span class="s2">, fy=</span><span class="si">{</span><span class="n">fy</span><span class="si">}</span><span class="s2">). No fallback focal is applied by design."</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Keep fx and fy distinct: per-axis resizing yields non-square pixels</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+        <span class="p">[[</span><span class="n">fx</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="p">(</span><span class="n">w</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">fy</span><span class="p">,</span> <span class="p">(</span><span class="n">h</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]],</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="fit_dominant_plane">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.fit_dominant_plane">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fit_dominant_plane</span><span class="p">(</span><span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    RANSAC floor plane, as the rigid transform that puts it at Z-up, z=0.</span>
+
+<span class="sd">    - open3d segment_plane over the full cloud; largest inlier set is taken as the floor</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points: (N, 3) point cloud.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        R: (3, 3) rotation taking the floor normal onto [0, 0, 1].</span>
+<span class="sd">        t: (3,) translation placing the floor at z=0 after that rotation.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ImportError: open3d is not installed.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Imported here: open3d ships no wheels past Python 3.12 and only this fit needs it</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">open3d</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">o3d</span>  <span class="c1"># noqa: PLC0415</span>
+    <span class="k">except</span> <span class="ne">ImportError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span><span class="s2">"fit_dominant_plane needs open3d: pip install open3d"</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+
+    <span class="c1"># RANSAC plane normal · x + d_norm = 0, with a unit normal</span>
+    <span class="n">pcd</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">PointCloud</span><span class="p">()</span>
+    <span class="n">pcd</span><span class="o">.</span><span class="n">points</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">utility</span><span class="o">.</span><span class="n">Vector3dVector</span><span class="p">(</span><span class="n">points</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+    <span class="n">plane_model</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">pcd</span><span class="o">.</span><span class="n">segment_plane</span><span class="p">(</span>
+        <span class="n">distance_threshold</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span> <span class="n">ransac_n</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">num_iterations</span><span class="o">=</span><span class="mi">1000</span>
+    <span class="p">)</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">d</span> <span class="o">=</span> <span class="n">plane_model</span>
+    <span class="n">n_mag</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">([</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">])</span>
+    <span class="n">normal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">])</span> <span class="o">/</span> <span class="n">n_mag</span>
+    <span class="n">d_norm</span> <span class="o">=</span> <span class="n">d</span> <span class="o">/</span> <span class="n">n_mag</span>
+
+    <span class="c1"># Ensure normal points upward (positive Z component after alignment)</span>
+    <span class="k">if</span> <span class="n">normal</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">normal</span> <span class="o">=</span> <span class="o">-</span><span class="n">normal</span>
+        <span class="n">d_norm</span> <span class="o">=</span> <span class="o">-</span><span class="n">d_norm</span>
+
+    <span class="c1"># Rodrigues rotation of the normal onto +z; the flip above rules out the antiparallel case</span>
+    <span class="n">axis</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cross</span><span class="p">(</span><span class="n">normal</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]))</span>
+    <span class="n">axis_norm</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">axis</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">axis_norm</span> <span class="o">&lt;</span> <span class="mf">1e-6</span><span class="p">:</span>
+        <span class="n">R</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">axis</span> <span class="o">/=</span> <span class="n">axis_norm</span>
+        <span class="n">angle</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arccos</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">normal</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">))</span>
+        <span class="n">cross</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+            <span class="p">[[</span><span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="n">axis</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">axis</span><span class="p">[</span><span class="mi">1</span><span class="p">]],</span> <span class="p">[</span><span class="n">axis</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="n">axis</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="p">[</span><span class="o">-</span><span class="n">axis</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">axis</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">0</span><span class="p">]]</span>
+        <span class="p">)</span>
+        <span class="n">R</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angle</span><span class="p">)</span> <span class="o">*</span> <span class="n">cross</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angle</span><span class="p">))</span> <span class="o">*</span> <span class="p">(</span><span class="n">cross</span> <span class="o">@</span> <span class="n">cross</span><span class="p">)</span>
+
+    <span class="c1"># After R the floor sits at z = -d_norm; translate by d_norm to bring it to z = 0</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="n">d_norm</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">R</span><span class="p">,</span> <span class="n">t</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Point-set alignment</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_umeyama</span><span class="p">(</span>
+    <span class="n">source</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">target</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">weights</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">with_scale</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Weighted Umeyama core shared by both solvers: scale, float64 rotation and the two weighted means.</span>
+
+<span class="sd">    - source, target (M, 3); weights (M,) non-negative, None for uniform</span>
+<span class="sd">    - scale is 1.0 without with_scale; multiplying by 1.0 leaves the cross-covariance bit-identical</span>
+<span class="sd">    - raises ValueError on fewer than 3 correspondences or zero total weight</span>
+<span class="sd">    """</span>
+    <span class="c1"># Reject too few points or zero weight, then normalize</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">M</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Umeyama alignment needs at least 3 correspondences, got </span><span class="si">{</span><span class="n">M</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="n">w</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">weights</span> <span class="ow">is</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">weights</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">w_sum</span> <span class="o">=</span> <span class="n">w</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">w_sum</span> <span class="o">&lt;</span> <span class="mf">1e-9</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"Umeyama alignment got zero total weight"</span><span class="p">)</span>
+
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span> <span class="o">/</span> <span class="n">w_sum</span>
+
+    <span class="c1"># Center both sets on their weighted means</span>
+    <span class="n">src</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">tgt</span> <span class="o">=</span> <span class="n">target</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">mu_src</span> <span class="o">=</span> <span class="p">(</span><span class="n">w</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">src</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">mu_tgt</span> <span class="o">=</span> <span class="p">(</span><span class="n">w</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">tgt</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">src_c</span> <span class="o">=</span> <span class="n">src</span> <span class="o">-</span> <span class="n">mu_src</span>
+    <span class="n">tgt_c</span> <span class="o">=</span> <span class="n">tgt</span> <span class="o">-</span> <span class="n">mu_tgt</span>
+
+    <span class="c1"># Scale as the ratio of weighted RMS spreads; coincident source points keep scale 1</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+    <span class="k">if</span> <span class="n">with_scale</span><span class="p">:</span>
+        <span class="n">scale_src</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">((</span><span class="n">w</span> <span class="o">*</span> <span class="p">(</span><span class="n">src_c</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">sum</span><span class="p">()))</span>
+        <span class="n">scale_tgt</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">((</span><span class="n">w</span> <span class="o">*</span> <span class="p">(</span><span class="n">tgt_c</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">sum</span><span class="p">()))</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="n">scale_tgt</span> <span class="o">/</span> <span class="n">scale_src</span> <span class="k">if</span> <span class="n">scale_src</span> <span class="o">&gt;</span> <span class="mf">1e-9</span> <span class="k">else</span> <span class="mf">1.0</span>
+
+    <span class="c1"># Rotation from the SVD of the weighted cross-covariance; D forces det(R) = +1</span>
+    <span class="n">H</span> <span class="o">=</span> <span class="p">(</span><span class="n">src_c</span> <span class="o">*</span> <span class="n">s</span> <span class="o">*</span> <span class="n">w</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">])</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">tgt_c</span>
+    <span class="n">U</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">Vt</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">H</span><span class="p">)</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">Vt</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">U</span><span class="o">.</span><span class="n">T</span><span class="p">)])</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">Vt</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">D</span> <span class="o">@</span> <span class="n">U</span><span class="o">.</span><span class="n">T</span>
+    <span class="k">return</span> <span class="n">s</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">mu_src</span><span class="p">,</span> <span class="n">mu_tgt</span>
+
+
+<div class="viewcode-block" id="umeyama_se3">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.umeyama_se3">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">umeyama_se3</span><span class="p">(</span>
+    <span class="n">source</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">target</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">weights</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Closed-form rigid alignment of point sets by weighted SVD, without scale.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        source: (M, 3) points in source frame.</span>
+<span class="sd">        target: (M, 3) corresponding points in target frame.</span>
+<span class="sd">        weights: (M,) non-negative weights; uniform if None.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (4, 4) float32 homogeneous T such that target ≈ T @ source.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: fewer than 3 correspondences, or zero total weight.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Rotation from the shared core, translation from the weighted means</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">mu_src</span><span class="p">,</span> <span class="n">mu_tgt</span> <span class="o">=</span> <span class="n">_umeyama</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">with_scale</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="n">mu_tgt</span> <span class="o">-</span> <span class="n">R</span> <span class="o">@</span> <span class="n">mu_src</span>
+
+    <span class="c1"># Pack into a float32 homogeneous transform</span>
+    <span class="n">T</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">R</span>
+    <span class="n">T</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">t</span>
+    <span class="k">return</span> <span class="n">T</span></div>
+
+
+
+<div class="viewcode-block" id="umeyama_sim3">
+<a class="viewcode-back" href="../../../api/geometry.html#collab_splats.geometry.transforms.umeyama_sim3">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">umeyama_sim3</span><span class="p">(</span>
+    <span class="n">source</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">target</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">weights</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Closed-form similarity alignment of point sets by weighted Umeyama, with scale.</span>
+
+<span class="sd">    - coincident source points give scale 1 by design: a stationary camera has one center</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        source: (M, 3) points in source frame.</span>
+<span class="sd">        target: (M, 3) corresponding points in target frame.</span>
+<span class="sd">        weights: (M,) non-negative weights; uniform if None.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (s, R, t): float scale, (3, 3) float32 rotation, (3,) float32 translation</span>
+<span class="sd">        such that target ≈ s * R @ source + t.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: fewer than 3 correspondences, or zero total weight.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Translation from the float32 rotation, as callers apply it</span>
+    <span class="n">s</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">mu_src</span><span class="p">,</span> <span class="n">mu_tgt</span> <span class="o">=</span> <span class="n">_umeyama</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">weights</span><span class="p">,</span> <span class="n">with_scale</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">R</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">t</span> <span class="o">=</span> <span class="p">(</span><span class="n">mu_tgt</span> <span class="o">-</span> <span class="n">s</span> <span class="o">*</span> <span class="n">R</span> <span class="o">@</span> <span class="n">mu_src</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">s</span><span class="p">,</span> <span class="n">R</span><span class="p">,</span> <span class="n">t</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

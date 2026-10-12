@@ -1,0 +1,1774 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.splats.scaffold &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/splats/scaffold';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.splats.scaffold</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.splats.scaffold</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Scaffold-GS: anchors whose MLP heads decode neural Gaussians per view.</span>
+
+<span class="sd">- `ScaffoldConfig`, `ScaffoldMLPs`: the yaml block and the three decode heads</span>
+<span class="sd">- `Scaffold`: anchor parameters, per-view decode, render, export, checkpoint</span>
+<span class="sd">- `AnchorStrategy`: grows and prunes anchors</span>
+<span class="sd">- reimplements city-super/Scaffold-GS @ 59c833b5: scene/gaussian_model.py, gaussian_renderer/__init__.py,</span>
+<span class="sd">  arguments/__init__.py, train.py; no code vendored</span>
+<span class="sd">- Scaffold x 2DGS (two-scale decode) follows yanxian-ll/GS-SR @ 566359be, gssr/scene/scaffold_2dgs_scene.py:8-19</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tensor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim.lr_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExponentialLR</span><span class="p">,</span> <span class="n">LambdaLR</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">gsplat</span><span class="w"> </span><span class="kn">import</span> <span class="n">fully_fused_projection</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">gsplat.strategy.ops</span><span class="w"> </span><span class="kn">import</span> <span class="n">_update_param_with_optimizer</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="n">project</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.gaussian</span><span class="w"> </span><span class="kn">import</span> <span class="n">SH_C0</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.rendering</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_gaussians</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">knn_spacing</span>
+
+<span class="c1"># Annotation-only: a runtime import of the trainer would be circular</span>
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.trainer</span><span class="w"> </span><span class="kn">import</span> <span class="n">SplatsConfig</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">########################################</span>
+<span class="c1"># Config</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="ScaffoldConfig">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.ScaffoldConfig">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ScaffoldConfig</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Settings for the anchor representation; the `splats.scaffold:` yaml block.</span>
+<span class="sd">    """</span>
+
+    <span class="n">n_offsets</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span>
+    <span class="n">feat_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span>
+
+    <span class="c1"># Anchor voxel size: median seed spacing x voxel_multiplier, or voxel_size in world units</span>
+    <span class="n">voxel_multiplier</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span>
+    <span class="n">voxel_size</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># Densification window and thresholds</span>
+    <span class="c1"># - grad_threshold: Scaffold's published value</span>
+    <span class="c1"># - gradients normalized as in gsplat @ d2f5c0f, gsplat/strategy/default.py:243-249</span>
+    <span class="n">start_stat</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span>  <span class="c1"># statistics start before growing</span>
+    <span class="n">update_from</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1500</span>
+    <span class="n">update_until</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">15000</span>
+    <span class="n">refine_every</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span>
+    <span class="n">grad_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2e-4</span>
+    <span class="n">min_opacity</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.005</span>
+    <span class="n">update_depth</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>  <span class="c1"># coarse-to-fine growing levels</span>
+    <span class="n">update_hierarchy_factor</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span>
+    <span class="n">update_init_factor</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span>  <span class="c1"># level-0 growth grid, in voxels</span>
+    <span class="n">success_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.8</span>  <span class="c1"># fraction of a window a slot must be seen</span>
+
+    <span class="c1"># Per-image appearance embedding for the color head</span>
+    <span class="c1"># - 0 disables it</span>
+    <span class="c1"># - independent of splats.appearance_opt</span>
+    <span class="n">appearance_dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span>
+
+    <span class="c1"># Learning rates</span>
+    <span class="c1"># - anchor / offset lrs scale with scene_scale</span>
+    <span class="c1"># - anchor_lr 0: anchors stay on the voxel grid, as upstream</span>
+    <span class="n">anchor_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">offset_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-2</span>
+    <span class="n">offset_lr_final</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-4</span>
+    <span class="n">anchor_feat_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">7.5e-3</span>
+    <span class="n">scaling_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">7e-3</span>
+    <span class="n">rotation_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2e-3</span>
+
+    <span class="c1"># One lr and decay per head, as upstream</span>
+    <span class="n">mlp_opacity_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2e-3</span>
+    <span class="n">mlp_opacity_lr_final</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2e-5</span>
+    <span class="n">mlp_cov_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">4e-3</span>
+    <span class="n">mlp_color_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">8e-3</span>
+    <span class="n">mlp_color_lr_final</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5e-5</span>
+    <span class="n">appearance_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5e-2</span>
+    <span class="n">appearance_lr_final</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5e-4</span>
+
+    <span class="c1"># Decay horizon, fixed rather than the run length</span>
+    <span class="n">lr_max_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30000</span>
+
+    <span class="c1"># bf16 autocast of the three decode heads; outputs return as float32; false for float32 heads</span>
+    <span class="n">mlp_bf16</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+
+<div class="viewcode-block" id="ScaffoldConfig.from_dict">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.ScaffoldConfig.from_dict">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dict</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">block</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"ScaffoldConfig"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Build from the yaml block, rejecting unknown keys.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            block: the parsed `splats.scaffold:` mapping.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The validated config.</span>
+<span class="sd">        """</span>
+        <span class="n">unknown</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">block</span><span class="p">)</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="bp">cls</span><span class="o">.</span><span class="n">__dataclass_fields__</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.scaffold: unknown keys </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">unknown</span><span class="p">)</span><span class="si">}</span><span class="s2">; allowed </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="bp">cls</span><span class="o">.</span><span class="n">__dataclass_fields__</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="n">cfg</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span><span class="o">**</span><span class="n">block</span><span class="p">)</span>
+
+        <span class="c1"># Reject sizes that would break the decode later</span>
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.scaffold.n_offsets must be &gt;= 1, got </span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">feat_dim</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.scaffold.feat_dim must be &gt;= 1, got </span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">feat_dim</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">voxel_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cfg</span><span class="o">.</span><span class="n">voxel_size</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.scaffold.voxel_size must be &gt; 0 when set, got </span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">voxel_size</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">lr_max_steps</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.scaffold.lr_max_steps must be &gt;= 1, got </span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">lr_max_steps</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">voxel_multiplier</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.scaffold.voxel_multiplier must be &gt; 0, got </span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">voxel_multiplier</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">cfg</span></div>
+</div>
+
+
+
+<span class="c1">########################################</span>
+<span class="c1"># MLP heads</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="ScaffoldMLPs">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.ScaffoldMLPs">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ScaffoldMLPs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    The three decode heads: opacity, covariance, color.</span>
+
+<span class="sd">    - input: anchor feature + unit view direction; output: `n_offsets` values per anchor</span>
+<span class="sd">    - opacity is tanh; a non-positive value hides that offset</span>
+<span class="sd">    - `mlp_bf16` runs the heads under bf16 autocast, forward and backward</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cfg</span><span class="p">:</span> <span class="n">ScaffoldConfig</span><span class="p">,</span> <span class="n">n_views</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Build the heads and, if enabled, the appearance embedding.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cfg: scaffold config; `feat_dim`, `n_offsets`, `appearance_dim` and `mlp_bf16` are read.</span>
+<span class="sd">            n_views: number of training views; 0 leaves out the appearance embedding.</span>
+<span class="sd">        """</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_offsets</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bf16</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">mlp_bf16</span>
+        <span class="n">width</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">feat_dim</span>
+
+        <span class="c1"># Head input: anchor feature + unit view direction, no distance</span>
+        <span class="n">base_dim</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">feat_dim</span> <span class="o">+</span> <span class="mi">3</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp_opacity</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">base_dim</span><span class="p">,</span> <span class="n">width</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(</span><span class="kc">True</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Tanh</span><span class="p">(),</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp_cov</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">base_dim</span><span class="p">,</span> <span class="n">width</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(</span><span class="kc">True</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="mi">7</span> <span class="o">*</span> <span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span><span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Appearance embedding feeds the color head only</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">embedding_appearance</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">color_dim</span> <span class="o">=</span> <span class="n">base_dim</span>
+
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">appearance_dim</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">n_views</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">"scaffold.appearance_dim &gt; 0 needs n_views &gt;= 1 to size the embedding"</span>
+                <span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">embedding_appearance</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Embedding</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">appearance_dim</span><span class="p">)</span>
+            <span class="n">color_dim</span> <span class="o">+=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">appearance_dim</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp_color</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">color_dim</span><span class="p">,</span> <span class="n">width</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(</span><span class="kc">True</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="mi">3</span> <span class="o">*</span> <span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span><span class="p">),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Sigmoid</span><span class="p">(),</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="ScaffoldMLPs.forward">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.ScaffoldMLPs.forward">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">forward</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">features</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">camera_id</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Opacity, covariance and color for each anchor.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            features: (A, feat_dim + 3) anchor features + unit view direction.</span>
+<span class="sd">            camera_id: (1,) view index; required when the appearance embedding is on.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (opacity (A, K), covariance (A, 7K), color (A, 3K)), K = n_offsets.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Optional bf16 autocast; float32 (a no-op cast when off) for everything downstream</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">autocast</span><span class="p">(</span>
+            <span class="n">device_type</span><span class="o">=</span><span class="n">features</span><span class="o">.</span><span class="n">device</span><span class="o">.</span><span class="n">type</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span> <span class="n">enabled</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">bf16</span>
+        <span class="p">):</span>
+            <span class="n">opacity</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_opacity</span><span class="p">(</span><span class="n">features</span><span class="p">)</span>
+            <span class="n">cov</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_cov</span><span class="p">(</span><span class="n">features</span><span class="p">)</span>
+
+            <span class="c1"># Append this view's appearance embedding to the color input</span>
+            <span class="n">color_input</span> <span class="o">=</span> <span class="n">features</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">embedding_appearance</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">camera_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                        <span class="s2">"scaffold.appearance_dim &gt; 0 requires camera_id at decode time"</span>
+                    <span class="p">)</span>
+
+                <span class="n">embedding</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">embedding_appearance</span><span class="p">(</span><span class="n">camera_id</span><span class="p">[:</span><span class="mi">1</span><span class="p">])</span><span class="o">.</span><span class="n">expand</span><span class="p">(</span>
+                    <span class="nb">len</span><span class="p">(</span><span class="n">features</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span>
+                <span class="p">)</span>
+                <span class="n">color_input</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">features</span><span class="p">,</span> <span class="n">embedding</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+            <span class="n">color</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_color</span><span class="p">(</span><span class="n">color_input</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">opacity</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">cov</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">color</span><span class="o">.</span><span class="n">float</span><span class="p">()</span></div>
+</div>
+
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Scaffold</span>
+<span class="c1">########################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_decay_lambda</span><span class="p">(</span><span class="n">lr_init</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">lr_final</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">lr_max_steps</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    LambdaLR multiplier for a log-space decay from lr_init to lr_final.</span>
+
+<span class="sd">    - matches upstream's `get_expon_lr_func`; flat past lr_max_steps</span>
+<span class="sd">    - non-positive endpoints hold the lr flat</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">lr_init</span> <span class="o">&lt;=</span> <span class="mf">0.0</span> <span class="ow">or</span> <span class="n">lr_final</span> <span class="o">&lt;=</span> <span class="mf">0.0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="k">lambda</span> <span class="n">step</span><span class="p">:</span> <span class="mf">1.0</span>
+
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">lr_final</span> <span class="o">/</span> <span class="n">lr_init</span>
+    <span class="n">horizon</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">lr_max_steps</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="k">lambda</span> <span class="n">step</span><span class="p">:</span> <span class="n">ratio</span> <span class="o">**</span> <span class="nb">min</span><span class="p">(</span><span class="n">step</span> <span class="o">/</span> <span class="n">horizon</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="voxelize">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.voxelize">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">voxelize</span><span class="p">(</span><span class="n">points</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">voxel_size</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Centers of the voxels that contain at least one point.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        points: (N, 3) positions.</span>
+<span class="sd">        voxel_size: voxel edge in world units.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (M, 3) centers of the occupied voxels.</span>
+<span class="sd">    """</span>
+    <span class="n">grid_coords</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">points</span> <span class="o">/</span> <span class="n">voxel_size</span><span class="p">)</span>
+    <span class="n">unique_coords</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">grid_coords</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">unique_coords</span> <span class="o">*</span> <span class="n">voxel_size</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_offsets_to_gaussians</span><span class="p">(</span>
+    <span class="n">anchors</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">scaling</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">offsets</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">neural_opacity</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cov</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">color</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">n_offsets</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Neural Gaussians from the open offsets, plus the kept slot indices.</span>
+
+<span class="sd">    - offsets with non-positive opacity are dropped</span>
+<span class="sd">    - the most opaque is always kept: gsplat needs at least one splat; a no-op when any is open</span>
+<span class="sd">    - one `nonzero` (host sync) gathers every field, not one per boolean mask</span>
+<span class="sd">    """</span>
+    <span class="n">flat_opacity</span> <span class="o">=</span> <span class="n">neural_opacity</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">keep</span> <span class="o">=</span> <span class="n">flat_opacity</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="n">keep</span><span class="p">[</span><span class="n">flat_opacity</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)]</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">kept</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">keep</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Means: anchor + offset x offset extent</span>
+    <span class="n">offset_extent</span> <span class="o">=</span> <span class="n">scaling</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">means</span> <span class="o">=</span> <span class="n">anchors</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:]</span> <span class="o">+</span> <span class="n">offsets</span> <span class="o">*</span> <span class="n">offset_extent</span>
+    <span class="n">means</span> <span class="o">=</span> <span class="n">means</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)[</span><span class="n">kept</span><span class="p">]</span>
+
+    <span class="c1"># Scales: anchor's Gaussian extent x sigmoid of the cov head</span>
+    <span class="n">cov</span> <span class="o">=</span> <span class="n">cov</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">7</span><span class="p">)[</span><span class="n">kept</span><span class="p">]</span>
+    <span class="n">extent</span> <span class="o">=</span> <span class="n">scaling</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">:</span><span class="mi">6</span><span class="p">]</span><span class="o">.</span><span class="n">repeat_interleave</span><span class="p">(</span><span class="n">n_offsets</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)[</span><span class="n">kept</span><span class="p">]</span>
+    <span class="n">modulation</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">cov</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">])</span>
+    <span class="n">scales</span> <span class="o">=</span> <span class="n">extent</span> <span class="o">*</span> <span class="n">modulation</span>
+
+    <span class="c1"># Rotation, opacity and color of the open slots</span>
+    <span class="n">quats</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">cov</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">:</span><span class="mi">7</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">opacities</span> <span class="o">=</span> <span class="n">flat_opacity</span><span class="p">[</span><span class="n">kept</span><span class="p">]</span>
+    <span class="n">colors</span> <span class="o">=</span> <span class="n">color</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)[</span><span class="n">kept</span><span class="p">]</span>
+
+    <span class="n">gaussians</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"means"</span><span class="p">:</span> <span class="n">means</span><span class="p">,</span>
+        <span class="s2">"scales"</span><span class="p">:</span> <span class="n">scales</span><span class="p">,</span>
+        <span class="s2">"quats"</span><span class="p">:</span> <span class="n">quats</span><span class="p">,</span>
+        <span class="s2">"opacities"</span><span class="p">:</span> <span class="n">opacities</span><span class="p">,</span>
+        <span class="s2">"colors"</span><span class="p">:</span> <span class="n">colors</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">kept</span><span class="p">,</span> <span class="n">gaussians</span>
+
+
+<div class="viewcode-block" id="Scaffold">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Scaffold</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Anchor-based splat model, a drop-in for `Gaussians` in the trainer.</span>
+
+<span class="sd">    - `params`: anchor tensors, grown and pruned by `strategy`</span>
+<span class="sd">    - `mlps`: decode heads, fixed size</span>
+<span class="sd">    - Gaussians exist only per view, via `decode`</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># n_primitives counts anchors, not Gaussians</span>
+    <span class="n">primitive_unit</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"anchors"</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">cfg</span><span class="p">:</span> <span class="s2">"SplatsConfig"</span><span class="p">,</span>
+        <span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">colors</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">scene_scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">n_views</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">lr_decay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span><span class="p">,</span>
+        <span class="n">adam_eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-15</span><span class="p">,</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Seed anchors from a point cloud and set up heads, optimizers and densification.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cfg: run config; `scaffold_config`, `primitive` and `max_steps` are read.</span>
+<span class="sd">            points: (N, 3) seed positions in the training frame.</span>
+<span class="sd">            colors: (N, 3) seed colors; unused.</span>
+<span class="sd">            scene_scale: camera extent of the training frame; scales anchor and offset lrs.</span>
+<span class="sd">            n_views: number of training views.</span>
+<span class="sd">            device: torch device string.</span>
+<span class="sd">            lr_decay: total decay of the anchor lr over the run.</span>
+<span class="sd">            adam_eps: Adam epsilon for every optimizer.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">scaffold_config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">primitive</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+
+        <span class="c1"># Short alias for the scaffold block</span>
+        <span class="n">cfg_scaffold</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span>
+
+        <span class="c1"># Voxel size: explicit, or from the seed points' median spacing</span>
+        <span class="n">points_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">voxel_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">voxel_size</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">spacing</span> <span class="o">=</span> <span class="n">knn_spacing</span><span class="p">(</span><span class="n">points_t</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="mi">3</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">spacing</span><span class="p">)</span> <span class="o">*</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">voxel_multiplier</span><span class="p">)</span>
+
+        <span class="n">anchors</span> <span class="o">=</span> <span class="n">voxelize</span><span class="p">(</span><span class="n">points_t</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">n_anchors</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">anchors</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"scaffold: </span><span class="si">%d</span><span class="s2"> seed points -&gt; </span><span class="si">%d</span><span class="s2"> anchors at voxel_size </span><span class="si">%.6g</span><span class="s2">"</span><span class="p">,</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">points_t</span><span class="p">),</span>
+            <span class="n">n_anchors</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Anchor tensors; scaling = log offset extent (3) + log Gaussian extent (3)</span>
+        <span class="n">log_voxel</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">params</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ParameterDict</span><span class="p">(</span>
+            <span class="p">{</span>
+                <span class="s2">"anchors"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">anchors</span><span class="p">),</span>
+                <span class="s2">"offsets"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+                    <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_anchors</span><span class="p">,</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">n_offsets</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+                <span class="p">),</span>
+                <span class="s2">"anchor_feat"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+                    <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_anchors</span><span class="p">,</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">feat_dim</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+                <span class="p">),</span>
+                <span class="s2">"scaling"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+                    <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">n_anchors</span><span class="p">,</span> <span class="mi">6</span><span class="p">),</span> <span class="n">log_voxel</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+                <span class="p">),</span>
+                <span class="s2">"rotation"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+                    <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span>
+                        <span class="n">n_anchors</span><span class="p">,</span> <span class="mi">1</span>
+                    <span class="p">)</span>
+                <span class="p">),</span>
+            <span class="p">}</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span> <span class="o">=</span> <span class="n">ScaffoldMLPs</span><span class="p">(</span><span class="n">cfg_scaffold</span><span class="p">,</span> <span class="n">n_views</span><span class="o">=</span><span class="n">n_views</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># One Adam per anchor tensor, so densification can resize its state</span>
+        <span class="n">learning_rates</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"anchors"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">anchor_lr</span> <span class="o">*</span> <span class="n">scene_scale</span><span class="p">,</span>
+            <span class="s2">"offsets"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">offset_lr</span> <span class="o">*</span> <span class="n">scene_scale</span><span class="p">,</span>
+            <span class="s2">"anchor_feat"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">anchor_feat_lr</span><span class="p">,</span>
+            <span class="s2">"scaling"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">scaling_lr</span><span class="p">,</span>
+            <span class="s2">"rotation"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">rotation_lr</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">name</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">(</span>
+                <span class="p">[{</span><span class="s2">"params"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="n">name</span><span class="p">],</span> <span class="s2">"lr"</span><span class="p">:</span> <span class="n">lr</span><span class="p">,</span> <span class="s2">"name"</span><span class="p">:</span> <span class="n">name</span><span class="p">}],</span> <span class="n">eps</span><span class="o">=</span><span class="n">adam_eps</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">lr</span> <span class="ow">in</span> <span class="n">learning_rates</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="c1"># One param group per head, each with its own lr</span>
+        <span class="n">mlp_groups</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="p">{</span>
+                <span class="s2">"params"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="o">.</span><span class="n">mlp_opacity</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span>
+                <span class="s2">"lr"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_opacity_lr</span><span class="p">,</span>
+                <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"mlp_opacity"</span><span class="p">,</span>
+            <span class="p">},</span>
+            <span class="p">{</span>
+                <span class="s2">"params"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="o">.</span><span class="n">mlp_cov</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span>
+                <span class="s2">"lr"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_cov_lr</span><span class="p">,</span>
+                <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"mlp_cov"</span><span class="p">,</span>
+            <span class="p">},</span>
+            <span class="p">{</span>
+                <span class="s2">"params"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="o">.</span><span class="n">mlp_color</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span>
+                <span class="s2">"lr"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_color_lr</span><span class="p">,</span>
+                <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"mlp_color"</span><span class="p">,</span>
+            <span class="p">},</span>
+        <span class="p">]</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="o">.</span><span class="n">embedding_appearance</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">mlp_groups</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="s2">"params"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="o">.</span><span class="n">embedding_appearance</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span>
+                    <span class="s2">"lr"</span><span class="p">:</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">appearance_lr</span><span class="p">,</span>
+                    <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"embedding_appearance"</span><span class="p">,</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Each group carries its own lr</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp_optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">(</span><span class="n">mlp_groups</span><span class="p">,</span> <span class="n">eps</span><span class="o">=</span><span class="n">adam_eps</span><span class="p">)</span>
+
+        <span class="c1"># Flat optimizer list for the trainer; param_optimizers keeps the by-name map</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizers</span> <span class="o">=</span> <span class="p">[</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="o">.</span><span class="n">values</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_optimizer</span><span class="p">]</span>
+
+        <span class="c1"># Anchor lr decays over the run</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">anchor_scheduler</span> <span class="o">=</span> <span class="n">ExponentialLR</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">],</span> <span class="n">gamma</span><span class="o">=</span><span class="n">lr_decay</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">cfg</span><span class="o">.</span><span class="n">max_steps</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Offsets and heads decay over lr_max_steps, not the run length</span>
+        <span class="n">offset_lr</span> <span class="o">=</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">offset_lr</span> <span class="o">*</span> <span class="n">scene_scale</span>
+        <span class="n">offset_lr_final</span> <span class="o">=</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">offset_lr_final</span> <span class="o">*</span> <span class="n">scene_scale</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_scheduler</span> <span class="o">=</span> <span class="n">LambdaLR</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="p">[</span><span class="s2">"offsets"</span><span class="p">],</span>
+            <span class="n">lr_lambda</span><span class="o">=</span><span class="n">_decay_lambda</span><span class="p">(</span>
+                <span class="n">offset_lr</span><span class="p">,</span> <span class="n">offset_lr_final</span><span class="p">,</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">lr_max_steps</span>
+            <span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="c1"># (init, final) lr per head; mlp_cov is constant</span>
+        <span class="n">mlp_endpoints</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"mlp_opacity"</span><span class="p">:</span> <span class="p">(</span>
+                <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_opacity_lr</span><span class="p">,</span>
+                <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_opacity_lr_final</span><span class="p">,</span>
+            <span class="p">),</span>
+            <span class="s2">"mlp_cov"</span><span class="p">:</span> <span class="p">(</span><span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_cov_lr</span><span class="p">,</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_cov_lr</span><span class="p">),</span>
+            <span class="s2">"mlp_color"</span><span class="p">:</span> <span class="p">(</span><span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_color_lr</span><span class="p">,</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">mlp_color_lr_final</span><span class="p">),</span>
+            <span class="s2">"embedding_appearance"</span><span class="p">:</span> <span class="p">(</span>
+                <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">appearance_lr</span><span class="p">,</span>
+                <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">appearance_lr_final</span><span class="p">,</span>
+            <span class="p">),</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mlp_scheduler</span> <span class="o">=</span> <span class="n">LambdaLR</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mlp_optimizer</span><span class="p">,</span>
+            <span class="n">lr_lambda</span><span class="o">=</span><span class="p">[</span>
+                <span class="n">_decay_lambda</span><span class="p">(</span><span class="o">*</span><span class="n">mlp_endpoints</span><span class="p">[</span><span class="n">group</span><span class="p">[</span><span class="s2">"name"</span><span class="p">]],</span> <span class="n">cfg_scaffold</span><span class="o">.</span><span class="n">lr_max_steps</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlp_optimizer</span><span class="o">.</span><span class="n">param_groups</span>
+            <span class="p">],</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">schedulers</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">anchor_scheduler</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">offset_scheduler</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mlp_scheduler</span><span class="p">,</span>
+        <span class="p">]</span>
+
+        <span class="c1"># Anchor densification</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span> <span class="o">=</span> <span class="n">AnchorStrategy</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">primitive</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span><span class="p">,</span>
+            <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]),</span>
+            <span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">visible_anchors</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">cam_to_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">height</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Mask of the anchors visible in this view.</span>
+
+<span class="sd">        - same anchor prefilter as upstream `prefilter_voxel`</span>
+<span class="sd">        - CPU falls back to a frustum test</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cam_to_world: (1, 4, 4) camera-to-world pose.</span>
+<span class="sd">            intrinsics: (1, 3, 3) camera matrix in pixels.</span>
+<span class="sd">            width: render width in pixels.</span>
+<span class="sd">            height: render height in pixels.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (A,) bool mask over the anchors.</span>
+<span class="sd">        """</span>
+        <span class="n">anchors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">anchors</span><span class="o">.</span><span class="n">is_cuda</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_frustum_anchors</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">)</span>
+
+        <span class="n">radii</span><span class="p">,</span> <span class="o">*</span><span class="n">_</span> <span class="o">=</span> <span class="n">fully_fused_projection</span><span class="p">(</span>
+            <span class="n">anchors</span><span class="p">,</span>
+            <span class="kc">None</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"rotation"</span><span class="p">],</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scaling"</span><span class="p">][:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]),</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">),</span>
+            <span class="n">intrinsics</span><span class="p">,</span>
+            <span class="n">width</span><span class="p">,</span>
+            <span class="n">height</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">radii</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">anchors</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">amax</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_frustum_anchors</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">cam_to_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">height</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        CPU visibility test: anchors in front of the camera and near the frame.</span>
+
+<span class="sd">        - half-frame margin on each side</span>
+<span class="sd">        """</span>
+        <span class="c1"># Project to pixels; depth floor 1e-3 keeps points behind the camera finite</span>
+        <span class="n">world_to_cam</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">projected</span><span class="p">,</span> <span class="n">anchors_cam</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">],</span> <span class="n">world_to_cam</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">min_depth</span><span class="o">=</span><span class="mf">1e-3</span>
+        <span class="p">)</span>
+        <span class="n">in_front</span> <span class="o">=</span> <span class="n">anchors_cam</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">1e-3</span>
+
+        <span class="c1"># The margin keeps anchors just outside the frame</span>
+        <span class="n">margin_x</span><span class="p">,</span> <span class="n">margin_y</span> <span class="o">=</span> <span class="n">width</span> <span class="o">*</span> <span class="mf">0.5</span><span class="p">,</span> <span class="n">height</span> <span class="o">*</span> <span class="mf">0.5</span>
+        <span class="n">in_frame</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="p">(</span><span class="n">projected</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="o">-</span><span class="n">margin_x</span><span class="p">)</span>
+            <span class="o">&amp;</span> <span class="p">(</span><span class="n">projected</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">width</span> <span class="o">+</span> <span class="n">margin_x</span><span class="p">)</span>
+            <span class="o">&amp;</span> <span class="p">(</span><span class="n">projected</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&gt;</span> <span class="o">-</span><span class="n">margin_y</span><span class="p">)</span>
+            <span class="o">&amp;</span> <span class="p">(</span><span class="n">projected</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">height</span> <span class="o">+</span> <span class="n">margin_y</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">in_front</span> <span class="o">&amp;</span> <span class="n">in_frame</span>
+
+<div class="viewcode-block" id="Scaffold.decode">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.decode">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">decode</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">primitive</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">cam_to_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">camera_id</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">],</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Decode this view's neural Gaussians.</span>
+
+<span class="sd">        - never empty: gsplat crashes (SIGFPE) on zero Gaussians</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            primitive: "3dgs" or "2dgs".</span>
+<span class="sd">            cam_to_world: (1, 4, 4) camera-to-world pose.</span>
+<span class="sd">            intrinsics: (1, 3, 3) camera matrix in pixels.</span>
+<span class="sd">            width: render width in pixels.</span>
+<span class="sd">            height: render height in pixels.</span>
+<span class="sd">            camera_id: (1,) view index for the appearance embedding; None when off.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (decoded, decode_index): rasterizer inputs plus `log_scales` and `visible_ids`, and</span>
+<span class="sd">            the `anchor * n_offsets + offset` slot of each Gaussian.</span>
+<span class="sd">        """</span>
+        <span class="n">n_offsets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span>
+        <span class="n">visible</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visible_anchors</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">)</span>
+        <span class="n">anchor_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">visible</span><span class="p">,</span> <span class="n">as_tuple</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Nothing visible: decode every anchor, since an empty decode crashes gsplat</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">anchor_ids</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">anchor_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span>
+                <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]),</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">device</span>
+            <span class="p">)</span>
+
+        <span class="n">anchors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">][</span><span class="n">anchor_ids</span><span class="p">]</span>
+        <span class="n">feat</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchor_feat"</span><span class="p">][</span><span class="n">anchor_ids</span><span class="p">]</span>
+        <span class="n">scaling</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scaling"</span><span class="p">][</span><span class="n">anchor_ids</span><span class="p">])</span>
+        <span class="n">offsets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"offsets"</span><span class="p">][</span><span class="n">anchor_ids</span><span class="p">]</span>
+
+        <span class="c1"># Head input: anchor feature + unit direction from the camera</span>
+        <span class="n">camera_center</span> <span class="o">=</span> <span class="n">cam_to_world</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+        <span class="n">to_camera</span> <span class="o">=</span> <span class="n">anchors</span> <span class="o">-</span> <span class="n">camera_center</span>
+        <span class="n">view_distance</span> <span class="o">=</span> <span class="n">to_camera</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">view_direction</span> <span class="o">=</span> <span class="n">to_camera</span> <span class="o">/</span> <span class="n">view_distance</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-8</span><span class="p">)</span>
+        <span class="n">features</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">feat</span><span class="p">,</span> <span class="n">view_direction</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">neural_opacity</span><span class="p">,</span> <span class="n">cov</span><span class="p">,</span> <span class="n">color</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="p">(</span><span class="n">features</span><span class="p">,</span> <span class="n">camera_id</span><span class="p">)</span>
+
+        <span class="c1"># Keep open offsets and record which slot each came from</span>
+        <span class="n">kept</span><span class="p">,</span> <span class="n">gaussians</span> <span class="o">=</span> <span class="n">_offsets_to_gaussians</span><span class="p">(</span>
+            <span class="n">anchors</span><span class="p">,</span> <span class="n">scaling</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">neural_opacity</span><span class="p">,</span> <span class="n">cov</span><span class="p">,</span> <span class="n">color</span><span class="p">,</span> <span class="n">n_offsets</span>
+        <span class="p">)</span>
+        <span class="n">slot_offsets</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_offsets</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">anchors</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">slot_index</span> <span class="o">=</span> <span class="n">anchor_ids</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">n_offsets</span> <span class="o">+</span> <span class="n">slot_offsets</span>
+        <span class="n">slot_index</span> <span class="o">=</span> <span class="n">slot_index</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">decode_index</span> <span class="o">=</span> <span class="n">slot_index</span><span class="p">[</span><span class="n">kept</span><span class="p">]</span>
+        <span class="n">scales</span> <span class="o">=</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"scales"</span><span class="p">]</span>
+
+        <span class="c1"># 2DGS uses two scales; zero the third</span>
+        <span class="k">if</span> <span class="n">primitive</span> <span class="o">==</span> <span class="s2">"2dgs"</span><span class="p">:</span>
+            <span class="n">zeros</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">scales</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">])</span>
+            <span class="n">log_scales</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">scales</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-12</span><span class="p">)),</span> <span class="n">zeros</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+            <span class="p">)</span>
+            <span class="n">scales</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">scales</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">2</span><span class="p">],</span> <span class="n">zeros</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">log_scales</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">scales</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-12</span><span class="p">))</span>
+
+        <span class="n">decoded</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"means"</span><span class="p">:</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"means"</span><span class="p">],</span>
+            <span class="s2">"quats"</span><span class="p">:</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"quats"</span><span class="p">],</span>
+            <span class="s2">"scales"</span><span class="p">:</span> <span class="n">scales</span><span class="p">,</span>
+            <span class="s2">"opacities"</span><span class="p">:</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"opacities"</span><span class="p">],</span>
+            <span class="s2">"colors"</span><span class="p">:</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"colors"</span><span class="p">],</span>
+            <span class="s2">"log_scales"</span><span class="p">:</span> <span class="n">log_scales</span><span class="p">,</span>
+            <span class="s2">"visible_ids"</span><span class="p">:</span> <span class="n">anchor_ids</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="k">return</span> <span class="n">decoded</span><span class="p">,</span> <span class="n">decode_index</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">n_primitives</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Number of anchors currently in the model.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Anchor count.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">])</span>
+
+<div class="viewcode-block" id="Scaffold.render">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.render">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">cam_to_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">camera_id</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">step</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">render_normals</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">],</span> <span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Decode this view's neural Gaussians and rasterize them.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cam_to_world: (1, 4, 4) camera-to-world pose.</span>
+<span class="sd">            intrinsics: (1, 3, 3) camera matrix in pixels.</span>
+<span class="sd">            width: render width in pixels.</span>
+<span class="sd">            height: render height in pixels.</span>
+<span class="sd">            camera_id: (1,) view index for the appearance embedding.</span>
+<span class="sd">            step: current training step; unused.</span>
+<span class="sd">            render_normals: also render normals.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (render, info): gsplat outputs plus the decoded Gaussians' fields the losses and</span>
+<span class="sd">            densification read.</span>
+<span class="sd">        """</span>
+        <span class="n">decoded</span><span class="p">,</span> <span class="n">decode_index</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">primitive</span><span class="p">,</span> <span class="n">cam_to_world</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">camera_id</span>
+        <span class="p">)</span>
+        <span class="n">render</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">render_gaussians</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">primitive</span><span class="p">,</span>
+            <span class="n">decoded</span><span class="p">,</span>
+            <span class="n">cam_to_world</span><span class="p">,</span>
+            <span class="n">intrinsics</span><span class="p">,</span>
+            <span class="n">width</span><span class="p">,</span>
+            <span class="n">height</span><span class="p">,</span>
+            <span class="n">sh_degree</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">render_normals</span><span class="o">=</span><span class="n">render_normals</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Expose decoded fields to the losses and the strategy</span>
+        <span class="n">render</span><span class="p">[</span><span class="s2">"log_scales"</span><span class="p">]</span> <span class="o">=</span> <span class="n">decoded</span><span class="p">[</span><span class="s2">"log_scales"</span><span class="p">]</span>
+        <span class="n">render</span><span class="p">[</span><span class="s2">"opacities"</span><span class="p">]</span> <span class="o">=</span> <span class="n">decoded</span><span class="p">[</span><span class="s2">"opacities"</span><span class="p">]</span>
+        <span class="n">info</span><span class="p">[</span><span class="s2">"decode_index"</span><span class="p">]</span> <span class="o">=</span> <span class="n">decode_index</span>
+        <span class="n">info</span><span class="p">[</span><span class="s2">"decoded_opacities"</span><span class="p">]</span> <span class="o">=</span> <span class="n">decoded</span><span class="p">[</span><span class="s2">"opacities"</span><span class="p">]</span>
+        <span class="n">info</span><span class="p">[</span><span class="s2">"visible_ids"</span><span class="p">]</span> <span class="o">=</span> <span class="n">decoded</span><span class="p">[</span><span class="s2">"visible_ids"</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">render</span><span class="p">,</span> <span class="n">info</span></div>
+
+
+<div class="viewcode-block" id="Scaffold.frame_report">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.frame_report">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">frame_report</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">render</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Per-view fields added to splats_quality_report.json.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            render: one view's render dict.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            {"n_decoded": number of Gaussians decoded for this view}.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"n_decoded"</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">render</span><span class="p">[</span><span class="s2">"opacities"</span><span class="p">]))}</span></div>
+
+
+<div class="viewcode-block" id="Scaffold.pre_backward">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.pre_backward">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">pre_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Keep the screen-space gradient that densification reads after backward.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            step: current training step; unused.</span>
+<span class="sd">            info: gsplat info dict from this step's render.</span>
+<span class="sd">        """</span>
+        <span class="n">info</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">key_for_gradient</span><span class="p">]</span><span class="o">.</span><span class="n">retain_grad</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="Scaffold.post_backward">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.post_backward">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">post_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Accumulate anchor statistics, then grow and prune.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            step: current training step.</span>
+<span class="sd">            info: gsplat info dict from this step's render.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">accumulate</span><span class="p">(</span><span class="n">step</span><span class="p">,</span> <span class="n">info</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">refine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Scaffold.denormalize">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.denormalize">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">denormalize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">center</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Undo `utils.scene_normalization` on the anchors, in place.</span>
+
+<span class="sd">        - offsets and MLP heads are scale-free and left as is</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            center: (3,) center returned by `scene_normalization`.</span>
+<span class="sd">            scale: scale returned by `scene_normalization`.</span>
+<span class="sd">        """</span>
+        <span class="n">center_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span>
+            <span class="n">center</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">device</span>
+        <span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">/</span> <span class="n">scale</span> <span class="o">+</span> <span class="n">center_t</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scaling"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scaling"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">scale</span><span class="p">)</span></div>
+
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">export_gaussians</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">cam_to_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">height</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Static Gaussians for a ply: each anchor decoded at its mean view direction.</span>
+
+<span class="sd">        - lossy: renders of the ply differ from per-view decodes</span>
+<span class="sd">        - unseen anchors use the nearest camera's direction</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cam_to_world: (N, 4, 4) training poses.</span>
+<span class="sd">            intrinsics: (N, 3, 3) camera matrices.</span>
+<span class="sd">            width: image width in pixels.</span>
+<span class="sd">            height: image height in pixels.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            means, log scales, quats, logit opacities, sh0 and empty shN, as the ply expects.</span>
+<span class="sd">        """</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">anchors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+
+        <span class="c1"># Sum unit directions over the cameras that see each anchor</span>
+        <span class="n">direction_sum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">anchors</span><span class="p">)</span>
+        <span class="n">seen_count</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">anchors</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">view</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">)):</span>
+            <span class="n">visible</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">visible_anchors</span><span class="p">(</span>
+                <span class="n">cam_to_world</span><span class="p">[</span><span class="n">view</span> <span class="p">:</span> <span class="n">view</span> <span class="o">+</span> <span class="mi">1</span><span class="p">],</span>
+                <span class="n">intrinsics</span><span class="p">[</span><span class="n">view</span> <span class="p">:</span> <span class="n">view</span> <span class="o">+</span> <span class="mi">1</span><span class="p">],</span>
+                <span class="n">width</span><span class="p">,</span>
+                <span class="n">height</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">to_camera</span> <span class="o">=</span> <span class="n">anchors</span> <span class="o">-</span> <span class="n">cam_to_world</span><span class="p">[</span><span class="n">view</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+            <span class="n">unit</span> <span class="o">=</span> <span class="n">to_camera</span> <span class="o">/</span> <span class="n">to_camera</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-8</span><span class="p">)</span>
+            <span class="n">direction_sum</span><span class="p">[</span><span class="n">visible</span><span class="p">]</span> <span class="o">+=</span> <span class="n">unit</span><span class="p">[</span><span class="n">visible</span><span class="p">]</span>
+            <span class="n">seen_count</span><span class="p">[</span><span class="n">visible</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="c1"># Unseen anchors: use the nearest camera's direction</span>
+        <span class="n">unseen</span> <span class="o">=</span> <span class="n">seen_count</span> <span class="o">==</span> <span class="mi">0</span>
+
+        <span class="k">if</span> <span class="nb">bool</span><span class="p">(</span><span class="n">unseen</span><span class="o">.</span><span class="n">any</span><span class="p">()):</span>
+            <span class="n">camera_centers</span> <span class="o">=</span> <span class="n">cam_to_world</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+            <span class="n">nearest</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cdist</span><span class="p">(</span><span class="n">anchors</span><span class="p">[</span><span class="n">unseen</span><span class="p">],</span> <span class="n">camera_centers</span><span class="p">)</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">to_nearest</span> <span class="o">=</span> <span class="n">anchors</span><span class="p">[</span><span class="n">unseen</span><span class="p">]</span> <span class="o">-</span> <span class="n">camera_centers</span><span class="p">[</span><span class="n">nearest</span><span class="p">]</span>
+            <span class="n">direction_sum</span><span class="p">[</span><span class="n">unseen</span><span class="p">]</span> <span class="o">=</span> <span class="n">to_nearest</span> <span class="o">/</span> <span class="n">to_nearest</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span>
+                <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-8</span><span class="p">)</span>
+            <span class="n">seen_count</span><span class="p">[</span><span class="n">unseen</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+
+        <span class="n">mean_direction</span> <span class="o">=</span> <span class="n">direction_sum</span> <span class="o">/</span> <span class="n">seen_count</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">mean_direction</span> <span class="o">=</span> <span class="n">mean_direction</span> <span class="o">/</span> <span class="n">mean_direction</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span>
+            <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-8</span><span class="p">)</span>
+
+        <span class="c1"># Decode every anchor at its mean direction</span>
+        <span class="n">features</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+            <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchor_feat"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">mean_direction</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+        <span class="p">)</span>
+        <span class="n">camera_id</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">neural_opacity</span><span class="p">,</span> <span class="n">cov</span><span class="p">,</span> <span class="n">color</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="p">(</span><span class="n">features</span><span class="p">,</span> <span class="n">camera_id</span><span class="p">)</span>
+
+        <span class="n">n_offsets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span>
+        <span class="n">scaling</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scaling"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">())</span>
+        <span class="n">offsets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"offsets"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+
+        <span class="c1"># Same slot-to-Gaussian step as a render</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">gaussians</span> <span class="o">=</span> <span class="n">_offsets_to_gaussians</span><span class="p">(</span>
+            <span class="n">anchors</span><span class="p">,</span> <span class="n">scaling</span><span class="p">,</span> <span class="n">offsets</span><span class="p">,</span> <span class="n">neural_opacity</span><span class="p">,</span> <span class="n">cov</span><span class="p">,</span> <span class="n">color</span><span class="p">,</span> <span class="n">n_offsets</span>
+        <span class="p">)</span>
+        <span class="n">means</span> <span class="o">=</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"means"</span><span class="p">]</span>
+        <span class="n">scales</span> <span class="o">=</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"scales"</span><span class="p">]</span>
+        <span class="n">quats</span> <span class="o">=</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"quats"</span><span class="p">]</span>
+        <span class="n">opacities</span> <span class="o">=</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"opacities"</span><span class="p">]</span>
+        <span class="n">colors</span> <span class="o">=</span> <span class="n">gaussians</span><span class="p">[</span><span class="s2">"colors"</span><span class="p">]</span>
+
+        <span class="c1"># Convert to raw ply forms: log scales, logit opacities, SH DC</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"means"</span><span class="p">:</span> <span class="n">means</span><span class="p">,</span>
+            <span class="s2">"scales"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">scales</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-12</span><span class="p">)),</span>
+            <span class="s2">"quats"</span><span class="p">:</span> <span class="n">quats</span><span class="p">,</span>
+            <span class="s2">"opacities"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">logit</span><span class="p">(</span><span class="n">opacities</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mf">1e-4</span><span class="p">,</span> <span class="mi">1</span> <span class="o">-</span> <span class="mf">1e-4</span><span class="p">)),</span>
+            <span class="s2">"sh0"</span><span class="p">:</span> <span class="p">((</span><span class="n">colors</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">/</span> <span class="n">SH_C0</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+            <span class="s2">"shN"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">means</span><span class="p">),</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">means</span><span class="o">.</span><span class="n">device</span><span class="p">),</span>
+        <span class="p">}</span>
+
+<div class="viewcode-block" id="Scaffold.checkpoint">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.checkpoint">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">checkpoint</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Model state for ckpt.pt.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            {"splats", "mlps", "voxel_size"}; the trainer adds the rest.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"splats"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">,</span>
+            <span class="s2">"mlps"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">mlps</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span>
+            <span class="s2">"voxel_size"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span><span class="p">,</span>
+        <span class="p">}</span></div>
+
+
+<div class="viewcode-block" id="Scaffold.from_checkpoint">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.Scaffold.from_checkpoint">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_checkpoint</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">ckpt</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"Scaffold"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Rebuild a render-only model from a checkpoint.</span>
+
+<span class="sd">        - no optimizers, schedulers or strategy</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            ckpt: loaded ckpt.pt.</span>
+<span class="sd">            device: torch device string.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The model on `device`.</span>
+<span class="sd">        """</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">ckpt</span><span class="p">[</span><span class="s2">"config"</span><span class="p">]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">cfg</span> <span class="o">=</span> <span class="n">ScaffoldConfig</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"scaffold"</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">primitive</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">"primitive"</span><span class="p">]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">voxel_size</span> <span class="o">=</span> <span class="n">ckpt</span><span class="p">[</span><span class="s2">"voxel_size"</span><span class="p">]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">params</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ParameterDict</span><span class="p">(</span>
+            <span class="p">{</span>
+                <span class="n">name</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tensor</span> <span class="ow">in</span> <span class="nb">dict</span><span class="p">(</span><span class="n">ckpt</span><span class="p">[</span><span class="s2">"splats"</span><span class="p">])</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="p">}</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># n_views from the saved appearance embedding, if any</span>
+        <span class="n">appearance_weight</span> <span class="o">=</span> <span class="n">ckpt</span><span class="p">[</span><span class="s2">"mlps"</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"embedding_appearance.weight"</span><span class="p">)</span>
+        <span class="n">n_views</span> <span class="o">=</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">appearance_weight</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">len</span><span class="p">(</span><span class="n">appearance_weight</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">mlps</span> <span class="o">=</span> <span class="n">ScaffoldMLPs</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">cfg</span><span class="p">,</span> <span class="n">n_views</span><span class="o">=</span><span class="n">n_views</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">mlps</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">ckpt</span><span class="p">[</span><span class="s2">"mlps"</span><span class="p">])</span>
+
+        <span class="n">model</span><span class="o">.</span><span class="n">param_optimizers</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">mlp_optimizer</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">optimizers</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">anchor_scheduler</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">offset_scheduler</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">mlp_scheduler</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">schedulers</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">strategy</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># type: ignore[assignment]</span>
+        <span class="k">return</span> <span class="n">model</span></div>
+</div>
+
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Densification</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="AnchorStrategy">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.AnchorStrategy">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">AnchorStrategy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Grows anchors where gradients are high and prunes anchors that stay transparent.</span>
+
+<span class="sd">    - statistics are per (anchor, offset) slot for growing, per anchor for pruning</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">cfg</span><span class="p">:</span> <span class="n">ScaffoldConfig</span><span class="p">,</span>
+        <span class="n">primitive</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">voxel_size</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">n_anchors</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Allocate the densification statistics.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cfg: scaffold config.</span>
+<span class="sd">            primitive: "3dgs" or "2dgs".</span>
+<span class="sd">            voxel_size: anchor voxel edge in world units.</span>
+<span class="sd">            n_anchors: initial anchor count.</span>
+<span class="sd">            device: torch device string.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span> <span class="o">=</span> <span class="n">cfg</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span> <span class="o">=</span> <span class="n">voxel_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+
+        <span class="c1"># Gradient key per primitive; the wrong one accumulates zeros</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_for_gradient</span> <span class="o">=</span> <span class="s2">"means2d"</span> <span class="k">if</span> <span class="n">primitive</span> <span class="o">==</span> <span class="s2">"3dgs"</span> <span class="k">else</span> <span class="s2">"gradient_2dgs"</span>
+
+        <span class="c1"># Running sums and visit counts: per slot for growing, per anchor for pruning</span>
+        <span class="n">n_slots</span> <span class="o">=</span> <span class="n">n_anchors</span> <span class="o">*</span> <span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_slots</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_slots</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_anchors</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_anchors</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+<div class="viewcode-block" id="AnchorStrategy.accumulate">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.AnchorStrategy.accumulate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">accumulate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Add this step's gradients and decoded opacities to the running sums.</span>
+
+<span class="sd">        - runs only for start_stat &lt; step &lt; update_until</span>
+<span class="sd">        - gradients normalized as in gsplat @ d2f5c0f, gsplat/strategy/default.py:243-249</span>
+<span class="sd">        - only rendered Gaussians count</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            step: current training step.</span>
+<span class="sd">            info: gsplat info dict from `render`.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">start_stat</span> <span class="o">&lt;</span> <span class="n">step</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">update_until</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># No gradient (nothing rendered): skip the step</span>
+        <span class="n">grads</span> <span class="o">=</span> <span class="n">info</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">key_for_gradient</span><span class="p">]</span><span class="o">.</span><span class="n">grad</span>
+
+        <span class="k">if</span> <span class="n">grads</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="n">grads</span> <span class="o">=</span> <span class="n">grads</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+        <span class="n">grads</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*=</span> <span class="n">info</span><span class="p">[</span><span class="s2">"width"</span><span class="p">]</span> <span class="o">/</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">info</span><span class="p">[</span><span class="s2">"n_cameras"</span><span class="p">]</span>
+        <span class="n">grads</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*=</span> <span class="n">info</span><span class="p">[</span><span class="s2">"height"</span><span class="p">]</span> <span class="o">/</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">info</span><span class="p">[</span><span class="s2">"n_cameras"</span><span class="p">]</span>
+        <span class="n">grad_norm</span> <span class="o">=</span> <span class="n">grads</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">index</span> <span class="o">=</span> <span class="n">info</span><span class="p">[</span><span class="s2">"decode_index"</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Gradient sums per slot, rendered Gaussians only; slots are unique, so unrendered ones add exactly 0</span>
+        <span class="n">rendered</span> <span class="o">=</span> <span class="p">(</span><span class="n">info</span><span class="p">[</span><span class="s2">"radii"</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">grad_norm</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">amax</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">device</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span>
+            <span class="mi">0</span><span class="p">,</span> <span class="n">index</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">rendered</span><span class="p">,</span> <span class="n">grad_norm</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">),</span> <span class="mf">0.0</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">index</span><span class="p">,</span> <span class="n">rendered</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span>
+
+        <span class="c1"># Opacity sums per anchor, divided later by visits</span>
+        <span class="n">anchor_index</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">div</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span><span class="p">,</span> <span class="n">rounding_mode</span><span class="o">=</span><span class="s2">"floor"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span>
+            <span class="mi">0</span><span class="p">,</span> <span class="n">anchor_index</span><span class="p">,</span> <span class="n">info</span><span class="p">[</span><span class="s2">"decoded_opacities"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">visible</span> <span class="o">=</span> <span class="n">info</span><span class="p">[</span><span class="s2">"visible_ids"</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span>
+            <span class="mi">0</span><span class="p">,</span> <span class="n">visible</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">visible</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="AnchorStrategy.grow">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.AnchorStrategy.grow">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">grow</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scaffold</span><span class="p">:</span> <span class="s2">"Scaffold"</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Add anchors in empty voxels near high-gradient slots.</span>
+
+<span class="sd">        - coarse to fine: finer levels need higher gradients</span>
+<span class="sd">        - a new anchor takes the max feature of the slots that seeded it</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scaffold: model to grow in place.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The number of anchors added.</span>
+<span class="sd">        """</span>
+        <span class="n">n_offsets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span>
+        <span class="n">mean_grads</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+
+        <span class="c1"># Slots seen often enough in this window</span>
+        <span class="n">seen</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">refine_every</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">success_threshold</span> <span class="o">*</span> <span class="mf">0.5</span>
+        <span class="p">)</span>
+
+        <span class="n">added_total</span> <span class="o">=</span> <span class="mi">0</span>
+
+        <span class="k">for</span> <span class="n">level</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">update_depth</span><span class="p">):</span>
+            <span class="c1"># Stop once a level adds nothing</span>
+            <span class="k">if</span> <span class="n">level</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">added_total</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">break</span>
+
+            <span class="n">threshold</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">grad_threshold</span> <span class="o">*</span> <span class="p">(</span>
+                <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">update_hierarchy_factor</span> <span class="o">//</span> <span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="n">level</span>
+            <span class="p">)</span>
+            <span class="n">size_factor</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">update_init_factor</span>
+                <span class="o">//</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">update_hierarchy_factor</span><span class="o">**</span><span class="n">level</span><span class="p">),</span>
+                <span class="mi">1</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">level_voxel</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">voxel_size</span> <span class="o">*</span> <span class="n">size_factor</span>
+            <span class="n">selected</span> <span class="o">=</span> <span class="n">seen</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">mean_grads</span> <span class="o">&gt;=</span> <span class="n">threshold</span><span class="p">)</span>
+
+            <span class="c1"># Randomly thin candidates, as upstream</span>
+            <span class="n">selected</span> <span class="o">=</span> <span class="n">selected</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">rand_like</span><span class="p">(</span><span class="n">mean_grads</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.5</span> <span class="o">**</span> <span class="p">(</span><span class="n">level</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">bool</span><span class="p">(</span><span class="n">selected</span><span class="o">.</span><span class="n">any</span><span class="p">()):</span>
+                <span class="k">continue</span>
+
+            <span class="c1"># Candidate positions: the slots' decoded means</span>
+            <span class="n">anchors</span> <span class="o">=</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+            <span class="n">offset_extent</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scaling"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">])</span>
+            <span class="n">candidates</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">anchors</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>
+                <span class="o">+</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"offsets"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">*</span> <span class="n">offset_extent</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="p">:]</span>
+            <span class="p">)</span>
+            <span class="n">candidates</span> <span class="o">=</span> <span class="n">candidates</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)[</span><span class="n">selected</span><span class="p">]</span>
+
+            <span class="c1"># Feature of each candidate's source anchor</span>
+            <span class="n">slot_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">selected</span><span class="p">,</span> <span class="n">as_tuple</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">source_feat</span> <span class="o">=</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchor_feat"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">()[</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">div</span><span class="p">(</span><span class="n">slot_ids</span><span class="p">,</span> <span class="n">n_offsets</span><span class="p">,</span> <span class="n">rounding_mode</span><span class="o">=</span><span class="s2">"floor"</span><span class="p">)</span>
+            <span class="p">]</span>
+
+            <span class="c1"># Snap to this level's grid; drop cells already holding an anchor</span>
+            <span class="n">candidate_cells</span><span class="p">,</span> <span class="n">cell_of_candidate</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">candidates</span> <span class="o">/</span> <span class="n">level_voxel</span><span class="p">),</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">return_inverse</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+            <span class="n">cell_feat</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+                <span class="nb">len</span><span class="p">(</span><span class="n">candidate_cells</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">feat_dim</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">source_feat</span><span class="o">.</span><span class="n">device</span>
+            <span class="p">)</span>
+            <span class="n">cell_feat</span><span class="o">.</span><span class="n">index_reduce_</span><span class="p">(</span>
+                <span class="mi">0</span><span class="p">,</span> <span class="n">cell_of_candidate</span><span class="p">,</span> <span class="n">source_feat</span><span class="p">,</span> <span class="s2">"amax"</span><span class="p">,</span> <span class="n">include_self</span><span class="o">=</span><span class="kc">False</span>
+            <span class="p">)</span>
+
+            <span class="n">occupied_cells</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">anchors</span> <span class="o">/</span> <span class="n">level_voxel</span><span class="p">)</span>
+            <span class="n">combined</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">occupied_cells</span><span class="p">,</span> <span class="n">candidate_cells</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">inverse</span><span class="p">,</span> <span class="n">counts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span>
+                <span class="n">combined</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">return_inverse</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">return_counts</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+            <span class="n">free</span> <span class="o">=</span> <span class="n">counts</span><span class="p">[</span><span class="n">inverse</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">occupied_cells</span><span class="p">)</span> <span class="p">:]]</span> <span class="o">==</span> <span class="mi">1</span>
+            <span class="n">new_cells</span> <span class="o">=</span> <span class="n">candidate_cells</span><span class="p">[</span><span class="n">free</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_cells</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">_append_anchors</span><span class="p">(</span>
+                <span class="n">scaffold</span><span class="p">,</span> <span class="n">new_cells</span> <span class="o">*</span> <span class="n">level_voxel</span><span class="p">,</span> <span class="n">level_voxel</span><span class="p">,</span> <span class="n">cell_feat</span><span class="p">[</span><span class="n">free</span><span class="p">]</span>
+            <span class="p">)</span>
+            <span class="n">added_total</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_cells</span><span class="p">)</span>
+
+            <span class="c1"># Pad per-slot stats for the new anchors; new slots are unseen</span>
+            <span class="n">padding</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">new_cells</span><span class="p">)</span> <span class="o">*</span> <span class="n">n_offsets</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">mean_grads</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">mean_grads</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">mean_grads</span><span class="p">,</span> <span class="n">padding</span><span class="p">])</span>
+            <span class="n">seen</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">seen</span><span class="p">,</span> <span class="n">padding</span><span class="o">.</span><span class="n">bool</span><span class="p">()])</span>
+
+        <span class="c1"># Reset only the slots that were used</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span><span class="p">[</span><span class="n">seen</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span><span class="p">[</span><span class="n">seen</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+        <span class="k">if</span> <span class="n">added_total</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                <span class="s2">"scaffold: grew </span><span class="si">%d</span><span class="s2"> anchors -&gt; </span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span>
+                <span class="n">added_total</span><span class="p">,</span>
+                <span class="nb">len</span><span class="p">(</span><span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]),</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">added_total</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_append_anchors</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">scaffold</span><span class="p">:</span> <span class="s2">"Scaffold"</span><span class="p">,</span>
+        <span class="n">new_anchors</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">level_voxel</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">new_feat</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Append anchors to params, Adam state and statistics together.</span>
+
+<span class="sd">        - zero offsets, given features, scaling from `level_voxel`</span>
+<span class="sd">        """</span>
+        <span class="n">n_new</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">new_anchors</span><span class="p">)</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">log_voxel</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">level_voxel</span><span class="p">)</span>
+        <span class="n">additions</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"anchors"</span><span class="p">:</span> <span class="n">new_anchors</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span>
+            <span class="s2">"offsets"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_new</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">),</span>
+            <span class="s2">"anchor_feat"</span><span class="p">:</span> <span class="n">new_feat</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span>
+            <span class="s2">"scaling"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">n_new</span><span class="p">,</span> <span class="mi">6</span><span class="p">),</span> <span class="n">log_voxel</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">),</span>
+            <span class="s2">"rotation"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span>
+                <span class="n">n_new</span><span class="p">,</span> <span class="mi">1</span>
+            <span class="p">),</span>
+        <span class="p">}</span>
+
+        <span class="c1"># Extend each parameter and its Adam state; new rows start at zero</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">param_fn</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">param</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">param</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">additions</span><span class="p">[</span><span class="n">name</span><span class="p">]],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">optimizer_fn</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+                <span class="p">[</span><span class="n">value</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_new</span><span class="p">,</span> <span class="o">*</span><span class="n">value</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:]),</span> <span class="n">device</span><span class="o">=</span><span class="n">value</span><span class="o">.</span><span class="n">device</span><span class="p">)],</span>
+                <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="n">_update_param_with_optimizer</span><span class="p">(</span>
+            <span class="n">param_fn</span><span class="p">,</span> <span class="n">optimizer_fn</span><span class="p">,</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">,</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">param_optimizers</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Pad the statistics: per slot and per anchor</span>
+        <span class="n">slot_padding</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_new</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">anchor_padding</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_new</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+            <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span><span class="p">,</span> <span class="n">slot_padding</span><span class="p">]</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span><span class="p">,</span> <span class="n">slot_padding</span><span class="o">.</span><span class="n">clone</span><span class="p">()])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span><span class="p">,</span> <span class="n">anchor_padding</span><span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span><span class="p">,</span> <span class="n">anchor_padding</span><span class="o">.</span><span class="n">clone</span><span class="p">()])</span>
+
+<div class="viewcode-block" id="AnchorStrategy.prune">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.AnchorStrategy.prune">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">prune</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scaffold</span><span class="p">:</span> <span class="s2">"Scaffold"</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">scale_cap</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Remove anchors whose mean opacity stayed below min_opacity.</span>
+
+<span class="sd">        - only anchors seen often enough are judged</span>
+<span class="sd">        - always keeps at least one anchor</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scaffold: model to prune in place.</span>
+<span class="sd">            scale_cap: cap on the log Gaussian extent.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The number of anchors removed.</span>
+<span class="sd">        """</span>
+        <span class="n">n_offsets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">n_offsets</span>
+        <span class="n">denom</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span>
+        <span class="n">mean_opacity</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span> <span class="o">/</span> <span class="n">denom</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+        <span class="n">seen</span> <span class="o">=</span> <span class="n">denom</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">refine_every</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">success_threshold</span>
+        <span class="n">drop</span> <span class="o">=</span> <span class="n">seen</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">mean_opacity</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">min_opacity</span><span class="p">)</span>
+
+        <span class="c1"># Reset the anchors that were judged</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span><span class="p">[</span><span class="n">seen</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span><span class="p">[</span><span class="n">seen</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+        <span class="c1"># Cap the Gaussian extent every refine</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scaling"</span><span class="p">][:,</span> <span class="mi">3</span><span class="p">:]</span><span class="o">.</span><span class="n">clamp_</span><span class="p">(</span><span class="nb">max</span><span class="o">=</span><span class="n">scale_cap</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">bool</span><span class="p">(</span><span class="n">drop</span><span class="o">.</span><span class="n">any</span><span class="p">()):</span>
+            <span class="k">return</span> <span class="mi">0</span>
+
+        <span class="c1"># Never prune to empty: keep the most opaque anchor</span>
+        <span class="k">if</span> <span class="nb">bool</span><span class="p">(</span><span class="n">drop</span><span class="o">.</span><span class="n">all</span><span class="p">()):</span>
+            <span class="n">drop</span><span class="p">[</span><span class="n">mean_opacity</span><span class="o">.</span><span class="n">argmax</span><span class="p">()]</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"scaffold: every anchor fell below min_opacity </span><span class="si">%.4g</span><span class="s2">; kept the most opaque one"</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">min_opacity</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="n">keep</span> <span class="o">=</span> <span class="o">~</span><span class="n">drop</span>
+        <span class="n">keep_slots</span> <span class="o">=</span> <span class="n">keep</span><span class="o">.</span><span class="n">repeat_interleave</span><span class="p">(</span><span class="n">n_offsets</span><span class="p">)</span>
+
+        <span class="c1"># Drop rows from each parameter and its Adam state</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">param_fn</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">param</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">param</span><span class="o">.</span><span class="n">detach</span><span class="p">()[</span><span class="n">keep</span><span class="p">])</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">optimizer_fn</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">value</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+
+        <span class="n">_update_param_with_optimizer</span><span class="p">(</span>
+            <span class="n">param_fn</span><span class="p">,</span> <span class="n">optimizer_fn</span><span class="p">,</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">,</span> <span class="n">scaffold</span><span class="o">.</span><span class="n">param_optimizers</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">offset_gradient_accum</span><span class="p">[</span><span class="n">keep_slots</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">offset_denom</span><span class="p">[</span><span class="n">keep_slots</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">opacity_accum</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">anchor_denom</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+
+        <span class="n">n_dropped</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">drop</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+            <span class="s2">"scaffold: pruned </span><span class="si">%d</span><span class="s2"> anchors -&gt; </span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span>
+            <span class="n">n_dropped</span><span class="p">,</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">scaffold</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"anchors"</span><span class="p">]),</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">n_dropped</span></div>
+
+
+<div class="viewcode-block" id="AnchorStrategy.refine">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.scaffold.AnchorStrategy.refine">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">refine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scaffold</span><span class="p">:</span> <span class="s2">"Scaffold"</span><span class="p">,</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Grow then prune every `refine_every` steps between update_from and update_until.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scaffold: model to refine in place.</span>
+<span class="sd">            step: current training step.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="n">step</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">update_from</span> <span class="ow">or</span> <span class="n">step</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">update_until</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">cfg</span><span class="o">.</span><span class="n">refine_every</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">grow</span><span class="p">(</span><span class="n">scaffold</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">prune</span><span class="p">(</span><span class="n">scaffold</span><span class="p">)</span></div>
+</div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

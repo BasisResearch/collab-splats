@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.mesh.texture &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/mesh/texture';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.mesh.texture</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.mesh.texture</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Texture a fused mesh: one albedo atlas baked from the source views.</span>
+
+<span class="sd">- input: prepare_mesh output (clean.py)</span>
+<span class="sd">- unwrap_view_charts: UV atlas from camera-projection charts (nvdiffrast face ids)</span>
+<span class="sd">- project_images_to_texture: per-view depth test; detail from the sharpest views, blurred base from all, then fill</span>
+<span class="sd">- _dilate_chart_gutters: chart edges copied into their own padding</span>
+<span class="sd">- write_textured_obj (utils/io.py): mesh.obj + mesh.mtl + albedo.png</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">cast</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">open3d</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">o3d</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.sparse</span><span class="w"> </span><span class="kn">import</span> <span class="n">coo_matrix</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.sparse.csgraph</span><span class="w"> </span><span class="kn">import</span> <span class="n">connected_components</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torchvision.transforms.functional</span><span class="w"> </span><span class="kn">import</span> <span class="n">gaussian_blur</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">nvdiffrast.torch</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dr</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="n">project</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">extract_intrinsics</span><span class="p">,</span> <span class="n">invert_poses</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.mesh.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">adjacent_face_pairs</span><span class="p">,</span> <span class="n">validate_views</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.image</span><span class="w"> </span><span class="kn">import</span> <span class="n">fill_missing_pixels</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_uint8_hwc</span><span class="p">,</span> <span class="n">write_textured_obj</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">pytorch_gc</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Entry point</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="create_texture_mesh">
+<a class="viewcode-back" href="../../../api/mesh.html#collab_splats.mesh.texture.create_texture_mesh">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">create_texture_mesh</span><span class="p">(</span>
+    <span class="n">mesh</span><span class="p">:</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">TriangleMesh</span><span class="p">,</span>
+    <span class="n">occluder</span><span class="p">:</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">TriangleMesh</span><span class="p">,</span>
+    <span class="n">out_dir</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">rgbs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">c2w</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">voxel_size</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">tex_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8192</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Unwrap and texture a prepared mesh.</span>
+
+<span class="sd">    - occlusion is tested against the occluder, so hole-fill patches never hide a real surface</span>
+<span class="sd">    - voxel_size is the occlusion tolerance</span>
+<span class="sd">    - writes out_dir/mesh.obj + mesh.mtl + albedo.png via write_textured_obj</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        mesh: prepare_mesh output.</span>
+<span class="sd">        occluder: the real surface, the second mesh clean_repair_mesh returns, with no hull or hole fill.</span>
+<span class="sd">        out_dir: directory to create.</span>
+<span class="sd">        rgbs: (N, H, W, 3) uint8 views that were fused.</span>
+<span class="sd">        c2w: (N, 4, 4) camera-to-world poses.</span>
+<span class="sd">        K: (N, 3, 3) intrinsics at image resolution.</span>
+<span class="sd">        voxel_size: TSDF voxel the mesh was fused at, world units.</span>
+<span class="sd">        tex_size: atlas edge in texels.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Path to out_dir/mesh.obj.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        RuntimeError: no CUDA device; nvdiffrast rasterizes on CUDA only.</span>
+<span class="sd">    """</span>
+    <span class="c1"># nvdiffrast has no CPU rasterizer; refuse before touching the views</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="s2">"create_texture_mesh needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines"</span>
+        <span class="p">)</span>
+
+    <span class="n">rgbs</span><span class="p">,</span> <span class="n">c2w</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">validate_views</span><span class="p">(</span><span class="n">rgbs</span><span class="p">,</span> <span class="n">c2w</span><span class="p">,</span> <span class="n">K</span><span class="p">)</span>
+
+    <span class="c1"># UVs, then smooth vertex normals on a copy; without normals viewers shade split corners flat</span>
+    <span class="n">uvs</span><span class="p">,</span> <span class="n">boxes</span> <span class="o">=</span> <span class="n">unwrap_view_charts</span><span class="p">(</span><span class="n">mesh</span><span class="p">,</span> <span class="n">c2w</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">rgbs</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">],</span> <span class="n">tex_size</span><span class="p">)</span>
+    <span class="n">mesh</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">TriangleMesh</span><span class="p">(</span><span class="n">mesh</span><span class="p">)</span>
+    <span class="n">mesh</span><span class="o">.</span><span class="n">compute_vertex_normals</span><span class="p">()</span>
+    <span class="n">verts</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">normals</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">vertices</span><span class="p">),</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">triangles</span><span class="p">),</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">vertex_normals</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">occluder_vf</span> <span class="o">=</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">occluder</span><span class="o">.</span><span class="n">vertices</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">occluder</span><span class="o">.</span><span class="n">triangles</span><span class="p">))</span>
+
+    <span class="c1"># Project, then grow each chart's edge into its own padding so bilinear lookups never mix charts</span>
+    <span class="n">albedo</span> <span class="o">=</span> <span class="n">project_images_to_texture</span><span class="p">(</span>
+        <span class="n">verts</span><span class="p">,</span>
+        <span class="n">faces</span><span class="p">,</span>
+        <span class="n">normals</span><span class="p">,</span>
+        <span class="n">uvs</span><span class="p">,</span>
+        <span class="n">rgbs</span><span class="p">,</span>
+        <span class="n">c2w</span><span class="p">,</span>
+        <span class="n">K</span><span class="p">,</span>
+        <span class="n">tex_size</span><span class="p">,</span>
+        <span class="n">occlusion_eps</span><span class="o">=</span><span class="n">voxel_size</span><span class="p">,</span>
+        <span class="n">occluder</span><span class="o">=</span><span class="n">occluder_vf</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">albedo</span> <span class="o">=</span> <span class="n">_dilate_chart_gutters</span><span class="p">(</span><span class="n">albedo</span><span class="p">,</span> <span class="n">uvs</span><span class="p">,</span> <span class="n">boxes</span><span class="p">)</span>
+
+    <span class="n">out</span> <span class="o">=</span> <span class="n">write_textured_obj</span><span class="p">(</span><span class="n">out_dir</span><span class="p">,</span> <span class="n">verts</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">normals</span><span class="p">,</span> <span class="n">uvs</span><span class="p">,</span> <span class="n">albedo</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"create_texture_mesh: </span><span class="si">%d</span><span class="s2"> faces -&gt; </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">uvs</span><span class="p">),</span> <span class="n">out</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># UV unwrap: view charts</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="unwrap_view_charts">
+<a class="viewcode-back" href="../../../api/mesh.html#collab_splats.mesh.texture.unwrap_view_charts">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">unwrap_view_charts</span><span class="p">(</span>
+    <span class="n">mesh</span><span class="p">:</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">TriangleMesh</span><span class="p">,</span>
+    <span class="n">c2w</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">image_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="n">tex_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">frac</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.75</span><span class="p">,</span>
+    <span class="n">small_px</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">4.0</span><span class="p">,</span>
+    <span class="n">rel_tol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.25</span><span class="p">,</span>
+    <span class="n">rounds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">40</span><span class="p">,</span>
+    <span class="n">tile_m</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">pad</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="n">min_owned</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    UV atlas whose charts are the source images themselves.</span>
+
+<span class="sd">    - a face may take a view only if it owns its pixels in that view's face-id buffer</span>
+<span class="sd">    - the z-buffer gives each pixel to one face, so faces in one camera chart cannot overlap</span>
+<span class="sd">    - faces no view fully sees get one flat patch per connected group, along its mean normal</span>
+<span class="sd">    - flipped or overwritten faces regroup into flat patches the same way; any still broken become single charts</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        mesh: prepare_mesh output.</span>
+<span class="sd">        c2w: (V, 4, 4) camera-to-world poses.</span>
+<span class="sd">        K: (V, 3, 3) intrinsics at image resolution.</span>
+<span class="sd">        image_hw: (height, width) of the views.</span>
+<span class="sd">        tex_size: atlas edge in texels.</span>
+<span class="sd">        frac: share of its projected area a face must own for the view to count.</span>
+<span class="sd">        small_px: faces under this projected area use a centroid depth test instead.</span>
+<span class="sd">        rel_tol: relative depth tolerance of that centroid test.</span>
+<span class="sd">        alpha: smoothing lets a face switch to a neighbor's view scoring &gt;= alpha of its best.</span>
+<span class="sd">        rounds: smoothing rounds.</span>
+<span class="sd">        tile_m: charts are cut into tiles of this world size, so no box spans the atlas.</span>
+<span class="sd">        pad: gutter texels around each chart box.</span>
+<span class="sd">        min_owned: a face owning under this share of its expected texels is overwritten.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (F, 3, 2) float32 UVs in [0, 1] with v up, and (C, 4) chart boxes x, y, w, h in texels.</span>
+<span class="sd">    """</span>
+    <span class="n">verts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">vertices</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">faces</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">triangles</span><span class="p">)</span>
+    <span class="n">w2c</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">c2w</span><span class="p">)</span>
+    <span class="n">n_faces</span><span class="p">,</span> <span class="n">n_views</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">faces</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">w2c</span><span class="p">)</span>
+
+    <span class="c1"># Label: best view the face owns its pixels in, smoothed among owned views only</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">_face_view_scores</span><span class="p">(</span>
+        <span class="n">verts</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">w2c</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">image_hw</span><span class="p">,</span> <span class="n">frac</span><span class="o">=</span><span class="n">frac</span><span class="p">,</span> <span class="n">small_px</span><span class="o">=</span><span class="n">small_px</span><span class="p">,</span> <span class="n">rel_tol</span><span class="o">=</span><span class="n">rel_tol</span>
+    <span class="p">)</span>
+    <span class="n">unseen</span> <span class="o">=</span> <span class="p">(</span><span class="n">scores</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">pairs</span> <span class="o">=</span> <span class="n">adjacent_face_pairs</span><span class="p">(</span><span class="n">faces</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">verts</span><span class="p">))</span>
+    <span class="n">labels</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">_smooth_labels</span><span class="p">(</span><span class="n">labels</span><span class="p">,</span> <span class="n">scores</span><span class="p">,</span> <span class="n">pairs</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span> <span class="n">rounds</span><span class="o">=</span><span class="n">rounds</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+    <span class="p">)</span>
+    <span class="k">del</span> <span class="n">scores</span>
+    <span class="n">pytorch_gc</span><span class="p">()</span>
+
+    <span class="c1"># Camera UVs: corner pixels in the label view</span>
+    <span class="n">fv</span> <span class="o">=</span> <span class="n">verts</span><span class="p">[</span><span class="n">faces</span><span class="p">]</span>
+    <span class="n">fn</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cross</span><span class="p">(</span><span class="n">fv</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">fv</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">fv</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">fv</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+    <span class="n">area</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="c1"># One dtype for the matmul: Open3D vertices are float64, pipeline cameras float32</span>
+    <span class="n">fv_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">fv</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+    <span class="n">w2c_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">w2c</span><span class="p">[</span><span class="n">labels</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+    <span class="n">K_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">K</span><span class="p">[</span><span class="n">labels</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+    <span class="n">pixels</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">fv_t</span><span class="p">,</span> <span class="n">w2c_t</span><span class="p">,</span> <span class="n">K_t</span><span class="p">)</span>
+    <span class="n">uv</span> <span class="o">=</span> <span class="n">pixels</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+
+    <span class="c1"># Unseen faces: each connected group of them gets one flat patch</span>
+    <span class="n">patch</span> <span class="o">=</span> <span class="n">_flat_patches</span><span class="p">(</span><span class="n">uv</span><span class="p">,</span> <span class="n">fv</span><span class="p">,</span> <span class="n">fn</span><span class="p">,</span> <span class="n">unseen</span><span class="p">,</span> <span class="n">pairs</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"view charts: </span><span class="si">%d</span><span class="s2"> of </span><span class="si">%d</span><span class="s2"> faces unseen"</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">unseen</span><span class="o">.</span><span class="n">sum</span><span class="p">()),</span> <span class="n">n_faces</span><span class="p">)</span>
+
+    <span class="c1"># Pack: chart key is the label view, or the plane patch for unseen faces</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">unseen</span><span class="p">,</span> <span class="n">n_views</span> <span class="o">+</span> <span class="n">patch</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+    <span class="n">uvs</span><span class="p">,</span> <span class="n">chart</span><span class="p">,</span> <span class="n">boxes</span> <span class="o">=</span> <span class="n">_pack_charts</span><span class="p">(</span><span class="n">uv</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">area</span><span class="p">,</span> <span class="n">pairs</span><span class="p">,</span> <span class="n">tile_m</span><span class="p">,</span> <span class="n">pad</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">)</span>
+    <span class="n">bad</span> <span class="o">=</span> <span class="n">_find_broken_faces</span><span class="p">(</span><span class="n">uvs</span><span class="p">,</span> <span class="n">chart</span><span class="p">,</span> <span class="n">unseen</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">,</span> <span class="n">min_owned</span><span class="p">)</span>
+
+    <span class="c1"># Broken faces regroup into flat patches, so neighbors keep one chart instead of a seam each</span>
+    <span class="k">if</span> <span class="n">bad</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">patch</span> <span class="o">=</span> <span class="n">_flat_patches</span><span class="p">(</span><span class="n">uv</span><span class="p">,</span> <span class="n">fv</span><span class="p">,</span> <span class="n">fn</span><span class="p">,</span> <span class="n">bad</span><span class="p">,</span> <span class="n">pairs</span><span class="p">)</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">bad</span><span class="p">,</span> <span class="n">n_views</span> <span class="o">+</span> <span class="n">n_faces</span> <span class="o">+</span> <span class="n">patch</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+        <span class="n">uvs</span><span class="p">,</span> <span class="n">chart</span><span class="p">,</span> <span class="n">boxes</span> <span class="o">=</span> <span class="n">_pack_charts</span><span class="p">(</span><span class="n">uv</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">area</span><span class="p">,</span> <span class="n">pairs</span><span class="p">,</span> <span class="n">tile_m</span><span class="p">,</span> <span class="n">pad</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">)</span>
+        <span class="n">bad</span> <span class="o">=</span> <span class="n">_find_broken_faces</span><span class="p">(</span><span class="n">uvs</span><span class="p">,</span> <span class="n">chart</span><span class="p">,</span> <span class="n">unseen</span> <span class="o">|</span> <span class="n">bad</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">,</span> <span class="n">min_owned</span><span class="p">)</span>
+
+    <span class="c1"># Faces still broken become single flat charts; repack once more</span>
+    <span class="k">if</span> <span class="n">bad</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+        <span class="n">uv</span><span class="p">[</span><span class="n">bad</span><span class="p">]</span> <span class="o">=</span> <span class="n">_plane_uv</span><span class="p">(</span><span class="n">fv</span><span class="p">[</span><span class="n">bad</span><span class="p">]</span> <span class="o">-</span> <span class="n">fv</span><span class="p">[</span><span class="n">bad</span><span class="p">][:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">],</span> <span class="n">fn</span><span class="p">[</span><span class="n">bad</span><span class="p">])</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">bad</span><span class="p">,</span> <span class="n">n_views</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">n_faces</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_faces</span><span class="p">),</span> <span class="n">key</span><span class="p">)</span>
+        <span class="n">uvs</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">boxes</span> <span class="o">=</span> <span class="n">_pack_charts</span><span class="p">(</span><span class="n">uv</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">area</span><span class="p">,</span> <span class="n">pairs</span><span class="p">,</span> <span class="n">tile_m</span><span class="p">,</span> <span class="n">pad</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">uvs</span><span class="p">,</span> <span class="n">boxes</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_face_view_scores</span><span class="p">(</span>
+    <span class="n">verts</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">faces</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">image_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">frac</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">small_px</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">rel_tol</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pixels each face owns in each view's face-id buffer, (F, V) float16 cuda; 0 where it does not count.</span>
+
+<span class="sd">    - counts only if in front, fully framed, and owning &gt;= frac of its projected area (one pixel of slack)</span>
+<span class="sd">    - sub-pixel faces own nothing: they count if the z-buffer depth at their centroid matches instead</span>
+<span class="sd">    """</span>
+    <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">image_hw</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">RasterizeCudaContext</span><span class="p">()</span>
+    <span class="n">verts_h</span><span class="p">,</span> <span class="n">faces_t</span> <span class="o">=</span> <span class="n">_to_cuda_mesh</span><span class="p">(</span><span class="n">verts</span><span class="p">,</span> <span class="n">faces</span><span class="p">)</span>
+    <span class="n">corners</span> <span class="o">=</span> <span class="n">faces_t</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+    <span class="n">centroids</span> <span class="o">=</span> <span class="n">verts_h</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">][</span><span class="n">corners</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">n_faces</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">faces</span><span class="p">)</span>
+    <span class="n">extrinsics_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">extrinsics</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">K_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">K</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">scores</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_faces</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">)):</span>
+        <span class="n">rast</span><span class="p">,</span> <span class="n">depth</span> <span class="o">=</span> <span class="n">_rasterize_view</span><span class="p">(</span>
+            <span class="n">ctx</span><span class="p">,</span> <span class="n">verts_h</span><span class="p">,</span> <span class="n">faces_t</span><span class="p">,</span> <span class="n">extrinsics_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">K_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span>
+        <span class="p">)</span>
+        <span class="n">face_id</span> <span class="o">=</span> <span class="n">rast</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">long</span><span class="p">()</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span>
+        <span class="n">owned</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">face_id</span><span class="p">[</span><span class="n">face_id</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">minlength</span><span class="o">=</span><span class="n">n_faces</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+        <span class="c1"># Projected area of each face; in front and fully framed only</span>
+        <span class="n">pixels</span><span class="p">,</span> <span class="n">cam</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">verts_h</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">],</span> <span class="n">extrinsics_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">K_t</span><span class="p">[</span><span class="n">k</span><span class="p">])</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[</span><span class="n">corners</span><span class="p">]</span>
+        <span class="n">area</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">_signed_area</span><span class="p">(</span><span class="n">p</span><span class="p">))</span>
+        <span class="n">area</span> <span class="o">=</span> <span class="n">area</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span>
+        <span class="n">in_front</span> <span class="o">=</span> <span class="p">(</span><span class="n">cam</span><span class="p">[</span><span class="n">corners</span><span class="p">][</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">1e-3</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">framed</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="o">&amp;</span> <span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">width</span><span class="p">)</span>
+            <span class="o">&amp;</span> <span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="o">&amp;</span> <span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">height</span><span class="p">)</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="c1"># Centroid depth test for faces too small to own pixels</span>
+        <span class="n">centroid_px</span><span class="p">,</span> <span class="n">centroid_cam</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">centroids</span><span class="p">,</span> <span class="n">extrinsics_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">K_t</span><span class="p">[</span><span class="n">k</span><span class="p">])</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="n">_nearest_depth</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">centroid_px</span><span class="p">)</span>
+        <span class="n">near</span> <span class="o">=</span> <span class="p">(</span><span class="n">d</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">((</span><span class="n">centroid_cam</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">d</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">rel_tol</span> <span class="o">*</span> <span class="n">d</span><span class="p">)</span>
+
+        <span class="c1"># Big faces must own their area; small ones must sit at the z-buffer depth</span>
+        <span class="n">owns</span> <span class="o">=</span> <span class="n">owned</span> <span class="o">&gt;=</span> <span class="n">frac</span> <span class="o">*</span> <span class="n">area</span> <span class="o">-</span> <span class="mf">1.0</span>
+        <span class="n">valid</span> <span class="o">=</span> <span class="n">in_front</span> <span class="o">&amp;</span> <span class="n">framed</span> <span class="o">&amp;</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">area</span> <span class="o">&gt;=</span> <span class="n">small_px</span><span class="p">,</span> <span class="n">owns</span><span class="p">,</span> <span class="n">near</span><span class="p">)</span>
+        <span class="n">scores</span><span class="p">[:,</span> <span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">valid</span><span class="p">,</span> <span class="n">owned</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">max</span><span class="o">=</span><span class="mf">6e4</span><span class="p">)</span><span class="o">.</span><span class="n">half</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">scores</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_smooth_labels</span><span class="p">(</span>
+    <span class="n">labels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">scores</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">pairs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">rounds</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Majority vote: a face takes the label two of its neighbors share if it scores &gt;= alpha of its best there.</span>
+
+<span class="sd">    - only switches to a view with a nonzero score, so a face never leaves the views it owns</span>
+<span class="sd">    - up to 3 neighbor slots per face; extra neighbors on non-manifold edges are dropped</span>
+<span class="sd">    """</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">pairs</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">pairs</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]]))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">pairs</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">pairs</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]]))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">best</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+    <span class="c1"># Neighbor table (F, 3), -1 where empty</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">stable</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">a</span><span class="p">[</span><span class="n">order</span><span class="p">],</span> <span class="n">b</span><span class="p">[</span><span class="n">order</span><span class="p">]</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">searchsorted</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">))</span>
+    <span class="n">slot</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">a</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span> <span class="o">-</span> <span class="n">start</span><span class="p">[</span><span class="n">a</span><span class="p">]</span>
+    <span class="n">keep</span> <span class="o">=</span> <span class="n">slot</span> <span class="o">&lt;</span> <span class="mi">3</span>
+    <span class="n">nbr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">n</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">nbr</span><span class="p">[</span><span class="n">a</span><span class="p">[</span><span class="n">keep</span><span class="p">],</span> <span class="n">slot</span><span class="p">[</span><span class="n">keep</span><span class="p">]]</span> <span class="o">=</span> <span class="n">b</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">rounds</span><span class="p">):</span>
+        <span class="c1"># Candidate: a label at least two neighbors share</span>
+        <span class="n">nl</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">nbr</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">labels</span><span class="p">[</span><span class="n">nbr</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">0</span><span class="p">)],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">first</span> <span class="o">=</span> <span class="p">(</span><span class="n">nl</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">((</span><span class="n">nl</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">nl</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">])</span> <span class="o">|</span> <span class="p">(</span><span class="n">nl</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">nl</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]))</span>
+        <span class="n">second</span> <span class="o">=</span> <span class="p">(</span><span class="n">nl</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">nl</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">nl</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">])</span>
+        <span class="n">cand</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">first</span><span class="p">,</span> <span class="n">nl</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">second</span><span class="p">,</span> <span class="n">nl</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+
+        <span class="c1"># Switch where the face scores well enough in the candidate view</span>
+        <span class="n">ok</span> <span class="o">=</span> <span class="n">cand</span> <span class="o">&gt;=</span> <span class="mi">0</span>
+        <span class="n">cand_score</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+        <span class="n">cand_score</span><span class="p">[</span><span class="n">ok</span><span class="p">]</span> <span class="o">=</span> <span class="n">scores</span><span class="p">[</span><span class="n">ok</span><span class="o">.</span><span class="n">nonzero</span><span class="p">()[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">cand</span><span class="p">[</span><span class="n">ok</span><span class="p">]]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="n">switch</span> <span class="o">=</span> <span class="n">ok</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">cand</span> <span class="o">!=</span> <span class="n">labels</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">cand_score</span> <span class="o">&gt;=</span> <span class="n">alpha</span> <span class="o">*</span> <span class="n">best</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">cand_score</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">switch</span><span class="p">,</span> <span class="n">cand</span><span class="p">,</span> <span class="n">labels</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">labels</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_same_key_components</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">pairs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Connected-component id per face, over edge-adjacent faces that share the same key.</span>
+<span class="sd">    """</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">pairs</span><span class="p">[</span><span class="n">key</span><span class="p">[</span><span class="n">pairs</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]]</span> <span class="o">==</span> <span class="n">key</span><span class="p">[</span><span class="n">pairs</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]]]</span>
+    <span class="n">graph</span> <span class="o">=</span> <span class="n">coo_matrix</span><span class="p">((</span><span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">p</span><span class="p">)),</span> <span class="p">(</span><span class="n">p</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">p</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">])),</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">n</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">connected_components</span><span class="p">(</span><span class="n">graph</span><span class="p">,</span> <span class="n">directed</span><span class="o">=</span><span class="kc">False</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_flat_patches</span><span class="p">(</span>
+    <span class="n">uv</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">fv</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">fn</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">mask</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">pairs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Masked faces flattened in place into uv, one plane per connected group along its mean normal.</span>
+
+<span class="sd">    - returns the group id per face; unmasked faces keep their uv and get ids of their own</span>
+<span class="sd">    """</span>
+    <span class="n">n_faces</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span>
+    <span class="n">patch</span> <span class="o">=</span> <span class="n">_same_key_components</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_faces</span><span class="p">)),</span> <span class="n">pairs</span><span class="p">,</span> <span class="n">n_faces</span>
+    <span class="p">)</span>
+    <span class="n">normal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="nb">int</span><span class="p">(</span><span class="n">patch</span><span class="o">.</span><span class="n">max</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">add</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="n">normal</span><span class="p">,</span> <span class="n">patch</span><span class="p">[</span><span class="n">mask</span><span class="p">],</span> <span class="n">fn</span><span class="p">[</span><span class="n">mask</span><span class="p">])</span>
+    <span class="n">uv</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span> <span class="o">=</span> <span class="n">_plane_uv</span><span class="p">(</span><span class="n">fv</span><span class="p">[</span><span class="n">mask</span><span class="p">],</span> <span class="n">normal</span><span class="p">[</span><span class="n">patch</span><span class="p">[</span><span class="n">mask</span><span class="p">]])</span>
+    <span class="k">return</span> <span class="n">patch</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_plane_uv</span><span class="p">(</span><span class="n">fv</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">normal</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Corner coordinates in the plane perpendicular to each normal, world units, (F, 3, 2).</span>
+<span class="sd">    """</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="n">normal</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">normal</span><span class="p">,</span> <span class="n">axis</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span> <span class="mf">1e-12</span><span class="p">)</span>
+
+    <span class="c1"># In-plane basis from any helper axis not parallel to the normal</span>
+    <span class="n">helper</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">n</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">])</span> <span class="o">&lt;</span> <span class="mf">0.9</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]]),</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="mi">0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]])</span>
+    <span class="p">)</span>
+    <span class="n">e1</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cross</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">helper</span><span class="p">)</span>
+    <span class="n">e1</span> <span class="o">/=</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">e1</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdims</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span> <span class="mf">1e-12</span><span class="p">)</span>
+    <span class="n">e2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cross</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">e1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"fcj,fj-&gt;fc"</span><span class="p">,</span> <span class="n">fv</span><span class="p">,</span> <span class="n">e1</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"fcj,fj-&gt;fc"</span><span class="p">,</span> <span class="n">fv</span><span class="p">,</span> <span class="n">e2</span><span class="p">)],</span> <span class="o">-</span><span class="mi">1</span>
+    <span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># UV unwrap: packing</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_pack_charts</span><span class="p">(</span>
+    <span class="n">uv</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">key</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">area</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">pairs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">tile_m</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">pad</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">tex_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Charts from (key, adjacency), tiled, scaled to one texel density, rotated, shelf-packed.</span>
+
+<span class="sd">    - returns (F, 3, 2) float32 UVs with v up, chart id per face, and (C, 4) boxes x, y, w, h</span>
+<span class="sd">    """</span>
+    <span class="n">n_faces</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="n">uv_area</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">_signed_area</span><span class="p">(</span><span class="n">uv</span><span class="p">))</span>
+    <span class="n">chart</span> <span class="o">=</span> <span class="n">_same_key_components</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">pairs</span><span class="p">,</span> <span class="n">n_faces</span><span class="p">)</span>
+
+    <span class="c1"># Cut charts into world-sized tiles so no box spans the atlas</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">_chart_world_scale</span><span class="p">(</span><span class="n">chart</span><span class="p">,</span> <span class="n">uv_area</span><span class="p">,</span> <span class="n">area</span><span class="p">)</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">uv</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span><span class="p">[</span><span class="n">chart</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">/</span> <span class="n">tile_m</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">tile</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">chart</span><span class="p">,</span> <span class="n">cell</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">cell</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]],</span> <span class="mi">1</span><span class="p">),</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">return_inverse</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    <span class="n">chart</span> <span class="o">=</span> <span class="n">_same_key_components</span><span class="p">(</span><span class="n">tile</span><span class="o">.</span><span class="n">ravel</span><span class="p">(),</span> <span class="n">pairs</span><span class="p">,</span> <span class="n">n_faces</span><span class="p">)</span>
+    <span class="n">n_charts</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">chart</span><span class="o">.</span><span class="n">max</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span>
+
+    <span class="c1"># World-unit corners, centered per chart</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">_chart_world_scale</span><span class="p">(</span><span class="n">chart</span><span class="p">,</span> <span class="n">uv_area</span><span class="p">,</span> <span class="n">area</span><span class="p">)</span>
+    <span class="n">flat</span> <span class="o">=</span> <span class="p">(</span><span class="n">uv</span> <span class="o">*</span> <span class="n">scale</span><span class="p">[</span><span class="n">chart</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">])</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">cc</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="n">chart</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+    <span class="n">mean</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">flat</span><span class="p">[:,</span> <span class="n">i</span><span class="p">],</span> <span class="n">n_charts</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">2</span><span class="p">)],</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">cc</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">flat</span> <span class="o">-</span> <span class="n">mean</span><span class="p">[</span><span class="n">cc</span><span class="p">]</span>
+
+    <span class="c1"># Rotate each chart onto its principal axes</span>
+    <span class="n">sxx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span><span class="p">,</span> <span class="n">n_charts</span><span class="p">)</span>
+    <span class="n">syy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span><span class="p">,</span> <span class="n">n_charts</span><span class="p">)</span>
+    <span class="n">sxy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">n_charts</span><span class="p">)</span>
+    <span class="n">angle</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">arctan2</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">sxy</span><span class="p">,</span> <span class="n">sxx</span> <span class="o">-</span> <span class="n">syy</span><span class="p">)</span>
+    <span class="n">ca</span><span class="p">,</span> <span class="n">sa</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">angle</span><span class="p">)[</span><span class="n">cc</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">angle</span><span class="p">)[</span><span class="n">cc</span><span class="p">]</span>
+    <span class="n">rot</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">ca</span> <span class="o">*</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">sa</span> <span class="o">*</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="o">-</span><span class="n">sa</span> <span class="o">*</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">ca</span> <span class="o">*</span> <span class="n">d</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]],</span> <span class="mi">1</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">cmin</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">n_charts</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+    <span class="n">cmax</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">n_charts</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">)</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">minimum</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="n">cmin</span><span class="p">,</span> <span class="n">chart</span><span class="p">,</span> <span class="n">rot</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="n">cmax</span><span class="p">,</span> <span class="n">chart</span><span class="p">,</span> <span class="n">rot</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+    <span class="n">local</span> <span class="o">=</span> <span class="n">rot</span> <span class="o">-</span> <span class="n">cmin</span><span class="p">[</span><span class="n">chart</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">]</span>
+
+    <span class="c1"># Largest global scale whose shelf pack fits the atlas</span>
+    <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="mf">1e-2</span><span class="p">,</span> <span class="mf">1e6</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">25</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">=</span> <span class="p">(</span><span class="n">lo</span> <span class="o">*</span> <span class="n">hi</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span>
+        <span class="n">size</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">cmax</span> <span class="o">-</span> <span class="n">cmin</span><span class="p">)</span> <span class="o">*</span> <span class="n">s</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">pad</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">total</span> <span class="o">=</span> <span class="n">_shelf_pack</span><span class="p">(</span><span class="n">size</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">size</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">tex_size</span><span class="p">)</span>
+        <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span> <span class="k">if</span> <span class="n">total</span> <span class="o">&lt;=</span> <span class="n">tex_size</span> <span class="k">else</span> <span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+
+    <span class="n">size</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">cmax</span> <span class="o">-</span> <span class="n">cmin</span><span class="p">)</span> <span class="o">*</span> <span class="n">lo</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">pad</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_shelf_pack</span><span class="p">(</span><span class="n">size</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">size</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">tex_size</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"view charts: </span><span class="si">%d</span><span class="s2"> charts at </span><span class="si">%.0f</span><span class="s2"> texels per world unit"</span><span class="p">,</span> <span class="n">n_charts</span><span class="p">,</span> <span class="n">lo</span><span class="p">)</span>
+
+    <span class="c1"># Atlas texel coordinates -&gt; UV with v up (row 0 is v = 1)</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">local</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">lo</span> <span class="o">+</span> <span class="n">x</span><span class="p">[</span><span class="n">chart</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">+</span> <span class="n">pad</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="n">ty</span> <span class="o">=</span> <span class="n">local</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">lo</span> <span class="o">+</span> <span class="n">y</span><span class="p">[</span><span class="n">chart</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">+</span> <span class="n">pad</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="n">uvs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">tx</span> <span class="o">/</span> <span class="n">tex_size</span><span class="p">,</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">ty</span> <span class="o">/</span> <span class="n">tex_size</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">uvs</span><span class="p">,</span> <span class="n">chart</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">x</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">y</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">size</span><span class="p">],</span> <span class="mi">1</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_chart_world_scale</span><span class="p">(</span>
+    <span class="n">chart</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">uv_area</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">world_area</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Per-chart sqrt(world area / uv area): chart coordinates times this are world units.</span>
+<span class="sd">    """</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">chart</span><span class="o">.</span><span class="n">max</span><span class="p">())</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">chart</span><span class="p">,</span> <span class="n">world_area</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+        <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">chart</span><span class="p">,</span> <span class="n">uv_area</span><span class="p">,</span> <span class="n">n</span><span class="p">),</span> <span class="mf">1e-12</span><span class="p">)</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_shelf_pack</span><span class="p">(</span>
+    <span class="n">w</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">h</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Shelf packing of integer boxes, tallest first; returns x, y offsets and total height.</span>
+<span class="sd">    """</span>
+    <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="o">-</span><span class="n">h</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">w</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">w</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+    <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">shelf</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">order</span><span class="p">:</span>
+        <span class="c1"># Start a new shelf when the row is full</span>
+        <span class="k">if</span> <span class="n">cx</span> <span class="o">+</span> <span class="n">w</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">width</span><span class="p">:</span>
+            <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">,</span> <span class="n">shelf</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">cy</span> <span class="o">+</span> <span class="n">shelf</span><span class="p">,</span> <span class="mi">0</span>
+
+        <span class="n">x</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">y</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span>
+        <span class="n">cx</span> <span class="o">+=</span> <span class="n">w</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">shelf</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">shelf</span><span class="p">,</span> <span class="n">h</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+
+    <span class="k">return</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">cy</span> <span class="o">+</span> <span class="n">shelf</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_find_broken_faces</span><span class="p">(</span>
+    <span class="n">uvs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">chart</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">unseen</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">tex_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">min_owned</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Faces one atlas raster shows flipped or overwritten, (F,) bool.</span>
+
+<span class="sd">    - flipped: plane-patch faces wound against their chart's area-weighted majority</span>
+<span class="sd">    - lost: faces owning under min_owned of their expected texels</span>
+<span class="sd">    """</span>
+    <span class="n">signed</span> <span class="o">=</span> <span class="n">_signed_area</span><span class="p">(</span><span class="n">uvs</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+    <span class="n">majority</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">chart</span><span class="p">,</span> <span class="n">signed</span><span class="p">))</span>
+    <span class="n">flipped</span> <span class="o">=</span> <span class="n">unseen</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">signed</span><span class="p">)</span> <span class="o">!=</span> <span class="n">majority</span><span class="p">[</span><span class="n">chart</span><span class="p">])</span>
+
+    <span class="c1"># Lost: faces another face overwrote in the atlas raster</span>
+    <span class="n">rast</span> <span class="o">=</span> <span class="n">_rasterize_uvs</span><span class="p">(</span><span class="n">uvs</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">)</span>
+    <span class="n">face_id</span> <span class="o">=</span> <span class="n">rast</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">long</span><span class="p">()</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">owned</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">face_id</span><span class="p">[</span><span class="n">face_id</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">],</span> <span class="n">minlength</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">uvs</span><span class="p">))</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+    <span class="k">del</span> <span class="n">rast</span><span class="p">,</span> <span class="n">face_id</span>
+    <span class="n">expect</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">signed</span><span class="p">)</span> <span class="o">*</span> <span class="n">tex_size</span><span class="o">**</span><span class="mi">2</span>
+    <span class="n">lost</span> <span class="o">=</span> <span class="p">(</span><span class="n">expect</span> <span class="o">&gt;=</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">owned</span> <span class="o">&lt;</span> <span class="n">min_owned</span> <span class="o">*</span> <span class="n">expect</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">"view charts: </span><span class="si">%d</span><span class="s2"> flipped, </span><span class="si">%d</span><span class="s2"> lost faces become single charts"</span><span class="p">,</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">flipped</span><span class="o">.</span><span class="n">sum</span><span class="p">()),</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">lost</span><span class="o">.</span><span class="n">sum</span><span class="p">()),</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">flipped</span> <span class="o">|</span> <span class="n">lost</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Projection</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="project_images_to_texture">
+<a class="viewcode-back" href="../../../api/mesh.html#collab_splats.mesh.texture.project_images_to_texture">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">project_images_to_texture</span><span class="p">(</span>
+    <span class="n">verts</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">faces</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">normals</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">uvs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">rgbs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">c2w</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">tex_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">occlusion_eps</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">occluder</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">view_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.5</span><span class="p">,</span>
+    <span class="n">blur_pix_sigma</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">16.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Visibility-weighted projection of images into a mesh's UV atlas.</span>
+
+<span class="sd">    - texels no view reaches take a push-pull fill from their seen surroundings</span>
+<span class="sd">    - a hole-filled mesh hides its own observed surface, so pass the pre-fill mesh as occluder</span>
+<span class="sd">    - view_ratio 1.0 is single-best-view (sharpest, seam-prone); large values average everything</span>
+<span class="sd">    - each image splits into a blurred base (blur_pix_sigma) and the detail left over</span>
+<span class="sd">    - base color averages every view that sees the texel, so color does not jump where the sharpest view changes</span>
+<span class="sd">    - detail comes only from the view_ratio views, so the texture stays sharp</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        verts: (P, 3) vertex positions.</span>
+<span class="sd">        faces: (F, 3) vertex indices.</span>
+<span class="sd">        normals: (P, 3) vertex normals; texels facing away from a view take nothing from it.</span>
+<span class="sd">        uvs: (F, 3, 2) per-corner UVs in [0, 1], v up (from unwrap_view_charts).</span>
+<span class="sd">        rgbs: (N, H, W, 3) uint8 images.</span>
+<span class="sd">        c2w: (N, 4, 4) camera-to-world poses.</span>
+<span class="sd">        K: (N, 3, 3) intrinsics at image resolution.</span>
+<span class="sd">        tex_size: atlas edge in texels.</span>
+<span class="sd">        occlusion_eps: depth-test tolerance in world units (≈ voxel size); stops self-occlusion.</span>
+<span class="sd">        occluder: (verts, faces) to depth-test against instead of the mesh.</span>
+<span class="sd">        view_ratio: keep views whose pixel size at the texel is within this factor of the texel's best.</span>
+<span class="sd">        blur_pix_sigma: base band Gaussian sigma in source pixels; 0 takes the whole image from the view_ratio views.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (tex_size, tex_size, 3) uint8 albedo.</span>
+<span class="sd">    """</span>
+    <span class="c1"># World position and normal of every covered texel, interpolated from per-corner attributes</span>
+    <span class="n">rast</span> <span class="o">=</span> <span class="n">_rasterize_uvs</span><span class="p">(</span><span class="n">uvs</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">)</span>
+    <span class="n">covered</span> <span class="o">=</span> <span class="n">rast</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="n">corners</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">verts</span><span class="p">[</span><span class="n">faces</span><span class="p">],</span> <span class="n">normals</span><span class="p">[</span><span class="n">faces</span><span class="p">]],</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">6</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">tri</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">corners</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+    <span class="n">attr</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">interpolate</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">corners</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()[</span><span class="kc">None</span><span class="p">],</span> <span class="n">rast</span><span class="p">,</span> <span class="n">tri</span><span class="p">)</span>
+    <span class="n">texels</span> <span class="o">=</span> <span class="n">attr</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="n">covered</span><span class="p">]</span>
+    <span class="n">points</span><span class="p">,</span> <span class="n">dirs</span> <span class="o">=</span> <span class="n">texels</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">],</span> <span class="n">F</span><span class="o">.</span><span class="n">normalize</span><span class="p">(</span><span class="n">texels</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">:],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">del</span> <span class="n">rast</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">texels</span>
+
+    <span class="c1"># Mesh whose per-view depth render decides occlusion; a separate occluder wins when given</span>
+    <span class="n">occ_verts</span><span class="p">,</span> <span class="n">occ_faces</span> <span class="o">=</span> <span class="p">(</span><span class="n">verts</span><span class="p">,</span> <span class="n">faces</span><span class="p">)</span> <span class="k">if</span> <span class="n">occluder</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">occluder</span>
+    <span class="n">verts_h</span><span class="p">,</span> <span class="n">faces_t</span> <span class="o">=</span> <span class="n">_to_cuda_mesh</span><span class="p">(</span><span class="n">occ_verts</span><span class="p">,</span> <span class="n">occ_faces</span><span class="p">)</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">RasterizeCudaContext</span><span class="p">()</span>
+    <span class="n">w2c</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">c2w</span><span class="p">)</span>
+    <span class="n">w2c</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">w2c</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">K_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">K</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">rgbs</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+
+    <span class="c1"># Pass one: finest pixel size any view achieves per texel, used to gate voters in pass two</span>
+    <span class="n">best</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">),),</span> <span class="n">torch</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">rgbs</span><span class="p">)):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">depth</span> <span class="o">=</span> <span class="n">_rasterize_view</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">verts_h</span><span class="p">,</span> <span class="n">faces_t</span><span class="p">,</span> <span class="n">w2c</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">K_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">)</span>
+        <span class="n">px_size</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">_visible_pixel_size</span><span class="p">(</span>
+            <span class="n">points</span><span class="p">,</span> <span class="n">dirs</span><span class="p">,</span> <span class="n">depth</span><span class="p">,</span> <span class="n">w2c</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">K_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">occlusion_eps</span>
+        <span class="p">)</span>
+        <span class="n">best</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">minimum</span><span class="p">(</span><span class="n">best</span><span class="p">,</span> <span class="n">px_size</span><span class="p">)</span>
+
+    <span class="c1"># Pass two: detail from the views within view_ratio of each texel's best, base from every view</span>
+    <span class="n">detail_acc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">),</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">detail_w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">base_acc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">),</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">base_w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">frame</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">rgbs</span><span class="p">)):</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">depth</span> <span class="o">=</span> <span class="n">_rasterize_view</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">verts_h</span><span class="p">,</span> <span class="n">faces_t</span><span class="p">,</span> <span class="n">w2c</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">K_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">)</span>
+        <span class="n">px_size</span><span class="p">,</span> <span class="n">pixels</span> <span class="o">=</span> <span class="n">_visible_pixel_size</span><span class="p">(</span>
+            <span class="n">points</span><span class="p">,</span> <span class="n">dirs</span><span class="p">,</span> <span class="n">depth</span><span class="p">,</span> <span class="n">w2c</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">K_t</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">occlusion_eps</span>
+        <span class="p">)</span>
+        <span class="n">vis</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">px_size</span><span class="p">)</span>
+        <span class="n">keep</span> <span class="o">=</span> <span class="n">vis</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">px_size</span> <span class="o">&lt;=</span> <span class="n">best</span> <span class="o">*</span> <span class="n">view_ratio</span><span class="p">)</span>
+
+        <span class="c1"># Blurred base; with blur_pix_sigma 0 the base is zero and the detail is the whole image</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">rgbs</span><span class="p">[</span><span class="n">k</span><span class="p">])</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="kc">None</span><span class="p">]</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="mf">255.0</span>
+        <span class="n">low</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">blur_pix_sigma</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">low</span> <span class="o">=</span> <span class="n">gaussian_blur</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="nb">int</span><span class="p">(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">blur_pix_sigma</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">blur_pix_sigma</span><span class="p">)</span>
+
+        <span class="c1"># Pixel positions to grid_sample's [-1, 1] frame; corners are pixel centers</span>
+        <span class="n">grid</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[</span><span class="n">vis</span><span class="p">]</span> <span class="o">/</span> <span class="n">frame</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="n">bands</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">image</span> <span class="o">-</span> <span class="n">low</span><span class="p">,</span> <span class="n">low</span><span class="p">],</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">color</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">grid_sample</span><span class="p">(</span><span class="n">bands</span><span class="p">,</span> <span class="n">grid</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">],</span> <span class="n">align_corners</span><span class="o">=</span><span class="kc">True</span><span class="p">)[</span><span class="mi">0</span><span class="p">,</span> <span class="p">:,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">T</span>
+
+        <span class="c1"># Weight each view by how finely it resolves the texel</span>
+        <span class="n">weight</span> <span class="o">=</span> <span class="n">best</span><span class="p">[</span><span class="n">vis</span><span class="p">]</span> <span class="o">/</span> <span class="n">px_size</span><span class="p">[</span><span class="n">vis</span><span class="p">]</span>
+        <span class="n">near</span> <span class="o">=</span> <span class="n">keep</span><span class="p">[</span><span class="n">vis</span><span class="p">]</span>
+        <span class="n">detail_acc</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span> <span class="o">+=</span> <span class="n">color</span><span class="p">[</span><span class="n">near</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span> <span class="o">*</span> <span class="n">weight</span><span class="p">[</span><span class="n">near</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">detail_w</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span> <span class="o">+=</span> <span class="n">weight</span><span class="p">[</span><span class="n">near</span><span class="p">]</span>
+        <span class="n">base_acc</span><span class="p">[</span><span class="n">vis</span><span class="p">]</span> <span class="o">+=</span> <span class="n">color</span><span class="p">[:,</span> <span class="mi">3</span><span class="p">:]</span> <span class="o">*</span> <span class="n">weight</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">base_w</span><span class="p">[</span><span class="n">vis</span><span class="p">]</span> <span class="o">+=</span> <span class="n">weight</span>
+
+    <span class="c1"># Color = weighted mean detail + weighted mean base; texels no sharp view reached stay black</span>
+    <span class="n">hit</span> <span class="o">=</span> <span class="n">detail_w</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="n">albedo</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">tex_size</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">color</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">detail_acc</span> <span class="o">/</span> <span class="n">detail_w</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="o">+</span> <span class="n">base_acc</span> <span class="o">/</span> <span class="n">base_w</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">)[:,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">albedo</span><span class="p">[</span><span class="n">covered</span><span class="p">]</span> <span class="o">=</span> <span class="n">color</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">hit</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">seen</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">tex_size</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+    <span class="n">seen</span><span class="p">[</span><span class="n">covered</span><span class="p">]</span> <span class="o">=</span> <span class="n">hit</span>
+
+    <span class="c1"># Two unrelated blacks: atlas space no chart claimed, and surface no camera ever reached</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">"atlas </span><span class="si">%.1f%%</span><span class="s2"> surface texels | </span><span class="si">%.1f%%</span><span class="s2"> of surface unseen | </span><span class="si">%.1f%%</span><span class="s2"> of atlas blank"</span><span class="p">,</span>
+        <span class="mi">100</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">covered</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()),</span>
+        <span class="mi">100</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">hit</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">())),</span>
+        <span class="mi">100</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="nb">float</span><span class="p">(</span><span class="n">seen</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">())),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Fill everything no view reached, then quantize</span>
+    <span class="n">albedo</span> <span class="o">=</span> <span class="n">fill_missing_pixels</span><span class="p">(</span><span class="n">albedo</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">seen</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">to_uint8_hwc</span><span class="p">(</span><span class="n">albedo</span><span class="p">,</span> <span class="n">channels_first</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_visible_pixel_size</span><span class="p">(</span>
+    <span class="n">points</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">dirs</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">depth</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    World size one source pixel covers at each texel, and the pixel (u, v) it projects to.</span>
+
+<span class="sd">    - pixel size = dist / (fx * cos): grazing and distant views resolve the surface coarsely</span>
+<span class="sd">    - inf for back-faces, texels behind the camera or out of frame, and texels the depth render hides</span>
+<span class="sd">    - hidden: depth at the nearest pixel; testing all 4 bilinear pixels hides grazing ground from itself</span>
+<span class="sd">    - depth: the occluder's (H, W) camera depth in this view, 0 where empty; extrinsics, K float32 cuda</span>
+<span class="sd">    """</span>
+    <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">pixels</span><span class="p">,</span> <span class="n">cam</span> <span class="o">=</span> <span class="n">project</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">K</span><span class="p">)</span>
+
+    <span class="c1"># Facing the camera: the camera-frame normal points back along the camera-frame position</span>
+    <span class="n">dist</span> <span class="o">=</span> <span class="n">cam</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">cam_dirs</span> <span class="o">=</span> <span class="n">dirs</span> <span class="o">@</span> <span class="n">extrinsics</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">T</span>
+    <span class="n">cos</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">cam_dirs</span> <span class="o">*</span> <span class="n">cam</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">dist</span>
+
+    <span class="c1"># In front of the camera and inside the frame</span>
+    <span class="n">u</span><span class="p">,</span> <span class="n">v</span> <span class="o">=</span> <span class="n">pixels</span><span class="o">.</span><span class="n">unbind</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">ok</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="p">(</span><span class="n">cos</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">cam</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">u</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">v</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">u</span> <span class="o">&lt;=</span> <span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="o">&amp;</span> <span class="p">(</span><span class="n">v</span> <span class="o">&lt;=</span> <span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Occluded when the depth render at the nearest pixel is nearer than the texel by more than eps</span>
+    <span class="n">front</span> <span class="o">=</span> <span class="n">_nearest_depth</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">pixels</span><span class="p">)</span>
+    <span class="n">ok</span> <span class="o">&amp;=</span> <span class="p">(</span><span class="n">front</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="o">|</span> <span class="p">(</span><span class="n">cam</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">front</span> <span class="o">+</span> <span class="n">eps</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">ok</span><span class="p">,</span> <span class="n">dist</span> <span class="o">/</span> <span class="p">(</span><span class="n">K</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">cos</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">inf</span><span class="p">),</span> <span class="n">pixels</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_dilate_chart_gutters</span><span class="p">(</span>
+    <span class="n">albedo</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">uvs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">boxes</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Texels no face covers filled from covered 8-neighbors in the same chart box, uint8.</span>
+
+<span class="sd">    - steps should reach the gutter width (pad + 1)</span>
+<span class="sd">    """</span>
+    <span class="n">tex_size</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">albedo</span><span class="p">)</span>
+    <span class="n">rast</span> <span class="o">=</span> <span class="n">_rasterize_uvs</span><span class="p">(</span><span class="n">uvs</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">)</span>
+    <span class="n">cov</span> <span class="o">=</span> <span class="n">rast</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="k">del</span> <span class="n">rast</span>
+
+    <span class="c1"># Chart-box id per texel, -1 outside every box</span>
+    <span class="n">box</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">tex_size</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">h</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">boxes</span><span class="p">):</span>
+        <span class="n">box</span><span class="p">[</span><span class="n">y</span> <span class="p">:</span> <span class="n">y</span> <span class="o">+</span> <span class="n">h</span><span class="p">,</span> <span class="n">x</span> <span class="p">:</span> <span class="n">x</span> <span class="o">+</span> <span class="n">w</span><span class="p">]</span> <span class="o">=</span> <span class="n">c</span>
+
+    <span class="n">img</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">albedo</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">bid</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">box</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">steps</span><span class="p">):</span>
+        <span class="n">acc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">img</span><span class="p">)</span>
+        <span class="n">cnt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">cov</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+
+        <span class="c1"># Sum of covered same-box neighbors</span>
+        <span class="k">for</span> <span class="n">dy</span> <span class="ow">in</span> <span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">dx</span> <span class="ow">in</span> <span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">dy</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">dx</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="n">same_box</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">roll</span><span class="p">(</span><span class="n">bid</span><span class="p">,</span> <span class="p">(</span><span class="n">dy</span><span class="p">,</span> <span class="n">dx</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">==</span> <span class="n">bid</span>
+                <span class="n">ok</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">roll</span><span class="p">(</span><span class="n">cov</span><span class="p">,</span> <span class="p">(</span><span class="n">dy</span><span class="p">,</span> <span class="n">dx</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">&amp;</span> <span class="n">same_box</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">bid</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">)</span>
+                <span class="n">acc</span> <span class="o">+=</span> <span class="n">torch</span><span class="o">.</span><span class="n">roll</span><span class="p">(</span><span class="n">img</span><span class="p">,</span> <span class="p">(</span><span class="n">dy</span><span class="p">,</span> <span class="n">dx</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="o">*</span> <span class="n">ok</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+                <span class="n">cnt</span> <span class="o">+=</span> <span class="n">ok</span>
+
+        <span class="n">grow</span> <span class="o">=</span> <span class="o">~</span><span class="n">cov</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">cnt</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">img</span><span class="p">[</span><span class="n">grow</span><span class="p">]</span> <span class="o">=</span> <span class="n">acc</span><span class="p">[</span><span class="n">grow</span><span class="p">]</span> <span class="o">/</span> <span class="n">cnt</span><span class="p">[</span><span class="n">grow</span><span class="p">][:,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">cov</span> <span class="o">=</span> <span class="n">cov</span> <span class="o">|</span> <span class="n">grow</span>
+
+    <span class="k">return</span> <span class="n">img</span><span class="o">.</span><span class="n">round</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">255</span><span class="p">)</span><span class="o">.</span><span class="n">byte</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Helpers</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_gl_projection</span><span class="p">(</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">near</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span><span class="p">,</span> <span class="n">far</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1000.0</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    OpenCV pinhole K as an OpenGL clip matrix, (4, 4) float32.</span>
+
+<span class="sd">    - NDC y = -1 is image row 0, matching nvdiffrast's first output row</span>
+<span class="sd">    - raster pixel j is centered on u = j, the package convention (`unproject`); hence the + 1 on cx, cy</span>
+<span class="sd">    """</span>
+    <span class="n">fx</span><span class="p">,</span> <span class="n">fy</span><span class="p">,</span> <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">extract_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="p">[</span><span class="mi">2</span> <span class="o">*</span> <span class="n">fx</span> <span class="o">/</span> <span class="n">width</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">cx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+            <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">fy</span> <span class="o">/</span> <span class="n">height</span><span class="p">,</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">cy</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+            <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">(</span><span class="n">far</span> <span class="o">+</span> <span class="n">near</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">far</span> <span class="o">-</span> <span class="n">near</span><span class="p">),</span> <span class="o">-</span><span class="mi">2</span> <span class="o">*</span> <span class="n">far</span> <span class="o">*</span> <span class="n">near</span> <span class="o">/</span> <span class="p">(</span><span class="n">far</span> <span class="o">-</span> <span class="n">near</span><span class="p">)],</span>
+            <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+        <span class="p">],</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rasterize_view</span><span class="p">(</span>
+    <span class="n">ctx</span><span class="p">:</span> <span class="n">dr</span><span class="o">.</span><span class="n">RasterizeCudaContext</span><span class="p">,</span>
+    <span class="n">verts_h</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">faces</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Face-id raster and camera depth of a mesh in one view.</span>
+
+<span class="sd">    - verts_h: (P, 4) homogeneous float32 cuda vertices; faces: (F, 3) int32 cuda; extrinsics, K float32 cuda</span>
+<span class="sd">    - returns rast (H, W, 4), whose channel 3 is face id + 1 (0 = empty), and depth (H, W), 0 where empty</span>
+<span class="sd">    """</span>
+    <span class="n">proj</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">_gl_projection</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">clip</span> <span class="o">=</span> <span class="n">verts_h</span> <span class="o">@</span> <span class="p">(</span><span class="n">proj</span> <span class="o">@</span> <span class="n">extrinsics</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+    <span class="n">rast</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">rasterize</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">clip</span><span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="n">faces</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="p">[</span><span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">])</span>
+
+    <span class="c1"># Camera z interpolated over the same fragments</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="p">(</span><span class="n">verts_h</span> <span class="o">@</span> <span class="n">extrinsics</span><span class="p">[</span><span class="mi">2</span><span class="p">])[:,</span> <span class="kc">None</span><span class="p">]</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+    <span class="n">depth</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">interpolate</span><span class="p">(</span><span class="n">z</span><span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="n">rast</span><span class="p">,</span> <span class="n">faces</span><span class="p">)</span>
+    <span class="n">hit</span> <span class="o">=</span> <span class="n">rast</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="k">return</span> <span class="n">rast</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">depth</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">hit</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_nearest_depth</span><span class="p">(</span><span class="n">depth</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">pixels</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Depth render value at the pixel nearest each (u, v), clamped into the frame.</span>
+<span class="sd">    """</span>
+    <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">round</span><span class="p">()</span><span class="o">.</span><span class="n">long</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">cols</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">round</span><span class="p">()</span><span class="o">.</span><span class="n">long</span><span class="p">()</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">depth</span><span class="p">[</span><span class="n">rows</span><span class="p">,</span> <span class="n">cols</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rasterize_uvs</span><span class="p">(</span><span class="n">uvs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Atlas raster of (F, 3, 2) UVs with one vertex per corner, (1, tex_size, tex_size, 4) cuda.</span>
+
+<span class="sd">    - channel 3 is face id + 1 (0 = empty); corner triangles are arange(3F).reshape(-1, 3)</span>
+<span class="sd">    - v flipped, since nvdiffrast's first output row is the top of the atlas</span>
+<span class="sd">    """</span>
+    <span class="n">flat</span> <span class="o">=</span> <span class="n">uvs</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">zeros</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">flat</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">clip</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">flat</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">flat</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">])</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">zeros</span><span class="p">,</span> <span class="n">zeros</span> <span class="o">+</span> <span class="mi">1</span><span class="p">],</span> <span class="o">-</span><span class="mi">1</span>
+    <span class="p">)</span>
+    <span class="n">tri</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">flat</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">RasterizeCudaContext</span><span class="p">()</span>
+    <span class="n">rast</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">dr</span><span class="o">.</span><span class="n">rasterize</span><span class="p">(</span>
+        <span class="n">ctx</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">clip</span><span class="p">)</span><span class="o">.</span><span class="n">cuda</span><span class="p">()[</span><span class="kc">None</span><span class="p">],</span> <span class="n">tri</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="p">[</span><span class="n">tex_size</span><span class="p">,</span> <span class="n">tex_size</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">rast</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_to_cuda_mesh</span><span class="p">(</span>
+    <span class="n">verts</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">faces</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Homogeneous float32 vertices and int32 faces on the GPU, as nvdiffrast takes them.</span>
+<span class="sd">    """</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">verts</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+    <span class="n">verts_h</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">v</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">v</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">])],</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">verts_h</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">faces</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_signed_area</span><span class="p">(</span><span class="n">uv</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Signed 2D area per triangle of (F, 3, 2) corners; numpy or torch.</span>
+<span class="sd">    """</span>
+    <span class="n">e1</span> <span class="o">=</span> <span class="n">uv</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">uv</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">e2</span> <span class="o">=</span> <span class="n">uv</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">uv</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="k">return</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">e1</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">e2</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">e2</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">e1</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">])</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

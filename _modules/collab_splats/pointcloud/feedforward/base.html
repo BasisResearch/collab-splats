@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.pointcloud.feedforward.base &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/pointcloud/feedforward/base';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.pointcloud.feedforward.base</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.pointcloud.feedforward.base</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Abstract template-method pipeline and shared helpers for feedforward creators.</span>
+
+<span class="sd">- BaseFeedforwardCreator: the pipeline each backend subclasses; returns a PointcloudResult</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">abstractmethod</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Iterator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">contextmanager</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">ClassVar</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">multiview_depth_confidence</span><span class="p">,</span>
+    <span class="n">unproject_frames</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">extrinsics_to_homogeneous</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BasePointcloudCreator</span><span class="p">,</span> <span class="n">PointcloudResult</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">confidence_mask</span><span class="p">,</span> <span class="n">cross_frame_attention_ratio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_uint8_hwc</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">RegistryMixin</span><span class="p">,</span> <span class="n">get_device</span><span class="p">,</span> <span class="n">pytorch_gc</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Abstract pipeline</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="BaseFeedforwardCreator">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.base.BaseFeedforwardCreator">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">BaseFeedforwardCreator</span><span class="p">(</span><span class="n">BasePointcloudCreator</span><span class="p">,</span> <span class="n">RegistryMixin</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Template-method pipeline shared by every feedforward creator.</span>
+
+<span class="sd">    - _reconstruct steps: load_model -&gt; setup_inference -&gt; run_inference -&gt; _postprocess</span>
+<span class="sd">    - BasePointcloudCreator.create_pointcloud then cleans, caps and exports</span>
+<span class="sd">    - the base owns device choice, CUDA cache release and step state</span>
+<span class="sd">    - subclasses implement the abstract methods; each docstring states its contract</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        conf_percentile: depth-confidence percentile (0-100); pixels strictly above it are kept.</span>
+<span class="sd">        min_views: other views that must agree with a pixel's depth; 0 turns the filter off.</span>
+<span class="sd">        mv_rel_thresh: multiview agreement tolerance, as a fraction of depth.</span>
+<span class="sd">        frames: preproc's RGB uint8 frames by file name; None, any path missing, or loger reads the files.</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># Registry of feedforward backends, filled in as each backend module is imported</span>
+    <span class="n">_registry</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">type</span><span class="p">[</span><span class="s2">"BaseFeedforwardCreator"</span><span class="p">]]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="c1"># Loop-closure settings, overridden by each backend that supports loop closure</span>
+    <span class="n">default_verify_match_ratio</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">_lc_layer_index</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">_lc_token_offset</span><span class="p">:</span> <span class="n">ClassVar</span><span class="p">[</span><span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="n">conf_percentile</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">50.0</span>
+
+    <span class="c1"># Settings for the multiview depth filter, which is off when min_views is 0</span>
+    <span class="n">min_views</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">mv_rel_thresh</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span>
+
+    <span class="c1"># Preproc's frames, set by Reconstructor when this process decoded them</span>
+    <span class="n">frames</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="c1"># State filled in as the pipeline runs</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">views</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">image_paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">original_coords</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">raw_outputs</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_reconstruct</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">],</span> <span class="n">out_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Load, preprocess, forward and unproject the frames into a filtered cloud.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">load_model</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">setup_inference</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">run_inference</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_postprocess</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">raw_outputs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="BaseFeedforwardCreator.load_model">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.base.BaseFeedforwardCreator.load_model">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_model</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Load the backend's model onto cuda when available, else cpu, once.</span>
+
+<span class="sd">        - a loaded model stays where it is</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Load and time the subclass's model</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
+        <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Loading model (</span><span class="si">%s</span><span class="s2">)..."</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_load_model</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"  done in </span><span class="si">%.1f</span><span class="s2">s"</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BaseFeedforwardCreator.setup_inference">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.base.BaseFeedforwardCreator.setup_inference">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">setup_inference</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Preprocess the frames into the backend's model input.</span>
+
+<span class="sd">        - sets views, image_paths (frame stems) and original_coords</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            paths: frame image paths, reconstruction order; handed-off frames are matched by name.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Name each frame by its file stem and let the backend prepare the model inputs</span>
+        <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">image_paths</span> <span class="o">=</span> <span class="p">[</span><span class="n">Path</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">stem</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">views</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">original_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_preprocess</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"Preprocessed </span><span class="si">%d</span><span class="s2"> images in </span><span class="si">%.1f</span><span class="s2">s"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">paths</span><span class="p">),</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span>
+        <span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_list_frames</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Frame paths named by the handed-off frames, else listed from images_dir.</span>
+
+<span class="sd">        - preproc may still be writing images/, so a handoff never lists the directory</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">frames</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">_list_frames</span><span class="p">(</span><span class="n">images_dir</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="p">[</span><span class="n">images_dir</span> <span class="o">/</span> <span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">frames</span><span class="p">)]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_path_frames</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        The handed-off frame for every path, in order, or None to read the files.</span>
+
+<span class="sd">        - None when nothing was handed off, or with a warning when any path is missing</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">frames</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="c1"># A partial handoff is ignored in favor of reading every file</span>
+        <span class="n">missing</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">frames</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"frames handed off but </span><span class="si">%d</span><span class="s2"> of </span><span class="si">%d</span><span class="s2"> paths missing; reading files"</span><span class="p">,</span>
+                <span class="n">missing</span><span class="p">,</span>
+                <span class="nb">len</span><span class="p">(</span><span class="n">paths</span><span class="p">),</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="k">return</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">frames</span><span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">]</span>
+
+<div class="viewcode-block" id="BaseFeedforwardCreator.run_inference">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.base.BaseFeedforwardCreator.run_inference">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_inference</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Run the forward pass into raw_outputs, then free the CUDA cache.</span>
+<span class="sd">        """</span>
+        <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Running inference..."</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">raw_outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_forward</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">views</span><span class="p">)</span>
+
+        <span class="c1"># Free forward-pass memory before postprocessing</span>
+        <span class="n">pytorch_gc</span><span class="p">()</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"  done in </span><span class="si">%.1f</span><span class="s2">s"</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span></div>
+
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_load_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Load the pretrained model onto `device` in eval mode.</span>
+
+<span class="sd">        - holds no GPU state outside the returned model</span>
+<span class="sd">        """</span>
+        <span class="o">...</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Model input batch from the frames at paths.</span>
+
+<span class="sd">        - a backend may read the handed-off arrays (_get_path_frames) instead of the files</span>
+<span class="sd">        - returns (views, original_coords)</span>
+<span class="sd">        - original_coords: (N, 6) float32 [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h]</span>
+<span class="sd">        """</span>
+        <span class="o">...</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">views</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Forward pass under torch.no_grad().</span>
+
+<span class="sd">        - takes _load_model's model and _preprocess's views</span>
+<span class="sd">        - returns the raw outputs _postprocess reads</span>
+<span class="sd">        """</span>
+        <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_multiview_mask</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">depth</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Keep-mask of pixels that min(min_views, seen) other views agree with; all-True when off.</span>
+
+<span class="sd">        - a pixel no other view sees is kept</span>
+<span class="sd">        - depth (N, H, W); intrinsics (N, 3, 3) on the depth grid; extrinsics (N, 4, 4) w2c</span>
+<span class="sd">        """</span>
+        <span class="c1"># Skip the filter entirely when it is turned off</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_views</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+
+        <span class="c1"># Keep a pixel when enough of the other views that see it agree on its depth</span>
+        <span class="n">agree</span><span class="p">,</span> <span class="n">seen</span> <span class="o">=</span> <span class="n">multiview_depth_confidence</span><span class="p">(</span>
+            <span class="n">depth</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">rel_thresh</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">mv_rel_thresh</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">agree</span> <span class="o">&gt;=</span> <span class="n">np</span><span class="o">.</span><span class="n">minimum</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">min_views</span><span class="p">,</span> <span class="n">seen</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_postprocess</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">raw_outputs</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Unproject raw depth-head outputs into the filtered cloud and dense per-pixel fields.</span>
+
+<span class="sd">        - reads images (N, 3, H, W) in [0, 1], extrinsic (N, 3, 4) w2c, model-grid intrinsics (N, 3, 3)</span>
+<span class="sd">        - reads depth (N, H, W) or (N, H, W, 1), depth_conf (N, H, W), optional keep-mask `mask`</span>
+<span class="sd">        - keeps pixels with depth &gt; 0 and in `mask`, or above the conf_percentile cutoff without one</span>
+<span class="sd">        - the multiview filter, when on, is ANDed on top</span>
+<span class="sd">        - intrinsics left None; PointcloudResult derives the full-res K</span>
+<span class="sd">        """</span>
+        <span class="c1"># Unpack the camera poses, intrinsics and depth, dropping any trailing depth channel</span>
+        <span class="n">extrinsic</span> <span class="o">=</span> <span class="n">raw_outputs</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">]</span>
+        <span class="n">intrinsic</span> <span class="o">=</span> <span class="n">raw_outputs</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">]</span>
+        <span class="n">extrinsic_4x4</span> <span class="o">=</span> <span class="n">extrinsics_to_homogeneous</span><span class="p">(</span><span class="n">extrinsic</span><span class="p">)</span>
+        <span class="n">depth_conf</span> <span class="o">=</span> <span class="n">raw_outputs</span><span class="p">[</span><span class="s2">"depth_conf"</span><span class="p">]</span>
+        <span class="n">depth</span> <span class="o">=</span> <span class="n">raw_outputs</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="n">depth</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
+            <span class="n">depth</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">model_h</span><span class="p">,</span> <span class="n">model_w</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="nb">int</span><span class="p">(</span><span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+
+        <span class="c1"># Unproject the depth into a world point for every pixel, instead of using the backend's point maps</span>
+        <span class="n">world_points</span> <span class="o">=</span> <span class="n">unproject_frames</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">extrinsic</span><span class="p">,</span> <span class="n">intrinsic</span><span class="p">)</span>
+
+        <span class="c1"># Keep pixels with positive depth that pass the backend's mask, or the confidence cutoff if it has none</span>
+        <span class="n">valid</span> <span class="o">=</span> <span class="n">depth</span> <span class="o">&gt;</span> <span class="mi">0</span>
+
+        <span class="k">if</span> <span class="s2">"mask"</span> <span class="ow">in</span> <span class="n">raw_outputs</span><span class="p">:</span>
+            <span class="n">valid</span> <span class="o">&amp;=</span> <span class="n">raw_outputs</span><span class="p">[</span><span class="s2">"mask"</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">valid</span> <span class="o">&amp;=</span> <span class="n">confidence_mask</span><span class="p">(</span><span class="n">depth_conf</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">conf_percentile</span><span class="p">)</span>
+
+        <span class="c1"># Optionally also require the depth to agree across views</span>
+        <span class="n">valid</span> <span class="o">&amp;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_multiview_mask</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">intrinsic</span><span class="p">,</span> <span class="n">extrinsic_4x4</span><span class="p">)</span>
+
+        <span class="c1"># Collect the colors and pixel indices of the kept pixels</span>
+        <span class="n">images</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">raw_outputs</span><span class="p">[</span><span class="s2">"images"</span><span class="p">])</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="n">colors_grid</span> <span class="o">=</span> <span class="n">to_uint8_hwc</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">channels_first</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">pixel_indices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">valid</span><span class="p">),</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">image_paths</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">original_coords</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+        <span class="k">return</span> <span class="n">PointcloudResult</span><span class="p">(</span>
+            <span class="n">points</span><span class="o">=</span><span class="n">world_points</span><span class="p">[</span><span class="n">valid</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
+            <span class="n">colors</span><span class="o">=</span><span class="n">colors_grid</span><span class="p">[</span><span class="n">valid</span><span class="p">],</span>
+            <span class="n">pixel_indices</span><span class="o">=</span><span class="n">pixel_indices</span><span class="p">,</span>
+            <span class="n">extrinsics</span><span class="o">=</span><span class="n">extrinsic_4x4</span><span class="p">,</span>
+            <span class="n">intrinsics</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">model_intrinsics</span><span class="o">=</span><span class="n">intrinsic</span><span class="p">,</span>
+            <span class="n">image_paths</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">image_paths</span><span class="p">,</span>
+            <span class="n">original_coords</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">original_coords</span><span class="p">,</span>
+            <span class="n">model_width</span><span class="o">=</span><span class="n">model_w</span><span class="p">,</span>
+            <span class="n">model_height</span><span class="o">=</span><span class="n">model_h</span><span class="p">,</span>
+            <span class="n">images</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">images</span><span class="p">),</span>
+            <span class="n">confidence</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">depth_conf</span><span class="p">),</span>
+            <span class="n">world_points</span><span class="o">=</span><span class="n">world_points</span><span class="p">,</span>
+            <span class="n">depth</span><span class="o">=</span><span class="n">depth</span><span class="p">,</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="BaseFeedforwardCreator.extract_intermediate_features">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.base.BaseFeedforwardCreator.extract_intermediate_features">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">extract_intermediate_features</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">frames</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">layer_index</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Q/K at one cross-frame block, plus joint poses and geometry, for LC verification.</span>
+
+<span class="sd">        - one _forward gives both, so _verify_loop_candidate needs no second pass</span>
+<span class="sd">        - world points are the depth unprojected, as _postprocess builds them</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            frames: (2, C, H, W) preprocessed frames on CPU or GPU.</span>
+<span class="sd">            layer_index: cross-frame block to tap; -1 = last.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            {"q", "k": (B, heads, tokens, head_dim), "poses": (2, 4, 4) w2c,</span>
+<span class="sd">            "world_points": (2, H, W, 3), "conf": (2, H, W)}.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            NotImplementedError: the backend does not support loop closure.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Capture attention queries and keys at the chosen block during one forward pass</span>
+        <span class="n">attn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lc_attn</span><span class="p">(</span><span class="n">layer_index</span><span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">capture_qk</span><span class="p">(</span><span class="n">attn</span><span class="o">.</span><span class="n">qkv</span><span class="p">,</span> <span class="n">attn</span><span class="o">.</span><span class="n">num_heads</span><span class="p">)</span> <span class="k">as</span> <span class="n">captured</span><span class="p">:</span>
+            <span class="n">raw</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_forward</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="n">frames</span><span class="p">)</span>
+
+        <span class="c1"># Unproject each frame's depth into world points</span>
+        <span class="n">depth</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">3</span><span class="p">])</span>
+        <span class="n">world_points</span> <span class="o">=</span> <span class="n">unproject_frames</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">],</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">])</span>
+
+        <span class="c1"># Return the poses and geometry alongside the captured queries and keys</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">"poses"</span><span class="p">]</span> <span class="o">=</span> <span class="n">extrinsics_to_homogeneous</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">])</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">"world_points"</span><span class="p">]</span> <span class="o">=</span> <span class="n">world_points</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">"conf"</span><span class="p">]</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"depth_conf"</span><span class="p">]</span>
+
+        <span class="k">return</span> <span class="n">captured</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_lc_attn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">layer_index</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Attention module (with .qkv and .num_heads) that loop closure taps; the base has none.</span>
+<span class="sd">        """</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> does not support loop closure"</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_verify_loop_candidate</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">frame1</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">frame2</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">verify_match_ratio</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Accept or reject a loop candidate by cross-frame attention between two frames.</span>
+
+<span class="sd">        - frame1, frame2: (C, H, W) preprocessed frames</span>
+<span class="sd">        - returns (accepted, lc_data); lc_data is None on reject</span>
+<span class="sd">        - lc_data: "poses" (2, 4, 4) w2c, "world_points" (2, H, W, 3), "conf" (2, H, W)</span>
+<span class="sd">        """</span>
+        <span class="c1"># Run both frames through the model and capture attention at the calibrated layer</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lc_layer_index</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lc_token_offset</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">features</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">extract_intermediate_features</span><span class="p">(</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">frame1</span><span class="p">,</span> <span class="n">frame2</span><span class="p">])</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lc_layer_index</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Score the pair by the mean of the top quarter of per-token attention ratios</span>
+        <span class="n">ratios</span> <span class="o">=</span> <span class="n">cross_frame_attention_ratio</span><span class="p">(</span>
+            <span class="n">features</span><span class="p">[</span><span class="s2">"k"</span><span class="p">],</span> <span class="n">features</span><span class="p">[</span><span class="s2">"q"</span><span class="p">],</span> <span class="n">token_offset</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_lc_token_offset</span>
+        <span class="p">)</span>
+        <span class="n">thresh</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">percentile</span><span class="p">(</span>
+            <span class="n">ratios</span><span class="p">,</span> <span class="mi">75</span>
+        <span class="p">)</span>  <span class="c1"># ignore background tokens that match nothing</span>
+        <span class="n">ratio</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">ratios</span><span class="p">[</span><span class="n">ratios</span> <span class="o">&gt;=</span> <span class="n">thresh</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+        <span class="n">accepted</span> <span class="o">=</span> <span class="n">ratio</span> <span class="o">&gt;=</span> <span class="n">verify_match_ratio</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"LC verify: ratio=</span><span class="si">%.4f</span><span class="s2"> threshold=</span><span class="si">%.4f</span><span class="s2"> accepted=</span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span>
+            <span class="n">ratio</span><span class="p">,</span>
+            <span class="n">verify_match_ratio</span><span class="p">,</span>
+            <span class="n">accepted</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">accepted</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="kc">None</span>
+
+        <span class="c1"># The pair is a loop, so return its poses and geometry</span>
+        <span class="k">return</span> <span class="kc">True</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s2">"poses"</span><span class="p">:</span> <span class="n">features</span><span class="p">[</span><span class="s2">"poses"</span><span class="p">],</span>
+            <span class="s2">"world_points"</span><span class="p">:</span> <span class="n">features</span><span class="p">[</span><span class="s2">"world_points"</span><span class="p">],</span>
+            <span class="s2">"conf"</span><span class="p">:</span> <span class="n">features</span><span class="p">[</span><span class="s2">"conf"</span><span class="p">],</span>
+        <span class="p">}</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Helpers</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="capture_qk">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.base.capture_qk">[docs]</a>
+<span class="nd">@contextmanager</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">capture_qk</span><span class="p">(</span>
+    <span class="n">qkv</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterator</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Capture q and k from a fused QKV projection for the duration of the block.</span>
+
+<span class="sd">    - the hook is removed in a finally block, so a raising forward still cleans up</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        qkv: the Linear producing (B, T, 3 * heads * head_dim).</span>
+<span class="sd">        num_heads: attention heads of that block.</span>
+
+<span class="sd">    Yields:</span>
+<span class="sd">        dict filled with "q", "k" as (B, heads, T, head_dim) after the forward runs.</span>
+<span class="sd">    """</span>
+    <span class="n">captured</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_hook</span><span class="p">(</span><span class="n">_module</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">,</span> <span class="n">_inp</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">out</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Split the fused qkv output into separate per-head q, k and v tensors</span>
+        <span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">C3</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">hd</span> <span class="o">=</span> <span class="p">(</span><span class="n">C3</span> <span class="o">//</span> <span class="mi">3</span><span class="p">)</span> <span class="o">//</span> <span class="n">num_heads</span>
+        <span class="n">split</span> <span class="o">=</span> <span class="n">out</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">num_heads</span><span class="p">,</span> <span class="n">hd</span><span class="p">)</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+        <span class="n">captured</span><span class="p">[</span><span class="s2">"q"</span><span class="p">],</span> <span class="n">captured</span><span class="p">[</span><span class="s2">"k"</span><span class="p">]</span> <span class="o">=</span> <span class="n">split</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">split</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Attach the hook and always remove it afterward, even if the forward pass fails</span>
+    <span class="n">handle</span> <span class="o">=</span> <span class="n">qkv</span><span class="o">.</span><span class="n">register_forward_hook</span><span class="p">(</span><span class="n">_hook</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span> <span class="n">captured</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">handle</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="center_crop_coords">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.base.center_crop_coords">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">center_crop_coords</span><span class="p">(</span>
+    <span class="n">orig_wh</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="n">resized_wh</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="n">crop_wh</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="n">scale</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Centered crop of a resized frame, as a box in original pixels.</span>
+
+<span class="sd">    - resize orig -&gt; resized, then center-crop resized -&gt; crop; the box undoes both</span>
+<span class="sd">    - crop offset (resized - crop) // 2 in the resized grid, as the upstream loaders do</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        orig_wh: original frame (width, height).</span>
+<span class="sd">        resized_wh: frame size after the resize, before the crop.</span>
+<span class="sd">        crop_wh: model input size after the crop.</span>
+<span class="sd">        scale: (sx, sy) resize factors, original -&gt; resized.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h].</span>
+<span class="sd">    """</span>
+    <span class="n">ow</span><span class="p">,</span> <span class="n">oh</span> <span class="o">=</span> <span class="n">orig_wh</span>
+    <span class="n">rw</span><span class="p">,</span> <span class="n">rh</span> <span class="o">=</span> <span class="n">resized_wh</span>
+    <span class="n">cw</span><span class="p">,</span> <span class="n">ch</span> <span class="o">=</span> <span class="n">crop_wh</span>
+    <span class="n">sx</span><span class="p">,</span> <span class="n">sy</span> <span class="o">=</span> <span class="n">scale</span>
+
+    <span class="c1"># Find the crop's top-left corner, then convert the box back to original pixels</span>
+    <span class="n">left</span><span class="p">,</span> <span class="n">top</span> <span class="o">=</span> <span class="p">(</span><span class="n">rw</span> <span class="o">-</span> <span class="n">cw</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="p">(</span><span class="n">rh</span> <span class="o">-</span> <span class="n">ch</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
+
+    <span class="k">return</span> <span class="p">[</span><span class="n">left</span> <span class="o">/</span> <span class="n">sx</span><span class="p">,</span> <span class="n">top</span> <span class="o">/</span> <span class="n">sy</span><span class="p">,</span> <span class="p">(</span><span class="n">left</span> <span class="o">+</span> <span class="n">cw</span><span class="p">)</span> <span class="o">/</span> <span class="n">sx</span><span class="p">,</span> <span class="p">(</span><span class="n">top</span> <span class="o">+</span> <span class="n">ch</span><span class="p">)</span> <span class="o">/</span> <span class="n">sy</span><span class="p">,</span> <span class="n">ow</span><span class="p">,</span> <span class="n">oh</span><span class="p">]</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_decode_depth_head</span><span class="p">(</span>
+    <span class="n">predictions</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">decode</span><span class="p">:</span> <span class="n">Callable</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Decode a VGGT-family forward's poses and depth to CPU float32 arrays.</span>
+
+<span class="sd">    - predictions: 'pose_enc', 'depth', 'depth_conf', each with batch dim 1</span>
+<span class="sd">    - hw: model-res (H, W)</span>
+<span class="sd">    - decode: the backend's pose decoder, (pose_enc, hw) -&gt; (extrinsic, intrinsic)</span>
+<span class="sd">    - returns 'extrinsic' (N, 3, 4) w2c and model-res 'intrinsics' (N, 3, 3)</span>
+<span class="sd">    - returns 'depth' (N, H, W, 1) and 'depth_conf' (N, H, W)</span>
+<span class="sd">    """</span>
+    <span class="n">ext_t</span><span class="p">,</span> <span class="n">intr_t</span> <span class="o">=</span> <span class="n">decode</span><span class="p">(</span><span class="n">predictions</span><span class="p">[</span><span class="s2">"pose_enc"</span><span class="p">]</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">hw</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"extrinsic"</span><span class="p">:</span> <span class="n">ext_t</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+        <span class="s2">"intrinsics"</span><span class="p">:</span> <span class="n">intr_t</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span>
+        <span class="s2">"depth"</span><span class="p">:</span> <span class="n">predictions</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+        <span class="s2">"depth_conf"</span><span class="p">:</span> <span class="n">predictions</span><span class="p">[</span><span class="s2">"depth_conf"</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_frame_sizes</span><span class="p">(</span>
+    <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">],</span> <span class="n">arrays</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Each frame's (w, h): from the handed-off arrays when given, else a header read per file.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">arrays</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">.</span><span class="n">size</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="p">[(</span><span class="n">a</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">a</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">arrays</span><span class="p">]</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

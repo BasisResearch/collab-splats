@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.utils.image &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/utils/image';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.utils.image</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.utils.image</h1><div class="highlight"><pre>
+<span></span><span class="c1"># collab_splats/utils/image.py</span>
+<span class="sd">"""</span>
+<span class="sd">Image helpers: PIL coercion, guided depth upsampling, hole filling, feature PCA view.</span>
+
+<span class="sd">- open_image, resize_image: PIL coercion and aspect-preserving resize</span>
+<span class="sd">- upsample_depths: model-res depth onto the original-res RGB grid (kornia guided filter)</span>
+<span class="sd">- fill_missing_pixels: push-pull fill of unknown pixels (texture atlas, hull ground heights)</span>
+<span class="sd">- features_to_rgb: top-3 PCA view of a (D, H_p, W_p) feature map</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">kornia.filters</span><span class="w"> </span><span class="kn">import</span> <span class="n">guided_blur</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_device</span>
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Normalization constants #####################</span>
+<span class="c1">########################################################</span>
+
+<span class="c1"># ImageNet stats — DINOv2/DINOv3 training preprocessing, and DINO-SALAD retrieval</span>
+<span class="n">IMAGENET_MEAN</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.485</span><span class="p">,</span> <span class="mf">0.456</span><span class="p">,</span> <span class="mf">0.406</span><span class="p">]</span>
+<span class="n">IMAGENET_STD</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.229</span><span class="p">,</span> <span class="mf">0.224</span><span class="p">,</span> <span class="mf">0.225</span><span class="p">]</span>
+
+<span class="c1"># CLIP stats — from maskclip_onnx/clip.py _transform()</span>
+<span class="n">CLIP_MEAN</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.48145466</span><span class="p">,</span> <span class="mf">0.4578275</span><span class="p">,</span> <span class="mf">0.40821073</span><span class="p">]</span>
+<span class="n">CLIP_STD</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.26862954</span><span class="p">,</span> <span class="mf">0.26130258</span><span class="p">,</span> <span class="mf">0.27577711</span><span class="p">]</span>
+
+
+<div class="viewcode-block" id="open_image">
+<a class="viewcode-back" href="../../../api/utils.html#collab_splats.utils.image.open_image">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">open_image</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span> <span class="o">|</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    PIL Image from a path, an array or an existing PIL Image.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        image: file path, (H, W[, C]) array, or PIL Image (returned as is).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The image as PIL.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: if image is an unsupported type.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">)):</span>
+        <span class="k">return</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">Image</span><span class="o">.</span><span class="n">fromarray</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">image</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Unsupported image type: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">image</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="resize_image">
+<a class="viewcode-back" href="../../../api/utils.html#collab_splats.utils.image.resize_image">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">resize_image</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">,</span> <span class="n">longest_edge</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Image</span><span class="o">.</span><span class="n">Image</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Aspect-preserving resize so the longest edge equals longest_edge.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        image: image to resize.</span>
+<span class="sd">        longest_edge: target pixel length of the longest dimension.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The resized image, bilinear.</span>
+<span class="sd">    """</span>
+    <span class="n">width</span><span class="p">,</span> <span class="n">height</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">size</span>
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">longest_edge</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">)</span>
+    <span class="n">new_width</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">width</span> <span class="o">*</span> <span class="n">ratio</span><span class="p">)</span>
+    <span class="n">new_height</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">height</span> <span class="o">*</span> <span class="n">ratio</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">image</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="n">new_width</span><span class="p">,</span> <span class="n">new_height</span><span class="p">),</span> <span class="n">Image</span><span class="o">.</span><span class="n">BILINEAR</span><span class="p">)</span></div>
+
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Depth upsampling ############################</span>
+<span class="c1">########################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_nearest_source_index</span><span class="p">(</span><span class="n">n_out</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">n_in</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Source index per output pixel along one axis, exactly as cv2.INTER_NEAREST picks it.</span>
+
+<span class="sd">    - cv2 floors x / (n_out / n_in) in double precision, clamped to the last source pixel</span>
+<span class="sd">    """</span>
+    <span class="n">inverse_scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">n_out</span> <span class="o">/</span> <span class="n">n_in</span><span class="p">)</span>
+    <span class="n">index</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_out</span><span class="p">)</span> <span class="o">*</span> <span class="n">inverse_scale</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">minimum</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">n_in</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_guided_upsample_depth</span><span class="p">(</span>
+    <span class="n">depth</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">rgb_full</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">crop_box</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+    <span class="n">radius</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Upsample one model-res depth map into its crop region of the original-res RGB canvas.</span>
+
+<span class="sd">    - crop_box (tl_x, tl_y, cr_x, cr_y) in original pixels; radius None = ~2 × the upsample factor</span>
+<span class="sd">    - masked pixels stay 0, canvas outside the crop is 0</span>
+<span class="sd">    - kornia guided_blur on device: He et al., gray guide, reflect-101 border</span>
+<span class="sd">    """</span>
+    <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">rgb_full</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+    <span class="n">tl_x</span><span class="p">,</span> <span class="n">tl_y</span><span class="p">,</span> <span class="n">cr_x</span><span class="p">,</span> <span class="n">cr_y</span> <span class="o">=</span> <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">v</span><span class="p">))</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">crop_box</span><span class="p">)</span>
+    <span class="n">cw</span><span class="p">,</span> <span class="n">ch</span> <span class="o">=</span> <span class="n">cr_x</span> <span class="o">-</span> <span class="n">tl_x</span><span class="p">,</span> <span class="n">cr_y</span> <span class="o">-</span> <span class="n">tl_y</span>
+    <span class="k">if</span> <span class="n">cw</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">ch</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"Degenerate crop box </span><span class="si">{</span><span class="n">crop_box</span><span class="si">}</span><span class="s2"> — original_coords are corrupt"</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">tl_x</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">tl_y</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">cr_x</span> <span class="o">&gt;</span> <span class="n">W</span> <span class="ow">or</span> <span class="n">cr_y</span> <span class="o">&gt;</span> <span class="n">H</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Crop box </span><span class="si">{</span><span class="n">crop_box</span><span class="si">}</span><span class="s2"> lies outside the </span><span class="si">{</span><span class="n">H</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">W</span><span class="si">}</span><span class="s2"> canvas"</span><span class="p">)</span>
+
+    <span class="c1"># Nearest resize on the device, gathering the source rows and columns cv2.INTER_NEAREST picks</span>
+    <span class="n">depth_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="n">_nearest_source_index</span><span class="p">(</span><span class="n">ch</span><span class="p">,</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">cols</span> <span class="o">=</span> <span class="n">_nearest_source_index</span><span class="p">(</span><span class="n">cw</span><span class="p">,</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">rows_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">cols_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">depth_nn</span> <span class="o">=</span> <span class="n">depth_t</span><span class="p">[</span><span class="n">rows_t</span><span class="p">][:,</span> <span class="n">cols_t</span><span class="p">]</span>
+    <span class="n">valid_nn</span> <span class="o">=</span> <span class="p">(</span><span class="n">depth_nn</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+    <span class="c1"># Gray guide in [0, 1]: cv2 conversion on the CPU (uint8 upload), scaling on the device</span>
+    <span class="n">gray</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">cvtColor</span><span class="p">(</span><span class="n">rgb_full</span><span class="p">[</span><span class="n">tl_y</span><span class="p">:</span><span class="n">cr_y</span><span class="p">,</span> <span class="n">tl_x</span><span class="p">:</span><span class="n">cr_x</span><span class="p">],</span> <span class="n">cv2</span><span class="o">.</span><span class="n">COLOR_RGB2GRAY</span><span class="p">)</span>
+    <span class="n">gray_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">gray</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+
+    <span class="c1"># Divide by a device tensor: a CUDA scalar divide multiplies by the reciprocal (1 ulp off)</span>
+    <span class="n">max_level</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">255.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">guide_t</span> <span class="o">=</span> <span class="n">gray_t</span> <span class="o">/</span> <span class="n">max_level</span>
+
+    <span class="c1"># Zero-mean guide: offset-invariant filter, less float32 cancellation in a and b</span>
+    <span class="n">guide_t</span> <span class="o">=</span> <span class="n">guide_t</span> <span class="o">-</span> <span class="mf">0.5</span>
+
+    <span class="k">if</span> <span class="n">radius</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">radius</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">cw</span> <span class="o">/</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])))</span>
+
+    <span class="c1"># Validity-weighted filtering: depth and validity as two channels of one guided filter</span>
+    <span class="n">guide_t</span> <span class="o">=</span> <span class="n">guide_t</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">src_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">depth_nn</span> <span class="o">*</span> <span class="n">valid_nn</span><span class="p">,</span> <span class="n">valid_nn</span><span class="p">])[</span><span class="kc">None</span><span class="p">]</span>
+    <span class="n">num</span><span class="p">,</span> <span class="n">den</span> <span class="o">=</span> <span class="n">guided_blur</span><span class="p">(</span><span class="n">guide_t</span><span class="p">,</span> <span class="n">src_t</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">radius</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">eps</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">filtered</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">den</span> <span class="o">&gt;</span> <span class="mf">1e-6</span><span class="p">,</span> <span class="n">num</span> <span class="o">/</span> <span class="n">den</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">),</span> <span class="mf">0.0</span><span class="p">)</span>
+
+    <span class="c1"># The guide must never resurrect deleted depth, and depth must stay non-negative</span>
+    <span class="n">filtered</span><span class="p">[</span><span class="n">src_t</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">filtered</span> <span class="o">=</span> <span class="n">filtered</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+
+    <span class="n">canvas</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">canvas</span><span class="p">[</span><span class="n">tl_y</span><span class="p">:</span><span class="n">cr_y</span><span class="p">,</span> <span class="n">tl_x</span><span class="p">:</span><span class="n">cr_x</span><span class="p">]</span> <span class="o">=</span> <span class="n">filtered</span>
+    <span class="k">return</span> <span class="n">canvas</span>
+
+
+<div class="viewcode-block" id="upsample_depths">
+<a class="viewcode-back" href="../../../api/utils.html#collab_splats.utils.image.upsample_depths">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">upsample_depths</span><span class="p">(</span>
+    <span class="n">depths</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">rgbs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">crop_boxes</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Guided-filter upsample model-res depth maps onto their original-res RGB frames.</span>
+
+<span class="sd">    - filters on get_device(), one frame at a time</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        depths: (N, h, w) model-res depth, 0 = no observation.</span>
+<span class="sd">        rgbs: (N, H, W, 3) uint8 original-res frames; H, W set the output size.</span>
+<span class="sd">        crop_boxes: (N, 4) [tl_x, tl_y, cr_x, cr_y] model crops in original pixels</span>
+<span class="sd">            (original_coords[:, :4]).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (N, H, W) float32 depth at frame resolution.</span>
+<span class="sd">    """</span>
+    <span class="n">depths</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">depths</span><span class="p">)</span>
+    <span class="n">rgbs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">rgbs</span><span class="p">)</span>
+    <span class="n">crop_boxes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">crop_boxes</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">depths</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">rgbs</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">crop_boxes</span><span class="p">)):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">depths</span><span class="p">)</span><span class="si">}</span><span class="s2"> depths, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rgbs</span><span class="p">)</span><span class="si">}</span><span class="s2"> rgbs, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">crop_boxes</span><span class="p">)</span><span class="si">}</span><span class="s2"> crop boxes"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># One guided upsample per frame into a preallocated stack</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="n">get_device</span><span class="p">())</span>
+    <span class="n">n</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">depths</span><span class="p">),</span> <span class="n">rgbs</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">rgbs</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">_guided_upsample_depth</span><span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">depths</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="n">rgbs</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">crop_boxes</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">device</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">out</span></div>
+
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Hole filling ################################</span>
+<span class="c1">########################################################</span>
+
+
+<div class="viewcode-block" id="fill_missing_pixels">
+<a class="viewcode-back" href="../../../api/utils.html#collab_splats.utils.image.fill_missing_pixels">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fill_missing_pixels</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">known</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Push-pull pyramid fill: every unknown pixel takes the smooth continuation of the known ones.</span>
+
+<span class="sd">    - fills any distance from a known pixel; the coarsest pyramid level is never empty</span>
+<span class="sd">    - known pixels come back unchanged</span>
+<span class="sd">    - with nothing known the result is zero</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        image: (H, W) or (H, W, C) values; unknown pixels are ignored.</span>
+<span class="sd">        known: (H, W) bool, True where image holds a real value.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        float32 array shaped like image.</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># Weight broadcast over channels when the image has them</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">expand</span><span class="p">(</span><span class="n">weight</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">weight</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="k">if</span> <span class="n">image</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">3</span> <span class="k">else</span> <span class="n">weight</span>
+
+    <span class="c1"># Pull: repeatedly halve value-sum and weight-sum</span>
+    <span class="n">values</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">image</span> <span class="o">*</span> <span class="n">expand</span><span class="p">(</span><span class="n">known</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)]</span>
+    <span class="n">weights</span> <span class="o">=</span> <span class="p">[</span><span class="n">known</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)]</span>
+
+    <span class="k">while</span> <span class="nb">min</span><span class="p">(</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">])</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">values</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cv2</span><span class="o">.</span><span class="n">pyrDown</span><span class="p">(</span><span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]))</span>
+        <span class="n">weights</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cv2</span><span class="o">.</span><span class="n">pyrDown</span><span class="p">(</span><span class="n">weights</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]))</span>
+
+    <span class="c1"># Push: normalize each level and let the coarser result show through wherever weight is missing</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">expand</span><span class="p">(</span><span class="n">weights</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]),</span> <span class="mf">1e-8</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">level</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)</span> <span class="o">-</span> <span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+        <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">values</span><span class="p">[</span><span class="n">level</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">up</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">h</span><span class="p">),</span> <span class="n">interpolation</span><span class="o">=</span><span class="n">cv2</span><span class="o">.</span><span class="n">INTER_LINEAR</span><span class="p">)</span>
+        <span class="n">weight</span> <span class="o">=</span> <span class="n">expand</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">weights</span><span class="p">[</span><span class="n">level</span><span class="p">],</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">))</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">values</span><span class="p">[</span><span class="n">level</span><span class="p">]</span> <span class="o">/</span> <span class="n">np</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">weight</span><span class="p">,</span> <span class="mf">1e-8</span><span class="p">)</span> <span class="o">*</span> <span class="n">weight</span> <span class="o">+</span> <span class="n">up</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">weight</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">out</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="features_to_rgb">
+<a class="viewcode-back" href="../../../api/utils.html#collab_splats.utils.image.features_to_rgb">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">features_to_rgb</span><span class="p">(</span><span class="n">features</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Feature map projected onto its top-3 principal components, as a patch-grid RGB image.</span>
+
+<span class="sd">    - torch SVD of the centered patch vectors; no sklearn</span>
+<span class="sd">    - each channel min-max normalized on its own; a zero-variance channel stays 0</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        features: (D, H_p, W_p) feature map, one frame's output from forward().</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (H_p, W_p, 3) uint8 RGB.</span>
+<span class="sd">    """</span>
+    <span class="n">feat</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">features</span><span class="p">)</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">D</span><span class="p">,</span> <span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span> <span class="o">=</span> <span class="n">feat</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="c1"># Center patch vectors, project onto the top-3 right singular vectors</span>
+    <span class="n">E</span> <span class="o">=</span> <span class="n">feat</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+    <span class="n">E</span> <span class="o">=</span> <span class="n">E</span> <span class="o">-</span> <span class="n">E</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">Vt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">E</span><span class="p">,</span> <span class="n">full_matrices</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">rgb</span> <span class="o">=</span> <span class="p">(</span><span class="n">E</span> <span class="o">@</span> <span class="n">Vt</span><span class="p">[:</span><span class="mi">3</span><span class="p">]</span><span class="o">.</span><span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+
+    <span class="c1"># Per-channel min-max to [0, 1]; the epsilon keeps a flat channel at 0</span>
+    <span class="n">rgb</span> <span class="o">-=</span> <span class="n">rgb</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">rgb</span> <span class="o">/=</span> <span class="n">rgb</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-8</span>
+
+    <span class="k">return</span> <span class="p">(</span><span class="n">rgb</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">H_p</span><span class="p">,</span> <span class="n">W_p</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="o">*</span> <span class="mi">255</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

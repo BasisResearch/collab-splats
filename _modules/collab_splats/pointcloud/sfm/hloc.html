@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.pointcloud.sfm.hloc &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/pointcloud/sfm/hloc';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.pointcloud.sfm.hloc</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.pointcloud.sfm.hloc</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">hloc incremental SfM: learned features and matches, then pycolmap incremental mapping.</span>
+
+<span class="sd">- config: `pointcloud: {method: sfm, backend: hloc}`</span>
+<span class="sd">- needs the optional `hloc` extra; install with setup/hloc.sh</span>
+<span class="sd">- intermediates under &lt;out_dir&gt;/colmap/hloc/</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pycolmap</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.sfm.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseSfmCreator</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Creator</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="HlocCreator">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.sfm.hloc.HlocCreator">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">HlocCreator</span><span class="p">(</span><span class="n">BaseSfmCreator</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Learned-feature incremental SfM via hloc on a scene directory.</span>
+
+<span class="sd">    - one shared SIMPLE_RADIAL camera, refined by the mapper</span>
+<span class="sd">    - h5 features and matches are reused across runs by hloc itself</span>
+<span class="sd">    - num_retrieved neighbors come from global descriptors (retrieval_conf)</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        retrieval_conf: hloc.extract_features.confs key for global descriptors.</span>
+<span class="sd">        feature_conf: hloc.extract_features.confs key for local features.</span>
+<span class="sd">        matcher_conf: hloc.match_features.confs key.</span>
+<span class="sd">    """</span>
+
+    <span class="n">retrieval_conf</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"netvlad"</span>
+    <span class="n">feature_conf</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"superpoint_max"</span>
+    <span class="n">matcher_conf</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"superpoint+lightglue"</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_map</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">images_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Reconstruction</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Extract, pair, match and map the keyframes with hloc; returns the largest model, in memory.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Import hloc here so the other backends work without it installed</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">hloc</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+                <span class="n">extract_features</span><span class="p">,</span>
+                <span class="n">match_features</span><span class="p">,</span>
+                <span class="n">pairs_from_exhaustive</span><span class="p">,</span>
+                <span class="n">pairs_from_retrieval</span><span class="p">,</span>
+                <span class="n">reconstruction</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">except</span> <span class="ne">ImportError</span> <span class="k">as</span> <span class="n">err</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
+                <span class="s2">"hloc is not installed — run `bash setup/hloc.sh`, then `uv lock` and `bash setup.sh` "</span>
+                <span class="s2">"(the `hloc` extra is an editable path source on third_party/hloc)"</span>
+            <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">err</span>
+
+        <span class="c1"># Working dir for features, pairs, matches and the mapper</span>
+        <span class="n">hloc_dir</span> <span class="o">=</span> <span class="n">out_dir</span> <span class="o">/</span> <span class="s2">"colmap"</span> <span class="o">/</span> <span class="s2">"hloc"</span>
+        <span class="n">hloc_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># Extract local features for every keyframe</span>
+        <span class="n">feature_conf</span> <span class="o">=</span> <span class="n">extract_features</span><span class="o">.</span><span class="n">confs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">feature_conf</span><span class="p">]</span>
+        <span class="n">features</span> <span class="o">=</span> <span class="n">extract_features</span><span class="o">.</span><span class="n">main</span><span class="p">(</span>
+            <span class="n">feature_conf</span><span class="p">,</span> <span class="n">images_dir</span><span class="p">,</span> <span class="n">hloc_dir</span><span class="p">,</span> <span class="n">image_list</span><span class="o">=</span><span class="n">names</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Build the list of image pairs to match</span>
+        <span class="n">pairs_path</span> <span class="o">=</span> <span class="n">hloc_dir</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"pairs-</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">pairing</span><span class="si">}</span><span class="s2">.txt"</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">pairing</span> <span class="o">==</span> <span class="s2">"exhaustive"</span><span class="p">:</span>
+            <span class="n">pairs_from_exhaustive</span><span class="o">.</span><span class="n">main</span><span class="p">(</span><span class="n">pairs_path</span><span class="p">,</span> <span class="n">image_list</span><span class="o">=</span><span class="n">names</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Start with sequential pairs, then add retrieval pairs (hloc removes duplicates)</span>
+            <span class="n">lines</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="p">[</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">a</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">b</span><span class="si">}</span><span class="se">\n</span><span class="s2">"</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">sequential_pairs</span><span class="p">(</span><span class="n">names</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">overlap</span><span class="p">)]</span>
+                <span class="k">if</span> <span class="s2">"sequential"</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">pairing</span>
+                <span class="k">else</span> <span class="p">[]</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="s2">"retrieval"</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">pairing</span><span class="p">:</span>
+                <span class="n">retrieval_conf</span> <span class="o">=</span> <span class="n">extract_features</span><span class="o">.</span><span class="n">confs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">retrieval_conf</span><span class="p">]</span>
+                <span class="n">descriptors</span> <span class="o">=</span> <span class="n">extract_features</span><span class="o">.</span><span class="n">main</span><span class="p">(</span>
+                    <span class="n">retrieval_conf</span><span class="p">,</span> <span class="n">images_dir</span><span class="p">,</span> <span class="n">hloc_dir</span><span class="p">,</span> <span class="n">image_list</span><span class="o">=</span><span class="n">names</span>
+                <span class="p">)</span>
+                <span class="n">retrieval_path</span> <span class="o">=</span> <span class="n">hloc_dir</span> <span class="o">/</span> <span class="s2">"pairs-retrieval.txt"</span>
+                <span class="n">pairs_from_retrieval</span><span class="o">.</span><span class="n">main</span><span class="p">(</span>
+                    <span class="n">descriptors</span><span class="p">,</span>
+                    <span class="n">retrieval_path</span><span class="p">,</span>
+                    <span class="n">num_matched</span><span class="o">=</span><span class="nb">min</span><span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">num_retrieved</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">names</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>
+                    <span class="p">),</span>  <span class="c1"># topk fails if k exceeds the image count</span>
+                    <span class="n">query_list</span><span class="o">=</span><span class="n">names</span><span class="p">,</span>
+                    <span class="n">db_list</span><span class="o">=</span><span class="n">names</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">retrieval_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+
+            <span class="n">pairs_path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="s2">""</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">))</span>
+
+        <span class="c1"># Match features across each image pair</span>
+        <span class="n">matches</span> <span class="o">=</span> <span class="n">match_features</span><span class="o">.</span><span class="n">main</span><span class="p">(</span>
+            <span class="n">match_features</span><span class="o">.</span><span class="n">confs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">matcher_conf</span><span class="p">],</span>
+            <span class="n">pairs_path</span><span class="p">,</span>
+            <span class="n">feature_conf</span><span class="p">[</span><span class="s2">"output"</span><span class="p">],</span>
+            <span class="n">hloc_dir</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Run incremental mapping in a fresh folder</span>
+        <span class="n">sfm_dir</span> <span class="o">=</span> <span class="n">hloc_dir</span> <span class="o">/</span> <span class="s2">"sfm"</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span>
+            <span class="n">sfm_dir</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>  <span class="c1"># old model folders would skew the split count below</span>
+        <span class="n">recon</span> <span class="o">=</span> <span class="n">reconstruction</span><span class="o">.</span><span class="n">main</span><span class="p">(</span>
+            <span class="n">sfm_dir</span><span class="p">,</span>
+            <span class="n">images_dir</span><span class="p">,</span>
+            <span class="n">pairs_path</span><span class="p">,</span>
+            <span class="n">features</span><span class="p">,</span>
+            <span class="n">matches</span><span class="p">,</span>
+            <span class="n">camera_mode</span><span class="o">=</span><span class="n">pycolmap</span><span class="o">.</span><span class="n">CameraMode</span><span class="o">.</span><span class="n">SINGLE</span><span class="p">,</span>
+            <span class="n">image_list</span><span class="o">=</span><span class="n">names</span><span class="p">,</span>
+            <span class="n">image_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"camera_model"</span><span class="p">:</span> <span class="s2">"SIMPLE_RADIAL"</span><span class="p">},</span>
+            <span class="n">mapper_options</span><span class="o">=</span><span class="p">{</span><span class="s2">"num_threads"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_threads</span><span class="p">},</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">recon</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="s2">"hloc produced no model — too little overlap between frames"</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Warn if the scene split into several separate models</span>
+        <span class="n">models</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="p">(</span><span class="n">sfm_dir</span> <span class="o">/</span> <span class="s2">"models"</span><span class="p">)</span><span class="o">.</span><span class="n">iterdir</span><span class="p">()</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">is_dir</span><span class="p">()]</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">models</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"hloc split the scene into </span><span class="si">%d</span><span class="s2"> models — keeping the largest"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">models</span><span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">recon</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Pair lists</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="sequential_pairs">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.sfm.hloc.sequential_pairs">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">sequential_pairs</span><span class="p">(</span><span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">overlap</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pair each frame with the next `overlap` frames.</span>
+
+<span class="sd">    - same pairs as COLMAP's sequential matcher without quadratic overlap</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        names: image names in capture order.</span>
+<span class="sd">        overlap: forward neighbors per frame.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (earlier, later) pairs, ordered by the earlier frame.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="p">[(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">a</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">names</span><span class="p">)</span> <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">names</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">overlap</span><span class="p">]]</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

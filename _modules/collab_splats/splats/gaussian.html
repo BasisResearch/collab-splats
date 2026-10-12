@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.splats.gaussian &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/splats/gaussian';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.splats.gaussian</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.splats.gaussian</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Plain Gaussian splats: one Gaussian per seed point.</span>
+
+<span class="sd">- `make_strategy`: the gsplat densification strategy per primitive</span>
+<span class="sd">- `Gaussians`: parameters, optimizers and rendering, same interface as `Scaffold`</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tensor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.optim.lr_scheduler</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExponentialLR</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">gsplat.strategy</span><span class="w"> </span><span class="kn">import</span> <span class="n">DefaultStrategy</span><span class="p">,</span> <span class="n">MCMCStrategy</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.rendering</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_gaussians</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">knn_spacing</span>
+
+<span class="c1"># Annotation-only: a runtime import of the trainer would be circular</span>
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.trainer</span><span class="w"> </span><span class="kn">import</span> <span class="n">SplatsConfig</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1"># Degree-0 SH constant: rgb = SH_C0 * sh0 + 0.5; changing it changes every splats.ply</span>
+<span class="n">SH_C0</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span>
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Densification strategy</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="make_strategy">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.make_strategy">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">make_strategy</span><span class="p">(</span>
+    <span class="n">cfg</span><span class="p">:</span> <span class="s2">"SplatsConfig"</span><span class="p">,</span>
+    <span class="n">n_views</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">prune_opa</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">prune_scale3d</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">refine_scale2d_stop_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4000</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">MCMCStrategy</span> <span class="o">|</span> <span class="n">DefaultStrategy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Densification strategy: MCMC for 3dgs, Default with splatfacto's settings for 2dgs.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        cfg: run config; reads `primitive`, `cap_max`, `grow_grad2d`.</span>
+<span class="sd">        n_views: number of training views; sets the 2dgs refine pause.</span>
+<span class="sd">        prune_opa: prune below this opacity (2dgs only).</span>
+<span class="sd">        prune_scale3d: prune above this world scale (2dgs only).</span>
+<span class="sd">        refine_scale2d_stop_iter: step after which screen-scale splitting stops (2dgs only).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The strategy; the caller still calls `initialize_state`.</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span> <span class="o">==</span> <span class="s2">"3dgs"</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">MCMCStrategy</span><span class="p">(</span><span class="n">cap_max</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">cap_max</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="c1"># splatfacto's DefaultStrategy settings</span>
+    <span class="c1"># - upstream: nerfstudio-project/nerfstudio @ 50e0e3c, splatfacto.py:264-280</span>
+    <span class="c1"># - absgrad off: 2dgs needs gradient_2dgs, so grow_grad2d is 2e-4 not 8e-4</span>
+    <span class="n">defaults</span> <span class="o">=</span> <span class="n">DefaultStrategy</span><span class="p">()</span>
+
+    <span class="c1"># Cap the refine pause, or large view counts never refine</span>
+    <span class="n">pause</span> <span class="o">=</span> <span class="n">n_views</span> <span class="o">+</span> <span class="mi">100</span>
+    <span class="n">max_pause</span> <span class="o">=</span> <span class="n">defaults</span><span class="o">.</span><span class="n">reset_every</span> <span class="o">-</span> <span class="n">defaults</span><span class="o">.</span><span class="n">refine_every</span>
+
+    <span class="k">if</span> <span class="n">pause</span> <span class="o">&gt;</span> <span class="n">max_pause</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">"pause_refine_after_reset=</span><span class="si">%d</span><span class="s2"> (n_views+100) &gt;= reset_every=</span><span class="si">%d</span><span class="s2"> would never refine; capped to </span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span>
+            <span class="n">pause</span><span class="p">,</span>
+            <span class="n">defaults</span><span class="o">.</span><span class="n">reset_every</span><span class="p">,</span>
+            <span class="n">max_pause</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">pause</span> <span class="o">=</span> <span class="n">max_pause</span>
+
+    <span class="k">return</span> <span class="n">DefaultStrategy</span><span class="p">(</span>
+        <span class="n">absgrad</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">grow_grad2d</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">grow_grad2d</span><span class="p">,</span>
+        <span class="n">key_for_gradient</span><span class="o">=</span><span class="s2">"gradient_2dgs"</span><span class="p">,</span>
+        <span class="n">prune_opa</span><span class="o">=</span><span class="n">prune_opa</span><span class="p">,</span>
+        <span class="n">prune_scale3d</span><span class="o">=</span><span class="n">prune_scale3d</span><span class="p">,</span>
+        <span class="n">refine_scale2d_stop_iter</span><span class="o">=</span><span class="n">refine_scale2d_stop_iter</span><span class="p">,</span>
+        <span class="n">pause_refine_after_reset</span><span class="o">=</span><span class="n">pause</span><span class="p">,</span>
+        <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Model</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="Gaussians">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Gaussians</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    3DGS / 2DGS Gaussians with their optimizers, strategy and rendering.</span>
+
+<span class="sd">    - same members as `Scaffold`, so the trainer treats both alike</span>
+<span class="sd">    - `activate` exists only here; `Scaffold` decodes per view instead</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># What this model counts, for log lines</span>
+    <span class="n">primitive_unit</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"gaussians"</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">cfg</span><span class="p">:</span> <span class="s2">"SplatsConfig"</span><span class="p">,</span>
+        <span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">colors</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">scene_scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">n_views</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">knn</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+        <span class="n">adam_eps</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-15</span><span class="p">,</span>
+        <span class="n">lr_decay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span><span class="p">,</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        One Gaussian per seed point, sized by neighbor spacing, one optimizer per parameter.</span>
+
+<span class="sd">        - ported from gsplat @ d2f5c0f, examples/simple_trainer.py:285 (`create_splats_with_optimizers`)</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cfg: run config; not kept.</span>
+<span class="sd">            points: (N, 3) seed positions in the training frame; N &gt;= `knn`.</span>
+<span class="sd">            colors: (N, 3) uint8 seed colors.</span>
+<span class="sd">            scene_scale: camera extent; scales the means lr and the strategy.</span>
+<span class="sd">            n_views: number of training views.</span>
+<span class="sd">            device: torch device string.</span>
+<span class="sd">            knn: neighbors for the initial scale, counting the point itself.</span>
+<span class="sd">            adam_eps: Adam epsilon.</span>
+<span class="sd">            lr_decay: total means-lr decay over the run (0.01 = 100x).</span>
+<span class="sd">        """</span>
+        <span class="c1"># Copy the config fields; from_checkpoint rebuilds them from a dict</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">primitive</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sh_degree</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">sh_degree</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sh_degree_interval</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">sh_degree_interval</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+
+        <span class="n">n_points</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">)</span>
+
+        <span class="c1"># Initial log-scale from nearest-neighbor spacing</span>
+        <span class="n">spacing</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">knn_spacing</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">knn</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+        <span class="n">log_scales</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">spacing</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+
+        <span class="c1"># Color into the degree-0 SH band; higher bands start at zero</span>
+        <span class="n">rgb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">colors</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="mf">255.0</span>
+        <span class="n">n_sh_coeffs</span> <span class="o">=</span> <span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">sh_degree</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
+        <span class="n">sh_coeffs</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_points</span><span class="p">,</span> <span class="n">n_sh_coeffs</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">sh_coeffs</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">,</span> <span class="p">:]</span> <span class="o">=</span> <span class="p">(</span><span class="n">rgb</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">/</span> <span class="n">SH_C0</span>
+
+        <span class="c1"># Raw parameters: random orientation, logit opacity</span>
+        <span class="n">initial_opacities</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">logit</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">n_points</span><span class="p">,),</span> <span class="n">cfg</span><span class="o">.</span><span class="n">init_opacity</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">params</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ParameterDict</span><span class="p">(</span>
+            <span class="p">{</span>
+                <span class="s2">"means"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">points</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()),</span>
+                <span class="s2">"scales"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">log_scales</span><span class="p">),</span>
+                <span class="s2">"quats"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">n_points</span><span class="p">,</span> <span class="mi">4</span><span class="p">)),</span>
+                <span class="s2">"opacities"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">initial_opacities</span><span class="p">),</span>
+                <span class="s2">"sh0"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">sh_coeffs</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">,</span> <span class="p">:]),</span>
+                <span class="s2">"shN"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">sh_coeffs</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:,</span> <span class="p">:]),</span>
+            <span class="p">}</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># One Adam per parameter, so the strategy can grow and prune each</span>
+        <span class="n">learning_rates</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"means"</span><span class="p">:</span> <span class="n">cfg</span><span class="o">.</span><span class="n">means_lr</span> <span class="o">*</span> <span class="n">scene_scale</span><span class="p">,</span>
+            <span class="s2">"scales"</span><span class="p">:</span> <span class="n">cfg</span><span class="o">.</span><span class="n">scales_lr</span><span class="p">,</span>
+            <span class="s2">"quats"</span><span class="p">:</span> <span class="n">cfg</span><span class="o">.</span><span class="n">quats_lr</span><span class="p">,</span>
+            <span class="s2">"opacities"</span><span class="p">:</span> <span class="n">cfg</span><span class="o">.</span><span class="n">opacities_lr</span><span class="p">,</span>
+            <span class="s2">"sh0"</span><span class="p">:</span> <span class="n">cfg</span><span class="o">.</span><span class="n">sh0_lr</span><span class="p">,</span>
+            <span class="s2">"shN"</span><span class="p">:</span> <span class="n">cfg</span><span class="o">.</span><span class="n">shN_lr</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">name</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">(</span>
+                <span class="p">[{</span><span class="s2">"params"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="n">name</span><span class="p">],</span> <span class="s2">"lr"</span><span class="p">:</span> <span class="n">lr</span><span class="p">,</span> <span class="s2">"name"</span><span class="p">:</span> <span class="n">name</span><span class="p">}],</span> <span class="n">eps</span><span class="o">=</span><span class="n">adam_eps</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">lr</span> <span class="ow">in</span> <span class="n">learning_rates</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">optimizers</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+
+        <span class="c1"># Only the means lr decays</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">means_scheduler</span> <span class="o">=</span> <span class="n">ExponentialLR</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="p">[</span><span class="s2">"means"</span><span class="p">],</span> <span class="n">gamma</span><span class="o">=</span><span class="n">lr_decay</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">cfg</span><span class="o">.</span><span class="n">max_steps</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">schedulers</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">means_scheduler</span><span class="p">]</span>
+
+        <span class="c1"># Densification strategy and its state</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span> <span class="o">=</span> <span class="n">make_strategy</span><span class="p">(</span><span class="n">cfg</span><span class="p">,</span> <span class="n">n_views</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">check_sanity</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="p">,</span> <span class="n">MCMCStrategy</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">strategy_state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">initialize_state</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">strategy_state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">initialize_state</span><span class="p">(</span>
+                <span class="n">scene_scale</span><span class="o">=</span><span class="n">scene_scale</span>
+            <span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">n_primitives</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Number of Gaussians in the model.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The Gaussian count.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"means"</span><span class="p">])</span>
+
+<div class="viewcode-block" id="Gaussians.activate">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.activate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">activate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Raw parameters converted to what the rasterizer takes.</span>
+
+<span class="sd">        - `colors` are still SH coefficients</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            {"means" (N,3), "quats" (N,4), "scales" (N,3), "opacities" (N,), "colors" (N,K,3)}.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"means"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"means"</span><span class="p">],</span>
+            <span class="s2">"quats"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"quats"</span><span class="p">],</span>
+            <span class="s2">"scales"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scales"</span><span class="p">]),</span>
+            <span class="s2">"opacities"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"opacities"</span><span class="p">]),</span>
+            <span class="s2">"colors"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"sh0"</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"shN"</span><span class="p">]],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+        <span class="p">}</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.render">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.render">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">cam_to_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">camera_id</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">step</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">render_normals</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">],</span> <span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Render one view.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cam_to_world: (1, 4, 4) pose in the training frame.</span>
+<span class="sd">            intrinsics: (1, 3, 3) camera matrix at the render resolution.</span>
+<span class="sd">            width: render width in pixels.</span>
+<span class="sd">            height: render height in pixels.</span>
+<span class="sd">            camera_id: (1,) view index; unused here.</span>
+<span class="sd">            step: training step, which unlocks SH bands; None uses all bands (export only).</span>
+<span class="sd">            render_normals: also render normals and depth normals.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (render dict, gsplat info dict), as in `rendering.render_gaussians`.</span>
+<span class="sd">        """</span>
+        <span class="n">sh_degree</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">sh_degree</span>
+            <span class="k">if</span> <span class="n">step</span> <span class="ow">is</span> <span class="kc">None</span>
+            <span class="k">else</span> <span class="nb">min</span><span class="p">(</span><span class="n">step</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">sh_degree_interval</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sh_degree</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">render_gaussians</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">primitive</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">activate</span><span class="p">(),</span>
+            <span class="n">cam_to_world</span><span class="p">,</span>
+            <span class="n">intrinsics</span><span class="p">,</span>
+            <span class="n">width</span><span class="p">,</span>
+            <span class="n">height</span><span class="p">,</span>
+            <span class="n">sh_degree</span><span class="p">,</span>
+            <span class="n">render_normals</span><span class="o">=</span><span class="n">render_normals</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.frame_report">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.frame_report">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">frame_report</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">render</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Per-view fields for the quality report.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            render: one view's render dict; unused here.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            An empty dict; plain Gaussians add no per-view fields.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="p">{}</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.pre_backward">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.pre_backward">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">pre_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Keep the screen-space gradients DefaultStrategy needs; no-op under MCMC.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            step: current training step.</span>
+<span class="sd">            info: the gsplat info dict this step's render returned.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Only DefaultStrategy uses the pre-backward hook</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="p">,</span> <span class="n">DefaultStrategy</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">step_pre_backward</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">strategy_state</span><span class="p">,</span> <span class="n">step</span><span class="p">,</span> <span class="n">info</span>
+            <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.post_backward">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.post_backward">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">post_backward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">info</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Densify, prune or relocate Gaussians.</span>
+
+<span class="sd">        - call after the optimizer step, or that step is silently skipped</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            step: current training step.</span>
+<span class="sd">            info: the gsplat info dict this step's render returned.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="p">,</span> <span class="n">MCMCStrategy</span><span class="p">):</span>
+            <span class="n">means_lr</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">means_scheduler</span><span class="o">.</span><span class="n">get_last_lr</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">step_post_backward</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">strategy_state</span><span class="p">,</span>
+                <span class="n">step</span><span class="p">,</span>
+                <span class="n">info</span><span class="p">,</span>
+                <span class="n">lr</span><span class="o">=</span><span class="n">means_lr</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">strategy</span><span class="o">.</span><span class="n">step_post_backward</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">param_optimizers</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">strategy_state</span><span class="p">,</span>
+                <span class="n">step</span><span class="p">,</span>
+                <span class="n">info</span><span class="p">,</span>
+                <span class="n">packed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.denormalize">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.denormalize">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">denormalize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">center</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Undo scene normalization on the Gaussians, in place.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            center: (3,) the center `utils.scene_normalization` returned.</span>
+<span class="sd">            scale: the scale `utils.scene_normalization` returned.</span>
+<span class="sd">        """</span>
+        <span class="n">center_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span>
+            <span class="n">center</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"means"</span><span class="p">]</span><span class="o">.</span><span class="n">device</span>
+        <span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"means"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"means"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">/</span> <span class="n">scale</span> <span class="o">+</span> <span class="n">center_t</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scales"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">[</span><span class="s2">"scales"</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">scale</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.export_gaussians">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.export_gaussians">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">export_gaussians</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">cam_to_world</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">height</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Raw parameters for the ply writer.</span>
+
+<span class="sd">        - the camera arguments are unused here; `Scaffold` needs them</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cam_to_world: (N, 4, 4) poses of all training views.</span>
+<span class="sd">            intrinsics: (N, 3, 3) camera matrices.</span>
+<span class="sd">            width: image width in pixels.</span>
+<span class="sd">            height: image height in pixels.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The parameters themselves (not copies): log scales, logit opacities, SH colors.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.checkpoint">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.checkpoint">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">checkpoint</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        The model's part of ckpt.pt.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            {"splats": params}; the trainer adds the rest.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"splats"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">params</span><span class="p">}</span></div>
+
+
+<div class="viewcode-block" id="Gaussians.from_checkpoint">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.gaussian.Gaussians.from_checkpoint">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_checkpoint</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">ckpt</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"Gaussians"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Rebuild a render-only model from a checkpoint.</span>
+
+<span class="sd">        - no optimizers or strategy, so it cannot train</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            ckpt: loaded ckpt.pt with `splats` and `config`.</span>
+<span class="sd">            device: torch device string.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The model on `device`.</span>
+<span class="sd">        """</span>
+        <span class="n">model</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">ckpt</span><span class="p">[</span><span class="s2">"config"</span><span class="p">]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">primitive</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">"primitive"</span><span class="p">]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">sh_degree</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">"sh_degree"</span><span class="p">]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">sh_degree_interval</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s2">"sh_degree_interval"</span><span class="p">]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">device</span> <span class="o">=</span> <span class="n">device</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">params</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">ParameterDict</span><span class="p">(</span>
+            <span class="p">{</span>
+                <span class="n">name</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tensor</span> <span class="ow">in</span> <span class="nb">dict</span><span class="p">(</span><span class="n">ckpt</span><span class="p">[</span><span class="s2">"splats"</span><span class="p">])</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="p">}</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">param_optimizers</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">optimizers</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">schedulers</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">means_scheduler</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">strategy</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">strategy_state</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">model</span></div>
+</div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

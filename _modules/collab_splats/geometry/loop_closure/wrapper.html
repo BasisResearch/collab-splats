@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.geometry.loop_closure.wrapper &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/geometry/loop_closure/wrapper';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.geometry.loop_closure.wrapper</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.geometry.loop_closure.wrapper</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Submap loop closure around a feedforward creator's forward pass.</span>
+
+<span class="sd">- walkthrough: docs/source/tutorials/02_pointcloud/slam_loop_closure.ipynb</span>
+<span class="sd">- imports pointcloud result types, so geometry exports LoopClosure lazily via __getattr__</span>
+<span class="sd">- adapted from MIT-SPARK/VGGT-SLAM @ fd3fd218 (BSD-2-Clause): main.py, vggt_slam/solver.py</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">dataclasses</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ThreadPoolExecutor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Literal</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.auto</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.bundle_adjustment</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BundleAdjustment</span><span class="p">,</span>
+    <span class="n">BundleAdjustmentConfig</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.loop_closure.graph</span><span class="w"> </span><span class="kn">import</span> <span class="n">PoseGraph</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.loop_closure.map</span><span class="w"> </span><span class="kn">import</span> <span class="n">GraphMap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.loop_closure.matching</span><span class="w"> </span><span class="kn">import</span> <span class="n">LoopMatch</span><span class="p">,</span> <span class="n">find_loop_closures</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.loop_closure.submap</span><span class="w"> </span><span class="kn">import</span> <span class="n">Submap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="n">unproject_frames</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">extrinsics_to_homogeneous</span><span class="p">,</span>
+    <span class="n">invert_poses</span><span class="p">,</span>
+    <span class="n">transform_points</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.localization</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseRetrievalExtractor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BasePointcloudCreator</span><span class="p">,</span> <span class="n">PointcloudResult</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">subsample_points</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">hold_matmul_precision</span><span class="p">,</span> <span class="n">pytorch_gc</span><span class="p">,</span> <span class="n">to_numpy</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"LoopClosure"</span><span class="p">,</span> <span class="s2">"LoopClosureConfig"</span><span class="p">]</span>
+
+
+<div class="viewcode-block" id="LoopClosureConfig">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.wrapper.LoopClosureConfig">[docs]</a>
+<span class="nd">@dataclasses</span><span class="o">.</span><span class="n">dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LoopClosureConfig</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Loop-closure settings, grouped by pipeline step.</span>
+
+<span class="sd">    - fields are grouped as windows, retrieval, graph and viz</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        submap_size: window stride; each submap holds this plus submap_overlap frames.</span>
+<span class="sd">        submap_overlap: frames shared by consecutive windows (1 = VGGT-SLAM); the earlier submap owns them.</span>
+<span class="sd">        retrieval: retrieval registry name, e.g. "dino-salad" or "megaloc"; megaloc needs its own threshold.</span>
+<span class="sd">        lc_retrieval_threshold: max L2 between unit descriptors, [0, 2], tuned for dino-salad; &lt;= 0 skips retrieval.</span>
+<span class="sd">        max_loops_per_submap: candidates kept per query submap, before NMS.</span>
+<span class="sd">        verify_match_ratio: loop verify threshold; None takes the creator's default_verify_match_ratio.</span>
+<span class="sd">        nms_frame_distance: suppression radius in frames between candidates on the same detected submap.</span>
+<span class="sd">        min_submap_gap: newest submaps left out of the retrieval search.</span>
+<span class="sd">        conf_percentile: depth_conf percentile gating scale points; VGGT-SLAM --conf_threshold 25 (main.py:32).</span>
+<span class="sd">        loop_edge_timing: deferred adds all loop edges after the window loop; live adds each as found.</span>
+<span class="sd">        viz_max_points: viewer per-submap point cap.</span>
+<span class="sd">    """</span>
+
+    <span class="c1"># Windows</span>
+    <span class="n">submap_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span>
+    <span class="n">submap_overlap</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+
+    <span class="c1"># Retrieval</span>
+    <span class="n">retrieval</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"dino-salad"</span>
+    <span class="n">lc_retrieval_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.95</span>
+    <span class="n">max_loops_per_submap</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span>
+    <span class="n">verify_match_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">nms_frame_distance</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">25</span>
+    <span class="n">min_submap_gap</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+
+    <span class="c1"># Graph</span>
+    <span class="n">conf_percentile</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">25.0</span>
+    <span class="n">loop_edge_timing</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"deferred"</span><span class="p">,</span> <span class="s2">"live"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"deferred"</span>
+
+    <span class="c1"># Viz</span>
+    <span class="n">viz_max_points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50000</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># LoopClosure wrapper</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="LoopClosure">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.wrapper.LoopClosure">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">LoopClosure</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Proxy around a feedforward creator that replaces its inference with the submap LC loop.</span>
+
+<span class="sd">    - `run_inference()` is the LC entry point; `create_pointcloud()` reaches it via _reconstruct</span>
+<span class="sd">    - every other attribute is forwarded to `base`</span>
+<span class="sd">    - fewer than submap_size frames, or the retrieval model failing to load, falls back to the</span>
+<span class="sd">      creator's own forward pass</span>
+
+<span class="sd">    Quickstart:</span>
+<span class="sd">        from pathlib import Path</span>
+<span class="sd">        from collab_splats.geometry import LoopClosure, LoopClosureConfig</span>
+<span class="sd">        from collab_splats.pointcloud import get_creator</span>
+<span class="sd">        lc = LoopClosure(get_creator("vggtx")(), config=LoopClosureConfig())</span>
+<span class="sd">        result = lc.create_pointcloud(Path("scene/images"), Path("scene/out"))</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">base</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="n">LoopClosureConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">ba</span><span class="p">:</span> <span class="n">BundleAdjustmentConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Wrap a creator, resolving the config against its per-model defaults.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            base: feedforward creator whose forward pass the LC loop drives.</span>
+<span class="sd">            config: loop-closure settings; None uses LoopClosureConfig().</span>
+<span class="sd">            ba: bundle adjustment run inside each window after its forward; None runs none.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span> <span class="o">=</span> <span class="n">base</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span> <span class="k">if</span> <span class="n">config</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">LoopClosureConfig</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ba</span> <span class="o">=</span> <span class="n">ba</span>
+
+        <span class="c1"># None resolves to the creator's per-model calibration</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">verify_match_ratio</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">base</span><span class="o">.</span><span class="n">default_verify_match_ratio</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">base</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> sets no default_verify_match_ratio; LC unsupported"</span>
+                <span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">verify_match_ratio</span><span class="o">=</span><span class="n">base</span><span class="o">.</span><span class="n">default_verify_match_ratio</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Scene state (VGGT-SLAM Solver structure): the submap collection + the pose graph</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">map</span> <span class="o">=</span> <span class="n">GraphMap</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">graph</span> <span class="o">=</span> <span class="n">PoseGraph</span><span class="p">()</span>
+
+        <span class="c1"># Optional live Viewer, set by the driver; None makes every viewer hook a no-op</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">viz</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># Result _run_lc_loop assembles; _reconstruct returns it as is, so base._postprocess cannot overwrite it</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span><span class="p">:</span> <span class="n">PointcloudResult</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># Per-window BA records and the focal later windows hold; reset by run_inference</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">window_ba</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ba_focal</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="c1"># Full-res frame paths for matcher tracks in window BA; set by _reconstruct</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frame_paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Delegation to self.base</span>
+    <span class="c1">####################################################################</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getattr__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Delegate attributes the wrapper lacks to the wrapped creator.</span>
+
+<span class="sd">        - fires only for missing names, so the overrides below still win</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: attribute missing on the wrapper.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            getattr(base, name).</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="c1"># The base creator's template: postprocess and export around _reconstruct</span>
+    <span class="n">create_pointcloud</span> <span class="o">=</span> <span class="n">BasePointcloudCreator</span><span class="o">.</span><span class="n">create_pointcloud</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_reconstruct</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">],</span> <span class="n">out_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        The base creator's steps with the windowed LC forward; the assembled result when LC ran.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Base load and setup, then the LC or fallback forward</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frame_paths</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">load_model</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">setup_inference</span><span class="p">(</span><span class="n">paths</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">run_inference</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">_postprocess</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">raw_outputs</span><span class="p">)</span>
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Inference: LC loop override</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="LoopClosure.run_inference">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.wrapper.LoopClosure.run_inference">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_inference</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Run the LC loop, or fall back to one whole-scene forward.</span>
+
+<span class="sd">        - LC loop: sets outputs to the assembled PointcloudResult</span>
+<span class="sd">        - under submap_size frames, or the retrieval model failing to load: one window, refined as window 0</span>
+<span class="sd">        - the fallback sets base.raw_outputs only and leaves outputs None</span>
+<span class="sd">        """</span>
+        <span class="c1"># Fresh per-run state: window BA records, held focal, assembled result</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">window_ba</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ba_focal</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span>
+
+        <span class="c1"># LC needs at least submap_size frames; views are a tensor or view dicts, len counts frames for both</span>
+        <span class="n">run_lc</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">views</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">submap_size</span>
+
+        <span class="c1"># Load the retrieval model only when a candidate can pass; dist &lt; threshold admits none at threshold &lt;= 0</span>
+        <span class="n">retrieval_extractor</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">run_lc</span> <span class="ow">and</span> <span class="n">cfg</span><span class="o">.</span><span class="n">lc_retrieval_threshold</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">device</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="nb">next</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">retrieval_cls</span> <span class="o">=</span> <span class="n">BaseRetrievalExtractor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">retrieval</span><span class="p">)</span>
+                <span class="n">retrieval_extractor</span> <span class="o">=</span> <span class="n">retrieval_cls</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+            <span class="k">except</span> <span class="p">(</span><span class="ne">ImportError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">,</span> <span class="ne">RuntimeError</span><span class="p">)</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">"Retrieval </span><span class="si">%s</span><span class="s2"> failed to load (</span><span class="si">%s</span><span class="s2">) — skipping loop closure"</span><span class="p">,</span>
+                    <span class="n">cfg</span><span class="o">.</span><span class="n">retrieval</span><span class="p">,</span>
+                    <span class="n">e</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">run_lc</span> <span class="o">=</span> <span class="kc">False</span>
+
+        <span class="c1"># LC loop, else the whole-scene fallback below</span>
+        <span class="k">if</span> <span class="n">run_lc</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_run_lc_loop</span><span class="p">(</span><span class="n">retrieval_extractor</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Fallback: one whole-scene forward</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">raw_outputs</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_forward_window</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">views</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">pytorch_gc</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="LoopClosure.run_predictions">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.wrapper.LoopClosure.run_predictions">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_predictions</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">window</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+        <span class="n">raw</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span>
+        <span class="n">rgb01</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">wi</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">submaps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Submap</span><span class="p">],</span>
+        <span class="n">lc_submaps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Submap</span><span class="p">],</span>
+        <span class="n">retrieval_extractor</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Submap</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">Submap</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="n">LoopMatch</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Build one forwarded window's Submap, then find and verify loop candidates.</span>
+
+<span class="sd">        - dense points are unprojected here; the caller attaches them with colors and conf</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            window: the window's model inputs (tensor or list of view dicts).</span>
+<span class="sd">            raw: the window's forward outputs.</span>
+<span class="sd">            rgb01: the window's model-grid RGB in [0, 1], (k, 3, H, W); see _forward_window.</span>
+<span class="sd">            wi: window index, used as the new submap_id.</span>
+<span class="sd">            start: global index of the window's first frame.</span>
+<span class="sd">            submaps: window submaps built so far.</span>
+<span class="sd">            lc_submaps: loop submaps accepted so far.</span>
+<span class="sd">            retrieval_extractor: retrieval extractor for the window's descriptors; None skips retrieval.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (submap, window_lc_submaps, loop_matches, dense_points): the window's Submap, its</span>
+<span class="sd">            verified loop carriers (see _run_lc_loop), every post-NMS candidate, and its</span>
+<span class="sd">            (k, H, W, 3) frame-0 points, to attach before recording the submap.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Window frame range: window == views[start:end]</span>
+        <span class="n">cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">start</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">window</span><span class="p">)</span>
+
+        <span class="c1"># Window (k, 4, 4) poses; the graph reads each submap's local frame as frame 0's camera</span>
+        <span class="n">ext_3x4</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">]</span>
+        <span class="n">poses_4x4</span> <span class="o">=</span> <span class="n">extrinsics_to_homogeneous</span><span class="p">(</span><span class="n">ext_3x4</span><span class="p">)</span>
+        <span class="n">pose0</span> <span class="o">=</span> <span class="n">poses_4x4</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">pose0</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">4</span><span class="p">),</span> <span class="n">atol</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"Window poses not normalized to frame 0: expected poses[0] ≈ eye(4), got</span><span class="se">\n</span><span class="si">{</span><span class="n">pose0</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="n">intrinsics</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">]</span>
+
+        <span class="c1"># Model inputs for loop verify: the window tensor, or MapAnything's dinov2-normalized view dicts</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">window</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+            <span class="n">frames_cpu</span> <span class="o">=</span> <span class="n">window</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">frames_cpu</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">v</span><span class="p">[</span><span class="s2">"img"</span><span class="p">]</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">window</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="c1"># Drop raw's reference to the forward's images; rgb01 holds what the window needs</span>
+        <span class="n">raw</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">"images"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="c1"># Retrieval descriptors on [0, 1] RGB, then the window's Submap; None when retrieval is off</span>
+        <span class="n">retrieval_frames</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">rgb01</span><span class="p">)</span>
+        <span class="n">ret_vecs</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">retrieval_extractor</span><span class="p">(</span><span class="n">retrieval_frames</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">retrieval_extractor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span>  <span class="c1"># (k, D)</span>
+        <span class="n">submap</span> <span class="o">=</span> <span class="n">Submap</span><span class="p">(</span>
+            <span class="n">submap_id</span><span class="o">=</span><span class="n">wi</span><span class="p">,</span>
+            <span class="n">frames</span><span class="o">=</span><span class="n">frames_cpu</span><span class="p">,</span>
+            <span class="n">poses</span><span class="o">=</span><span class="n">poses_4x4</span><span class="p">,</span>
+            <span class="n">intrinsics</span><span class="o">=</span><span class="n">intrinsics</span><span class="p">,</span>
+            <span class="n">retrieval_vectors</span><span class="o">=</span><span class="n">ret_vecs</span><span class="p">,</span>
+            <span class="n">image_paths</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">image_paths</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">]),</span>
+            <span class="n">frame_start</span><span class="o">=</span><span class="n">start</span><span class="p">,</span>
+            <span class="n">conf_percentile</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">conf_percentile</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Dense per-pixel points (fat Submap, VGGT-SLAM data path): full-res depth unprojection</span>
+        <span class="n">depth</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">3</span><span class="p">])</span>
+        <span class="n">dense_points</span> <span class="o">=</span> <span class="n">unproject_frames</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">ext_3x4</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">)</span>
+
+        <span class="c1"># Query retrieval index for loop candidates against prior submaps; none when retrieval is off</span>
+        <span class="n">loop_matches</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">if</span> <span class="n">retrieval_extractor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">past_for_lc</span> <span class="o">=</span> <span class="n">submaps</span><span class="p">[:</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">submaps</span><span class="p">)</span> <span class="o">-</span> <span class="n">cfg</span><span class="o">.</span><span class="n">min_submap_gap</span><span class="p">)]</span>
+            <span class="n">loop_matches</span> <span class="o">=</span> <span class="n">find_loop_closures</span><span class="p">(</span>
+                <span class="n">submap</span><span class="p">,</span>
+                <span class="n">past_for_lc</span><span class="p">,</span>
+                <span class="n">cfg</span><span class="o">.</span><span class="n">lc_retrieval_threshold</span><span class="p">,</span>
+                <span class="n">cfg</span><span class="o">.</span><span class="n">max_loops_per_submap</span><span class="p">,</span>
+                <span class="n">nms_frame_distance</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">nms_frame_distance</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Verify each candidate on the query and detected frames</span>
+        <span class="n">window_lc_submaps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Submap</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">match</span> <span class="ow">in</span> <span class="n">loop_matches</span><span class="p">:</span>
+            <span class="n">pair</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"submap </span><span class="si">{</span><span class="n">match</span><span class="o">.</span><span class="n">query_submap_id</span><span class="si">}</span><span class="s2"> → </span><span class="si">{</span><span class="n">match</span><span class="o">.</span><span class="n">detected_submap_id</span><span class="si">}</span><span class="s2">"</span>
+            <span class="n">q_frame</span> <span class="o">=</span> <span class="n">frames_cpu</span><span class="p">[</span><span class="n">match</span><span class="o">.</span><span class="n">query_frame_idx</span><span class="p">]</span>
+            <span class="n">d_submap</span> <span class="o">=</span> <span class="n">submaps</span><span class="p">[</span><span class="n">match</span><span class="o">.</span><span class="n">detected_submap_id</span><span class="p">]</span>
+            <span class="k">assert</span> <span class="n">d_submap</span><span class="o">.</span><span class="n">frames</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="n">d_frame</span> <span class="o">=</span> <span class="n">d_submap</span><span class="o">.</span><span class="n">frames</span><span class="p">[</span><span class="n">match</span><span class="o">.</span><span class="n">detected_frame_idx</span><span class="p">]</span>
+            <span class="n">verify_ok</span><span class="p">,</span> <span class="n">lc_data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">_verify_loop_candidate</span><span class="p">(</span>
+                <span class="n">q_frame</span><span class="p">,</span> <span class="n">d_frame</span><span class="p">,</span> <span class="n">verify_match_ratio</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">verify_match_ratio</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">verify_ok</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                    <span class="s2">"Loop rejected (verify ratio): </span><span class="si">%s</span><span class="s2"> dist=</span><span class="si">%.3f</span><span class="s2">"</span><span class="p">,</span>
+                    <span class="n">pair</span><span class="p">,</span>
+                    <span class="k">match</span><span class="o">.</span><span class="n">similarity_score</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">continue</span>
+
+            <span class="c1"># Reject a loop whose relative pose is not finite</span>
+            <span class="n">lc_poses</span> <span class="o">=</span> <span class="n">lc_data</span><span class="p">[</span><span class="s2">"poses"</span><span class="p">]</span>
+            <span class="n">q_pose</span> <span class="o">=</span> <span class="n">lc_poses</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+            <span class="n">d_pose</span> <span class="o">=</span> <span class="n">lc_poses</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+            <span class="n">lc_rel</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">d_pose</span><span class="p">)</span> <span class="o">@</span> <span class="n">q_pose</span>
+            <span class="n">lc_rel_f32</span> <span class="o">=</span> <span class="n">lc_rel</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">lc_rel_f32</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">():</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Loop rejected (non-finite pose): </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">pair</span><span class="p">)</span>
+                <span class="k">continue</span>
+
+            <span class="k">match</span><span class="o">.</span><span class="n">accepted</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Loop accepted: </span><span class="si">%s</span><span class="s2"> dist=</span><span class="si">%.3f</span><span class="s2">"</span><span class="p">,</span> <span class="n">pair</span><span class="p">,</span> <span class="n">match</span><span class="o">.</span><span class="n">similarity_score</span><span class="p">)</span>
+
+            <span class="c1"># Loop carrier with the pair's (2, H, W, 3) frame-0 points and conf (solver.py:268); see _run_lc_loop</span>
+            <span class="n">q_i</span><span class="p">,</span> <span class="n">d_i</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">query_frame_idx</span><span class="p">,</span> <span class="n">match</span><span class="o">.</span><span class="n">detected_frame_idx</span>
+            <span class="n">window_lc_submaps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">Submap</span><span class="p">(</span>
+                    <span class="n">submap_id</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">submaps</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">lc_submaps</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">window_lc_submaps</span><span class="p">),</span>
+                    <span class="n">poses</span><span class="o">=</span><span class="n">lc_poses</span><span class="p">,</span>
+                    <span class="n">intrinsics</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                        <span class="p">[</span><span class="n">submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">q_i</span><span class="p">],</span> <span class="n">d_submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">d_i</span><span class="p">]]</span>
+                    <span class="p">),</span>
+                    <span class="n">image_paths</span><span class="o">=</span><span class="p">[</span><span class="n">submap</span><span class="o">.</span><span class="n">image_paths</span><span class="p">[</span><span class="n">q_i</span><span class="p">],</span> <span class="n">d_submap</span><span class="o">.</span><span class="n">image_paths</span><span class="p">[</span><span class="n">d_i</span><span class="p">]],</span>
+                    <span class="n">points</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">lc_data</span><span class="p">[</span><span class="s2">"world_points"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
+                    <span class="n">conf</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">lc_data</span><span class="p">[</span><span class="s2">"conf"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span>
+                    <span class="n">conf_percentile</span><span class="o">=</span><span class="n">cfg</span><span class="o">.</span><span class="n">conf_percentile</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">submap</span><span class="p">,</span> <span class="n">window_lc_submaps</span><span class="p">,</span> <span class="n">loop_matches</span><span class="p">,</span> <span class="n">dense_points</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_forward_window</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">start</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        One window's forward under no_grad, then its bundle adjustment when ba is set.</span>
+
+<span class="sd">        - returns (raw, rgb01): rgb01 is the model-grid RGB in [0, 1], (k, 3, H, W) float32</span>
+<span class="sd">        - rgb01: the window tensor, or MapAnything's raw images (its views are dinov2-normalized)</span>
+<span class="sd">        - runs on the pipeline worker thread; no_grad is thread-local, so it is entered here</span>
+<span class="sd">        - BA enters enable_grad itself; worker order makes window 0's focal known before window 1's solve</span>
+<span class="sd">        - the first refined window's focal is held fixed in every later window (refine_focal only)</span>
+<span class="sd">        - a solve raising ValueError keeps the feedforward poses; its record has ok False</span>
+<span class="sd">        """</span>
+        <span class="c1"># Forward under the precision lock and no_grad</span>
+        <span class="k">with</span> <span class="n">hold_matmul_precision</span><span class="p">(),</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">raw</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">_forward</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">model</span><span class="p">,</span> <span class="n">window</span><span class="p">)</span>
+
+            <span class="c1"># Model-grid RGB in [0, 1] for BA, retrieval and colors</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">window</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+                <span class="n">window_f32</span> <span class="o">=</span> <span class="n">window</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+                <span class="n">rgb01</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">window_f32</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">rgb01</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"images"</span><span class="p">]</span>
+
+            <span class="c1"># No BA configured: forward only</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">ba</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">raw</span><span class="p">,</span> <span class="n">rgb01</span>
+
+            <span class="c1"># Peak GPU memory counted from here</span>
+            <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+            <span class="n">k</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">reset_peak_memory_stats</span><span class="p">()</span>
+
+            <span class="c1"># Hold the first refined window's focal</span>
+            <span class="n">intrinsics</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+            <span class="n">cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ba</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ba_focal</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">intrinsics</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ba_focal</span>
+                <span class="n">intrinsics</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ba_focal</span>
+                <span class="n">cfg</span> <span class="o">=</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">cfg</span><span class="p">,</span> <span class="n">refine_focal</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+            <span class="c1"># One track cache per window</span>
+            <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">tracks_cache_dir</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">cache_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">tracks_cache_dir</span><span class="p">)</span> <span class="o">/</span> <span class="sa">f</span><span class="s2">"w</span><span class="si">{</span><span class="n">start</span><span class="si">:</span><span class="s2">06d</span><span class="si">}</span><span class="s2">"</span>
+                <span class="n">cfg</span> <span class="o">=</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">cfg</span><span class="p">,</span> <span class="n">tracks_cache_dir</span><span class="o">=</span><span class="n">cache_dir</span><span class="p">)</span>
+
+            <span class="c1"># Solve inputs: (k, H, W) depth, world points under the solve's K, 4x4 poses</span>
+            <span class="n">depth</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="s2">"depth"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">3</span><span class="p">])</span>
+            <span class="n">world_points</span> <span class="o">=</span> <span class="n">unproject_frames</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">],</span> <span class="n">intrinsics</span><span class="p">)</span>
+            <span class="n">poses</span> <span class="o">=</span> <span class="n">extrinsics_to_homogeneous</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">])</span>
+            <span class="n">confidence</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="s2">"depth_conf"</span><span class="p">])</span>
+
+            <span class="c1"># A matcher track source without frames is a config error, not a failed window</span>
+            <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">track_source</span> <span class="o">!=</span> <span class="s2">"vggsfm"</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">frame_paths</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">"window BA: track_source </span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">track_source</span><span class="si">!r}</span><span class="s2"> needs frame_paths"</span>
+                <span class="p">)</span>
+
+            <span class="c1"># Solve; a ValueError keeps the feedforward poses</span>
+            <span class="n">ba</span> <span class="o">=</span> <span class="n">BundleAdjustment</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
+            <span class="n">ok</span> <span class="o">=</span> <span class="kc">True</span>
+
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">refined</span><span class="p">,</span> <span class="n">refined_intrinsics</span> <span class="o">=</span> <span class="n">ba</span><span class="o">.</span><span class="n">refine</span><span class="p">(</span>
+                    <span class="n">rgb01</span><span class="p">,</span>
+                    <span class="n">confidence</span><span class="p">,</span>
+                    <span class="n">world_points</span><span class="p">,</span>
+                    <span class="n">poses</span><span class="p">,</span>
+                    <span class="n">intrinsics</span><span class="p">,</span>
+                    <span class="n">depth</span><span class="o">=</span><span class="n">depth</span><span class="p">,</span>
+                    <span class="n">frame_paths</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">frame_paths</span><span class="p">[</span><span class="n">start</span> <span class="p">:</span> <span class="n">start</span> <span class="o">+</span> <span class="n">k</span><span class="p">]</span> <span class="ow">or</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">"Window BA at frame </span><span class="si">%d</span><span class="s2"> failed (</span><span class="si">%s</span><span class="s2">); keeping feedforward poses"</span><span class="p">,</span>
+                    <span class="n">start</span><span class="p">,</span>
+                    <span class="n">e</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">ok</span> <span class="o">=</span> <span class="kc">False</span>
+
+            <span class="c1"># Back to frame 0's camera, as run_predictions expects</span>
+            <span class="k">if</span> <span class="n">ok</span><span class="p">:</span>
+                <span class="n">refined</span> <span class="o">=</span> <span class="n">refined</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+                <span class="n">frame0_inv</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">refined</span><span class="p">[:</span><span class="mi">1</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="n">local</span> <span class="o">=</span> <span class="n">refined</span> <span class="o">@</span> <span class="n">frame0_inv</span>
+                <span class="n">raw</span><span class="p">[</span><span class="s2">"extrinsic"</span><span class="p">]</span> <span class="o">=</span> <span class="n">local</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+                <span class="n">raw</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">]</span> <span class="o">=</span> <span class="n">refined_intrinsics</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+                <span class="c1"># Window 0's refined focal is held by every later window</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ba_focal</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">ba</span><span class="o">.</span><span class="n">refine_focal</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_ba_focal</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">refined_intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
+
+            <span class="c1"># Window record</span>
+            <span class="n">record</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">"start"</span><span class="p">:</span> <span class="n">start</span><span class="p">,</span>
+                <span class="s2">"n_frames"</span><span class="p">:</span> <span class="n">k</span><span class="p">,</span>
+                <span class="s2">"ok"</span><span class="p">:</span> <span class="n">ok</span><span class="p">,</span>
+                <span class="s2">"alignment_scale"</span><span class="p">:</span> <span class="n">ba</span><span class="o">.</span><span class="n">alignment_scale</span><span class="p">,</span>
+                <span class="s2">"loss_final"</span><span class="p">:</span> <span class="n">ba</span><span class="o">.</span><span class="n">loss_history</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+                <span class="k">if</span> <span class="n">ba</span><span class="o">.</span><span class="n">loss_history</span> <span class="ow">and</span> <span class="n">ba</span><span class="o">.</span><span class="n">loss_history</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+                <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="s2">"focal"</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">raw</span><span class="p">[</span><span class="s2">"intrinsics"</span><span class="p">][</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]),</span>
+                <span class="s2">"seconds"</span><span class="p">:</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">,</span>
+                <span class="s2">"gpu_max_mib"</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">max_memory_allocated</span><span class="p">()</span> <span class="o">&gt;&gt;</span> <span class="mi">20</span>
+                <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span>
+                <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">window_ba</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="s2">"Window BA at frame </span><span class="si">%d</span><span class="s2">: ok </span><span class="si">%s</span><span class="s2">, focal </span><span class="si">%.1f</span><span class="s2">, </span><span class="si">%.0f</span><span class="s2"> s"</span><span class="p">,</span>
+                <span class="n">start</span><span class="p">,</span>
+                <span class="n">ok</span><span class="p">,</span>
+                <span class="n">record</span><span class="p">[</span><span class="s2">"focal"</span><span class="p">],</span>
+                <span class="n">record</span><span class="p">[</span><span class="s2">"seconds"</span><span class="p">],</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">raw</span><span class="p">,</span> <span class="n">rgb01</span>
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Live viewer hooks (guarded)</span>
+    <span class="c1">####################################################################</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_viz_push_submap</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">submap</span><span class="p">:</span> <span class="n">Submap</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Push one submap's corrected points and per-frame frusta to the viewer.</span>
+
+<span class="sd">        - no-op without a viewer; called on window submaps only, which always carry dense points</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">viz</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Viewer I/O, runtime and bad-data failures are logged; programming errors propagate</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># Skip overlap frames the previous submap drew; see LoopClosureConfig</span>
+            <span class="n">skip</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">submap_overlap</span> <span class="k">if</span> <span class="n">submap</span><span class="o">.</span><span class="n">frame_start</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
+
+            <span class="c1"># Graph-corrected world points and colors past the overlap, masked by confidence</span>
+            <span class="n">grid</span> <span class="o">=</span> <span class="n">submap</span><span class="o">.</span><span class="n">get_world_grid</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">)[</span><span class="n">skip</span><span class="p">:]</span>
+            <span class="k">assert</span> <span class="n">submap</span><span class="o">.</span><span class="n">conf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">submap</span><span class="o">.</span><span class="n">colors</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">submap</span><span class="o">.</span><span class="n">conf</span><span class="p">[</span><span class="n">skip</span><span class="p">:]</span> <span class="o">&gt;</span> <span class="n">submap</span><span class="o">.</span><span class="n">conf_threshold</span>
+            <span class="n">world_pts</span> <span class="o">=</span> <span class="n">grid</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span>
+            <span class="n">cols</span> <span class="o">=</span> <span class="n">submap</span><span class="o">.</span><span class="n">colors</span><span class="p">[</span><span class="n">skip</span><span class="p">:][</span><span class="n">mask</span><span class="p">]</span>
+
+            <span class="c1"># A pure-overlap tail submap trims to nothing; leave the scene untouched</span>
+            <span class="k">if</span> <span class="n">world_pts</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">return</span>
+
+            <span class="c1"># Subsampled point cloud</span>
+            <span class="n">all_points</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">world_pts</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+            <span class="n">keep</span> <span class="o">=</span> <span class="n">subsample_points</span><span class="p">(</span><span class="n">all_points</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">viz_max_points</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">add_points</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"submap_</span><span class="si">{</span><span class="n">submap</span><span class="o">.</span><span class="n">submap_id</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">world_pts</span><span class="p">[</span><span class="n">keep</span><span class="p">],</span> <span class="n">cols</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Per-frame frusta at the corrected world-to-cam poses (overlap frames skipped)</span>
+            <span class="n">poses</span> <span class="o">=</span> <span class="n">submap</span><span class="o">.</span><span class="n">get_all_poses_world</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">skip</span><span class="p">,</span> <span class="n">poses</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">add_frustum</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">"submap_</span><span class="si">{</span><span class="n">submap</span><span class="o">.</span><span class="n">submap_id</span><span class="si">}</span><span class="s2">/cam_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">poses</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+                <span class="p">)</span>
+        <span class="k">except</span> <span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="ne">ZeroDivisionError</span><span class="p">,</span> <span class="ne">RuntimeError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">)</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"viewer submap push failed (submap </span><span class="si">%s</span><span class="s2">): </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">submap</span><span class="o">.</span><span class="n">submap_id</span><span class="p">,</span> <span class="n">e</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_viz_reupload_all</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Re-upload every submap so the scene snaps to the corrected poses.</span>
+
+<span class="sd">        - no-op without a viewer; the map holds window submaps only, never loop carriers</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">viz</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Push every window submap</span>
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">ordered_submaps_by_key</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_viz_push_submap</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run_lc_loop</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">retrieval_extractor</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">],</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Slide windows over the frames, close loops, then assemble outputs.</span>
+
+<span class="sd">        - loop carrier: the verified (query, detected) frame pair as a 2-frame Submap; adds a loop edge only</span>
+<span class="sd">        - carrier ids follow the window submaps; loop_edge_timing sets when edges land</span>
+<span class="sd">        - with a viewer, each push waits for the running forward (precision lock)</span>
+<span class="sd">        """</span>
+        <span class="c1"># Reset the scene map + pose graph so a re-run does not accumulate stale state</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">map</span> <span class="o">=</span> <span class="n">GraphMap</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">graph</span> <span class="o">=</span> <span class="n">PoseGraph</span><span class="p">()</span>
+
+        <span class="c1"># Window geometry: stride = submap_size, matching VGGT-SLAM main.py:109-130 (not K-O)</span>
+        <span class="n">cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span>
+        <span class="n">K</span><span class="p">,</span> <span class="n">overlap</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">submap_size</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">submap_overlap</span>
+        <span class="n">views</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">views</span>
+        <span class="n">N</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">views</span><span class="p">)</span>
+
+        <span class="c1"># Driver state: window submaps and loop carriers</span>
+        <span class="n">submaps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Submap</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">lc_submaps</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Submap</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="c1"># Window bounds: K+overlap frames each, as VGGT-SLAM main.py:109; overlap: see LoopClosureConfig</span>
+        <span class="n">bounds</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">start</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">):</span>
+            <span class="n">end</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">start</span> <span class="o">+</span> <span class="n">K</span> <span class="o">+</span> <span class="n">overlap</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span>
+            <span class="n">bounds</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">))</span>
+
+            <span class="k">if</span> <span class="n">end</span> <span class="o">&gt;=</span> <span class="n">N</span><span class="p">:</span>
+                <span class="k">break</span>
+
+        <span class="c1"># Submap count for the log and the bar</span>
+        <span class="n">n_submaps</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">bounds</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"Loop closure: </span><span class="si">%d</span><span class="s2"> frames → </span><span class="si">%d</span><span class="s2"> submaps (size=</span><span class="si">%d</span><span class="s2">, overlap=</span><span class="si">%d</span><span class="s2">)"</span><span class="p">,</span>
+            <span class="n">N</span><span class="p">,</span>
+            <span class="n">n_submaps</span><span class="p">,</span>
+            <span class="n">K</span><span class="p">,</span>
+            <span class="n">overlap</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Slice each window once; the forward submits and the loop share it</span>
+        <span class="n">windows</span> <span class="o">=</span> <span class="p">[</span><span class="n">views</span><span class="p">[</span><span class="n">s</span><span class="p">:</span><span class="n">e</span><span class="p">]</span> <span class="k">for</span> <span class="n">s</span><span class="p">,</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">bounds</span><span class="p">]</span>
+
+        <span class="c1"># Window k+1's forward runs on one worker while window k's CPU post runs here</span>
+        <span class="k">with</span> <span class="p">(</span>
+            <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">,</span>
+            <span class="n">tqdm</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="n">n_submaps</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"Loop closure"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"submap"</span><span class="p">)</span> <span class="k">as</span> <span class="n">pbar</span><span class="p">,</span>
+        <span class="p">):</span>
+            <span class="n">pending</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_forward_window</span><span class="p">,</span> <span class="n">windows</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">bounds</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">])</span>
+
+            <span class="k">for</span> <span class="n">wi</span><span class="p">,</span> <span class="p">((</span><span class="n">start</span><span class="p">,</span> <span class="n">_</span><span class="p">),</span> <span class="n">window</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">bounds</span><span class="p">,</span> <span class="n">windows</span><span class="p">)):</span>
+                <span class="n">raw</span><span class="p">,</span> <span class="n">rgb01</span> <span class="o">=</span> <span class="n">pending</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+
+                <span class="c1"># GPU post before launch: unproject takes the precision lock the next forward holds</span>
+                <span class="n">submap</span><span class="p">,</span> <span class="n">window_lc_submaps</span><span class="p">,</span> <span class="n">loop_matches</span><span class="p">,</span> <span class="n">dense_points</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">run_predictions</span><span class="p">(</span>
+                        <span class="n">window</span><span class="p">,</span>
+                        <span class="n">raw</span><span class="p">,</span>
+                        <span class="n">rgb01</span><span class="p">,</span>
+                        <span class="n">wi</span><span class="p">,</span>
+                        <span class="n">start</span><span class="p">,</span>
+                        <span class="n">submaps</span><span class="p">,</span>
+                        <span class="n">lc_submaps</span><span class="p">,</span>
+                        <span class="n">retrieval_extractor</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+
+                <span class="c1"># Launch the next window's forward, then the CPU post overlaps it</span>
+                <span class="k">if</span> <span class="n">wi</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">windows</span><span class="p">):</span>
+                    <span class="n">pending</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_forward_window</span><span class="p">,</span> <span class="n">windows</span><span class="p">[</span><span class="n">wi</span> <span class="o">+</span> <span class="mi">1</span><span class="p">],</span> <span class="n">bounds</span><span class="p">[</span><span class="n">wi</span> <span class="o">+</span> <span class="mi">1</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+                    <span class="p">)</span>
+
+                <span class="c1"># Dense uint8 colors: VGGT-SLAM truncates [0, 1] frames scaled by 255</span>
+                <span class="n">frames_hw3</span> <span class="o">=</span> <span class="n">rgb01</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+                <span class="n">dense_colors</span> <span class="o">=</span> <span class="p">(</span><span class="n">frames_hw3</span> <span class="o">*</span> <span class="mf">255.0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+
+                <span class="n">submap</span><span class="o">.</span><span class="n">set_dense_points</span><span class="p">(</span>
+                    <span class="n">dense_points</span><span class="p">,</span> <span class="n">dense_colors</span><span class="p">,</span> <span class="n">raw</span><span class="p">[</span><span class="s2">"depth_conf"</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+                <span class="p">)</span>
+
+                <span class="c1"># Record the submaps, add the sequential edges and optimize; loop edges land per loop_edge_timing</span>
+                <span class="n">submaps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">submap</span><span class="p">)</span>
+                <span class="n">lc_submaps</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">window_lc_submaps</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">add_submap</span><span class="p">(</span><span class="n">submap</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">add_submap</span><span class="p">(</span><span class="n">submap</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">submap_overlap</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+
+                <span class="c1"># Hook 1: push the just-appended submap to the live viewer</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_viz_push_submap</span><span class="p">(</span><span class="n">submap</span><span class="p">)</span>
+
+                <span class="c1"># Live timing: add this window's loop edges and re-solve, as VGGT-SLAM solver.py:255-287</span>
+                <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">loop_edge_timing</span> <span class="o">==</span> <span class="s2">"live"</span> <span class="ow">and</span> <span class="n">window_lc_submaps</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">lc</span> <span class="ow">in</span> <span class="n">window_lc_submaps</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">add_loop_edge</span><span class="p">(</span><span class="n">lc</span><span class="p">)</span>
+
+                    <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+
+                <span class="c1"># Progress</span>
+                <span class="n">pbar</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+                <span class="n">pbar</span><span class="o">.</span><span class="n">set_postfix</span><span class="p">(</span><span class="n">loops</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">lc_submaps</span><span class="p">))</span>
+
+                <span class="c1"># Hook 2 runs only on a window that closed a loop, with a viewer attached</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">window_lc_submaps</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">viz</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">):</span>
+                    <span class="k">continue</span>
+
+                <span class="c1"># Loop lines between graph-corrected camera centers of each accepted match; failures logged</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">loop_matches</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="ow">not</span> <span class="n">m</span><span class="o">.</span><span class="n">accepted</span><span class="p">:</span>
+                            <span class="k">continue</span>
+
+                        <span class="n">q_pose</span> <span class="o">=</span> <span class="n">submaps</span><span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">query_submap_id</span><span class="p">]</span><span class="o">.</span><span class="n">get_all_poses_world</span><span class="p">(</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">graph</span>
+                        <span class="p">)[</span><span class="n">m</span><span class="o">.</span><span class="n">query_frame_idx</span><span class="p">]</span>
+                        <span class="n">d_pose</span> <span class="o">=</span> <span class="n">submaps</span><span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">detected_submap_id</span><span class="p">]</span><span class="o">.</span><span class="n">get_all_poses_world</span><span class="p">(</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">graph</span>
+                        <span class="p">)[</span><span class="n">m</span><span class="o">.</span><span class="n">detected_frame_idx</span><span class="p">]</span>
+                        <span class="n">q_center</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">q_pose</span><span class="p">)[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+                        <span class="n">d_center</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">d_pose</span><span class="p">)[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+                        <span class="n">segment</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">q_center</span><span class="p">,</span> <span class="n">d_center</span><span class="p">])[</span><span class="kc">None</span><span class="p">]</span>  <span class="c1"># (1, 2, 3)</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">viz</span><span class="o">.</span><span class="n">add_lines</span><span class="p">(</span>
+                            <span class="sa">f</span><span class="s2">"loop_</span><span class="si">{</span><span class="n">m</span><span class="o">.</span><span class="n">query_submap_id</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">m</span><span class="o">.</span><span class="n">detected_submap_id</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">segment</span>
+                        <span class="p">)</span>
+                <span class="k">except</span> <span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="ne">ZeroDivisionError</span><span class="p">,</span> <span class="ne">RuntimeError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">)</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">"viewer loop-line failed: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+                <span class="c1"># A loop moves every prior submap, so re-upload the whole scene</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_viz_reupload_all</span><span class="p">()</span>
+
+        <span class="c1"># One cache release after the loop</span>
+        <span class="n">pytorch_gc</span><span class="p">()</span>
+
+        <span class="c1"># Add deferred loop edges (live mode added them in the loop), then the final solve</span>
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">loop_edge_timing</span> <span class="o">==</span> <span class="s2">"deferred"</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">lc</span> <span class="ow">in</span> <span class="n">lc_submaps</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">add_loop_edge</span><span class="p">(</span><span class="n">lc</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+
+        <span class="c1"># Hook 3: final PGO done; re-upload so the scene snaps to loop-closed poses</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_viz_reupload_all</span><span class="p">()</span>
+
+        <span class="c1"># Assemble outputs from the graph-corrected GraphMap cloud; see outputs in __init__</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">outputs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_assemble_result</span><span class="p">(</span><span class="n">N</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_assemble_result</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n_frames</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PointcloudResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Build a PointcloudResult from the GraphMap dense cloud.</span>
+
+<span class="sd">        - VGGT-SLAM correction-at-read: poses and points from the optimized graph</span>
+<span class="sd">        - one pose and intrinsics row per frame of the full n_frames sequence</span>
+<span class="sd">        - each submap is lifted once; the cloud keeps only the capped draw, never the dense stack</span>
+<span class="sd">        - world_points is None: the lean store re-derives it from depth</span>
+<span class="sd">        - images and pixel_indices come from each frame's owning submap, so refine can read the store</span>
+<span class="sd">        - raises ValueError on an empty cloud or zero model dims</span>
+<span class="sd">        """</span>
+        <span class="c1"># Overlap skip and per-submap kept-pixel table</span>
+        <span class="n">overlap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">submap_overlap</span>
+        <span class="n">kept</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="c1"># Confidence-kept pixels of each window submap, as _viz_push_submap masks them</span>
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">ordered_submaps_by_key</span><span class="p">():</span>
+            <span class="n">skip</span> <span class="o">=</span> <span class="n">overlap</span> <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">frame_start</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
+            <span class="k">assert</span> <span class="n">s</span><span class="o">.</span><span class="n">conf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">conf</span><span class="p">[</span><span class="n">skip</span><span class="p">:]</span> <span class="o">&gt;</span> <span class="n">s</span><span class="o">.</span><span class="n">conf_threshold</span>
+            <span class="n">kept</span><span class="p">[</span><span class="n">s</span><span class="o">.</span><span class="n">submap_id</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">skip</span><span class="p">,</span> <span class="n">mask</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()))</span>
+
+        <span class="c1"># Draw the max_points cap over the whole cloud before lifting; to_colmap and SOR OOM on it</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">count</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">kept</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+        <span class="n">all_kept</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">total</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+        <span class="n">keep</span> <span class="o">=</span> <span class="n">subsample_points</span><span class="p">(</span><span class="n">all_kept</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">max_points</span><span class="p">)</span>
+
+        <span class="c1"># Split the draw into each submap's share, in submap order</span>
+        <span class="n">share</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">a</span> <span class="o">=</span> <span class="mi">0</span>
+
+        <span class="k">for</span> <span class="n">submap_id</span><span class="p">,</span> <span class="p">(</span><span class="n">skip</span><span class="p">,</span> <span class="n">mask</span><span class="p">,</span> <span class="n">count</span><span class="p">)</span> <span class="ow">in</span> <span class="n">kept</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">b</span> <span class="o">=</span> <span class="n">a</span> <span class="o">+</span> <span class="n">count</span>
+            <span class="n">share</span><span class="p">[</span><span class="n">submap_id</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">skip</span><span class="p">,</span> <span class="n">mask</span><span class="p">,</span> <span class="n">keep</span><span class="p">[</span><span class="n">a</span><span class="p">:</span><span class="n">b</span><span class="p">])</span>
+            <span class="n">a</span> <span class="o">=</span> <span class="n">b</span>
+
+        <span class="c1"># One pose and intrinsics row per global frame, identity where no submap covers it</span>
+        <span class="n">extrinsics</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="p">(</span><span class="n">n_frames</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">intrinsics</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">),</span> <span class="p">(</span><span class="n">n_frames</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">assigned</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">n_frames</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+        <span class="n">model_height</span> <span class="o">=</span> <span class="n">model_width</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">depth</span> <span class="o">=</span> <span class="n">confidence</span> <span class="o">=</span> <span class="n">images</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">pts_chunks</span><span class="p">,</span> <span class="n">col_chunks</span><span class="p">,</span> <span class="n">pix_chunks</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">map</span><span class="o">.</span><span class="n">ordered_submaps_by_key</span><span class="p">():</span>
+            <span class="c1"># Lift each submap once; keep only its share of the capped draw</span>
+            <span class="n">skip</span><span class="p">,</span> <span class="n">mask</span><span class="p">,</span> <span class="n">sub_keep</span> <span class="o">=</span> <span class="n">share</span><span class="p">[</span><span class="n">s</span><span class="o">.</span><span class="n">submap_id</span><span class="p">]</span>
+            <span class="n">grid</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">get_world_grid</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">)</span>
+            <span class="k">assert</span> <span class="n">s</span><span class="o">.</span><span class="n">points</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">s</span><span class="o">.</span><span class="n">colors</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">s</span><span class="o">.</span><span class="n">conf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+            <span class="c1"># Flat pixel index of each kept point: one gather, not a mask copy then a subsample copy</span>
+            <span class="n">idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">flatnonzero</span><span class="p">(</span><span class="n">mask</span><span class="p">)[</span><span class="n">sub_keep</span><span class="p">]</span>
+            <span class="n">grid_flat</span> <span class="o">=</span> <span class="n">grid</span><span class="p">[</span><span class="n">skip</span><span class="p">:]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+            <span class="n">colors_flat</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">colors</span><span class="p">[</span><span class="n">skip</span><span class="p">:]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+            <span class="n">pts_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">grid_flat</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
+            <span class="n">col_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">colors_flat</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
+
+            <span class="c1"># Source pixel of each kept point, as global [frame, row, col]</span>
+            <span class="n">frame</span><span class="p">,</span> <span class="n">row</span><span class="p">,</span> <span class="n">col</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unravel_index</span><span class="p">(</span><span class="n">idx</span><span class="p">,</span> <span class="n">grid</span><span class="p">[</span><span class="n">skip</span><span class="p">:]</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">3</span><span class="p">])</span>
+            <span class="n">pix_chunks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">frame</span> <span class="o">+</span> <span class="n">s</span><span class="o">.</span><span class="n">frame_start</span> <span class="o">+</span> <span class="n">skip</span><span class="p">,</span> <span class="n">row</span><span class="p">,</span> <span class="n">col</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Size the per-pixel arrays from the first grid</span>
+            <span class="k">if</span> <span class="n">model_height</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">model_height</span><span class="p">,</span> <span class="n">model_width</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="nb">int</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+                    <span class="nb">int</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">]),</span>
+                <span class="p">)</span>
+                <span class="n">depth</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+                    <span class="p">(</span><span class="n">n_frames</span><span class="p">,</span> <span class="n">model_height</span><span class="p">,</span> <span class="n">model_width</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span>
+                <span class="p">)</span>
+                <span class="n">confidence</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+                    <span class="p">(</span><span class="n">n_frames</span><span class="p">,</span> <span class="n">model_height</span><span class="p">,</span> <span class="n">model_width</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span>
+                <span class="p">)</span>
+                <span class="n">images</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+                    <span class="p">(</span><span class="n">n_frames</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">model_height</span><span class="p">,</span> <span class="n">model_width</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span>
+                <span class="p">)</span>
+
+            <span class="k">assert</span> <span class="n">depth</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">confidence</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">images</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+            <span class="c1"># First submap to cover a frame wins: the overlap frame keeps the earlier submap's pose, as evo</span>
+            <span class="n">poses_world</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">get_all_poses_world</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">graph</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">local_i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">intrinsics</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
+                <span class="n">g</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">frame_start</span> <span class="o">+</span> <span class="n">local_i</span>
+
+                <span class="k">if</span> <span class="n">assigned</span><span class="p">[</span><span class="n">g</span><span class="p">]:</span>
+                    <span class="k">continue</span>
+
+                <span class="n">extrinsics</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="n">poses_world</span><span class="p">[</span><span class="n">local_i</span><span class="p">]</span>
+                <span class="n">intrinsics</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">local_i</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+                <span class="n">assigned</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+
+                <span class="c1"># Depth under the corrected pose, and confidence</span>
+                <span class="n">depth</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="n">transform_points</span><span class="p">(</span><span class="n">grid</span><span class="p">[</span><span class="n">local_i</span><span class="p">],</span> <span class="n">extrinsics</span><span class="p">[</span><span class="n">g</span><span class="p">])[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+                <span class="n">confidence</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">conf</span><span class="p">[</span><span class="n">local_i</span><span class="p">]</span>
+
+                <span class="c1"># Model-grid RGB in [0, 1] from the submap's uint8 colors</span>
+                <span class="n">images</span><span class="p">[</span><span class="n">g</span><span class="p">]</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">colors</span><span class="p">[</span><span class="n">local_i</span><span class="p">]</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mf">255.0</span>
+
+        <span class="c1"># Stack the kept points; an empty map gives empty arrays</span>
+        <span class="n">points</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">(</span><span class="n">pts_chunks</span><span class="p">)</span> <span class="k">if</span> <span class="n">pts_chunks</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">colors</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">(</span><span class="n">col_chunks</span><span class="p">)</span> <span class="k">if</span> <span class="n">col_chunks</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">pixel_indices</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">(</span><span class="n">pix_chunks</span><span class="p">)</span> <span class="k">if</span> <span class="n">pix_chunks</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Fail fast on an empty cloud or zero model dims, before PointcloudResult's K rescale fails less clearly</span>
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="n">model_height</span> <span class="ow">is</span> <span class="kc">None</span>
+            <span class="ow">or</span> <span class="n">model_width</span> <span class="ow">is</span> <span class="kc">None</span>
+            <span class="ow">or</span> <span class="n">points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
+            <span class="ow">or</span> <span class="n">model_width</span> <span class="o">==</span> <span class="mi">0</span>
+            <span class="ow">or</span> <span class="n">model_height</span> <span class="o">==</span> <span class="mi">0</span>
+        <span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">"LC produced an empty point cloud — every pixel was confidence-masked out "</span>
+                <span class="s2">"(no geometry to assemble a result from)."</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">PointcloudResult</span><span class="p">(</span>
+            <span class="n">points</span><span class="o">=</span><span class="n">points</span><span class="p">,</span>
+            <span class="n">colors</span><span class="o">=</span><span class="n">colors</span><span class="p">,</span>
+            <span class="n">extrinsics</span><span class="o">=</span><span class="n">extrinsics</span><span class="p">,</span>
+            <span class="n">intrinsics</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">model_intrinsics</span><span class="o">=</span><span class="n">intrinsics</span><span class="p">,</span>
+            <span class="n">image_paths</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">image_paths</span><span class="p">),</span>
+            <span class="n">original_coords</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">base</span><span class="o">.</span><span class="n">original_coords</span><span class="p">,</span>
+            <span class="n">model_width</span><span class="o">=</span><span class="n">model_width</span><span class="p">,</span>
+            <span class="n">model_height</span><span class="o">=</span><span class="n">model_height</span><span class="p">,</span>
+            <span class="n">images</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">images</span><span class="p">),</span>
+            <span class="n">confidence</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">confidence</span><span class="p">),</span>
+            <span class="n">world_points</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">depth</span><span class="o">=</span><span class="n">depth</span><span class="p">,</span>
+            <span class="n">pixel_indices</span><span class="o">=</span><span class="n">pixel_indices</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

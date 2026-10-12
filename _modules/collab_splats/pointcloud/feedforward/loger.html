@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.pointcloud.feedforward.loger &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/pointcloud/feedforward/loger';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.pointcloud.feedforward.loger</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.pointcloud.feedforward.loger</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">LoGeR feedforward backend: sliding-window Pi3 with a test-time-trained memory.</span>
+
+<span class="sd">- predicts no intrinsics; one K is fitted from the camera-frame pointmap</span>
+<span class="sd">- vendored: github.com/Junyi42/LoGeR @ 7685b7a (setup/loger.sh -&gt; third_party/LoGeR/)</span>
+<span class="sd">- cites: loger/models/pi3.py:59, 172, 584-596, 772-775; loger/utils/basic.py:21, 53-63</span>
+<span class="sd">- read, not a dependency: github.com/PolyCam/LoGeR @ 5d7c1a7, run_loger.py:47-164, 481</span>
+<span class="sd">- neither fork ships a LICENSE; nothing is copied</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">inspect</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">estimate_intrinsics_from_points</span><span class="p">,</span>
+    <span class="n">invert_poses</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.feedforward.base</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BaseFeedforwardCreator</span><span class="p">,</span>
+    <span class="n">_frame_sizes</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_hf_weights</span><span class="p">,</span> <span class="n">vendored_path</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Constants</span>
+<span class="c1">########################################################################</span>
+
+<span class="n">LOGER_HF_REPO</span> <span class="o">=</span> <span class="s2">"Junyi42/LoGeR"</span>
+<span class="n">LOGER_VARIANTS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"LoGeR"</span><span class="p">,</span> <span class="s2">"LoGeR_star"</span><span class="p">)</span>
+
+<span class="c1"># Location of the vendored LoGeR code, installed by setup/loger.sh</span>
+<span class="n">_LOGER_ROOT</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span><span class="o">.</span><span class="n">parents</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span> <span class="o">/</span> <span class="s2">"third_party"</span> <span class="o">/</span> <span class="s2">"LoGeR"</span>
+
+<span class="c1"># Model image width and height must be multiples of this patch size</span>
+<span class="n">_LOGER_PATCH</span> <span class="o">=</span> <span class="mi">14</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Creator</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="LoGeRCreator">
+<a class="viewcode-back" href="../../../../api/pointcloud.html#collab_splats.pointcloud.feedforward.loger.LoGeRCreator">[docs]</a>
+<span class="nd">@BaseFeedforwardCreator</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">"loger"</span><span class="p">)</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LoGeRCreator</span><span class="p">(</span><span class="n">BaseFeedforwardCreator</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pointcloud from LoGeR's windowed inference, for sequences too long for the VGGT family.</span>
+
+<span class="sd">    - memory is bounded by the window, not the sequence length</span>
+<span class="sd">    - one K is fitted from the camera-frame pointmap and shared across frames</span>
+<span class="sd">    - multiview-filter defaults are the VGGT family's, not tuned for LoGeR</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        variant: "LoGeR" or "LoGeR_star"; each is a config and weights pair.</span>
+<span class="sd">        model_path: local checkpoint; None downloads from HuggingFace.</span>
+<span class="sd">        k_fit_conf_threshold: post-sigmoid confidence floor for the shared-K fit.</span>
+<span class="sd">        window_size: frames per sliding window.</span>
+<span class="sd">        overlap_size: frames shared between adjacent windows.</span>
+<span class="sd">        reset_every: reset the memory every N frames; 0 disables.</span>
+<span class="sd">        num_iterations: memory-update iterations per window.</span>
+<span class="sd">        pixel_limit: area budget for the resize, in px².</span>
+<span class="sd">    """</span>
+
+    <span class="n">variant</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"LoGeR_star"</span>
+    <span class="n">model_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># Confidence cutoff for fitting the shared intrinsics, kept low because LoGeR's scores are small</span>
+    <span class="n">k_fit_conf_threshold</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.02</span>
+
+    <span class="c1"># Sliding-window settings, copied from upstream's defaults because the shipped config has none</span>
+    <span class="n">window_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span>
+    <span class="n">overlap_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
+    <span class="n">reset_every</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">num_iterations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span>
+
+    <span class="n">pixel_limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">255_000</span>
+
+    <span class="c1"># Whether the model runs in se3 mode, read from the config by _load_model (None until then)</span>
+    <span class="n">_se3</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Reject an unknown variant before any multi-GB checkpoint download.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">variant</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">LOGER_VARIANTS</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"variant must be one of </span><span class="si">{</span><span class="n">LOGER_VARIANTS</span><span class="si">}</span><span class="s2">, got </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">variant</span><span class="si">!r}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_load_model</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Build Pi3 from the vendored variant yaml and load its checkpoint.</span>
+
+<span class="sd">        - FileNotFoundError: the vendored config is missing</span>
+<span class="sd">        - ValueError: the config's model: block is empty or holds unknown keys</span>
+<span class="sd">        """</span>
+        <span class="c1"># Path to this variant's vendored config file</span>
+        <span class="n">cfg_path</span> <span class="o">=</span> <span class="n">_LOGER_ROOT</span> <span class="o">/</span> <span class="s2">"ckpts"</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">variant</span> <span class="o">/</span> <span class="s2">"original_config.yaml"</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">cfg_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"LoGeR config not found: </span><span class="si">{</span><span class="n">cfg_path</span><span class="si">}</span><span class="s2">. Run `bash setup/loger.sh` to vendor the tree."</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Read the model settings from the config and refuse an empty one</span>
+        <span class="n">model_cfg</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">cfg_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">model_cfg</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">cfg_path</span><span class="si">}</span><span class="s2"> has no 'model:' block; the config is empty or truncated"</span>
+            <span class="p">)</span>
+
+        <span class="c1"># se3 is passed when running the model, not when building it, so take it out of the settings</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_se3</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">model_cfg</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">"se3"</span><span class="p">,</span> <span class="kc">False</span><span class="p">))</span>
+
+        <span class="c1"># Import and build the Pi3 model from the vendored code</span>
+        <span class="k">with</span> <span class="n">vendored_path</span><span class="p">(</span><span class="n">_LOGER_ROOT</span><span class="p">,</span> <span class="s2">"run `bash setup/loger.sh` to vendor the tree"</span><span class="p">):</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">loger.models.pi3</span><span class="w"> </span><span class="kn">import</span> <span class="n">Pi3</span>
+
+            <span class="c1"># Refuse unknown settings, since silently dropping them would change the model</span>
+            <span class="n">unknown</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span>
+                <span class="nb">set</span><span class="p">(</span><span class="n">model_cfg</span><span class="p">)</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="n">inspect</span><span class="o">.</span><span class="n">signature</span><span class="p">(</span><span class="n">Pi3</span><span class="o">.</span><span class="fm">__init__</span><span class="p">)</span><span class="o">.</span><span class="n">parameters</span><span class="p">)</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">cfg_path</span><span class="si">}</span><span class="s2"> 'model:' holds keys that are neither Pi3.__init__ "</span>
+                    <span class="sa">f</span><span class="s2">"parameters nor the known forward kwarg 'se3': </span><span class="si">{</span><span class="n">unknown</span><span class="si">}</span><span class="s2">. "</span>
+                    <span class="s2">"Upstream changed the config; route them explicitly rather than dropping them."</span>
+                <span class="p">)</span>
+
+            <span class="c1"># Build the model, with the config overriding Pi3's default settings</span>
+            <span class="n">model</span> <span class="o">=</span> <span class="n">Pi3</span><span class="p">(</span><span class="o">**</span><span class="n">model_cfg</span><span class="p">)</span>
+
+        <span class="c1"># Load the checkpoint, with weights_only protecting against unsafe pickled files</span>
+        <span class="n">ckpt</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_path</span> <span class="ow">or</span> <span class="n">load_hf_weights</span><span class="p">(</span>
+            <span class="n">LOGER_HF_REPO</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">variant</span><span class="si">}</span><span class="s2">/latest.pt"</span>
+        <span class="p">)</span>
+        <span class="n">state</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">ckpt</span><span class="p">),</span> <span class="n">map_location</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">weights_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">state</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model_state_dict"</span><span class="p">,</span> <span class="n">state</span><span class="p">)</span>
+        <span class="n">state</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="s2">"module."</span><span class="p">):</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">state</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"LoGeRCreator: loaded </span><span class="si">%s</span><span class="s2"> (se3=</span><span class="si">%s</span><span class="s2">) on </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">variant</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_se3</span><span class="p">,</span> <span class="n">device</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_preprocess</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">paths</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Resize frames to LoGeR's patch-aligned area budget.</span>
+
+<span class="sd">        - paths in temporal order; all frames must share one size, else ValueError</span>
+<span class="sd">        - returns (N, 3, H, W) float32 images in [0, 1] and (N, 6) original_coords</span>
+<span class="sd">        """</span>
+        <span class="c1"># Refuse frames of different sizes, since LoGeR sizes every frame from the first one</span>
+        <span class="n">sizes</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">_frame_sizes</span><span class="p">(</span><span class="n">paths</span><span class="p">,</span> <span class="kc">None</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sizes</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"LoGeR needs uniform frame sizes; got (w, h) </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">sizes</span><span class="p">)</span><span class="si">}</span><span class="s2">. All frames must share "</span>
+                <span class="s2">"one resolution; re-extract the frame store."</span>
+            <span class="p">)</span>
+
+        <span class="n">orig_w</span><span class="p">,</span> <span class="n">orig_h</span> <span class="o">=</span> <span class="n">sizes</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="n">target_w</span><span class="p">,</span> <span class="n">target_h</span> <span class="o">=</span> <span class="n">_compute_target_size</span><span class="p">(</span><span class="n">orig_w</span><span class="p">,</span> <span class="n">orig_h</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_limit</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">"LoGeRCreator: </span><span class="si">%d</span><span class="s2">x</span><span class="si">%d</span><span class="s2"> -&gt; </span><span class="si">%d</span><span class="s2">x</span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span> <span class="n">orig_w</span><span class="p">,</span> <span class="n">orig_h</span><span class="p">,</span> <span class="n">target_w</span><span class="p">,</span> <span class="n">target_h</span><span class="p">)</span>
+
+        <span class="c1"># Resize with PIL, as LoGeR's own directory loader does</span>
+        <span class="n">imgs</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span><span class="s2">"RGB"</span><span class="p">)</span><span class="o">.</span><span class="n">resize</span><span class="p">((</span><span class="n">target_w</span><span class="p">,</span> <span class="n">target_h</span><span class="p">),</span> <span class="n">Image</span><span class="o">.</span><span class="n">LANCZOS</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paths</span>
+        <span class="p">]</span>
+        <span class="n">resized</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">img</span><span class="p">)</span> <span class="k">for</span> <span class="n">img</span> <span class="ow">in</span> <span class="n">imgs</span><span class="p">])</span>
+
+        <span class="c1"># Convert to float and scale to [0, 1] in place to avoid an extra copy</span>
+        <span class="n">views</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">resized</span><span class="p">)</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">div_</span><span class="p">(</span><span class="mf">255.0</span><span class="p">)</span>
+
+        <span class="c1"># No cropping, so every frame's crop box is the whole original frame</span>
+        <span class="n">row</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">orig_w</span><span class="p">,</span> <span class="n">orig_h</span><span class="p">,</span> <span class="n">orig_w</span><span class="p">,</span> <span class="n">orig_h</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">original_coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">row</span><span class="p">,</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">paths</span><span class="p">),</span> <span class="mi">1</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">views</span><span class="p">,</span> <span class="n">original_coords</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_forward_kwargs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Kwargs for one Pi3 forward pass, mirroring upstream's build_forward_kwargs.</span>
+
+<span class="sd">        - RuntimeError: _load_model has not run</span>
+<span class="sd">        """</span>
+        <span class="c1"># Refuse to run before se3 is known, since guessing would be wrong for one of the variants</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_se3</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="s2">"LoGeRCreator._forward requires _load_model to have run (se3 unset)"</span>
+            <span class="p">)</span>
+
+        <span class="c1"># sim3 stays off because Pi3 fails when sim3 and se3 are both on</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span>
+            <span class="n">window_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">window_size</span><span class="p">,</span>
+            <span class="n">overlap_size</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">overlap_size</span><span class="p">,</span>
+            <span class="n">reset_every</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">reset_every</span><span class="p">,</span>
+            <span class="n">num_iterations</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">num_iterations</span><span class="p">,</span>
+            <span class="n">sim3</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">sim3_scale_mode</span><span class="o">=</span><span class="s2">"median"</span><span class="p">,</span>
+            <span class="n">se3</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_se3</span><span class="p">,</span>
+            <span class="n">turn_off_ttt</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">turn_off_swa</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">model</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">views</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Windowed inference, plus one shared K fitted from the camera-frame pointmap.</span>
+
+<span class="sd">        - views: (N, 3, H, W) images in [0, 1]; ValueError outside that range</span>
+<span class="sd">        - returns images, extrinsic (N, 3, 4) w2c, intrinsics, depth and depth_conf</span>
+<span class="sd">        """</span>
+        <span class="c1"># Build the settings first so a missing se3 fails before any GPU work</span>
+        <span class="n">forward_kwargs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_forward_kwargs</span><span class="p">()</span>
+
+        <span class="c1"># Move the images to the model's device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">images</span> <span class="o">=</span> <span class="n">views</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Check that the images are in the [0, 1] range</span>
+        <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">images</span><span class="o">.</span><span class="n">min</span><span class="p">()),</span> <span class="nb">float</span><span class="p">(</span><span class="n">images</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>
+
+        <span class="k">if</span> <span class="n">lo</span> <span class="o">&lt;</span> <span class="mf">0.0</span> <span class="ow">or</span> <span class="n">hi</span> <span class="o">&gt;</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"LoGeR expects RGB in [0, 1]; got [</span><span class="si">{</span><span class="n">lo</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">hi</span><span class="si">}</span><span class="s2">]"</span><span class="p">)</span>
+
+        <span class="c1"># Run the model, adding the batch dimension it expects</span>
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">preds</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">images</span><span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="o">**</span><span class="n">forward_kwargs</span><span class="p">)</span>
+
+        <span class="c1"># Pointmap in each camera's own frame</span>
+        <span class="n">local_points</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">preds</span><span class="p">[</span><span class="s2">"local_points"</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="p">)</span>  <span class="c1"># (N,H,W,3)</span>
+
+        <span class="c1"># Turn the raw confidence scores into probabilities, which the intrinsics fit below expects</span>
+        <span class="n">depth_conf</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sigmoid</span><span class="p">(</span><span class="n">preds</span><span class="p">[</span><span class="s2">"conf"</span><span class="p">])</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">depth_conf</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
+            <span class="n">depth_conf</span> <span class="o">=</span> <span class="n">depth_conf</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (N,H,W)</span>
+
+        <span class="c1"># Turn LoGeR's camera-to-world poses into world-to-camera</span>
+        <span class="n">camera_poses</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">preds</span><span class="p">[</span><span class="s2">"camera_poses"</span><span class="p">]</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="p">)</span>  <span class="c1"># (N,4,4) c2w</span>
+        <span class="n">extrinsic</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">camera_poses</span><span class="p">)[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">float32</span>
+        <span class="p">)</span>  <span class="c1"># (N,3,4) w2c</span>
+
+        <span class="c1"># Fit one set of intrinsics and copy it for every frame</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">estimate_intrinsics_from_points</span><span class="p">(</span>
+            <span class="n">local_points</span><span class="p">,</span> <span class="n">depth_conf</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">k_fit_conf_threshold</span>
+        <span class="p">)</span>
+        <span class="n">intrinsic</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">broadcast_to</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="p">(</span><span class="n">local_points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+        <span class="c1"># Depth is the z coordinate of the camera-frame pointmap</span>
+        <span class="n">depth</span> <span class="o">=</span> <span class="n">local_points</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span><span class="mi">3</span><span class="p">]</span>  <span class="c1"># (N,H,W,1)</span>
+
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"images"</span><span class="p">:</span> <span class="n">images</span><span class="p">,</span>
+            <span class="s2">"extrinsic"</span><span class="p">:</span> <span class="n">extrinsic</span><span class="p">,</span>
+            <span class="s2">"intrinsics"</span><span class="p">:</span> <span class="n">intrinsic</span><span class="p">,</span>
+            <span class="s2">"depth"</span><span class="p">:</span> <span class="n">depth</span><span class="p">,</span>
+            <span class="s2">"depth_conf"</span><span class="p">:</span> <span class="n">depth_conf</span><span class="p">,</span>
+        <span class="p">}</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Preprocessing helpers</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_compute_target_size</span><span class="p">(</span><span class="n">orig_w</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">orig_h</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">pixel_limit</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Scale to an area budget, then round both axes to whole 14-px patches.</span>
+
+<span class="sd">    - matches LoGeR's own loader; pinned by a parity test</span>
+<span class="sd">    - axes round independently, so aspect may stretch a few percent</span>
+<span class="sd">    - extreme aspect or a pixel_limit under 196 can exceed the budget, as upstream does</span>
+<span class="sd">    - sizes in px, pixel_limit in px²; returns (width, height), both multiples of 14</span>
+<span class="sd">    """</span>
+    <span class="c1"># Scale factor that fits the image into the pixel budget</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span>
+        <span class="n">pixel_limit</span> <span class="o">/</span> <span class="p">(</span><span class="n">orig_w</span> <span class="o">*</span> <span class="n">orig_h</span><span class="p">)</span>
+    <span class="p">)</span>  <span class="c1"># an empty frame raises here on purpose</span>
+    <span class="n">w_target</span><span class="p">,</span> <span class="n">h_target</span> <span class="o">=</span> <span class="n">orig_w</span> <span class="o">*</span> <span class="n">scale</span><span class="p">,</span> <span class="n">orig_h</span> <span class="o">*</span> <span class="n">scale</span>
+
+    <span class="c1"># Round to whole patches, then shrink one side at a time until the image fits the budget</span>
+    <span class="n">patches_w</span><span class="p">,</span> <span class="n">patches_h</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="nb">round</span><span class="p">(</span><span class="n">w_target</span> <span class="o">/</span> <span class="n">_LOGER_PATCH</span><span class="p">),</span>
+        <span class="nb">round</span><span class="p">(</span><span class="n">h_target</span> <span class="o">/</span> <span class="n">_LOGER_PATCH</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="k">while</span> <span class="p">(</span><span class="n">patches_w</span> <span class="o">*</span> <span class="n">_LOGER_PATCH</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">patches_h</span> <span class="o">*</span> <span class="n">_LOGER_PATCH</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">pixel_limit</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">patches_w</span> <span class="o">/</span> <span class="n">patches_h</span> <span class="o">&gt;</span> <span class="n">w_target</span> <span class="o">/</span> <span class="n">h_target</span><span class="p">:</span>
+            <span class="n">patches_w</span> <span class="o">-=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">patches_h</span> <span class="o">-=</span> <span class="mi">1</span>
+
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">patches_w</span><span class="p">)</span> <span class="o">*</span> <span class="n">_LOGER_PATCH</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">patches_h</span><span class="p">)</span> <span class="o">*</span> <span class="n">_LOGER_PATCH</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

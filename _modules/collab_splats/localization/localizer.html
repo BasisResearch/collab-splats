@@ -1,0 +1,1509 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.localization.localizer &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/localization/localizer';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.localization.localizer</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.localization.localizer</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Stage 3 pose estimation: cached-feature matches, world-point lookup, pycolmap absolute pose.</span>
+
+<span class="sd">- feature DB: pointcloud.zarr local_features/&lt;matcher&gt;/reconstruction</span>
+<span class="sd">- refs: DINO-SALAD top-k reconstruction frames, or frames the caller chooses</span>
+<span class="sd">- ref px map through the preprocess crop onto the world_points grid before lookup</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">dataclasses</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">itertools</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">Iterator</span><span class="p">,</span> <span class="n">Sequence</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">cast</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pycolmap</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">zarr</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.auto</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="n">sample_world_points</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">rescale_intrinsics</span><span class="p">,</span> <span class="n">shift_intrinsics</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.localization.extractors</span><span class="w"> </span><span class="kn">import</span> <span class="n">LocalFeatures</span><span class="p">,</span> <span class="n">LocalMatcher</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.localization.retrieval</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseRetrievalExtractor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">LZ4</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_numpy</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">PointcloudResult</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Helpers</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="seed_intrinsics">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.seed_intrinsics">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">seed_intrinsics</span><span class="p">(</span><span class="n">height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pinhole K seed from image proportions, COLMAP's f = 1.2 * max(W, H) rule.</span>
+
+<span class="sd">    - pixel-center K: principal point at the image center ((W - 1) / 2, (H - 1) / 2)</span>
+<span class="sd">    - square pixels; pycolmap SIMPLE_PINHOLE refinement solves the true focal</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        height: image height, px.</span>
+<span class="sd">        width: image width, px.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (3, 3) float32 K.</span>
+<span class="sd">    """</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="mf">1.2</span> <span class="o">*</span> <span class="nb">max</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+        <span class="p">[[</span><span class="n">f</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="p">(</span><span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="p">(</span><span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]],</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_crop_to_model_grid</span><span class="p">(</span>
+    <span class="n">px</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">box</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">model_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Full-res pixels on the model grid: inverse of PointcloudResult.__post_init__'s crop map.</span>
+
+<span class="sd">    - box is one original_coords row [tl_x, tl_y, cr_x, cr_y, orig_w, orig_h], pixel-corner</span>
+<span class="sd">    - px and the result are pixel-center: (px - tl + 0.5) * scale - 0.5</span>
+<span class="sd">    - pixels outside the grid come back outside it; sample_world_points marks them invalid</span>
+<span class="sd">    """</span>
+    <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">model_hw</span>
+    <span class="n">crop_wh</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">box</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">box</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">box</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span> <span class="o">-</span> <span class="n">box</span><span class="p">[</span><span class="mi">1</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">W</span><span class="p">,</span> <span class="n">H</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span> <span class="o">/</span> <span class="n">crop_wh</span>
+    <span class="n">shifted</span> <span class="o">=</span> <span class="n">px</span> <span class="o">-</span> <span class="n">box</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span> <span class="o">+</span> <span class="mf">0.5</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">shifted</span> <span class="o">*</span> <span class="n">scale</span> <span class="o">-</span> <span class="mf">0.5</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_rescale_center_intrinsics</span><span class="p">(</span>
+    <span class="n">K</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">src_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">dst_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Pixel-center K resized from one grid to another: shift to corner, rescale, shift back.</span>
+<span class="sd">    """</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">shift_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">))</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">rescale_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">src_hw</span><span class="p">,</span> <span class="n">dst_hw</span><span class="p">)</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">shift_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="p">(</span><span class="o">-</span><span class="mf">0.5</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.5</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">K</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_to_query_grid</span><span class="p">(</span>
+    <span class="n">result</span><span class="p">:</span> <span class="n">LocalizationResult</span><span class="p">,</span> <span class="n">small_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">full_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LocalizationResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Result with K and query px mapped from the shrunk query grid back to the original one.</span>
+
+<span class="sd">    - per-axis full / small scale, pixel-center K and px: (px + 0.5) * scale - 0.5; pose unchanged</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">small_hw</span> <span class="o">==</span> <span class="n">full_hw</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="n">K</span> <span class="o">=</span> <span class="n">_rescale_center_intrinsics</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">query_intrinsics</span><span class="p">,</span> <span class="n">small_hw</span><span class="p">,</span> <span class="n">full_hw</span><span class="p">)</span>
+    <span class="n">pts2d</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">pts2d</span>
+
+    <span class="k">if</span> <span class="n">pts2d</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">full_hw</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="n">small_hw</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">full_hw</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="n">small_hw</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span>
+        <span class="p">)</span>
+        <span class="n">pts2d</span> <span class="o">=</span> <span class="p">(</span><span class="n">pts2d</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">scale</span> <span class="o">-</span> <span class="mf">0.5</span>
+
+    <span class="k">return</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">query_intrinsics</span><span class="o">=</span><span class="n">K</span><span class="p">,</span> <span class="n">pts2d</span><span class="o">=</span><span class="n">pts2d</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_chunked</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">size</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterator</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Consecutive lists of up to size items, drawn lazily.</span>
+<span class="sd">    """</span>
+    <span class="n">it</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">(</span><span class="n">items</span><span class="p">)</span>
+
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">window</span> <span class="o">=</span> <span class="n">itertools</span><span class="o">.</span><span class="n">islice</span><span class="p">(</span><span class="n">it</span><span class="p">,</span> <span class="n">size</span><span class="p">)</span>
+        <span class="n">chunk</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">window</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">chunk</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="k">yield</span> <span class="n">chunk</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_full_frame_coords</span><span class="p">(</span><span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">height</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    original_coords rows for uncropped frames whose model grid is the image itself.</span>
+<span class="sd">    """</span>
+    <span class="n">row</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">row</span><span class="p">,</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+
+
+<div class="viewcode-block" id="localization_db_exists">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.localization_db_exists">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">localization_db_exists</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span> <span class="n">extractor_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    True when pointcloud.zarr holds a complete reconstruction feature DB for the extractor.</span>
+
+<span class="sd">    - a missing store, or one that is not a group, reads as absent</span>
+<span class="sd">    - a group without the image_paths commit marker is a crashed build and reads as absent</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        zarr_path: pointcloud.zarr path.</span>
+<span class="sd">        extractor_name: feature-cache key.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Whether local_features/&lt;extractor_name&gt;/reconstruction exists and is committed.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Open read-only; a missing or non-group store has no DB</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open_group</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span>
+        <span class="ne">FileNotFoundError</span><span class="p">,</span>
+        <span class="n">zarr</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">NodeNotFoundError</span><span class="p">,</span>
+        <span class="n">zarr</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">ContainsArrayError</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="c1"># save_index writes image_paths last; without it the build never finished</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"local_features/</span><span class="si">{</span><span class="n">extractor_name</span><span class="si">}</span><span class="s2">/reconstruction"</span>
+
+    <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">store</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">return</span> <span class="s2">"image_paths"</span> <span class="ow">in</span> <span class="n">store</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">attrs</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_features_from_csr</span><span class="p">(</span>
+    <span class="n">group</span><span class="p">:</span> <span class="n">zarr</span><span class="o">.</span><span class="n">Group</span><span class="p">,</span> <span class="n">image_sizes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">LocalFeatures</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Per-frame LocalFeatures from the reconstruction CSR feature group.</span>
+<span class="sd">    """</span>
+    <span class="n">offsets</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">"frame_offsets"</span><span class="p">][:]</span>
+    <span class="n">kpts</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">"keypoints"</span><span class="p">][:]</span>
+    <span class="n">descs</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">"descriptors"</span><span class="p">][:]</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">"keypoints_normalized"</span><span class="p">][:]</span> <span class="k">if</span> <span class="s2">"keypoints_normalized"</span> <span class="ow">in</span> <span class="n">group</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="n">feats</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">offsets</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">s</span><span class="p">,</span> <span class="n">e</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">offsets</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span> <span class="nb">int</span><span class="p">(</span><span class="n">offsets</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span>
+        <span class="n">norm_i</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">norm</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">norm</span><span class="p">[</span><span class="n">s</span><span class="p">:</span><span class="n">e</span><span class="p">])</span>
+        <span class="n">feats</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">LocalFeatures</span><span class="p">(</span>
+                <span class="n">keypoints</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">kpts</span><span class="p">[</span><span class="n">s</span><span class="p">:</span><span class="n">e</span><span class="p">]),</span>
+                <span class="n">descriptors</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">descs</span><span class="p">[</span><span class="n">s</span><span class="p">:</span><span class="n">e</span><span class="p">]),</span>
+                <span class="n">keypoints_normalized</span><span class="o">=</span><span class="n">norm_i</span><span class="p">,</span>
+                <span class="n">image_size</span><span class="o">=</span><span class="n">image_sizes</span><span class="p">[</span><span class="n">i</span><span class="p">],</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">feats</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_write_csr</span><span class="p">(</span>
+    <span class="n">group</span><span class="p">:</span> <span class="n">zarr</span><span class="o">.</span><span class="n">Group</span><span class="p">,</span> <span class="n">feats</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">LocalFeatures</span><span class="p">],</span> <span class="n">chunk_rows</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">65536</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Create the CSR arrays of a feature group: offsets, keypoints, descriptors, normalized keypoints.</span>
+
+<span class="sd">    - keypoints_normalized: written only when every frame has it; zeros would be wrong data</span>
+<span class="sd">    - per-keypoint arrays chunk by chunk_rows rows, so a cache-hit load decodes chunks in parallel</span>
+<span class="sd">    """</span>
+    <span class="c1"># Row offsets per frame</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">keypoints</span><span class="p">)</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">feats</span><span class="p">]</span>
+    <span class="n">offsets</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">counts</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">offsets</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+
+    <span class="c1"># Flat keypoint and descriptor tables</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">feats</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">descriptors</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">feats</span> <span class="k">else</span> <span class="mi">1</span>
+    <span class="n">kpts</span> <span class="o">=</span> <span class="p">[</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">keypoints</span><span class="p">)</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">feats</span><span class="p">]</span>
+    <span class="n">descs</span> <span class="o">=</span> <span class="p">[</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">descriptors</span><span class="p">)</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">feats</span><span class="p">]</span>
+    <span class="n">all_kpts</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">kpts</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">offsets</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">all_descs</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">descs</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">offsets</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="n">d</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Row chunks no taller than the table, so a small DB stays one chunk</span>
+    <span class="n">n_rows</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">offsets</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">chunk_rows</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="n">n_rows</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+
+    <span class="n">group</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span>
+        <span class="s2">"frame_offsets"</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">offsets</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="n">offsets</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span>
+    <span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span><span class="s2">"keypoints"</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">all_kpts</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span><span class="p">)</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span>
+        <span class="s2">"descriptors"</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">all_descs</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="nb">max</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="mi">1</span><span class="p">)),</span> <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Normalized keypoints only when every frame carries them</span>
+    <span class="k">if</span> <span class="n">feats</span> <span class="ow">and</span> <span class="n">offsets</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="ow">and</span> <span class="nb">all</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">keypoints_normalized</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">feats</span><span class="p">):</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="p">[</span><span class="n">to_numpy</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">keypoints_normalized</span><span class="p">)</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">feats</span><span class="p">]</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">group</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span>
+            <span class="s2">"keypoints_normalized"</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">chunks</span><span class="o">=</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span>
+        <span class="p">)</span>
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Result</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="LocalizationResult">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.LocalizationResult">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LocalizationResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Output of CameraLocalizer.localize: pose plus the correspondences PnP saw.</span>
+
+<span class="sd">    - pose None when PnP fails or fewer than 4 correspondences exist</span>
+<span class="sd">    - pts2d_ref lives in reference-image pixels of size ref_hw; rescale before drawing elsewhere</span>
+<span class="sd">    - ref_frame_indices: source reference frame per correspondence</span>
+<span class="sd">    """</span>
+
+    <span class="n">pose</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># (4, 4) world-to-camera</span>
+    <span class="n">n_correspondences</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># M, 2D-3D pairs before RANSAC</span>
+    <span class="n">n_inliers</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">pts2d</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># (M, 2) query px</span>
+    <span class="n">pts3d_matched</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># (M, 3) world</span>
+    <span class="n">inlier_mask</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span>  <span class="c1"># (M,) bool</span>
+    <span class="n">pts2d_ref</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (M, 2) reference px</span>
+    <span class="n">ref_frame_indices</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (M,) int32</span>
+    <span class="n">query_intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="kc">None</span>  <span class="c1"># (3, 3) pixel-center K: refined when a pose is found, else the input K</span>
+    <span class="p">)</span>
+    <span class="n">ref_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># (H, W) of the reference images</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ranked_ref_frames</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Reference frames ordered by inlier count, most first; zero-inlier frames dropped.</span>
+
+<span class="sd">        - ties broken by lowest frame index; empty when pose failed</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Reference-frame indices.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">inlier_mask</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">ref_frame_indices</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[]</span>
+
+        <span class="c1"># Inliers per reference frame, descending, stable tie-break</span>
+        <span class="n">frames</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ref_frame_indices</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">inlier_mask</span><span class="p">]</span>
+        <span class="n">frames</span> <span class="o">=</span> <span class="n">frames</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">intp</span><span class="p">)</span>
+        <span class="n">counts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span><span class="n">frames</span><span class="p">)</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="o">-</span><span class="n">counts</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">order</span> <span class="k">if</span> <span class="n">counts</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span></div>
+
+
+
+<div class="viewcode-block" id="read_localization_db">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.read_localization_db">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">read_localization_db</span><span class="p">(</span>
+    <span class="n">zarr_path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span> <span class="n">extractor_name</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="n">LocalFeatures</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Read the reconstruction feature DB of one extractor.</span>
+
+<span class="sd">    - the read half of CameraLocalizer.save_index; load_index builds a localizer on it</span>
+<span class="sd">    - image_paths is written last, so a DB cut short mid-write reads as missing</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        zarr_path: pointcloud.zarr path.</span>
+<span class="sd">        extractor_name: feature-cache key.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Per-frame LocalFeatures, frame ids, and the reference images' (H, W).</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        KeyError: no DB for the extractor, or one that is incomplete (rebuild it).</span>
+<span class="sd">    """</span>
+    <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+    <span class="n">rec_key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"local_features/</span><span class="si">{</span><span class="n">extractor_name</span><span class="si">}</span><span class="s2">/reconstruction"</span>
+
+    <span class="k">if</span> <span class="n">rec_key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">store</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"No feature DB for '</span><span class="si">{</span><span class="n">extractor_name</span><span class="si">}</span><span class="s2">' in </span><span class="si">{</span><span class="n">zarr_path</span><span class="si">}</span><span class="s2">; build via CameraLocalizer.from_pointcloud()"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Completeness: the image_paths commit marker, global_desc, and agreeing frame counts</span>
+    <span class="n">group</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="n">rec_key</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="s2">"image_paths"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">group</span><span class="o">.</span><span class="n">attrs</span> <span class="ow">or</span> <span class="s2">"global_desc"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">group</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"feature DB for '</span><span class="si">{</span><span class="n">extractor_name</span><span class="si">}</span><span class="s2">' is incomplete (no image_paths or global_desc); rebuild it"</span>
+        <span class="p">)</span>
+
+    <span class="n">ids</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"image_paths"</span><span class="p">]]</span>
+    <span class="n">n_frames</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">"frame_offsets"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">n_desc</span> <span class="o">=</span> <span class="n">group</span><span class="p">[</span><span class="s2">"global_desc"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">n_frames</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span> <span class="o">==</span> <span class="n">n_desc</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"feature DB for '</span><span class="si">{</span><span class="n">extractor_name</span><span class="si">}</span><span class="s2">' is inconsistent "</span>
+            <span class="sa">f</span><span class="s2">"(</span><span class="si">{</span><span class="n">n_frames</span><span class="si">}</span><span class="s2"> frames, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> ids, </span><span class="si">{</span><span class="n">n_desc</span><span class="si">}</span><span class="s2"> global_desc); rebuild it"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Bulk decode is the slow phase of a cache-hit load; time it</span>
+    <span class="n">hw</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">group</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"hw"</span><span class="p">])</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">feats</span> <span class="o">=</span> <span class="n">_features_from_csr</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="p">[(</span><span class="n">hw</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">hw</span><span class="p">[</span><span class="mi">0</span><span class="p">])]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">))</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">"CameraLocalizer: read feature DB (</span><span class="si">%d</span><span class="s2"> frames) in </span><span class="si">%.1f</span><span class="s2">s"</span><span class="p">,</span>
+        <span class="nb">len</span><span class="p">(</span><span class="n">feats</span><span class="p">),</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">feats</span><span class="p">,</span> <span class="n">ids</span><span class="p">,</span> <span class="n">cast</span><span class="p">(</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="n">hw</span><span class="p">)</span></div>
+
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Localizer</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="CameraLocalizer">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.CameraLocalizer">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">CameraLocalizer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Locates a query camera in a known scene from cached reference-frame features.</span>
+
+<span class="sd">    - reference features stay on the CPU; each chosen ref moves to the matcher's device per localize</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">world_points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">images</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+        <span class="n">ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">extractor</span><span class="p">:</span> <span class="n">LocalMatcher</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">original_coords</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
+        <span class="n">retrieval</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"dino-salad"</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Extract and embed every reference frame, one chunk at a time.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            world_points: (N, H, W, 3) model-grid world points, one map per reference frame.</span>
+<span class="sd">            extrinsics: (N, 4, 4) world-to-camera.</span>
+<span class="sd">            images: (h, w, 3) uint8 RGB reference frames, drawn lazily; no image IO here.</span>
+<span class="sd">            ids: stable per-frame labels, index-aligned with images.</span>
+<span class="sd">            extractor: local matcher; None builds LocalMatcher("loma").</span>
+<span class="sd">            config: pycolmap options: "estimation" {"ransac": {"max_error"}} (50),</span>
+<span class="sd">                "refinement" {"refine_focal_length", "refine_extra_params"} (True, False).</span>
+<span class="sd">            original_coords: (N, 6) preprocess crop per frame; None means images are the uncropped grid source.</span>
+<span class="sd">            top_k: retrieved reference frames per localize(refs=None).</span>
+<span class="sd">            batch_size: frames per extract and embed call.</span>
+<span class="sd">            retrieval: retrieval registry name, e.g. "dino-salad" or "megaloc".</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: images is empty, or a frame's size disagrees with its original_coords row.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_setup</span><span class="p">(</span>
+            <span class="n">world_points</span><span class="p">,</span>
+            <span class="n">extrinsics</span><span class="p">,</span>
+            <span class="n">ids</span><span class="p">,</span>
+            <span class="n">extractor</span><span class="o">=</span><span class="n">extractor</span><span class="p">,</span>
+            <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+            <span class="n">original_coords</span><span class="o">=</span><span class="n">original_coords</span><span class="p">,</span>
+            <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span>
+            <span class="n">retrieval</span><span class="o">=</span><span class="n">retrieval</span><span class="p">,</span>
+            <span class="n">batch_size</span><span class="o">=</span><span class="n">batch_size</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">descs</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="c1"># Extract and embed per chunk</span>
+        <span class="n">bar</span> <span class="o">=</span> <span class="n">tqdm</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">),</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"Indexing frames"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"frame"</span><span class="p">,</span> <span class="n">leave</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">_chunked</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">):</span>
+            <span class="n">start</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">)</span>
+
+            <span class="c1"># Ref pixels map through original_coords; each frame must be its row's full-res (orig_w, orig_h)</span>
+            <span class="k">if</span> <span class="n">original_coords</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">image</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">chunk</span><span class="p">,</span> <span class="n">start</span><span class="p">):</span>
+                    <span class="n">frame_wh</span> <span class="o">=</span> <span class="p">(</span><span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+                    <span class="n">orig_wh</span> <span class="o">=</span> <span class="n">original_coords</span><span class="p">[</span><span class="n">k</span><span class="p">,</span> <span class="mi">4</span><span class="p">:</span><span class="mi">6</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+
+                    <span class="k">if</span> <span class="n">frame_wh</span> <span class="o">!=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">orig_wh</span><span class="p">):</span>
+                        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                            <span class="sa">f</span><span class="s2">"CameraLocalizer: reference frame </span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2"> is </span><span class="si">{</span><span class="n">frame_wh</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">x</span><span class="si">{</span><span class="n">frame_wh</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2"> "</span>
+                            <span class="sa">f</span><span class="s2">"but original_coords expects </span><span class="si">{</span><span class="n">orig_wh</span><span class="si">}</span><span class="s2">; pass full-res frames"</span>
+                        <span class="p">)</span>
+
+            <span class="n">feats</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">extract</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+            <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">feats</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span> <span class="o">+=</span> <span class="n">feats</span>
+            <span class="n">descs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_embed</span><span class="p">(</span><span class="n">chunk</span><span class="p">))</span>
+            <span class="n">bar</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">chunk</span><span class="p">))</span>
+
+        <span class="n">bar</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"CameraLocalizer: no reference frames"</span><span class="p">)</span>
+
+        <span class="c1"># Reference image size, and the crop each frame went through</span>
+        <span class="n">image_size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">image_size</span>
+        <span class="k">assert</span> <span class="n">image_size</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="n">w</span><span class="p">,</span> <span class="n">h</span> <span class="o">=</span> <span class="n">image_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_set_frames</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">descs</span><span class="p">),</span> <span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">))</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"CameraLocalizer: indexed </span><span class="si">%d</span><span class="s2"> frames"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_setup</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">world_points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">extractor</span><span class="p">:</span> <span class="n">LocalMatcher</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">original_coords</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+        <span class="n">retrieval</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">32</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        State shared by __init__ and load_index, before any reference frame is known.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_world_points</span> <span class="o">=</span> <span class="n">world_points</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_extrinsics</span> <span class="o">=</span> <span class="n">extrinsics</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span> <span class="o">=</span> <span class="n">extractor</span> <span class="k">if</span> <span class="n">extractor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">LocalMatcher</span><span class="p">(</span><span class="s2">"loma"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_retrieval_name</span> <span class="o">=</span> <span class="n">retrieval</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_retrieval</span><span class="p">:</span> <span class="n">BaseRetrievalExtractor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_top_k</span> <span class="o">=</span> <span class="n">top_k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_batch_size</span> <span class="o">=</span> <span class="n">batch_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_original_coords</span> <span class="o">=</span> <span class="n">original_coords</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ids</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">LocalFeatures</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_set_frames</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">features</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">LocalFeatures</span><span class="p">],</span>
+        <span class="n">global_desc</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Reference features, descriptors and image size; uncropped coords when none were given.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span> <span class="o">=</span> <span class="n">features</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_global_desc</span> <span class="o">=</span> <span class="n">global_desc</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_image_hw</span> <span class="o">=</span> <span class="n">hw</span>
+        <span class="n">coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_original_coords</span>
+
+        <span class="k">if</span> <span class="n">coords</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">coords</span> <span class="o">=</span> <span class="n">_full_frame_coords</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">features</span><span class="p">),</span> <span class="o">*</span><span class="n">hw</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_coords</span> <span class="o">=</span> <span class="n">coords</span>
+
+    <span class="c1">########################################</span>
+    <span class="c1"># Views</span>
+    <span class="c1">########################################</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">image_paths</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Frame ids, index-aligned with extrinsics.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Reconstruction frame ids.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ids</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">extrinsics</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        World-to-camera pose of every reconstruction frame.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (N, 4, 4) poses.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extrinsics</span>
+
+    <span class="c1">########################################</span>
+    <span class="c1"># Retrieval</span>
+    <span class="c1">########################################</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_embed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Retrieval descriptors of uint8 RGB frames; the registry model is built on first use.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retrieval</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">retrieval_cls</span> <span class="o">=</span> <span class="n">BaseRetrievalExtractor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_retrieval_name</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_retrieval</span> <span class="o">=</span> <span class="n">retrieval_cls</span><span class="p">()</span>
+
+        <span class="c1"># Upload uint8, convert on device</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_retrieval</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
+        <span class="n">stack</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+        <span class="n">tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">stack</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">tensor</span> <span class="o">=</span> <span class="n">tensor</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">/</span> <span class="mi">255</span>
+        <span class="n">desc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retrieval</span><span class="p">(</span><span class="n">tensor</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">desc</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_rank_refs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query_image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Top-k reconstruction frames by cosine similarity to the query.</span>
+<span class="sd">        """</span>
+        <span class="n">query_desc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_embed</span><span class="p">([</span><span class="n">query_image</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">sims</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_global_desc</span> <span class="o">@</span> <span class="n">query_desc</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="o">-</span><span class="n">sims</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">order</span><span class="p">[:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_top_k</span><span class="p">]]</span>
+
+    <span class="c1">########################################</span>
+    <span class="c1"># Persistence</span>
+    <span class="c1">########################################</span>
+
+<div class="viewcode-block" id="CameraLocalizer.save_index">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.CameraLocalizer.save_index">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_index</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">zarr_path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span> <span class="n">extractor_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">attrs</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Persist the reconstruction features and global descriptors to pointcloud.zarr.</span>
+
+<span class="sd">        - replaces the extractor's whole group</span>
+<span class="sd">        - image_paths is written last: it marks the DB complete</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            zarr_path: pointcloud.zarr path.</span>
+<span class="sd">            extractor_name: feature-cache key.</span>
+<span class="sd">            attrs: build provenance (backbone, ba, lc, built_at, ...).</span>
+<span class="sd">        """</span>
+        <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"a"</span><span class="p">)</span>
+        <span class="n">ext_key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"local_features/</span><span class="si">{</span><span class="n">extractor_name</span><span class="si">}</span><span class="s2">"</span>
+
+        <span class="c1"># Clean overwrite of the extractor's group</span>
+        <span class="k">if</span> <span class="n">ext_key</span> <span class="ow">in</span> <span class="n">store</span><span class="p">:</span>
+            <span class="k">del</span> <span class="n">store</span><span class="p">[</span><span class="n">ext_key</span><span class="p">]</span>
+
+        <span class="n">ext_group</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">require_group</span><span class="p">(</span><span class="n">ext_key</span><span class="p">)</span>
+        <span class="n">provenance</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">attrs</span><span class="p">)</span> <span class="k">if</span> <span class="n">attrs</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="p">{}</span>
+        <span class="n">provenance</span><span class="p">[</span><span class="s2">"extractor"</span><span class="p">]</span> <span class="o">=</span> <span class="n">extractor_name</span>
+        <span class="n">ext_group</span><span class="o">.</span><span class="n">attrs</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">provenance</span><span class="p">)</span>
+
+        <span class="c1"># Arrays first, then the cache stamps, then the image_paths commit marker</span>
+        <span class="n">group</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">require_group</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">ext_key</span><span class="si">}</span><span class="s2">/reconstruction"</span><span class="p">)</span>
+        <span class="n">_write_csr</span><span class="p">(</span><span class="n">group</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">)</span>
+        <span class="n">group</span><span class="o">.</span><span class="n">create_array</span><span class="p">(</span>
+            <span class="s2">"global_desc"</span><span class="p">,</span>
+            <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_global_desc</span><span class="p">,</span>
+            <span class="n">chunks</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_global_desc</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+            <span class="n">compressors</span><span class="o">=</span><span class="n">LZ4</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">group</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"hw"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_image_hw</span><span class="p">)</span>
+        <span class="n">group</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"max_num_keypoints"</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">max_num_keypoints</span>
+        <span class="n">group</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"retrieval"</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retrieval_name</span>
+        <span class="n">group</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"image_paths"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ids</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"CameraLocalizer.save_index: </span><span class="si">%d</span><span class="s2"> frames to </span><span class="si">%s</span><span class="s2"> [</span><span class="si">%s</span><span class="s2">]"</span><span class="p">,</span>
+            <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ids</span><span class="p">),</span>
+            <span class="n">zarr_path</span><span class="p">,</span>
+            <span class="n">extractor_name</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="CameraLocalizer.load_index">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.CameraLocalizer.load_index">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_index</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">zarr_path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">extractor_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">world_points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">extractor</span><span class="p">:</span> <span class="n">LocalMatcher</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">original_coords</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CameraLocalizer</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Localizer from the zarr feature DB, attached to the current scene geometry.</span>
+
+<span class="sd">        - the retrieval model loads on first localize</span>
+<span class="sd">        - the retrieval model is the one stored with the DB, so queries embed like the references</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            zarr_path: pointcloud.zarr path.</span>
+<span class="sd">            extractor_name: feature-cache key.</span>
+<span class="sd">            world_points: (N, H, W, 3) model-grid world points.</span>
+<span class="sd">            extrinsics: (N, 4, 4) world-to-camera.</span>
+<span class="sd">            config: pycolmap options, as __init__.</span>
+<span class="sd">            extractor: local matcher; None builds LocalMatcher("loma").</span>
+<span class="sd">            original_coords: (N, 6) preprocess crop per frame; None means uncropped.</span>
+<span class="sd">            top_k: retrieved reference frames per localize(refs=None).</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The localizer.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            KeyError: no DB for the extractor, or an incomplete one (rebuild it).</span>
+<span class="sd">            ValueError: the geometry does not cover exactly the DB's frames.</span>
+<span class="sd">        """</span>
+        <span class="n">rec_features</span><span class="p">,</span> <span class="n">rec_ids</span><span class="p">,</span> <span class="n">hw</span> <span class="o">=</span> <span class="n">read_localization_db</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">,</span> <span class="n">extractor_name</span><span class="p">)</span>
+
+        <span class="c1"># Geometry must cover exactly the DB's frames</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">rec_ids</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">world_points</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span>
+            <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span>
+            <span class="ow">or</span> <span class="p">(</span><span class="n">original_coords</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">original_coords</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span><span class="p">)</span>
+        <span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"load_index: DB holds </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> frames; world_points, extrinsics and original_coords must match"</span>
+            <span class="p">)</span>
+
+        <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+        <span class="n">rec_group</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="sa">f</span><span class="s2">"local_features/</span><span class="si">{</span><span class="n">extractor_name</span><span class="si">}</span><span class="s2">/reconstruction"</span><span class="p">]</span>
+
+        <span class="c1"># Same state as __init__, with the stored features and retrieval model in place of extraction</span>
+        <span class="n">retrieval</span> <span class="o">=</span> <span class="n">rec_group</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"retrieval"</span><span class="p">]</span>
+        <span class="n">obj</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span>
+        <span class="n">obj</span><span class="o">.</span><span class="n">_setup</span><span class="p">(</span>
+            <span class="n">world_points</span><span class="p">,</span>
+            <span class="n">extrinsics</span><span class="p">,</span>
+            <span class="n">rec_ids</span><span class="p">,</span>
+            <span class="n">extractor</span><span class="o">=</span><span class="n">extractor</span><span class="p">,</span>
+            <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+            <span class="n">original_coords</span><span class="o">=</span><span class="n">original_coords</span><span class="p">,</span>
+            <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span>
+            <span class="n">retrieval</span><span class="o">=</span><span class="n">retrieval</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">global_desc</span> <span class="o">=</span> <span class="n">rec_group</span><span class="p">[</span><span class="s2">"global_desc"</span><span class="p">][:]</span>
+        <span class="n">obj</span><span class="o">.</span><span class="n">_set_frames</span><span class="p">(</span><span class="n">rec_features</span><span class="p">,</span> <span class="n">global_desc</span><span class="p">,</span> <span class="n">hw</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"CameraLocalizer.load_index: </span><span class="si">%d</span><span class="s2"> frames [</span><span class="si">%s</span><span class="s2">]"</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">rec_ids</span><span class="p">),</span> <span class="n">extractor_name</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">obj</span></div>
+
+
+<div class="viewcode-block" id="CameraLocalizer.from_pointcloud">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.CameraLocalizer.from_pointcloud">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_pointcloud</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">result</span><span class="p">:</span> <span class="n">PointcloudResult</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">zarr_path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">images</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">ids</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">extractor</span><span class="p">:</span> <span class="n">LocalMatcher</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">top_k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">retrieval</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"dino-salad"</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CameraLocalizer</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Localizer for a reconstruction: loads the zarr feature DB, or builds and saves it.</span>
+
+<span class="sd">        - cache hit: ids, max_num_keypoints, retrieval name and full-res (H, W) all match the DB</span>
+<span class="sd">        - a hit draws nothing from images; an incomplete DB rebuilds</span>
+<span class="sd">        - a rebuild replaces the DB</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            result: the reconstruction; reads world_points, extrinsics, original_coords, image_paths.</span>
+<span class="sd">            zarr_path: pointcloud.zarr path holding the DB.</span>
+<span class="sd">            images: (h, w, 3) uint8 RGB full-res reference frames, aligned to ids; drawn only on a rebuild.</span>
+<span class="sd">            ids: frame labels, index-aligned with result's frames; None labels them str(result.image_paths).</span>
+<span class="sd">            extractor: local matcher; None builds LocalMatcher("loma"). Its model_name keys the DB.</span>
+<span class="sd">            top_k: retrieved reference frames per localize(refs=None).</span>
+<span class="sd">            config: pycolmap options, as __init__.</span>
+<span class="sd">            retrieval: retrieval registry name; keys the DB's global descriptors.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The localizer.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: result has no world_points, or its per-frame arrays or ids disagree in length,</span>
+<span class="sd">                or a rebuild is needed without images,</span>
+<span class="sd">                or a rebuild's frame size disagrees with original_coords.</span>
+<span class="sd">        """</span>
+        <span class="n">coords</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">original_coords</span>
+
+        <span class="c1"># Reference geometry is required; a points-only result cannot index frames</span>
+        <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">world_points</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">"CameraLocalizer.from_pointcloud: result has no world_points"</span>
+            <span class="p">)</span>
+
+        <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">world_points</span><span class="p">)</span>
+
+        <span class="c1"># Default labels: the reconstruction's own image paths</span>
+        <span class="k">if</span> <span class="n">ids</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">ids</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">image_paths</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="p">(</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span>
+            <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">ids</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span>
+            <span class="ow">or</span> <span class="p">(</span><span class="n">coords</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">coords</span><span class="p">)</span> <span class="o">!=</span> <span class="n">n</span><span class="p">)</span>
+        <span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">"from_pointcloud: world_points, extrinsics, ids and original_coords must align per frame"</span>
+            <span class="p">)</span>
+
+        <span class="n">extractor</span> <span class="o">=</span> <span class="n">extractor</span> <span class="k">if</span> <span class="n">extractor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">LocalMatcher</span><span class="p">(</span><span class="s2">"loma"</span><span class="p">)</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">extractor</span><span class="o">.</span><span class="n">model_name</span>
+
+        <span class="c1"># Cache key: what the DB was built from</span>
+        <span class="n">expected</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"image_paths"</span><span class="p">:</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">],</span>
+            <span class="s2">"max_num_keypoints"</span><span class="p">:</span> <span class="n">extractor</span><span class="o">.</span><span class="n">max_num_keypoints</span><span class="p">,</span>
+            <span class="s2">"retrieval"</span><span class="p">:</span> <span class="n">retrieval</span><span class="p">,</span>
+        <span class="p">}</span>
+
+        <span class="k">if</span> <span class="n">coords</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">expected</span><span class="p">[</span><span class="s2">"hw"</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">coords</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">]),</span> <span class="nb">int</span><span class="p">(</span><span class="n">coords</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">4</span><span class="p">])]</span>
+
+        <span class="n">cached</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">if</span> <span class="n">localization_db_exists</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+            <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open_group</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+            <span class="n">group</span> <span class="o">=</span> <span class="n">store</span><span class="p">[</span><span class="sa">f</span><span class="s2">"local_features/</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">/reconstruction"</span><span class="p">]</span>
+            <span class="n">cached</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">attrs</span><span class="p">)</span>
+
+        <span class="n">stale</span> <span class="o">=</span> <span class="p">[</span><span class="n">key</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">expected</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">cached</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="o">!=</span> <span class="n">value</span><span class="p">]</span>
+
+        <span class="c1"># Cache hit, unless the DB turns out incomplete</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">stale</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">load_index</span><span class="p">(</span>
+                    <span class="n">zarr_path</span><span class="p">,</span>
+                    <span class="n">name</span><span class="p">,</span>
+                    <span class="n">result</span><span class="o">.</span><span class="n">world_points</span><span class="p">,</span>
+                    <span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">,</span>
+                    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+                    <span class="n">extractor</span><span class="o">=</span><span class="n">extractor</span><span class="p">,</span>
+                    <span class="n">original_coords</span><span class="o">=</span><span class="n">coords</span><span class="p">,</span>
+                    <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">except</span> <span class="ne">KeyError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"CameraLocalizer: </span><span class="si">%s</span><span class="s2">, rebuilding"</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"CameraLocalizer: feature DB stale on </span><span class="si">%s</span><span class="s2">, rebuilding"</span><span class="p">,</span> <span class="n">stale</span><span class="p">)</span>
+
+        <span class="c1"># Rebuild from the caller's frames</span>
+        <span class="k">if</span> <span class="n">images</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"from_pointcloud: building the feature DB needs images"</span><span class="p">)</span>
+
+        <span class="n">localizer</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span>
+            <span class="n">result</span><span class="o">.</span><span class="n">world_points</span><span class="p">,</span>
+            <span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">,</span>
+            <span class="n">images</span><span class="p">,</span>
+            <span class="n">ids</span><span class="p">,</span>
+            <span class="n">extractor</span><span class="o">=</span><span class="n">extractor</span><span class="p">,</span>
+            <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+            <span class="n">original_coords</span><span class="o">=</span><span class="n">coords</span><span class="p">,</span>
+            <span class="n">top_k</span><span class="o">=</span><span class="n">top_k</span><span class="p">,</span>
+            <span class="n">retrieval</span><span class="o">=</span><span class="n">retrieval</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">localizer</span><span class="o">.</span><span class="n">save_index</span><span class="p">(</span><span class="n">zarr_path</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">localizer</span></div>
+
+
+    <span class="c1">########################################</span>
+    <span class="c1"># Localization</span>
+    <span class="c1">########################################</span>
+
+<div class="viewcode-block" id="CameraLocalizer.localize">
+<a class="viewcode-back" href="../../../api/localization.html#collab_splats.localization.localizer.CameraLocalizer.localize">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">localize</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">query_image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">query_intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">refs</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LocalizationResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        World-to-camera pose of a query image.</span>
+
+<span class="sd">        - refs None: DINO-SALAD ranks reconstruction frames, top_k are matched</span>
+<span class="sd">        - refs given: exactly those reconstruction frames (align to a chosen scene image)</span>
+<span class="sd">        - query shrunk to the reference long side; K and px returned on the original grid</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            query_image: HxWx3 uint8 RGB.</span>
+<span class="sd">            query_intrinsics: (3, 3) pixel-center K, as PointcloudResult.intrinsics; None seeds from proportions;</span>
+<span class="sd">                its focal is refined, fx == fy.</span>
+<span class="sd">            refs: reconstruction frame indices to match against.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            LocalizationResult; pose None when PnP fails; query_intrinsics is the refined K on success.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: refs names a frame with no world_points (not a reconstruction frame).</span>
+<span class="sd">        """</span>
+        <span class="c1"># Chosen frames must carry world points</span>
+        <span class="n">n_rec</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_world_points</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">refs</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">any</span><span class="p">(</span><span class="ow">not</span> <span class="mi">0</span> <span class="o">&lt;=</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n_rec</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">refs</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"localize: refs </span><span class="si">{</span><span class="nb">list</span><span class="p">(</span><span class="n">refs</span><span class="p">)</span><span class="si">}</span><span class="s2"> must index reconstruction frames [0, </span><span class="si">{</span><span class="n">n_rec</span><span class="si">}</span><span class="s2">)"</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Match on a query no larger than the references; K follows the resize</span>
+        <span class="n">full_hw</span> <span class="o">=</span> <span class="n">query_image</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">small</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_shrink_query</span><span class="p">(</span><span class="n">query_image</span><span class="p">)</span>
+        <span class="n">small_hw</span> <span class="o">=</span> <span class="n">small</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="n">query_intrinsics</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">query_intrinsics</span> <span class="o">=</span> <span class="n">seed_intrinsics</span><span class="p">(</span><span class="o">*</span><span class="n">small_hw</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">query_intrinsics</span> <span class="o">=</span> <span class="n">_rescale_center_intrinsics</span><span class="p">(</span>
+                <span class="n">query_intrinsics</span><span class="p">,</span> <span class="n">full_hw</span><span class="p">,</span> <span class="n">small_hw</span>
+            <span class="p">)</span>
+
+        <span class="n">query_feats</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">extract</span><span class="p">(</span><span class="n">small</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">query_feats</span><span class="p">,</span> <span class="n">LocalFeatures</span><span class="p">)</span>
+        <span class="n">query_feats</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="n">query_feats</span><span class="p">)</span>
+        <span class="n">refs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_rank_refs</span><span class="p">(</span><span class="n">small</span><span class="p">)</span> <span class="k">if</span> <span class="n">refs</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">list</span><span class="p">(</span><span class="n">refs</span><span class="p">)</span>
+        <span class="n">model_hw</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_world_points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+        <span class="n">all_q</span><span class="p">,</span> <span class="n">all_3d</span><span class="p">,</span> <span class="n">all_ref</span><span class="p">,</span> <span class="n">all_frame</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+
+        <span class="c1"># Match each ref and lift its matched px through the world map</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">refs</span><span class="p">:</span>
+            <span class="n">ref_feats</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">to_device</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_frame_features</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+            <span class="n">m</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_extractor</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">query_feats</span><span class="p">,</span> <span class="n">ref_feats</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">m</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">px_model</span> <span class="o">=</span> <span class="n">_crop_to_model_grid</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">ref_px</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coords</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">model_hw</span><span class="p">)</span>
+            <span class="n">pts3d</span><span class="p">,</span> <span class="n">valid</span> <span class="o">=</span> <span class="n">sample_world_points</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_world_points</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">px_model</span><span class="p">)</span>
+            <span class="n">n_valid</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">valid</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span>
+
+            <span class="k">if</span> <span class="n">n_valid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">all_q</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">query_px</span><span class="p">[</span><span class="n">valid</span><span class="p">])</span>
+            <span class="n">all_3d</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pts3d</span><span class="p">[</span><span class="n">valid</span><span class="p">])</span>
+            <span class="n">all_ref</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">ref_px</span><span class="p">[</span><span class="n">valid</span><span class="p">])</span>
+            <span class="n">all_frame</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="n">n_valid</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_solve_pnp</span><span class="p">(</span>
+            <span class="n">all_q</span><span class="p">,</span> <span class="n">all_3d</span><span class="p">,</span> <span class="n">all_ref</span><span class="p">,</span> <span class="n">all_frame</span><span class="p">,</span> <span class="n">small_hw</span><span class="p">,</span> <span class="n">query_intrinsics</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">_to_query_grid</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">small_hw</span><span class="p">,</span> <span class="n">full_hw</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_shrink_query</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query_image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Query resized so its long side is the reference long side; never upscaled.</span>
+<span class="sd">        """</span>
+        <span class="n">ref_long</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_image_hw</span><span class="p">)</span>
+        <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">query_image</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">scale</span> <span class="o">=</span> <span class="n">ref_long</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">scale</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">query_image</span>
+
+        <span class="n">size</span> <span class="o">=</span> <span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">w</span> <span class="o">*</span> <span class="n">scale</span><span class="p">),</span> <span class="nb">round</span><span class="p">(</span><span class="n">h</span> <span class="o">*</span> <span class="n">scale</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">cv2</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">query_image</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="n">interpolation</span><span class="o">=</span><span class="n">cv2</span><span class="o">.</span><span class="n">INTER_AREA</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_solve_pnp</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">all_q</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+        <span class="n">all_3d</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+        <span class="n">all_ref</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+        <span class="n">all_frame</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+        <span class="n">query_hw</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+        <span class="n">query_intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LocalizationResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        LO-RANSAC + refinement PnP over the accumulated correspondences.</span>
+
+<span class="sd">        - no pose: correspondences are still returned for display when any exist</span>
+<span class="sd">        - SIMPLE_PINHOLE query camera: pycolmap refines the focal, the principal point stays fixed</span>
+<span class="sd">        - px and K both pixel-center: with no distortion and a fixed principal point, a common shift cancels</span>
+<span class="sd">        """</span>
+        <span class="n">ref_hw</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_image_hw</span>
+        <span class="n">n_corr</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">a</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">all_q</span><span class="p">)</span>
+
+        <span class="c1"># Assemble correspondence arrays, when there are any</span>
+        <span class="n">pts2d</span> <span class="o">=</span> <span class="n">pts3d_matched</span> <span class="o">=</span> <span class="n">pts2d_ref</span> <span class="o">=</span> <span class="n">ref_frame_indices</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">n_corr</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">pts2d</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_q</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">pts3d_matched</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_3d</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">pts2d_ref</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_ref</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">ref_frame_indices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">all_frame</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+        <span class="n">failed</span> <span class="o">=</span> <span class="n">LocalizationResult</span><span class="p">(</span>
+            <span class="n">pose</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">n_correspondences</span><span class="o">=</span><span class="n">n_corr</span><span class="p">,</span>
+            <span class="n">n_inliers</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+            <span class="n">pts2d</span><span class="o">=</span><span class="n">pts2d</span><span class="p">,</span>
+            <span class="n">pts3d_matched</span><span class="o">=</span><span class="n">pts3d_matched</span><span class="p">,</span>
+            <span class="n">inlier_mask</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+            <span class="n">pts2d_ref</span><span class="o">=</span><span class="n">pts2d_ref</span><span class="p">,</span>
+            <span class="n">ref_frame_indices</span><span class="o">=</span><span class="n">ref_frame_indices</span><span class="p">,</span>
+            <span class="n">query_intrinsics</span><span class="o">=</span><span class="n">query_intrinsics</span><span class="p">,</span>
+            <span class="n">ref_hw</span><span class="o">=</span><span class="n">ref_hw</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># PnP needs at least 4 correspondences</span>
+        <span class="k">if</span> <span class="n">n_corr</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"CameraLocalizer: only </span><span class="si">%d</span><span class="s2"> 2D-3D correspondences, need &gt;= 4 for PnP"</span><span class="p">,</span>
+                <span class="n">n_corr</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">failed</span>
+
+        <span class="k">assert</span> <span class="n">pts2d</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">pts3d_matched</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+        <span class="c1"># Single-focal pinhole camera from the query intrinsics</span>
+        <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">query_hw</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">query_intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]),</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">query_intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">query_intrinsics</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span>
+        <span class="p">]</span>
+        <span class="n">camera</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">Camera</span><span class="p">(</span>
+            <span class="n">model</span><span class="o">=</span><span class="s2">"SIMPLE_PINHOLE"</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">W</span><span class="p">),</span> <span class="n">height</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">H</span><span class="p">),</span> <span class="n">params</span><span class="o">=</span><span class="n">params</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Solver options from the config dict</span>
+        <span class="n">est_cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"estimation"</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="n">ransac_cfg</span> <span class="o">=</span> <span class="n">est_cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"ransac"</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="n">estimation_options</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">AbsolutePoseEstimationOptions</span><span class="p">()</span>
+        <span class="n">estimation_options</span><span class="o">.</span><span class="n">ransac</span><span class="o">.</span><span class="n">max_error</span> <span class="o">=</span> <span class="n">ransac_cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"max_error"</span><span class="p">,</span> <span class="mi">50</span><span class="p">)</span>
+        <span class="n">ref_cfg</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"refinement"</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="n">refinement_options</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">AbsolutePoseRefinementOptions</span><span class="p">()</span>
+        <span class="n">refinement_options</span><span class="o">.</span><span class="n">refine_focal_length</span> <span class="o">=</span> <span class="n">ref_cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="s2">"refine_focal_length"</span><span class="p">,</span> <span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="n">refinement_options</span><span class="o">.</span><span class="n">refine_extra_params</span> <span class="o">=</span> <span class="n">ref_cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="s2">"refine_extra_params"</span><span class="p">,</span> <span class="kc">False</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Solve with LO-RANSAC + refinement</span>
+        <span class="n">pts2d_f64</span> <span class="o">=</span> <span class="n">pts2d</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">pts3d_f64</span> <span class="o">=</span> <span class="n">pts3d_matched</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">ret</span> <span class="o">=</span> <span class="n">pycolmap</span><span class="o">.</span><span class="n">estimate_and_refine_absolute_pose</span><span class="p">(</span>
+            <span class="n">pts2d_f64</span><span class="p">,</span>
+            <span class="n">pts3d_f64</span><span class="p">,</span>
+            <span class="n">camera</span><span class="p">,</span>
+            <span class="n">estimation_options</span><span class="o">=</span><span class="n">estimation_options</span><span class="p">,</span>
+            <span class="n">refinement_options</span><span class="o">=</span><span class="n">refinement_options</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">n_inliers</span> <span class="o">=</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">ret</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">int</span><span class="p">(</span><span class="n">ret</span><span class="p">[</span><span class="s2">"num_inliers"</span><span class="p">])</span>
+
+        <span class="c1"># Too few inliers: no pose, but keep the correspondences for display</span>
+        <span class="k">if</span> <span class="n">n_inliers</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"CameraLocalizer: pycolmap failed (inliers=</span><span class="si">%d</span><span class="s2"> / </span><span class="si">%d</span><span class="s2"> correspondences)"</span><span class="p">,</span>
+                <span class="n">n_inliers</span><span class="p">,</span>
+                <span class="n">n_corr</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">failed</span><span class="o">.</span><span class="n">n_inliers</span> <span class="o">=</span> <span class="n">n_inliers</span>
+            <span class="k">return</span> <span class="n">failed</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"CameraLocalizer: localized, </span><span class="si">%d</span><span class="s2"> / </span><span class="si">%d</span><span class="s2"> inliers"</span><span class="p">,</span> <span class="n">n_inliers</span><span class="p">,</span> <span class="n">n_corr</span><span class="p">)</span>
+
+        <span class="c1"># Inlier mask and 4x4 world-to-camera transform</span>
+        <span class="n">cam_from_world</span> <span class="o">=</span> <span class="n">ret</span><span class="p">[</span><span class="s2">"cam_from_world"</span><span class="p">]</span>
+        <span class="n">pose</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">pose</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">cam_from_world</span><span class="o">.</span><span class="n">rotation</span><span class="o">.</span><span class="n">matrix</span><span class="p">()</span>
+        <span class="n">pose</span><span class="p">[:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">cam_from_world</span><span class="o">.</span><span class="n">translation</span>
+
+        <span class="c1"># Refined K from the camera pycolmap updated in place</span>
+        <span class="n">refined_K</span> <span class="o">=</span> <span class="n">camera</span><span class="o">.</span><span class="n">calibration_matrix</span><span class="p">()</span>
+        <span class="n">refined_K</span> <span class="o">=</span> <span class="n">refined_K</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">dataclasses</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span>
+            <span class="n">failed</span><span class="p">,</span>
+            <span class="n">pose</span><span class="o">=</span><span class="n">pose</span><span class="p">,</span>
+            <span class="n">n_inliers</span><span class="o">=</span><span class="n">n_inliers</span><span class="p">,</span>
+            <span class="n">inlier_mask</span><span class="o">=</span><span class="n">ret</span><span class="p">[</span><span class="s2">"inlier_mask"</span><span class="p">],</span>
+            <span class="n">query_intrinsics</span><span class="o">=</span><span class="n">refined_K</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

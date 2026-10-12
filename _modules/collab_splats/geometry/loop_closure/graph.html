@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.geometry.loop_closure.graph &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/geometry/loop_closure/graph';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../../_static/searchtools.js"></script>
+    <script src="../../../../_static/language_data.js"></script>
+    <script src="../../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.geometry.loop_closure.graph</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.geometry.loop_closure.graph</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">SL(4) factor graph over per-frame camera projection matrices, for loop closure.</span>
+
+<span class="sd">- optimizes poses on the SL(4) manifold to correct drift and close loops</span>
+<span class="sd">- one node per frame, keyed by global frame index</span>
+<span class="sd">- ported from MIT-SPARK/VGGT-SLAM @ fd3fd218 (BSD-2-Clause): vggt_slam/graph.py, solver.py, scale_solver.py</span>
+<span class="sd">- decompose_camera (vggt_slam/slam_utils.py) lives in geometry.transforms</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">gtsam</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">gtsam.symbol_shorthand</span><span class="w"> </span><span class="kn">import</span> <span class="n">X</span> <span class="k">as</span> <span class="n">_X</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.loop_closure.submap</span><span class="w"> </span><span class="kn">import</span> <span class="n">Submap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">intrinsics_4x4</span><span class="p">,</span> <span class="n">transform_points</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Scale and overlap</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="calculate_pairwise_frame_scale">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.calculate_pairwise_frame_scale">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">calculate_pairwise_frame_scale</span><span class="p">(</span>
+    <span class="n">curr_submap</span><span class="p">:</span> <span class="n">Submap</span><span class="p">,</span>
+    <span class="n">curr_idx</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">prior_submap</span><span class="p">:</span> <span class="n">Submap</span><span class="p">,</span>
+    <span class="n">prior_idx</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">min_conf_points</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Scale taking one frame's points into another's units, for two frames of the same image.</span>
+
+<span class="sd">    - each frame's points are moved into its own camera first (diverges from VGGT-SLAM)</span>
+<span class="sd">    - None when points are missing, grids differ, or the scale is not finite and &gt; 0</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        curr_submap: submap holding the frames to rescale.</span>
+<span class="sd">        curr_idx: local frame index, or indices pooled into one fit.</span>
+<span class="sd">        prior_submap: submap whose units the scale maps into.</span>
+<span class="sd">        prior_idx: local frame index or indices, paired with curr_idx.</span>
+<span class="sd">        min_conf_points: fewest confident points before the confidence mask is used.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Scale from curr_submap's units to prior_submap's, or None.</span>
+<span class="sd">    """</span>
+    <span class="c1"># No points to fit the scale on, or grids that do not pair pixel-for-pixel</span>
+    <span class="k">if</span> <span class="n">curr_submap</span><span class="o">.</span><span class="n">points</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">points</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">curr_submap</span><span class="o">.</span><span class="n">points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">]</span> <span class="o">!=</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="c1"># One index or a list of them, paired frame by frame</span>
+    <span class="n">curr_idx</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">atleast_1d</span><span class="p">(</span><span class="n">curr_idx</span><span class="p">))</span>
+    <span class="n">prior_idx</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">atleast_1d</span><span class="p">(</span><span class="n">prior_idx</span><span class="p">))</span>
+
+    <span class="c1"># Each frame's points in its own camera, rotated by inv(K_prior) @ K_curr (rotation_only)</span>
+    <span class="n">curr_pts</span><span class="p">,</span> <span class="n">prior_pts</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">ci</span><span class="p">,</span> <span class="n">pi</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">curr_idx</span><span class="p">,</span> <span class="n">prior_idx</span><span class="p">):</span>
+        <span class="n">c_local</span> <span class="o">=</span> <span class="n">curr_submap</span><span class="o">.</span><span class="n">points</span><span class="p">[</span><span class="n">ci</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">p_local</span> <span class="o">=</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">points</span><span class="p">[</span><span class="n">pi</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">transform_points</span><span class="p">(</span><span class="n">c_local</span><span class="p">,</span> <span class="n">curr_submap</span><span class="o">.</span><span class="n">poses</span><span class="p">[</span><span class="n">ci</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+        <span class="n">p</span> <span class="o">=</span> <span class="n">transform_points</span><span class="p">(</span><span class="n">p_local</span><span class="p">,</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">poses</span><span class="p">[</span><span class="n">pi</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+        <span class="n">K_prior</span> <span class="o">=</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">pi</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">K_curr</span> <span class="o">=</span> <span class="n">curr_submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">ci</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">K_ratio</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_prior</span><span class="p">)</span> <span class="o">@</span> <span class="n">K_curr</span>
+        <span class="n">curr_pts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">c</span> <span class="o">@</span> <span class="n">K_ratio</span><span class="o">.</span><span class="n">T</span><span class="p">)</span>
+        <span class="n">prior_pts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+
+    <span class="c1"># Every pair's points in one array per side</span>
+    <span class="n">curr_pts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">curr_pts</span><span class="p">)</span>
+    <span class="n">prior_pts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">prior_pts</span><span class="p">)</span>
+
+    <span class="c1"># Confidence tiers until min_conf_points survive: both &gt; threshold, prior &gt; threshold, prior &gt; 0 (solver.py:129-138)</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">curr_pts</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">conf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">prior_conf</span> <span class="o">=</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">conf</span><span class="p">[</span><span class="n">prior_idx</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">prior_mask</span> <span class="o">=</span> <span class="n">prior_conf</span> <span class="o">&gt;</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">conf_threshold</span>
+        <span class="n">joint</span> <span class="o">=</span> <span class="n">prior_mask</span>
+
+        <span class="k">if</span> <span class="n">curr_submap</span><span class="o">.</span><span class="n">conf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">curr_conf</span> <span class="o">=</span> <span class="n">curr_submap</span><span class="o">.</span><span class="n">conf</span><span class="p">[</span><span class="n">curr_idx</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">joint</span> <span class="o">=</span> <span class="n">joint</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">curr_conf</span> <span class="o">&gt;</span> <span class="n">prior_submap</span><span class="o">.</span><span class="n">conf_threshold</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">joint</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="n">min_conf_points</span><span class="p">:</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">joint</span>
+        <span class="k">elif</span> <span class="n">prior_mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="n">min_conf_points</span><span class="p">:</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">prior_mask</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">prior_conf</span> <span class="o">&gt;</span> <span class="mi">0</span>
+
+    <span class="c1"># Median norm ratio over non-degenerate source norms (scale_solver.py:estimate_scale_pairwise); 1.0 when none</span>
+    <span class="n">x_norms</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">curr_pts</span><span class="p">[</span><span class="n">mask</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">y_norms</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">prior_pts</span><span class="p">[</span><span class="n">mask</span><span class="p">],</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">valid</span> <span class="o">=</span> <span class="n">x_norms</span> <span class="o">&gt;</span> <span class="mf">1e-8</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">y_norms</span><span class="p">[</span><span class="n">valid</span><span class="p">]</span> <span class="o">/</span> <span class="n">x_norms</span><span class="p">[</span><span class="n">valid</span><span class="p">]))</span> <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">valid</span><span class="p">)</span> <span class="k">else</span> <span class="mf">1.0</span>
+
+    <span class="c1"># NaN/inf depth pixels can poison the median; a scale &lt;= 0 makes the SL(4) factor singular</span>
+    <span class="k">return</span> <span class="n">s</span> <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="ow">and</span> <span class="n">s</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="kc">None</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># PoseGraph</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="PoseGraph">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">PoseGraph</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Per-frame SL(4) factor graph for loop-closure trajectory correction.</span>
+
+<span class="sd">    - one node per frame, keyed gtsam.symbol('x', node_id) by global frame index</span>
+<span class="sd">    - port of MIT-SPARK/VGGT-SLAM @ fd3fd218, vggt_slam/graph.py:PoseGraph</span>
+<span class="sd">    - noise matches vggt_slam/graph.py:19-23: sigma 0.05 on every edge, 1e-6 on the first-frame prior</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        min_conf_points: fewest confident points before the scale fit uses the confidence mask.</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">min_conf_points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Empty graph with no nodes, edges or submaps.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            min_conf_points: fewest confident points before the scale fit uses the confidence mask.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Factor graph and initial values</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">min_conf_points</span> <span class="o">=</span> <span class="n">min_conf_points</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_graph</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">NonlinearFactorGraph</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_initial</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">Values</span><span class="p">()</span>
+
+        <span class="c1"># Sigma 0.05 on every edge (sequential, inter-submap, loop chain), 1e-6 on the first-frame prior</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_seq_noise</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">noiseModel</span><span class="o">.</span><span class="n">Diagonal</span><span class="o">.</span><span class="n">Sigmas</span><span class="p">(</span>
+            <span class="mf">0.05</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_anchor_noise</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">noiseModel</span><span class="o">.</span><span class="n">Diagonal</span><span class="o">.</span><span class="n">Sigmas</span><span class="p">(</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">(</span><span class="mi">15</span><span class="p">,</span> <span class="mf">1e-6</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Incremental submap-build bookkeeping (per-submap cadence state)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_global_node_id</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_submap_node_ids</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_submaps_seen</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Submap</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Node management</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="PoseGraph.add_homography">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph.add_homography">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_homography</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">H</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Insert a frame node.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            node_id: new global frame node id.</span>
+<span class="sd">            H: 4x4 homography; GTSAM's SL4 normalizes it.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Node initial value as an SL(4) element</span>
+        <span class="n">H</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">_X</span><span class="p">(</span><span class="n">node_id</span><span class="p">)</span>
+        <span class="n">H_sl4</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">SL4</span><span class="p">(</span><span class="n">H</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_initial</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">H_sl4</span><span class="p">)</span></div>
+
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Edges</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="PoseGraph.add_between_factor">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph.add_between_factor">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_between_factor</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">id_i</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">id_j</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">H_rel</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Relative SL(4) constraint between two nodes: H_j = H_i @ H_rel.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            id_i: source node id.</span>
+<span class="sd">            id_j: target node id.</span>
+<span class="sd">            H_rel: 4x4 relative homography.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Between factor under the sequential noise model</span>
+        <span class="n">H_rel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">H_rel</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">key_i</span> <span class="o">=</span> <span class="n">_X</span><span class="p">(</span><span class="n">id_i</span><span class="p">)</span>
+        <span class="n">key_j</span> <span class="o">=</span> <span class="n">_X</span><span class="p">(</span><span class="n">id_j</span><span class="p">)</span>
+        <span class="n">H_rel_sl4</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">SL4</span><span class="p">(</span><span class="n">H_rel</span><span class="p">)</span>
+        <span class="n">factor</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">BetweenFactorSL4</span><span class="p">(</span><span class="n">key_i</span><span class="p">,</span> <span class="n">key_j</span><span class="p">,</span> <span class="n">H_rel_sl4</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seq_noise</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_graph</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">factor</span><span class="p">)</span></div>
+
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Optimization</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="PoseGraph.optimize">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph.optimize">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">optimize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Run Levenberg-Marquardt in place; read results with get_homography.</span>
+
+<span class="sd">        - on a GTSAM RuntimeError the initial values are kept and a warning is logged</span>
+<span class="sd">        """</span>
+        <span class="c1"># Levenberg-Marquardt over the whole graph; failures keep the initial values</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">params</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">LevenbergMarquardtParams</span><span class="p">()</span>
+            <span class="n">optimizer</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">LevenbergMarquardtOptimizer</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_graph</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_initial</span><span class="p">,</span> <span class="n">params</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_initial</span> <span class="o">=</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">optimize</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">RuntimeError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"GTSAM optimization failed: </span><span class="si">%s</span><span class="s2"> — returning initial values"</span><span class="p">,</span> <span class="n">exc</span>
+            <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="PoseGraph.get_homography">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph.get_homography">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_homography</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        4x4 homography of a frame node; the optimized value once optimize() has run.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            node_id: node to read.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (4, 4) float64 homography.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Node value as a float64 matrix</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">_X</span><span class="p">(</span><span class="n">node_id</span><span class="p">)</span>
+        <span class="n">H</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_initial</span><span class="o">.</span><span class="n">atSL4</span><span class="p">(</span><span class="n">key</span><span class="p">)</span><span class="o">.</span><span class="n">matrix</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">H</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span></div>
+
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Incremental submap build</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="PoseGraph.add_submap">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph.add_submap">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_submap</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">submap</span><span class="p">:</span> <span class="n">Submap</span><span class="p">,</span> <span class="n">overlap_frames</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Add one submap's nodes and SL(4) edges to the persistent graph.</span>
+
+<span class="sd">        - the first submap is anchored at identity with a tight prior</span>
+<span class="sd">        - later submaps link to the previous submap's last node through the overlap frames</span>
+<span class="sd">        - the inter-submap scale comes from the overlap points, rotation_only as VGGT-SLAM</span>
+<span class="sd">        - overlap points on both sides move into their own frame's camera; upstream skips this</span>
+<span class="sd">        - scale falls back to 1.0, with a warning, when the overlap points are missing or degenerate</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            submap: the next Submap in trajectory order.</span>
+<span class="sd">            overlap_frames: frames shared with the previous submap.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Allocate consecutive global node ids for this submap's frames</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">submap</span><span class="o">.</span><span class="n">poses</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">node_ids_this</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_global_node_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_global_node_id</span> <span class="o">+</span> <span class="n">k</span><span class="p">))</span>
+
+        <span class="c1"># First node = I, prior = I, as VGGT-SLAM @ fd3fd218, vggt_slam/solver.py:169-170</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submaps_seen</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_homography</span><span class="p">(</span><span class="n">node_ids_this</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">4</span><span class="p">))</span>
+
+            <span class="c1"># Tight prior (sigma 1e-6) holding the first frame at identity</span>
+            <span class="n">H_identity</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">SL4</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">4</span><span class="p">))</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="n">_X</span><span class="p">(</span><span class="n">node_ids_this</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="n">prior</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">PriorFactorSL4</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">H_identity</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_anchor_noise</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_graph</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">prior</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Previous submap and the usable overlap length</span>
+            <span class="n">prev_submap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submaps_seen</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">n_prev</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">prev_submap</span><span class="o">.</span><span class="n">poses</span><span class="p">)</span>
+            <span class="n">n_overlap</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">overlap_frames</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">n_prev</span><span class="p">)</span>
+
+            <span class="c1"># T = inv(K_prev[-1]) @ K_curr[0], VGGT-SLAM's P_temp (solver.py:140); see decompose_camera</span>
+            <span class="n">K_prev_last</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">prev_submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+            <span class="n">K_curr_first</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+            <span class="n">T</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_prev_last</span><span class="p">)</span> <span class="o">@</span> <span class="n">K_curr_first</span>
+
+            <span class="c1"># Overlap scale, each frame in its own camera (rotation_only; diverges from solver.py:141)</span>
+            <span class="n">scale</span> <span class="o">=</span> <span class="kc">None</span>
+
+            <span class="k">if</span> <span class="n">n_overlap</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">prev_idx</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">n_prev</span> <span class="o">-</span> <span class="n">n_overlap</span><span class="p">,</span> <span class="n">n_prev</span><span class="p">))</span>
+                <span class="n">curr_idx</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">n_overlap</span><span class="p">))</span>
+                <span class="n">scale</span> <span class="o">=</span> <span class="n">calculate_pairwise_frame_scale</span><span class="p">(</span>
+                    <span class="n">submap</span><span class="p">,</span> <span class="n">curr_idx</span><span class="p">,</span> <span class="n">prev_submap</span><span class="p">,</span> <span class="n">prev_idx</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_conf_points</span>
+                <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">scale</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">"Submap </span><span class="si">%d</span><span class="s2"> → </span><span class="si">%d</span><span class="s2">: no usable overlap points (missing, misaligned or degenerate); scale 1.0"</span><span class="p">,</span>
+                    <span class="n">prev_submap</span><span class="o">.</span><span class="n">submap_id</span><span class="p">,</span>
+                    <span class="n">submap</span><span class="o">.</span><span class="n">submap_id</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">scale</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+            <span class="c1"># H_w = H_overlap @ T @ H_scale, VGGT-SLAM solver.py:153-154 (its proj_mats hold K, so T matches)</span>
+            <span class="n">H_scale</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">([</span><span class="n">scale</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">])</span>
+            <span class="n">prev_submap_last_nid</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submap_node_ids</span><span class="p">[</span><span class="n">prev_submap</span><span class="o">.</span><span class="n">submap_id</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="n">H_overlap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_homography</span><span class="p">(</span><span class="n">prev_submap_last_nid</span><span class="p">)</span>
+            <span class="n">H_w</span> <span class="o">=</span> <span class="n">H_overlap</span> <span class="o">@</span> <span class="n">T</span> <span class="o">@</span> <span class="n">H_scale</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_homography</span><span class="p">(</span><span class="n">node_ids_this</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">H_w</span><span class="p">)</span>
+
+            <span class="c1"># Inter-submap edge from the previous submap's last node</span>
+            <span class="n">H_rel_inter</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">H_overlap</span><span class="p">)</span> <span class="o">@</span> <span class="n">H_w</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_between_factor</span><span class="p">(</span><span class="n">prev_submap_last_nid</span><span class="p">,</span> <span class="n">node_ids_this</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">H_rel_inter</span><span class="p">)</span>
+
+        <span class="c1"># Chain consecutive frames: H_inner = P[i-1] @ inv(P[i]), each node seeded from its predecessor</span>
+        <span class="n">poses</span> <span class="o">=</span> <span class="n">submap</span><span class="o">.</span><span class="n">poses</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">local_i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+            <span class="n">H_inner</span> <span class="o">=</span> <span class="n">poses</span><span class="p">[</span><span class="n">local_i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">@</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">poses</span><span class="p">[</span><span class="n">local_i</span><span class="p">])</span>
+            <span class="n">prev_H</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_homography</span><span class="p">(</span><span class="n">node_ids_this</span><span class="p">[</span><span class="n">local_i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">])</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_homography</span><span class="p">(</span><span class="n">node_ids_this</span><span class="p">[</span><span class="n">local_i</span><span class="p">],</span> <span class="n">prev_H</span> <span class="o">@</span> <span class="n">H_inner</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_between_factor</span><span class="p">(</span>
+                <span class="n">node_ids_this</span><span class="p">[</span><span class="n">local_i</span> <span class="o">-</span> <span class="mi">1</span><span class="p">],</span> <span class="n">node_ids_this</span><span class="p">[</span><span class="n">local_i</span><span class="p">],</span> <span class="n">H_inner</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Book the submap for later overlap lookups and extraction</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_submap_node_ids</span><span class="p">[</span><span class="n">submap</span><span class="o">.</span><span class="n">submap_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">node_ids_this</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_global_node_id</span> <span class="o">+=</span> <span class="n">k</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_submaps_seen</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">submap</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="PoseGraph.add_loop_edge">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph.add_loop_edge">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_loop_edge</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">lc</span><span class="p">:</span> <span class="n">Submap</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Add one verified loop closure as a 3-edge SL(4) chain through two LC nodes.</span>
+
+<span class="sd">        - chain: query -&gt; LC frame 0 -&gt; LC frame 1 -&gt; detected; LC nodes map to no output frame</span>
+<span class="sd">        - both LC image paths must belong to submaps already in the graph</span>
+<span class="sd">        - anchor scale falls back to 1.0, with a warning, when LC points are unusable</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            lc: 2-frame loop-closure Submap (query, detected).</span>
+<span class="sd">        """</span>
+        <span class="c1"># Image path -&gt; (node id, submap, local index); the earliest submap holding the path wins</span>
+        <span class="n">located</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">Submap</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">for</span> <span class="n">sub</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submaps_seen</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">local_i</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">sub</span><span class="o">.</span><span class="n">image_paths</span><span class="p">):</span>
+                <span class="n">located</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span>
+                    <span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_submap_node_ids</span><span class="p">[</span><span class="n">sub</span><span class="o">.</span><span class="n">submap_id</span><span class="p">][</span><span class="n">local_i</span><span class="p">],</span> <span class="n">sub</span><span class="p">,</span> <span class="n">local_i</span><span class="p">)</span>
+                <span class="p">)</span>
+
+        <span class="c1"># Graph node, submap and local frame of each carrier image</span>
+        <span class="n">nid_q</span><span class="p">,</span> <span class="n">sub_q</span><span class="p">,</span> <span class="n">qi</span> <span class="o">=</span> <span class="n">located</span><span class="p">[</span><span class="n">lc</span><span class="o">.</span><span class="n">image_paths</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
+        <span class="n">nid_d</span><span class="p">,</span> <span class="n">sub_d</span><span class="p">,</span> <span class="n">di</span> <span class="o">=</span> <span class="n">located</span><span class="p">[</span><span class="n">lc</span><span class="o">.</span><span class="n">image_paths</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span>
+
+        <span class="c1"># Anchor scales on identical images, argument order as VGGT-SLAM's add_edge (solver.py:286-287)</span>
+        <span class="n">s_a</span> <span class="o">=</span> <span class="n">calculate_pairwise_frame_scale</span><span class="p">(</span><span class="n">lc</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">sub_q</span><span class="p">,</span> <span class="n">qi</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_conf_points</span><span class="p">)</span>
+        <span class="n">s_b</span> <span class="o">=</span> <span class="n">calculate_pairwise_frame_scale</span><span class="p">(</span><span class="n">sub_d</span><span class="p">,</span> <span class="n">di</span><span class="p">,</span> <span class="n">lc</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">min_conf_points</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">s_a</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">s_b</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"Loop submap </span><span class="si">%d</span><span class="s2"> → </span><span class="si">%d</span><span class="s2">: LC points unavailable or grid-misaligned; using anchor scale 1.0"</span><span class="p">,</span>
+                <span class="n">sub_q</span><span class="o">.</span><span class="n">submap_id</span><span class="p">,</span>
+                <span class="n">sub_d</span><span class="o">.</span><span class="n">submap_id</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">s_a</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">s_a</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">s_a</span>
+            <span class="n">s_b</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">s_b</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">s_b</span>
+
+        <span class="c1"># Per-frame intrinsics as 4×4 for the K change across anchors (I for a shared camera)</span>
+        <span class="n">K_q</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">sub_q</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">qi</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+        <span class="n">K_lc0</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">lc</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+        <span class="n">K_lc1</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">lc</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+        <span class="n">K_d</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">sub_d</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">di</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+
+        <span class="c1"># Chain relatives H_j = H_i @ M (solver.py:286-287): anchors fold K and scale, inner edge is LC pose</span>
+        <span class="n">H_rel_a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_q</span><span class="p">)</span> <span class="o">@</span> <span class="n">K_lc0</span> <span class="o">@</span> <span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">([</span><span class="n">s_a</span><span class="p">,</span> <span class="n">s_a</span><span class="p">,</span> <span class="n">s_a</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">])</span>
+        <span class="n">P_lc0</span> <span class="o">=</span> <span class="n">lc</span><span class="o">.</span><span class="n">poses</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">P_lc1</span> <span class="o">=</span> <span class="n">lc</span><span class="o">.</span><span class="n">poses</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">H_inner_lc</span> <span class="o">=</span> <span class="n">P_lc0</span> <span class="o">@</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">P_lc1</span><span class="p">)</span>
+        <span class="n">H_rel_b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_lc1</span><span class="p">)</span> <span class="o">@</span> <span class="n">K_d</span> <span class="o">@</span> <span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">([</span><span class="n">s_b</span><span class="p">,</span> <span class="n">s_b</span><span class="p">,</span> <span class="n">s_b</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">])</span>
+
+        <span class="c1"># LC nodes chained from the query node's state (solver.py:153-158); no output frame (vggt_slam/map.py:128-129)</span>
+        <span class="n">nid_lc0</span><span class="p">,</span> <span class="n">nid_lc1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_global_node_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_global_node_id</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_global_node_id</span> <span class="o">+=</span> <span class="mi">2</span>
+        <span class="n">H_q_state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_homography</span><span class="p">(</span><span class="n">nid_q</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_homography</span><span class="p">(</span><span class="n">nid_lc0</span><span class="p">,</span> <span class="n">H_q_state</span> <span class="o">@</span> <span class="n">H_rel_a</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_homography</span><span class="p">(</span><span class="n">nid_lc1</span><span class="p">,</span> <span class="n">H_q_state</span> <span class="o">@</span> <span class="n">H_rel_a</span> <span class="o">@</span> <span class="n">H_inner_lc</span><span class="p">)</span>
+
+        <span class="c1"># Three-edge chain: query -&gt; LC0 -&gt; LC1 -&gt; detected</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_between_factor</span><span class="p">(</span><span class="n">nid_q</span><span class="p">,</span> <span class="n">nid_lc0</span><span class="p">,</span> <span class="n">H_rel_a</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_between_factor</span><span class="p">(</span><span class="n">nid_lc0</span><span class="p">,</span> <span class="n">nid_lc1</span><span class="p">,</span> <span class="n">H_inner_lc</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_between_factor</span><span class="p">(</span><span class="n">nid_lc1</span><span class="p">,</span> <span class="n">nid_d</span><span class="p">,</span> <span class="n">H_rel_b</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="PoseGraph.submap_node_ids">
+<a class="viewcode-back" href="../../../../api/geometry.html#collab_splats.geometry.loop_closure.graph.PoseGraph.submap_node_ids">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">submap_node_ids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">submap_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Graph node ids of one submap's frames, in frame order.</span>
+
+<span class="sd">        - node ids are allocated per submap frame, overlap frames included, then 2 per loop carrier</span>
+<span class="sd">        - so a frame's node id is not its global frame index</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            submap_id: id of a submap already added with add_submap.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            One node id per submap frame.</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_submap_node_ids</span><span class="p">[</span><span class="n">submap_id</span><span class="p">])</span></div>
+</div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

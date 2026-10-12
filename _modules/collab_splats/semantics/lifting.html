@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.semantics.lifting &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/semantics/lifting';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.semantics.lifting</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.semantics.lifting</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Lift dense per-frame feature maps onto a reconstruction's points.</span>
+
+<span class="sd">- multi-view: every point projects into every frame, weighted by confidence and depth consistency</span>
+<span class="sd">- source fallback: points visible nowhere sample their own source pixel, when they have one</span>
+<span class="sd">- transfer_features: point features onto other positions (mesh vertices, or smoothing in place)</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">cast</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">scipy.spatial</span><span class="w"> </span><span class="kn">import</span> <span class="n">cKDTree</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="n">depth_residual</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_device</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">PointcloudResult</span>
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Feature sampling ############################</span>
+<span class="c1">########################################################</span>
+
+
+<div class="viewcode-block" id="lift_features">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.lifting.lift_features">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">lift_features</span><span class="p">(</span>
+    <span class="n">frame_features</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">],</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]],</span>
+    <span class="n">result</span><span class="p">:</span> <span class="n">PointcloudResult</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">depth_tol</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+    <span class="n">num_classes</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Multi-view confidence-weighted lift of dense feature maps to per-point features.</span>
+
+<span class="sd">    - each point in result.points projects into every frame; only visible points are sampled,</span>
+<span class="sd">      so each frame costs its visible count, not P</span>
+<span class="sd">    - masked by depth_residual's in-bounds + depth consistency (``|residual| / |z_proj| &lt; depth_tol``)</span>
+<span class="sd">    - weighted by confidence at the same rounded pixel the depth test reads, then mean-reduced</span>
+<span class="sd">    - points visible nowhere fall back to a source-frame sample at their pixel_indices entry</span>
+<span class="sd">    - without pixel_indices (e.g. mesh vertices) they stay zero: unobserved</span>
+<span class="sd">    - indexed maps add each point's bilinear blend of its 4 nearest patches' lists at the id</span>
+<span class="sd">      columns: the dense lift's result without the zero columns</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        frame_features: frame i's features, called once per frame, then once per fallback frame</span>
+<span class="sd">            (dense maps only); a list passes `maps.__getitem__`. Either a dense (D, H_p, W_p) map,</span>
+<span class="sd">            any float dtype, or an indexed map: an (ids, values) pair, each (K, H_p, W_p), listing</span>
+<span class="sd">            K entries per patch of a num_classes-long vector whose other entries are 0.</span>
+<span class="sd">        result: points, depth, extrinsics, model_intrinsics and model grid size; `confidence`</span>
+<span class="sd">            (uniform when absent) and `pixel_indices` (no fallback when absent) are optional.</span>
+<span class="sd">        depth_tol: relative depth tolerance for the visibility test.</span>
+<span class="sd">        num_classes: indexed maps only; number of distinct ids, i.e. the output width. Values at</span>
+<span class="sd">            the K listed ids per patch are summed per point; K is never a dimension. None for</span>
+<span class="sd">            dense maps.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (P, D) or (P, num_classes) float32 tensor of per-point features, aligned with result.points.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: when a required field is missing, or extrinsics / depth have the wrong shape;</span>
+<span class="sd">            indexed maps without num_classes, with pixel_indices, or with an id outside</span>
+<span class="sd">            [0, num_classes); num_classes with dense maps.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Required fields — fail loud at function entry, not deep in the kernel</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"points"</span><span class="p">,</span> <span class="s2">"extrinsics"</span><span class="p">,</span> <span class="s2">"model_intrinsics"</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"lift_features requires result.</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="c1"># Depth separately, so the check also narrows its Optional type</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">depth</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"lift_features requires result.depth"</span><span class="p">)</span>
+
+    <span class="n">N</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">model_height</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">model_width</span>
+    <span class="n">P</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">points</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">image_size</span> <span class="o">=</span> <span class="p">(</span><span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">)</span>
+
+    <span class="c1"># Whole kernel on one device in float32 (GPU when available); one .cpu() at the end</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
+
+    <span class="n">points_c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">points</span><span class="p">)</span>
+    <span class="n">pts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">points_c</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Extrinsics and depth are (N, 4, 4) / (N, H, W) by contract (see PointcloudResult) — fail loud otherwise</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">!=</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">4</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"extrinsics must be (N, 4, 4), got </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">depth</span><span class="o">.</span><span class="n">ndim</span> <span class="o">!=</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"depth must be (N, H, W), got </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="n">extrinsics_c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">)</span>
+    <span class="n">intrinsics_c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">model_intrinsics</span><span class="p">)</span>
+    <span class="n">ext</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">extrinsics_c</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>  <span class="c1"># (N, 4, 4)</span>
+    <span class="n">intr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span>
+        <span class="n">intrinsics_c</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+    <span class="p">)</span>  <span class="c1"># (N, 3, 3)</span>
+
+    <span class="c1"># Conf → (N, H, W) float32 on device; absent confidence (SfM results) = uniform weights</span>
+    <span class="n">conf</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">N</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">confidence</span> <span class="ow">is</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="n">result</span><span class="o">.</span><span class="n">confidence</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="n">depth_c</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">depth</span><span class="p">)</span>
+    <span class="n">depth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">depth_c</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">features_sum</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">weights_sum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">P</span><span class="p">,),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">N</span><span class="p">):</span>
+        <span class="n">fmap</span> <span class="o">=</span> <span class="n">frame_features</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+
+        <span class="c1"># Accumulator width: num_classes for indexed maps, else the first frame's channels</span>
+        <span class="k">if</span> <span class="n">features_sum</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">indexed</span> <span class="o">=</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">fmap</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">indexed</span> <span class="ow">and</span> <span class="n">num_classes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">"indexed (ids, values) maps need num_classes, the number of distinct ids"</span>
+                <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">indexed</span> <span class="ow">and</span> <span class="n">result</span><span class="o">.</span><span class="n">pixel_indices</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">"indexed maps take no pixel_indices fallback; pass a result without pixel_indices"</span>
+                <span class="p">)</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">indexed</span> <span class="ow">and</span> <span class="n">num_classes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="s2">"num_classes applies to indexed maps only; dense maps keep their channels"</span>
+                <span class="p">)</span>
+
+            <span class="n">width</span> <span class="o">=</span> <span class="n">num_classes</span> <span class="k">if</span> <span class="n">indexed</span> <span class="k">else</span> <span class="n">cast</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">fmap</span><span class="p">)</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">features_sum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">P</span><span class="p">,</span> <span class="n">width</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># Visibility: in front, in bounds, depth-consistent against frame i's depth map</span>
+        <span class="c1"># - depth_residual projects all P points and reads the depth map nearest-neighbor</span>
+        <span class="c1"># - the relative tolerance stays lifting's own, applied to the returned depths</span>
+        <span class="n">residual</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">valid</span><span class="p">,</span> <span class="n">pixels</span> <span class="o">=</span> <span class="n">depth_residual</span><span class="p">(</span>
+            <span class="n">pts</span><span class="p">,</span> <span class="n">ext</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">intr</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">depth</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="p">)</span>
+        <span class="n">depth_ok</span> <span class="o">=</span> <span class="n">residual</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">/</span> <span class="p">(</span><span class="n">expected</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">+</span> <span class="mf">1e-8</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">depth_tol</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">]</span>
+
+        <span class="c1"># Confidence weight at the pixel the depth test read</span>
+        <span class="c1"># - rounded, as depth_residual's nearest read, so one pixel per point for test + weight</span>
+        <span class="c1"># - nan/inf coords (degenerate points) → 0 for indexing/sampling; valid is False there</span>
+        <span class="n">u_safe</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nan_to_num</span><span class="p">(</span><span class="n">u</span><span class="p">,</span> <span class="n">nan</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">posinf</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">neginf</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">v_safe</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nan_to_num</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">nan</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">posinf</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">neginf</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">u_px</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">u_safe</span><span class="p">)</span>
+        <span class="n">v_px</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">v_safe</span><span class="p">)</span>
+        <span class="n">u_idx</span> <span class="o">=</span> <span class="n">u_px</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">W</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">v_idx</span> <span class="o">=</span> <span class="n">v_px</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">H</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">u_idx</span> <span class="o">=</span> <span class="n">u_idx</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+        <span class="n">v_idx</span> <span class="o">=</span> <span class="n">v_idx</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+        <span class="n">visible</span> <span class="o">=</span> <span class="n">valid</span> <span class="o">&amp;</span> <span class="n">depth_ok</span>
+        <span class="n">w</span> <span class="o">=</span> <span class="n">conf</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">v_idx</span><span class="p">,</span> <span class="n">u_idx</span><span class="p">]</span> <span class="o">*</span> <span class="n">visible</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>  <span class="c1"># (P,)</span>
+
+        <span class="c1"># Sample and accumulate visible points only; the rest carry weight 0</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">w</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">indexed</span><span class="p">:</span>
+            <span class="n">ids</span><span class="p">,</span> <span class="n">values</span> <span class="o">=</span> <span class="n">fmap</span>
+            <span class="n">_add_indexed_bilinear</span><span class="p">(</span>
+                <span class="n">features_sum</span><span class="p">,</span>
+                <span class="n">ids</span><span class="p">,</span>
+                <span class="n">values</span><span class="p">,</span>
+                <span class="n">idx</span><span class="p">,</span>
+                <span class="n">v_safe</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span>
+                <span class="n">u_safe</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span>
+                <span class="n">w</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span>
+                <span class="n">image_size</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">fmap</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">fmap</span><span class="p">)</span>
+            <span class="n">fmap</span> <span class="o">=</span> <span class="n">fmap</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>  <span class="c1"># (D, H_p, W_p)</span>
+            <span class="n">sampled</span> <span class="o">=</span> <span class="n">_grid_sample_at_pixels</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">v_safe</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="n">u_safe</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="n">image_size</span>
+            <span class="p">)</span>  <span class="c1"># (P_vis, D)</span>
+            <span class="n">sampled</span> <span class="o">*=</span> <span class="n">w</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">features_sum</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">sampled</span><span class="p">)</span>
+
+        <span class="n">weights_sum</span> <span class="o">+=</span> <span class="n">w</span>
+
+    <span class="c1"># Weighted mean in place, eps for numerical safety</span>
+    <span class="n">features</span> <span class="o">=</span> <span class="n">features_sum</span>
+    <span class="n">features</span> <span class="o">/=</span> <span class="n">weights_sum</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1e-8</span>
+
+    <span class="c1"># Fallback: zero-weight points sample their own source pixel, clipped; loads only frames holding one</span>
+    <span class="n">zero_w</span> <span class="o">=</span> <span class="n">weights_sum</span> <span class="o">&lt;</span> <span class="mf">1e-6</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">pixel_indices</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">bool</span><span class="p">(</span><span class="n">zero_w</span><span class="o">.</span><span class="n">any</span><span class="p">()):</span>
+        <span class="n">pixel_indices</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">pixel_indices</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">frame_ids</span> <span class="o">=</span> <span class="n">pixel_indices</span><span class="p">[</span><span class="n">zero_w</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">frame_ids</span><span class="o">.</span><span class="n">tolist</span><span class="p">():</span>
+            <span class="n">mask_i</span> <span class="o">=</span> <span class="n">zero_w</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">pixel_indices</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">i</span><span class="p">)</span>
+            <span class="n">fmap</span> <span class="o">=</span> <span class="n">frame_features</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+            <span class="n">fmap</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">fmap</span><span class="p">)</span>
+            <span class="n">fmap</span> <span class="o">=</span> <span class="n">fmap</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">rows</span> <span class="o">=</span> <span class="n">pixel_indices</span><span class="p">[</span><span class="n">mask_i</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">H</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">cols</span> <span class="o">=</span> <span class="n">pixel_indices</span><span class="p">[</span><span class="n">mask_i</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">W</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="n">features</span><span class="p">[</span><span class="n">mask_i</span><span class="p">]</span> <span class="o">=</span> <span class="n">_grid_sample_at_pixels</span><span class="p">(</span>
+                <span class="n">fmap</span><span class="p">,</span> <span class="n">rows</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">cols</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">image_size</span>
+            <span class="p">)</span>
+
+    <span class="n">features</span> <span class="o">=</span> <span class="n">features</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">features</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_grid_sample_at_pixels</span><span class="p">(</span>
+    <span class="n">fmap</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">rows</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cols</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">image_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Bilinear-sample fmap (D, H_p, W_p) at (rows, cols) given in the image_size frame.</span>
+
+<span class="sd">    - returns (P_i, D) float32 on fmap's device</span>
+<span class="sd">    - pixel centers normalized to [-1, 1] with align_corners=False, so any (H_p, W_p) works</span>
+<span class="sd">    """</span>
+    <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">image_size</span>
+
+    <span class="c1"># grid_sample wants (N, H_out, W_out, 2); treat P_i points as (1, 1, P_i, 2)</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">cols</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">W</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">rows</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">H</span> <span class="o">-</span> <span class="mi">1</span>
+    <span class="n">grid</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">grid</span> <span class="o">=</span> <span class="n">grid</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="n">fmap_b</span> <span class="o">=</span> <span class="n">fmap</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">fmap_b</span> <span class="o">=</span> <span class="n">fmap_b</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">sampled</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">grid_sample</span><span class="p">(</span>
+        <span class="n">fmap_b</span><span class="p">,</span>
+        <span class="n">grid</span><span class="p">,</span>
+        <span class="n">mode</span><span class="o">=</span><span class="s2">"bilinear"</span><span class="p">,</span>
+        <span class="n">align_corners</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">padding_mode</span><span class="o">=</span><span class="s2">"border"</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># (1, D, 1, P_i) → (P_i, D)</span>
+    <span class="n">sampled</span> <span class="o">=</span> <span class="n">sampled</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">sampled</span> <span class="o">=</span> <span class="n">sampled</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">sampled</span><span class="o">.</span><span class="n">T</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_add_indexed_bilinear</span><span class="p">(</span>
+    <span class="n">acc</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">ids</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">idx</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">rows</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cols</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">weights</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">image_size</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Add each point's bilinear blend of its 4 nearest patches' (id, value) lists into acc, in place.</span>
+
+<span class="sd">    - ids, values (K, H_p, W_p); point j's blend goes to row idx[j], each value at column id</span>
+<span class="sd">    - same corners and weights as grid_sample (border, align_corners=False), so it equals the</span>
+<span class="sd">      dense lift of the same lists scattered to acc's width</span>
+<span class="sd">    - raises ValueError on an id &lt; 0 or &gt;= acc width, which would land in another point's row</span>
+<span class="sd">    """</span>
+    <span class="c1"># An id outside [0, num_classes) would write into another point's row</span>
+    <span class="n">lo</span><span class="p">,</span> <span class="n">hi</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">ids</span><span class="o">.</span><span class="n">min</span><span class="p">()),</span> <span class="nb">int</span><span class="p">(</span><span class="n">ids</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>
+
+    <span class="k">if</span> <span class="n">lo</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">hi</span> <span class="o">&gt;=</span> <span class="n">acc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"ids span [</span><span class="si">{</span><span class="n">lo</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">hi</span><span class="si">}</span><span class="s2">], outside [0, num_classes=</span><span class="si">{</span><span class="n">acc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">)"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Lists as patch rows: (H_p * W_p, K) ids and values</span>
+    <span class="n">k</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">acc</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+    <span class="n">values</span> <span class="o">=</span> <span class="n">values</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">acc</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span>
+    <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">image_size</span>
+
+    <span class="c1"># Patch-grid coords, clamped as border padding clamps them</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="p">(</span><span class="n">cols</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">width</span> <span class="o">/</span> <span class="n">W</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="p">(</span><span class="n">rows</span> <span class="o">+</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">height</span> <span class="o">/</span> <span class="n">H</span> <span class="o">-</span> <span class="mf">0.5</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">x0</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">floor</span><span class="p">()</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+    <span class="n">y0</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">floor</span><span class="p">()</span><span class="o">.</span><span class="n">long</span><span class="p">()</span>
+    <span class="n">x1</span> <span class="o">=</span> <span class="p">(</span><span class="n">x0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">max</span><span class="o">=</span><span class="n">width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">y1</span> <span class="o">=</span> <span class="p">(</span><span class="n">y0</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">max</span><span class="o">=</span><span class="n">height</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">wx</span> <span class="o">=</span> <span class="n">x</span> <span class="o">-</span> <span class="n">x0</span>
+    <span class="n">wy</span> <span class="o">=</span> <span class="n">y</span> <span class="o">-</span> <span class="n">y0</span>
+
+    <span class="c1"># Four nearest patches per point, each weighted by its bilinear share times the point weight</span>
+    <span class="n">corners</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">y0</span> <span class="o">*</span> <span class="n">width</span> <span class="o">+</span> <span class="n">x0</span><span class="p">,</span> <span class="n">y0</span> <span class="o">*</span> <span class="n">width</span> <span class="o">+</span> <span class="n">x1</span><span class="p">,</span> <span class="n">y1</span> <span class="o">*</span> <span class="n">width</span> <span class="o">+</span> <span class="n">x0</span><span class="p">,</span> <span class="n">y1</span> <span class="o">*</span> <span class="n">width</span> <span class="o">+</span> <span class="n">x1</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">corner_w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">wy</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">wx</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">wy</span><span class="p">)</span> <span class="o">*</span> <span class="n">wx</span><span class="p">,</span> <span class="n">wy</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">wx</span><span class="p">),</span> <span class="n">wy</span> <span class="o">*</span> <span class="n">wx</span><span class="p">])</span>
+    <span class="n">corner_w</span> <span class="o">*=</span> <span class="n">weights</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
+
+    <span class="c1"># K entries per patch into the flat accumulator: row * num_classes + id</span>
+    <span class="n">flat</span> <span class="o">=</span> <span class="n">idx</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">acc</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">ids</span><span class="p">[</span><span class="n">corners</span><span class="p">]</span>
+    <span class="n">weighted</span> <span class="o">=</span> <span class="n">values</span><span class="p">[</span><span class="n">corners</span><span class="p">]</span> <span class="o">*</span> <span class="n">corner_w</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">acc</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">flat</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">weighted</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+
+
+<span class="c1">########################################################</span>
+<span class="c1">########## Feature transfer ############################</span>
+<span class="c1">########################################################</span>
+
+
+<div class="viewcode-block" id="transfer_features">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.lifting.transfer_features">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">transfer_features</span><span class="p">(</span>
+    <span class="n">targets</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">features</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">k</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="n">max_dist</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.03</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Gaussian-weighted k-NN scatter of point features onto target positions.</span>
+
+<span class="sd">    - targets: mesh vertices, or the points themselves to smooth features over k neighbors</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        targets: (M, 3) positions receiving features.</span>
+<span class="sd">        points: (P, 3) point positions in the same frame.</span>
+<span class="sd">        features: (P, D) per-point features.</span>
+<span class="sd">        k: nearest targets each point contributes to.</span>
+<span class="sd">        max_dist: points whose nearest target is farther than this (world units) are dropped.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        (M, D) array in features.dtype; targets no point reached are zero.</span>
+<span class="sd">    """</span>
+    <span class="n">targets</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span>
+    <span class="n">M</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span>
+    <span class="n">D</span> <span class="o">=</span> <span class="n">features</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Nearest-target query for every point; workers=-1 uses all cores</span>
+    <span class="n">tree</span> <span class="o">=</span> <span class="n">cKDTree</span><span class="p">(</span><span class="n">targets</span><span class="p">)</span>
+    <span class="n">distances</span><span class="p">,</span> <span class="n">indices</span> <span class="o">=</span> <span class="n">tree</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">points</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">k</span><span class="p">,</span> <span class="n">workers</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># k=1 collapses the neighbor axis; restore it so the kernel below is uniform</span>
+    <span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">distances</span> <span class="o">=</span> <span class="n">distances</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>
+        <span class="n">indices</span> <span class="o">=</span> <span class="n">indices</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">]</span>
+
+    <span class="c1"># Drop points whose closest target is beyond the truncation band</span>
+    <span class="n">valid_mask</span> <span class="o">=</span> <span class="n">distances</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="n">max_dist</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">valid_mask</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">M</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">features</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="n">distances</span> <span class="o">=</span> <span class="n">distances</span><span class="p">[</span><span class="n">valid_mask</span><span class="p">]</span>
+    <span class="n">indices</span> <span class="o">=</span> <span class="n">indices</span><span class="p">[</span><span class="n">valid_mask</span><span class="p">]</span>
+    <span class="n">feats</span> <span class="o">=</span> <span class="n">features</span><span class="p">[</span><span class="n">valid_mask</span><span class="p">]</span>
+
+    <span class="c1"># Move the aggregation to the GPU (float32); one .cpu() at the end</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
+    <span class="n">distances</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">distances</span><span class="p">)</span>
+    <span class="n">indices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">indices</span><span class="p">)</span>
+    <span class="n">feats</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">feats</span><span class="p">)</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">distances</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">indices</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">feats</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Gaussian kernel over neighbor distances; floored sigma keeps all-zero distances finite (uniform weights)</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">d</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="mf">1e-12</span><span class="p">)</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="p">(</span><span class="n">d</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">sigma</span><span class="o">**</span><span class="mi">2</span><span class="p">))</span>
+
+    <span class="c1"># Normalize weights per point (over k)</span>
+    <span class="n">w</span> <span class="o">=</span> <span class="n">w</span> <span class="o">/</span> <span class="n">w</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># Scatter weighted features to targets; accumulate weights for normalization</span>
+    <span class="n">acc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">M</span><span class="p">,</span> <span class="n">D</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">wsum</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">M</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">k</span><span class="p">):</span>
+        <span class="n">acc</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">idx</span><span class="p">[:,</span> <span class="n">j</span><span class="p">],</span> <span class="n">f</span> <span class="o">*</span> <span class="n">w</span><span class="p">[:,</span> <span class="n">j</span> <span class="p">:</span> <span class="n">j</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span>
+        <span class="n">wsum</span><span class="o">.</span><span class="n">index_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">idx</span><span class="p">[:,</span> <span class="n">j</span><span class="p">],</span> <span class="n">w</span><span class="p">[:,</span> <span class="n">j</span> <span class="p">:</span> <span class="n">j</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span>
+
+    <span class="c1"># Normalize aggregated features by summed weights (untouched targets stay zero)</span>
+    <span class="n">nz</span> <span class="o">=</span> <span class="n">wsum</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span>
+    <span class="n">acc</span><span class="p">[</span><span class="n">nz</span><span class="p">]</span> <span class="o">/=</span> <span class="n">wsum</span><span class="p">[</span><span class="n">nz</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">acc</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">features</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

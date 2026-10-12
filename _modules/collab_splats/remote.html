@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.remote &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/remote';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.remote</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.remote</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Scene-level access to the curated and processed GCS buckets.</span>
+
+<span class="sd">- a scene id is the curated dir name; its processed outputs live under the same name</span>
+<span class="sd">- transport is collab-data's RcloneClient; this module knows buckets, ids and excludes</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_data.data_dashboard.rclone_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">RcloneClient</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">########################################</span>
+<span class="c1"># Constants</span>
+<span class="c1">########################################</span>
+
+<span class="c1"># One path segment, no leading "." or "-": ids are joined onto local output paths</span>
+<span class="n">SCENE_ID_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">"^[A-Za-z0-9][A-Za-z0-9_.-]*$"</span><span class="p">)</span>
+
+<span class="c1"># Never pushed: caches, build databases, source video; images/ is pushed, so images/ patterns need a leading slash</span>
+<span class="n">PUSH_EXCLUDES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="c1"># Scene-root temporary full-width features; the 2D codes and &lt;backend&gt;/semantics are pushed</span>
+    <span class="s2">"/semantics/*_features.zarr/**"</span><span class="p">,</span>
+    <span class="c1"># Source video, already in the curated bucket; bracketed because rclone globs are case sensitive</span>
+    <span class="s2">"*.[Mm][Pp]4"</span><span class="p">,</span>
+    <span class="s2">"*.[Mm][Oo][Vv]"</span><span class="p">,</span>
+    <span class="s2">"*.[Aa][Vv][Ii]"</span><span class="p">,</span>
+    <span class="c1"># SIFT databases and hloc intermediates, rebuilt from images/</span>
+    <span class="s2">"/*/colmap/instantsfm.db"</span><span class="p">,</span>
+    <span class="s2">"/*/colmap/colmap.db"</span><span class="p">,</span>
+    <span class="s2">"/*/colmap/hloc/**"</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># rclone flags that log a one-line progress stat every 2s at NOTICE, so on_line sees it</span>
+<span class="n">STATS_ARGS</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"--stats"</span><span class="p">,</span> <span class="s2">"2s"</span><span class="p">,</span> <span class="s2">"--stats-one-line"</span><span class="p">,</span> <span class="s2">"--stats-log-level"</span><span class="p">,</span> <span class="s2">"NOTICE"</span><span class="p">)</span>
+
+<span class="c1">########################################</span>
+<span class="c1"># Source</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="SceneSource">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">SceneSource</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Curated scene listing and processed-output transfers for one rclone remote.</span>
+
+<span class="sd">    - listings are memoized for listing_ttl seconds; transfers invalidate what they change</span>
+<span class="sd">    - an absent GCS prefix lists as []; any rclone failure raises, so absent never looks like unreachable</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">client</span><span class="p">:</span> <span class="n">RcloneClient</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">curated</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"environments-curated"</span><span class="p">,</span>
+        <span class="n">processed</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"environments-processed"</span><span class="p">,</span>
+        <span class="n">video_exts</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="s2">".mp4"</span><span class="p">,</span> <span class="s2">".mov"</span><span class="p">,</span> <span class="s2">".avi"</span><span class="p">),</span>
+        <span class="n">listing_ttl</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Bind a client and the two buckets.</span>
+
+<span class="sd">        - a client that fails to construct degrades to None; check_available retries it</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            client: rclone client; None builds the default one.</span>
+<span class="sd">            curated: bucket of input scenes, one video per scene dir.</span>
+<span class="sd">            processed: bucket receiving pipeline outputs.</span>
+<span class="sd">            video_exts: lower-case extensions accepted as a scene's video.</span>
+<span class="sd">            listing_ttl: seconds a memoized listing stays fresh.</span>
+<span class="sd">        """</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">curated</span> <span class="o">=</span> <span class="n">curated</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">processed</span> <span class="o">=</span> <span class="n">processed</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">video_exts</span> <span class="o">=</span> <span class="n">video_exts</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">listing_ttl</span> <span class="o">=</span> <span class="n">listing_ttl</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_listing_cache</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="c1"># Build the default client; a broken rclone surfaces on first use, not here</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">client</span>
+
+        <span class="k">if</span> <span class="n">client</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">RcloneClient</span><span class="p">()</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">"rclone unavailable: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_require_client</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RcloneClient</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        The client, or RuntimeError when rclone never came up.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">"rclone is not available"</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bucket</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        `&lt;remote&gt;:&lt;bucket&gt;[/&lt;path&gt;]` for this client's remote.</span>
+<span class="sd">        """</span>
+        <span class="n">remote</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">remote_name</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">bucket</span><span class="si">}</span><span class="s2">"</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">remote</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">path</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s1">'/'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span> <span class="k">if</span> <span class="n">path</span> <span class="k">else</span> <span class="n">remote</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_cached</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span> <span class="n">producer</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Memoized listing for key, refreshed once the TTL has elapsed.</span>
+
+<span class="sd">        - cached values are shared by reference; callers must not mutate them</span>
+<span class="sd">        """</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+        <span class="n">hit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_listing_cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">hit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">hit</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">now</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">hit</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+        <span class="c1"># Drop other expired entries so the memo does not grow unbounded</span>
+        <span class="n">expired</span> <span class="o">=</span> <span class="p">[</span><span class="n">k</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="p">(</span><span class="n">exp</span><span class="p">,</span> <span class="n">_v</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_listing_cache</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">exp</span> <span class="o">&lt;=</span> <span class="n">now</span><span class="p">]</span>
+
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">expired</span><span class="p">:</span>
+            <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_listing_cache</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+
+        <span class="c1"># Produce and memoize a fresh value</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">producer</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_listing_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">now</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">listing_ttl</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">value</span>
+
+<div class="viewcode-block" id="SceneSource.invalidate">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.invalidate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">invalidate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Drop one memoized listing, or all of them.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            key: the cache key to drop; None clears the whole cache.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_listing_cache</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_listing_cache</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="SceneSource.check_available">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.check_available">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_available</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Uncached liveness probe against the curated bucket.</span>
+
+<span class="sd">        - tells "this scene failed" apart from "rclone stopped working"</span>
+<span class="sd">        - bypasses the listing memo, so a stale success cannot answer</span>
+<span class="sd">        - retries client construction when rclone was unavailable at init</span>
+<span class="sd">        - an empty bucket still counts as available</span>
+<span class="sd">        - never raises</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            True when rclone can list the curated bucket right now.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Retry a client that failed at construction, or a transient fault would stick forever</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">RcloneClient</span><span class="p">()</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"rclone still unavailable on re-attempt: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+                <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="c1"># Catch-all on purpose: the probe must answer, never raise the fault it detects</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">list_directory</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+                <span class="s2">"rclone liveness probe failed against </span><span class="si">%s</span><span class="s2">: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="p">,</span> <span class="n">exc</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="k">return</span> <span class="kc">True</span></div>
+
+
+    <span class="c1">########################################</span>
+    <span class="c1"># Curated inputs</span>
+    <span class="c1">########################################</span>
+
+<div class="viewcode-block" id="SceneSource.list_scenes">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.list_scenes">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">list_scenes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Scene ids in the curated bucket.</span>
+
+<span class="sd">        - dirs failing SCENE_ID_RE are skipped with a warning</span>
+<span class="sd">        - an unreachable bucket raises instead of listing empty</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Sorted dir names directly under the curated bucket.</span>
+<span class="sd">        """</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_produce</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+            <span class="n">entries</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">list_directory</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">entries</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                    <span class="s2">"</span><span class="si">%s</span><span class="s2"> listed empty — no curated scenes to process"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">curated</span>
+                <span class="p">)</span>
+                <span class="k">return</span> <span class="p">[]</span>
+
+            <span class="c1"># Name skipped dirs, or a naming drift silently drops scenes from --all</span>
+            <span class="n">dirs</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span><span class="p">[</span><span class="s2">"Name"</span><span class="p">]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span> <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"IsDir"</span><span class="p">)]</span>
+            <span class="n">scenes</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">skipped</span> <span class="o">=</span> <span class="p">[]</span>
+
+            <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">dirs</span><span class="p">):</span>
+                <span class="p">(</span><span class="n">scenes</span> <span class="k">if</span> <span class="n">SCENE_ID_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="k">else</span> <span class="n">skipped</span><span class="p">)</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">skipped</span><span class="p">:</span>
+                <span class="n">listed</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">skipped</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">"skipping non-scene dirs in </span><span class="si">%s</span><span class="s2">: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="p">,</span> <span class="n">listed</span>
+                <span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">scenes</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span><span class="p">((</span><span class="s2">"list_scenes"</span><span class="p">,),</span> <span class="n">_produce</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="SceneSource.scene_video">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.scene_video">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">scene_video</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Video filename inside a curated scene dir.</span>
+
+<span class="sd">        - several videos: warns and takes the first by name</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scene: curated scene id.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The video's filename, not a path.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            FileNotFoundError: the scene dir holds no video.</span>
+<span class="sd">        """</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_produce</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+            <span class="c1"># Video files in the scene dir, by name</span>
+            <span class="n">entries</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">list_directory</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="p">,</span> <span class="n">scene</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+            <span class="n">videos</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span>
+                <span class="n">e</span><span class="p">[</span><span class="s2">"Name"</span><span class="p">]</span>
+                <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">e</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"IsDir"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">e</span><span class="p">[</span><span class="s2">"Name"</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">video_exts</span><span class="p">)</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Reported inside the producer so it fires once per TTL, not on every cached hit</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">videos</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"no video in </span><span class="si">%s</span><span class="s2">/</span><span class="si">%s</span><span class="s2"> — skipping"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="p">,</span> <span class="n">scene</span><span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">videos</span>
+
+        <span class="c1"># Raising outside the producer memoizes the listing, while a fault never reaches the memo</span>
+        <span class="n">videos</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span><span class="p">((</span><span class="s2">"scene_video"</span><span class="p">,</span> <span class="n">scene</span><span class="p">),</span> <span class="n">_produce</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">videos</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"no video in </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">scene</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">videos</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"</span><span class="si">%s</span><span class="s2"> holds </span><span class="si">%d</span><span class="s2"> videos; using </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">scene</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">videos</span><span class="p">),</span> <span class="n">videos</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">videos</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span></div>
+
+
+<div class="viewcode-block" id="SceneSource.fetch_video">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.fetch_video">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fetch_video</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">dest_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">on_line</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Copy the scene's video into dest_dir.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scene: curated scene id.</span>
+<span class="sd">            dest_dir: local directory, created if absent.</span>
+<span class="sd">            on_line: receives each rclone output line.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Local path of the video.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Resolve the video name and create the destination</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scene_video</span><span class="p">(</span><span class="n">scene</span><span class="p">)</span>
+        <span class="n">dest_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">dest_dir</span><span class="p">)</span>
+        <span class="n">dest_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># Copy the one remote file to its local path</span>
+        <span class="n">local</span> <span class="o">=</span> <span class="n">dest_dir</span> <span class="o">/</span> <span class="n">name</span>
+        <span class="n">remote</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">curated</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">scene</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span>
+            <span class="n">remote</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">local</span><span class="p">),</span> <span class="n">extra</span><span class="o">=</span><span class="n">STATS_ARGS</span><span class="p">,</span> <span class="n">on_line</span><span class="o">=</span><span class="n">on_line</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">local</span></div>
+
+
+    <span class="c1">########################################</span>
+    <span class="c1"># Processed state</span>
+    <span class="c1">########################################</span>
+
+<div class="viewcode-block" id="SceneSource.list_processed_scenes">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.list_processed_scenes">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">list_processed_scenes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Scene ids with processed outputs.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Sorted dir names under the processed bucket that match SCENE_ID_RE.</span>
+<span class="sd">        """</span>
+
+        <span class="c1"># Every processed dir comes from push_outputs, so a non-matching name is a stray upload</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">_produce</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+            <span class="n">entries</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">list_directory</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">,</span> <span class="s2">""</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">entries</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"</span><span class="si">%s</span><span class="s2"> listed empty — nothing processed yet"</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">)</span>
+                <span class="k">return</span> <span class="p">[]</span>
+
+            <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span>
+                <span class="n">e</span><span class="p">[</span><span class="s2">"Name"</span><span class="p">]</span>
+                <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span>
+                <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"IsDir"</span><span class="p">)</span> <span class="ow">and</span> <span class="n">SCENE_ID_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">e</span><span class="p">[</span><span class="s2">"Name"</span><span class="p">])</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span><span class="p">((</span><span class="s2">"list_processed_scenes"</span><span class="p">,),</span> <span class="n">_produce</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="SceneSource.has_processed">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.has_processed">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">has_processed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Whether a scene already has processed outputs.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scene: processed scene id.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            True when the scene's processed dir lists non-empty.</span>
+<span class="sd">        """</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_produce</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+            <span class="n">entries</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">list_directory</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">,</span> <span class="n">scene</span><span class="p">,</span> <span class="n">strict</span><span class="o">=</span><span class="kc">True</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">entries</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                    <span class="s2">"</span><span class="si">%s</span><span class="s2"> has no processed outputs yet — </span><span class="si">%s</span><span class="s2"> listed empty"</span><span class="p">,</span>
+                    <span class="n">scene</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">,</span>
+                <span class="p">)</span>
+
+            <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">entries</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cached</span><span class="p">((</span><span class="s2">"has_processed"</span><span class="p">,</span> <span class="n">scene</span><span class="p">),</span> <span class="n">_produce</span><span class="p">)</span></div>
+
+
+    <span class="c1">########################################</span>
+    <span class="c1"># Transfers</span>
+    <span class="c1">########################################</span>
+
+<div class="viewcode-block" id="SceneSource.pull_processed">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.pull_processed">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">pull_processed</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">dest_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+        <span class="n">excludes</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+        <span class="n">on_line</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Copy a scene's processed outputs into dest_dir.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scene: processed scene id.</span>
+<span class="sd">            dest_dir: local directory, created if absent.</span>
+<span class="sd">            excludes: rclone --exclude globs to skip.</span>
+<span class="sd">            on_line: receives each rclone output line.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            dest_dir.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Create the destination, then copy the scene dir minus excludes</span>
+        <span class="n">dest_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">dest_dir</span><span class="p">)</span>
+        <span class="n">dest_dir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">remote</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">,</span> <span class="n">scene</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span>
+            <span class="n">remote</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">dest_dir</span><span class="p">),</span> <span class="n">exclude</span><span class="o">=</span><span class="n">excludes</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="n">STATS_ARGS</span><span class="p">,</span> <span class="n">on_line</span><span class="o">=</span><span class="n">on_line</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">dest_dir</span></div>
+
+
+<div class="viewcode-block" id="SceneSource.push_outputs">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.push_outputs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">push_outputs</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">local_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+        <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">on_line</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="kc">None</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">transfers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+        <span class="n">retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+        <span class="n">timeout</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"300s"</span><span class="p">,</span>
+        <span class="n">contimeout</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"60s"</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Upload a scene directory to the processed bucket, minus PUSH_EXCLUDES.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            local_dir: local scene directory.</span>
+<span class="sd">            scene: processed scene id.</span>
+<span class="sd">            on_line: receives each rclone output line.</span>
+<span class="sd">            transfers: parallel file transfers.</span>
+<span class="sd">            retries: rclone retries of a failed copy.</span>
+<span class="sd">            timeout: rclone IO idle timeout, as an rclone duration.</span>
+<span class="sd">            contimeout: rclone connect timeout, as an rclone duration.</span>
+<span class="sd">        """</span>
+        <span class="c1"># rclone tuning flags, then copy the scene dir minus excludes</span>
+        <span class="n">flags</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="s2">"--gcs-bucket-policy-only"</span><span class="p">,</span>
+            <span class="s2">"--transfers"</span><span class="p">,</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">transfers</span><span class="p">),</span>
+            <span class="s2">"--retries"</span><span class="p">,</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">retries</span><span class="p">),</span>
+        <span class="p">]</span>
+        <span class="n">flags</span> <span class="o">+=</span> <span class="p">[</span><span class="s2">"--timeout"</span><span class="p">,</span> <span class="n">timeout</span><span class="p">,</span> <span class="s2">"--contimeout"</span><span class="p">,</span> <span class="n">contimeout</span><span class="p">,</span> <span class="o">*</span><span class="n">STATS_ARGS</span><span class="p">]</span>
+        <span class="n">remote</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">,</span> <span class="n">scene</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">local_dir</span><span class="p">),</span> <span class="n">remote</span><span class="p">,</span> <span class="n">exclude</span><span class="o">=</span><span class="n">PUSH_EXCLUDES</span><span class="p">,</span> <span class="n">on_line</span><span class="o">=</span><span class="n">on_line</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="n">flags</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Drop memoized listings the push made stale</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">invalidate</span><span class="p">((</span><span class="s2">"has_processed"</span><span class="p">,</span> <span class="n">scene</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">invalidate</span><span class="p">((</span><span class="s2">"list_processed_scenes"</span><span class="p">,))</span></div>
+
+
+<div class="viewcode-block" id="SceneSource.verify_push">
+<a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource.verify_push">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">verify_push</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">local_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">checkers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        True when every pushed local file exists remotely with equal content.</span>
+
+<span class="sd">        - gates the remote driver's local delete, so any failure answers False</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            local_dir: local scene directory.</span>
+<span class="sd">            scene: processed scene id.</span>
+<span class="sd">            checkers: parallel rclone checkers.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            False on a mismatch or when the check could not run.</span>
+<span class="sd">        """</span>
+        <span class="c1"># rclone check flags; log what is being verified</span>
+        <span class="n">flags</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"--gcs-bucket-policy-only"</span><span class="p">,</span> <span class="s2">"--fast-list"</span><span class="p">,</span> <span class="s2">"--checkers"</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">checkers</span><span class="p">)]</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"verifying </span><span class="si">%s</span><span class="s2"> against </span><span class="si">%s</span><span class="s2">/</span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">local_dir</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">,</span> <span class="n">scene</span><span class="p">)</span>
+
+        <span class="c1"># Any fault answers False: cannot-verify must never read as verified</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">remote</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_path</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">processed</span><span class="p">,</span> <span class="n">scene</span><span class="p">)</span>
+            <span class="n">matched</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_require_client</span><span class="p">()</span><span class="o">.</span><span class="n">compare_checksums</span><span class="p">(</span>
+                <span class="nb">str</span><span class="p">(</span><span class="n">local_dir</span><span class="p">),</span> <span class="n">remote</span><span class="p">,</span> <span class="n">exclude</span><span class="o">=</span><span class="n">PUSH_EXCLUDES</span><span class="p">,</span> <span class="n">extra</span><span class="o">=</span><span class="n">flags</span>
+            <span class="p">)</span>
+        <span class="k">except</span> <span class="p">(</span><span class="ne">RuntimeError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">)</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"verify could not run for </span><span class="si">%s</span><span class="s2">, local data kept: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">scene</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">matched</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+                <span class="s2">"verify FAILED for </span><span class="si">%s</span><span class="s2">: content mismatch, local data kept"</span><span class="p">,</span> <span class="n">scene</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">matched</span></div>
+</div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

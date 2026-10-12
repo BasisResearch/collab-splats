@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.splats.trainer &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/splats/trainer';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.splats.trainer</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.splats.trainer</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Gaussian-splat training loop on gsplat.</span>
+
+<span class="sd">- `SplatsConfig`: every training knob, parsed from the `splats:` yaml block</span>
+<span class="sd">- `train`: frames, poses and seed points in; splats.ply, ckpt.pt and a quality report out</span>
+<span class="sd">- `primitive` picks the rasterizer (3dgs / 2dgs), `representation` the model (vanilla / scaffold)</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Sequence</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tensor</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">invert_poses</span><span class="p">,</span>
+    <span class="n">rescale_intrinsics</span><span class="p">,</span>
+    <span class="n">shift_intrinsics</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.cameras</span><span class="w"> </span><span class="kn">import</span> <span class="n">CameraOpt</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.checkpoint</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">MODEL_CLASSES</span><span class="p">,</span>
+    <span class="n">REPRESENTATIONS</span><span class="p">,</span>
+    <span class="n">write_outputs</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.losses</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">compute_losses</span><span class="p">,</span>
+    <span class="n">default_losses</span><span class="p">,</span>
+    <span class="n">loss_active</span><span class="p">,</span>
+    <span class="n">rescale_depth_units</span><span class="p">,</span>
+    <span class="n">validate_schedule</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.scaffold</span><span class="w"> </span><span class="kn">import</span> <span class="n">ScaffoldConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">cached_target</span><span class="p">,</span>
+    <span class="n">compute_scene_scale</span><span class="p">,</span>
+    <span class="n">denormalize_cameras</span><span class="p">,</span>
+    <span class="n">downscale_factor</span><span class="p">,</span>
+    <span class="n">scene_normalization</span><span class="p">,</span>
+    <span class="n">view_order</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.progress</span><span class="w"> </span><span class="kn">import</span> <span class="n">progress</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="n">PRIMITIVES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"3dgs"</span><span class="p">,</span> <span class="s2">"2dgs"</span><span class="p">)</span>
+
+<span class="c1">########################################</span>
+<span class="c1"># Config</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="SplatsConfig">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.trainer.SplatsConfig">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SplatsConfig</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Training settings: the `splats:` yaml block, defaults from gsplat's example trainer.</span>
+<span class="sd">    """</span>
+
+    <span class="n">primitive</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"3dgs"</span>
+    <span class="n">representation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"vanilla"</span>  <span class="c1"># vanilla | scaffold</span>
+    <span class="n">scaffold</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># only with representation: scaffold</span>
+    <span class="n">max_steps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30000</span>
+    <span class="n">pose_opt</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">appearance_opt</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># per-image color correction</span>
+    <span class="n">losses</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># None -&gt; default_losses(primitive)</span>
+
+    <span class="c1"># Appearance</span>
+    <span class="n">sh_degree</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
+    <span class="n">sh_degree_interval</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1000</span>  <span class="c1"># steps between SH band unlocks</span>
+    <span class="n">init_opacity</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span>
+
+    <span class="c1"># Learning rates; means_lr and pose_lr are scaled by the scene extent</span>
+    <span class="n">means_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.6e-4</span>
+    <span class="n">scales_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5e-3</span>
+    <span class="n">quats_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-3</span>
+    <span class="n">opacities_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5e-2</span>
+    <span class="n">sh0_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.5e-3</span>
+    <span class="n">shN_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.25e-4</span>
+    <span class="n">pose_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-5</span>
+    <span class="n">appearance_lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-3</span>
+
+    <span class="c1"># Densification</span>
+    <span class="n">cap_max</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1_000_000</span>  <span class="c1"># 3dgs: max Gaussian count</span>
+    <span class="c1"># 2dgs: gradient threshold for split/duplicate (gsplat's non-absgrad default)</span>
+    <span class="n">grow_grad2d</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2e-4</span>
+
+    <span class="n">log_every</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span>
+
+    <span class="c1"># Coarse-to-fine: start at 1/2^num_downscales, double every resolution_schedule steps; 0 off</span>
+    <span class="n">num_downscales</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">resolution_schedule</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3000</span>
+
+    <span class="c1"># Train in splatfacto's unit-cube frame; outputs are mapped back to world units</span>
+    <span class="n">normalize_scene</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Fill in default losses, check max_steps, and parse the scaffold block.</span>
+<span class="sd">        """</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">losses</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">losses</span> <span class="o">=</span> <span class="n">default_losses</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">primitive</span><span class="p">)</span>
+
+        <span class="c1"># At least one step</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_steps</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"splats.max_steps must be &gt;= 1, got </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">max_steps</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="c1"># Parsed scaffold block, kept off the fields so asdict(cfg) matches the yaml</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">representation</span> <span class="o">==</span> <span class="s2">"scaffold"</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaffold_config</span> <span class="o">=</span> <span class="n">ScaffoldConfig</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scaffold</span> <span class="ow">or</span> <span class="p">{})</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scaffold_config</span> <span class="o">=</span> <span class="kc">None</span>
+
+<div class="viewcode-block" id="SplatsConfig.from_dict">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.trainer.SplatsConfig.from_dict">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_dict</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">block</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"SplatsConfig"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Config from the `splats:` yaml block, validated.</span>
+
+<span class="sd">        - a given `losses` block replaces the defaults, it is not merged</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            block: the `splats:` yaml mapping; `enabled` is ignored.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            The validated config.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: unknown key, primitive or representation, SH set on scaffold, or bad losses.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Unknown keys are likely typos: refuse them</span>
+        <span class="n">allowed_keys</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"enabled"</span><span class="p">,</span> <span class="o">*</span><span class="bp">cls</span><span class="o">.</span><span class="n">__dataclass_fields__</span><span class="p">}</span>
+        <span class="n">unknown_keys</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">block</span><span class="p">)</span> <span class="o">-</span> <span class="n">allowed_keys</span>
+
+        <span class="k">if</span> <span class="n">unknown_keys</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats: unknown keys </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">unknown_keys</span><span class="p">)</span><span class="si">}</span><span class="s2">; allowed </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">allowed_keys</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="n">fields</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">value</span> <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">block</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">key</span> <span class="o">!=</span> <span class="s2">"enabled"</span><span class="p">}</span>
+        <span class="n">cfg</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span><span class="o">**</span><span class="n">fields</span><span class="p">)</span>
+
+        <span class="c1"># Known primitive</span>
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">PRIMITIVES</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.primitive must be one of </span><span class="si">{</span><span class="n">PRIMITIVES</span><span class="si">}</span><span class="s2">, got '</span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span><span class="si">}</span><span class="s2">'"</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Known representation; a scaffold block needs representation: scaffold</span>
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">representation</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">REPRESENTATIONS</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"splats.representation must be one of </span><span class="si">{</span><span class="n">REPRESENTATIONS</span><span class="si">}</span><span class="s2">, got '</span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">representation</span><span class="si">}</span><span class="s2">'"</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">scaffold</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cfg</span><span class="o">.</span><span class="n">representation</span> <span class="o">!=</span> <span class="s2">"scaffold"</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"splats.scaffold requires representation: scaffold"</span><span class="p">)</span>
+
+        <span class="c1"># Scaffold has no SH; only a non-default SH value is an error</span>
+        <span class="n">sh_keys</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"sh_degree"</span><span class="p">,</span> <span class="s2">"sh_degree_interval"</span><span class="p">)</span>
+        <span class="n">sh_overridden</span> <span class="o">=</span> <span class="nb">any</span><span class="p">(</span>
+            <span class="n">key</span> <span class="ow">in</span> <span class="n">block</span> <span class="ow">and</span> <span class="n">block</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">!=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">__dataclass_fields__</span><span class="p">[</span><span class="n">key</span><span class="p">]</span><span class="o">.</span><span class="n">default</span>
+            <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">sh_keys</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">representation</span> <span class="o">==</span> <span class="s2">"scaffold"</span> <span class="ow">and</span> <span class="n">sh_overridden</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">"splats.sh_degree / sh_degree_interval are vanilla-only; scaffold decodes RGB from mlp_color"</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Loss schedule</span>
+        <span class="k">assert</span> <span class="n">cfg</span><span class="o">.</span><span class="n">losses</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="n">validate_schedule</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">losses</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">cfg</span></div>
+</div>
+
+
+
+<span class="c1">########################################</span>
+<span class="c1"># Training</span>
+<span class="c1">########################################</span>
+
+
+<div class="viewcode-block" id="train">
+<a class="viewcode-back" href="../../../api/splats.html#collab_splats.splats.trainer.train">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">train</span><span class="p">(</span>
+    <span class="n">cfg</span><span class="p">:</span> <span class="n">SplatsConfig</span><span class="p">,</span>
+    <span class="n">images</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">world_to_cam</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">colors</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">out_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="n">depth_targets</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">image_ids</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+    <span class="n">min_points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">100</span><span class="p">,</span>
+    <span class="n">lr_decay</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.01</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Train a splat model and write splats.ply, ckpt.pt and the quality report to `out_dir`.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        cfg: run config.</span>
+<span class="sd">        images: (n_views, H, W, 3) uint8 frames.</span>
+<span class="sd">        world_to_cam: (n_views, 4, 4) COLMAP-convention poses.</span>
+<span class="sd">        intrinsics: (n_views, 3, 3) pixel-center K (pixel i at coordinate i) at frame resolution.</span>
+<span class="sd">        points: (P, 3) float32 seed points.</span>
+<span class="sd">        colors: (P, 3) uint8 seed colors.</span>
+<span class="sd">        out_dir: output directory; created if absent.</span>
+<span class="sd">        depth_targets: optional (n_views, h, w) depth at any resolution; 0 = no target.</span>
+<span class="sd">        image_ids: source frame index per row of `images`.</span>
+<span class="sd">        min_points: minimum seed point count.</span>
+<span class="sd">        lr_decay: total lr decay over the run; 0.01 = 100x down.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        None; outputs are written to `out_dir`.</span>
+<span class="sd">    """</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="s2">"cuda"</span>
+    <span class="n">n_views</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">images</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">3</span><span class="p">]</span>
+    <span class="n">out_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">out_dir</span><span class="p">)</span>
+
+    <span class="c1"># Refuse too few seed points or mismatched per-view counts</span>
+    <span class="n">n_points</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">n_points</span> <span class="o">&lt;</span> <span class="n">min_points</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"splats: need &gt;= </span><span class="si">{</span><span class="n">min_points</span><span class="si">}</span><span class="s2"> seed points, got </span><span class="si">{</span><span class="n">n_points</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+    <span class="n">n_poses</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">world_to_cam</span><span class="p">)</span>
+    <span class="n">n_intrinsics</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">)</span>
+    <span class="n">n_depth</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">depth_targets</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">len</span><span class="p">(</span><span class="n">depth_targets</span><span class="p">)</span>
+    <span class="n">n_ids</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">image_ids</span><span class="p">)</span>
+    <span class="n">per_view_counts</span> <span class="o">=</span> <span class="p">{</span><span class="n">n_views</span><span class="p">,</span> <span class="n">n_poses</span><span class="p">,</span> <span class="n">n_intrinsics</span><span class="p">,</span> <span class="n">n_ids</span><span class="p">}</span>
+
+    <span class="k">if</span> <span class="n">n_depth</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">per_view_counts</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">n_depth</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">per_view_counts</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"splats: frames mismatch — images </span><span class="si">{</span><span class="n">n_views</span><span class="si">}</span><span class="s2">, world_to_cam </span><span class="si">{</span><span class="n">n_poses</span><span class="si">}</span><span class="s2">, "</span>
+            <span class="sa">f</span><span class="s2">"intrinsics </span><span class="si">{</span><span class="n">n_intrinsics</span><span class="si">}</span><span class="s2">, image_ids </span><span class="si">{</span><span class="n">n_ids</span><span class="si">}</span><span class="s2">, depth_targets </span><span class="si">{</span><span class="n">n_depth</span><span class="si">}</span><span class="s2">"</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Cameras to the GPU, optionally normalized to a unit cube (frames reach the GPU through the target cache)</span>
+    <span class="n">cam_to_world_np</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">world_to_cam</span><span class="p">)</span>
+    <span class="n">world_extent</span> <span class="o">=</span> <span class="n">compute_scene_scale</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">cam_to_world_np</span><span class="p">))</span>
+    <span class="n">loss_schedule</span> <span class="o">=</span> <span class="n">cfg</span><span class="o">.</span><span class="n">losses</span>
+    <span class="k">assert</span> <span class="n">loss_schedule</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+    <span class="n">center</span> <span class="o">=</span> <span class="n">normalize_factor</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">normalize_scene</span><span class="p">:</span>
+        <span class="n">center</span><span class="p">,</span> <span class="n">normalize_factor</span> <span class="o">=</span> <span class="n">scene_normalization</span><span class="p">(</span><span class="n">cam_to_world_np</span><span class="p">)</span>
+        <span class="n">cam_to_world_np</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">cam_to_world_np</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">-</span> <span class="n">center</span>
+        <span class="p">)</span> <span class="o">*</span> <span class="n">normalize_factor</span>
+        <span class="n">points</span> <span class="o">=</span> <span class="p">(</span><span class="n">points</span> <span class="o">-</span> <span class="n">center</span><span class="p">)</span> <span class="o">*</span> <span class="n">normalize_factor</span>
+
+        <span class="k">if</span> <span class="n">depth_targets</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">depth_targets</span> <span class="o">=</span> <span class="n">depth_targets</span> <span class="o">*</span> <span class="n">normalize_factor</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">"splats: normalized scene, center </span><span class="si">%s</span><span class="s2"> scale </span><span class="si">%.4g</span><span class="s2">"</span><span class="p">,</span>
+            <span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">center</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+            <span class="n">normalize_factor</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Depth-unit loss settings follow the normalization</span>
+        <span class="n">loss_schedule</span> <span class="o">=</span> <span class="n">rescale_depth_units</span><span class="p">(</span><span class="n">loss_schedule</span><span class="p">,</span> <span class="n">normalize_factor</span><span class="p">)</span>
+
+    <span class="c1"># gsplat puts pixel i's center at i + 0.5</span>
+    <span class="n">intrinsics</span> <span class="o">=</span> <span class="n">shift_intrinsics</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">,</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">))</span>
+
+    <span class="n">cam_to_world</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">cam_to_world_np</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">intrinsics_gpu</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Intrinsics per coarse-to-fine factor, on the (H // f, W // f) grid</span>
+    <span class="n">native_hw</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">])</span>
+    <span class="n">n_levels</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">num_downscales</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">intrinsics_by_factor</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">level</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_levels</span><span class="p">):</span>
+        <span class="n">factor</span> <span class="o">=</span> <span class="mi">2</span><span class="o">**</span><span class="n">level</span>
+        <span class="n">scaled</span> <span class="o">=</span> <span class="n">rescale_intrinsics</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">,</span> <span class="n">native_hw</span><span class="p">,</span> <span class="n">native_hw</span> <span class="o">//</span> <span class="n">factor</span><span class="p">)</span>
+        <span class="n">intrinsics_by_factor</span><span class="p">[</span><span class="n">factor</span><span class="p">]</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">scaled</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">scene_scale</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">normalize_scene</span> <span class="k">else</span> <span class="n">compute_scene_scale</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">)</span>
+
+    <span class="c1"># Model and camera refiner, each with its own optimizers</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">MODEL_CLASSES</span><span class="p">[</span><span class="n">cfg</span><span class="o">.</span><span class="n">representation</span><span class="p">](</span>
+        <span class="n">cfg</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">scene_scale</span><span class="p">,</span> <span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="p">,</span> <span class="n">lr_decay</span><span class="o">=</span><span class="n">lr_decay</span>
+    <span class="p">)</span>
+    <span class="n">refine</span> <span class="o">=</span> <span class="n">CameraOpt</span><span class="o">.</span><span class="n">from_config</span><span class="p">(</span>
+        <span class="n">cfg</span><span class="p">,</span>
+        <span class="n">n_views</span><span class="p">,</span>
+        <span class="n">world_extent</span><span class="p">,</span>
+        <span class="n">scene_scale</span><span class="p">,</span>
+        <span class="n">lr_decay</span> <span class="o">**</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="n">cfg</span><span class="o">.</span><span class="n">max_steps</span><span class="p">),</span>
+        <span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+        <span class="s2">"splats: training </span><span class="si">%s</span><span class="s2">/</span><span class="si">%s</span><span class="s2">, </span><span class="si">%d</span><span class="s2"> views, </span><span class="si">%d</span><span class="s2"> primitives at start"</span><span class="p">,</span>
+        <span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span><span class="p">,</span>
+        <span class="n">cfg</span><span class="o">.</span><span class="n">representation</span><span class="p">,</span>
+        <span class="n">n_views</span><span class="p">,</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">n_primitives</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">views</span> <span class="o">=</span> <span class="n">view_order</span><span class="p">(</span><span class="n">n_views</span><span class="p">)</span>
+    <span class="n">loss_values</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">normal_spec</span> <span class="o">=</span> <span class="n">loss_schedule</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"normal_consistency"</span><span class="p">)</span>
+
+    <span class="c1"># GPU targets of the current downscale factor, built on each view's first visit</span>
+    <span class="n">target_cache</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="c1"># Camera ids on the GPU once: a per-step torch.tensor(..., device) syncs the stream</span>
+    <span class="n">camera_ids</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n_views</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="n">progress</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">cfg</span><span class="o">.</span><span class="n">max_steps</span><span class="p">),</span> <span class="n">desc</span><span class="o">=</span><span class="sa">f</span><span class="s2">"splats[</span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">primitive</span><span class="si">}</span><span class="s2">]"</span><span class="p">):</span>
+        <span class="c1"># Next view in shuffled order</span>
+        <span class="n">view</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">views</span><span class="p">)</span>
+
+        <span class="c1"># Coarse-to-fine: the view's target at this factor and its refined camera</span>
+        <span class="n">factor</span> <span class="o">=</span> <span class="n">downscale_factor</span><span class="p">(</span><span class="n">step</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">num_downscales</span><span class="p">,</span> <span class="n">cfg</span><span class="o">.</span><span class="n">resolution_schedule</span><span class="p">)</span>
+        <span class="n">target</span> <span class="o">=</span> <span class="n">cached_target</span><span class="p">(</span>
+            <span class="n">target_cache</span><span class="p">,</span> <span class="n">images</span><span class="p">,</span> <span class="n">depth_targets</span><span class="p">,</span> <span class="n">view</span><span class="p">,</span> <span class="n">factor</span><span class="p">,</span> <span class="n">device</span>
+        <span class="p">)</span>
+        <span class="n">view_intrinsics</span> <span class="o">=</span> <span class="n">intrinsics_by_factor</span><span class="p">[</span><span class="n">factor</span><span class="p">][</span><span class="n">view</span> <span class="p">:</span> <span class="n">view</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">step_height</span><span class="p">,</span> <span class="n">step_width</span> <span class="o">=</span> <span class="n">target</span><span class="p">[</span><span class="s2">"rgb"</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">3</span><span class="p">]</span>
+
+        <span class="n">camera_id</span> <span class="o">=</span> <span class="n">camera_ids</span><span class="p">[</span><span class="n">view</span> <span class="p">:</span> <span class="n">view</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">view_cam_to_world</span> <span class="o">=</span> <span class="n">refine</span><span class="o">.</span><span class="n">camera</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">[</span><span class="n">view</span> <span class="p">:</span> <span class="n">view</span> <span class="o">+</span> <span class="mi">1</span><span class="p">],</span> <span class="n">camera_id</span><span class="p">)</span>
+
+        <span class="c1"># Render; normals only once the normal-consistency loss is active</span>
+        <span class="n">render_normals</span> <span class="o">=</span> <span class="n">loss_active</span><span class="p">(</span><span class="n">step</span><span class="p">,</span> <span class="n">normal_spec</span><span class="p">)</span>
+        <span class="n">render</span><span class="p">,</span> <span class="n">info</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">render</span><span class="p">(</span>
+            <span class="n">view_cam_to_world</span><span class="p">,</span>
+            <span class="n">view_intrinsics</span><span class="p">,</span>
+            <span class="n">step_width</span><span class="p">,</span>
+            <span class="n">step_height</span><span class="p">,</span>
+            <span class="n">camera_id</span><span class="p">,</span>
+            <span class="n">step</span><span class="o">=</span><span class="n">step</span><span class="p">,</span>
+            <span class="n">render_normals</span><span class="o">=</span><span class="n">render_normals</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Color correction, then composite over a random background</span>
+        <span class="n">render</span><span class="p">[</span><span class="s2">"rgb"</span><span class="p">]</span> <span class="o">=</span> <span class="n">refine</span><span class="o">.</span><span class="n">color</span><span class="p">(</span><span class="n">render</span><span class="p">[</span><span class="s2">"rgb"</span><span class="p">],</span> <span class="n">camera_id</span><span class="p">)</span>
+        <span class="n">appearance_params</span> <span class="o">=</span> <span class="n">refine</span><span class="o">.</span><span class="n">color_params</span><span class="p">(</span><span class="n">camera_id</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">appearance_params</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">render</span><span class="p">[</span><span class="s2">"appearance"</span><span class="p">]</span> <span class="o">=</span> <span class="n">appearance_params</span>
+
+        <span class="n">background</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">transparency</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">-</span> <span class="n">render</span><span class="p">[</span><span class="s2">"alpha"</span><span class="p">]</span>
+        <span class="n">render</span><span class="p">[</span><span class="s2">"rgb"</span><span class="p">]</span> <span class="o">=</span> <span class="n">render</span><span class="p">[</span><span class="s2">"rgb"</span><span class="p">]</span> <span class="o">+</span> <span class="n">background</span> <span class="o">*</span> <span class="n">transparency</span>
+
+        <span class="c1"># Loss + backward</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">pre_backward</span><span class="p">(</span><span class="n">step</span><span class="p">,</span> <span class="n">info</span><span class="p">)</span>
+        <span class="n">loss</span><span class="p">,</span> <span class="n">loss_values</span> <span class="o">=</span> <span class="n">compute_losses</span><span class="p">(</span>
+            <span class="n">step</span><span class="p">,</span> <span class="n">render</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">params</span><span class="p">,</span> <span class="n">loss_schedule</span><span class="p">,</span> <span class="n">scene_scale</span>
+        <span class="p">)</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+        <span class="c1"># Optimizer and lr scheduler steps</span>
+        <span class="k">for</span> <span class="n">optimizer</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">optimizers</span> <span class="o">+</span> <span class="n">refine</span><span class="o">.</span><span class="n">optimizers</span><span class="p">:</span>
+            <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+            <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">(</span><span class="n">set_to_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">scheduler</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">schedulers</span> <span class="o">+</span> <span class="n">refine</span><span class="o">.</span><span class="n">schedulers</span><span class="p">:</span>
+            <span class="n">scheduler</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+        <span class="c1"># Densify / prune after the optimizer step: refine rebuilds the Parameters, so .grad is gone</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">post_backward</span><span class="p">(</span><span class="n">step</span><span class="p">,</span> <span class="n">info</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">step</span> <span class="o">%</span> <span class="n">cfg</span><span class="o">.</span><span class="n">log_every</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">rounded</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="n">name</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="mi">4</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">loss_values</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="p">}</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="s2">"splats step </span><span class="si">%d</span><span class="s2"> loss </span><span class="si">%.4f</span><span class="s2"> </span><span class="si">%s</span><span class="s2"> </span><span class="si">%d</span><span class="s2"> </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span>
+                <span class="n">step</span><span class="p">,</span>
+                <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+                <span class="nb">type</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+                <span class="n">model</span><span class="o">.</span><span class="n">n_primitives</span><span class="p">,</span>
+                <span class="n">rounded</span><span class="p">,</span>
+            <span class="p">)</span>
+
+    <span class="c1"># loss_values holds the last step's losses, not an average</span>
+    <span class="n">train_seconds</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+    <span class="n">final_losses</span> <span class="o">=</span> <span class="p">{</span><span class="n">name</span><span class="p">:</span> <span class="n">value</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">loss_values</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+    <span class="c1"># Map model, cameras and pose deltas back to world units</span>
+    <span class="k">if</span> <span class="n">cfg</span><span class="o">.</span><span class="n">normalize_scene</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="n">center</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">normalize_factor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="n">model</span><span class="o">.</span><span class="n">denormalize</span><span class="p">(</span><span class="n">center</span><span class="p">,</span> <span class="n">normalize_factor</span><span class="p">)</span>
+        <span class="n">denormalize_cameras</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">,</span> <span class="n">center</span><span class="p">,</span> <span class="n">normalize_factor</span><span class="p">)</span>
+        <span class="n">refine</span><span class="o">.</span><span class="n">denormalize</span><span class="p">(</span><span class="n">normalize_factor</span><span class="p">)</span>
+
+    <span class="c1"># Bake the pose deltas into the saved poses</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="n">corrected</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">refine</span><span class="o">.</span><span class="n">camera</span><span class="p">(</span>
+                    <span class="n">cam_to_world</span><span class="p">[</span><span class="n">view</span> <span class="p">:</span> <span class="n">view</span> <span class="o">+</span> <span class="mi">1</span><span class="p">],</span> <span class="n">camera_ids</span><span class="p">[</span><span class="n">view</span> <span class="p">:</span> <span class="n">view</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+                <span class="p">)</span>
+                <span class="k">for</span> <span class="n">view</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_views</span><span class="p">)</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Write outputs: corrected poses for ckpt and renders, training poses for the ply</span>
+    <span class="n">write_outputs</span><span class="p">(</span>
+        <span class="n">cfg</span><span class="p">,</span>
+        <span class="n">model</span><span class="p">,</span>
+        <span class="n">refine</span><span class="p">,</span>
+        <span class="n">images</span><span class="p">,</span>
+        <span class="nb">list</span><span class="p">(</span><span class="n">image_ids</span><span class="p">),</span>
+        <span class="n">corrected</span><span class="p">,</span>
+        <span class="n">intrinsics_gpu</span><span class="p">,</span>
+        <span class="n">out_dir</span><span class="p">,</span>
+        <span class="n">train_seconds</span><span class="p">,</span>
+        <span class="n">final_losses</span><span class="p">,</span>
+        <span class="n">training_cam_to_world</span><span class="o">=</span><span class="n">cam_to_world</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

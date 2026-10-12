@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.viewer &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/viewer';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.viewer</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.viewer</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Browser 3D scene viewer over viser: arrays in, named scene nodes out.</span>
+
+<span class="sd">- nodes upsert by name: re-adding a name replaces the node, which is how callers refresh one</span>
+<span class="sd">- point clouds, camera frusta, line sets and meshes; meshes add vertex picking, label lists and a heat overlay</span>
+<span class="sd">- served at http://&lt;host&gt;:&lt;port&gt; over a websocket; no display needed on the host</span>
+<span class="sd">- `python -m collab_splats.viewer &lt;scene&gt;/&lt;backend&gt;`: the mesh, plus a Semantics dropdown</span>
+<span class="sd">  over its lifted stores' vertex arrays</span>
+<span class="sd">- `python -m collab_splats.viewer &lt;outputs root&gt;`: a Scene dropdown over every meshed backend</span>
+
+<span class="sd">Usage:</span>
+<span class="sd">    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\</span>
+<span class="sd">        /workspace/outputs/&lt;scene&gt;/&lt;backend&gt; --port 8080</span>
+<span class="sd">    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\</span>
+<span class="sd">        /workspace/outputs --textured --port 8080</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">zlib</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Sequence</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">open3d</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">o3d</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">trimesh</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">viser</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">viser.transforms</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">viser_tf</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">zarr</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">invert_poses</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.features</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseFeatureExtractor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.store</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_point_features</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">file_sha256</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">pytorch_gc</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.visualization</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_viridis</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="Viewer">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Viewer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Live viser scene of named point clouds, camera frusta, line sets and pickable meshes.</span>
+
+<span class="sd">    - GUI: camera toggle, flat color per node, point size, up direction, reset view</span>
+<span class="sd">    - `points` holds name -&gt; (handle, points, colors, point_size) so toggles can re-send clouds</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        port: port the viser server listens on.</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8080</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">server</span> <span class="o">=</span> <span class="n">viser</span><span class="o">.</span><span class="n">ViserServer</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">"0.0.0.0"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="n">port</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"viser scene viewer on port </span><span class="si">%d</span><span class="s2">"</span><span class="p">,</span> <span class="n">port</span><span class="p">)</span>
+
+        <span class="c1"># Per-name node state, so GUI toggles can restyle nodes already in the scene</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span>
+            <span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">viser</span><span class="o">.</span><span class="n">PointCloudHandle</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span>
+        <span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frustums</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">viser</span><span class="o">.</span><span class="n">CameraFrustumHandle</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="c1"># Meshes: name -&gt; (vertices, faces, raycasting scene); click callbacks and label lists</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">meshes</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span>
+            <span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">o3d</span><span class="o">.</span><span class="n">t</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">RaycastingScene</span><span class="p">]</span>
+        <span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mesh_clicks</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">label_lists</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span>
+            <span class="nb">str</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">viser</span><span class="o">.</span><span class="n">GuiFolderHandle</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">viser</span><span class="o">.</span><span class="n">GuiButtonHandle</span><span class="p">]]</span>
+        <span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">heats</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">viser</span><span class="o">.</span><span class="n">GlbHandle</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">heat_shifts</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_click_registered</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stop</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+
+        <span class="c1"># Camera visibility and flat per-node colors (shows node boundaries)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">show_cameras</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_checkbox</span><span class="p">(</span>
+            <span class="s2">"Show cameras"</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">show_cameras</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span><span class="k">lambda</span> <span class="n">_</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_apply_camera_visibility</span><span class="p">())</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">color_by_node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_checkbox</span><span class="p">(</span>
+            <span class="s2">"Color by node"</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="kc">False</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">color_by_node</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span><span class="k">lambda</span> <span class="n">_</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resend_points</span><span class="p">())</span>
+
+        <span class="c1"># Point size for every cloud; re-sends them on change</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">point_size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_slider</span><span class="p">(</span>
+            <span class="s2">"Point size"</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">0.0005</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mf">0.0005</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="mf">0.003</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">point_size</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span><span class="k">lambda</span> <span class="n">_</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resend_points</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">point_size</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+
+        <span class="c1"># World up axis and a button that frames the scene</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">up_direction</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_dropdown</span><span class="p">(</span>
+            <span class="s2">"Up direction"</span><span class="p">,</span> <span class="p">(</span><span class="s2">"-y"</span><span class="p">,</span> <span class="s2">"+y"</span><span class="p">,</span> <span class="s2">"+z"</span><span class="p">,</span> <span class="s2">"-z"</span><span class="p">,</span> <span class="s2">"+x"</span><span class="p">,</span> <span class="s2">"-x"</span><span class="p">),</span> <span class="n">initial_value</span><span class="o">=</span><span class="s2">"-y"</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">up_direction</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span>
+            <span class="k">lambda</span> <span class="n">_</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">set_up_direction</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">up_direction</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">set_up_direction</span><span class="p">(</span><span class="s2">"-y"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_button</span><span class="p">(</span><span class="s2">"Reset view"</span><span class="p">)</span><span class="o">.</span><span class="n">on_click</span><span class="p">(</span><span class="k">lambda</span> <span class="n">_</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_reset_view</span><span class="p">())</span>
+
+    <span class="c1">########################################################################</span>
+    <span class="c1"># Scene nodes (upsert by name)</span>
+    <span class="c1">########################################################################</span>
+
+<div class="viewcode-block" id="Viewer.add_points">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.add_points">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_points</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">colors</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">point_size</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.003</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Upsert a named point cloud.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: scene node name.</span>
+<span class="sd">            points: (N, 3) positions.</span>
+<span class="sd">            colors: (N, 3) uint8 colors; replaced by the node color while "Color by node" is on.</span>
+<span class="sd">            point_size: dot size, world units.</span>
+<span class="sd">        """</span>
+        <span class="n">shown</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_flat_color</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">points</span><span class="p">))</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">color_by_node</span><span class="o">.</span><span class="n">value</span> <span class="k">else</span> <span class="n">colors</span>
+        <span class="p">)</span>
+        <span class="n">handle</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">add_point_cloud</span><span class="p">(</span>
+            <span class="n">name</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">points</span><span class="p">,</span> <span class="n">colors</span><span class="o">=</span><span class="n">shown</span><span class="p">,</span> <span class="n">point_size</span><span class="o">=</span><span class="n">point_size</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">handle</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">point_size</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Viewer.add_frustum">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.add_frustum">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_frustum</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">pose</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">intrinsic</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">image</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">scale</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+        <span class="n">max_image_width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Upsert one camera frustum.</span>
+
+<span class="sd">        - hierarchical names group a submap's cameras, e.g. "submap_3/cams/frame_0"</span>
+<span class="sd">        - without an image, the sensor size comes from the principal point (image center)</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: scene node name.</span>
+<span class="sd">            pose: (4, 4) world-to-camera.</span>
+<span class="sd">            intrinsic: (3, 3) camera matrix.</span>
+<span class="sd">            image: optional (H, W, 3) uint8 thumbnail shown in the frustum.</span>
+<span class="sd">            scale: frustum size, world units.</span>
+<span class="sd">            max_image_width: thumbnails wider than this are strided down before upload.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Sensor size from the image, strided down to cap the upload; else from the principal point</span>
+        <span class="k">if</span> <span class="n">image</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="n">w</span> <span class="o">&gt;</span> <span class="n">max_image_width</span><span class="p">:</span>
+                <span class="n">stride</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">w</span> <span class="o">/</span> <span class="n">max_image_width</span><span class="p">))</span>
+                <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="p">[::</span><span class="n">stride</span><span class="p">,</span> <span class="p">::</span><span class="n">stride</span><span class="p">]</span>
+
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">w</span><span class="p">,</span> <span class="n">h</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">intrinsic</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">intrinsic</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>
+
+        <span class="n">fov</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">arctan2</span><span class="p">(</span><span class="n">h</span> <span class="o">/</span> <span class="mf">2.0</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">intrinsic</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])))</span>
+
+        <span class="c1"># Repo poses are world-to-camera; viser frames are camera-to-world</span>
+        <span class="n">pose64</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">pose</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">cam_to_world</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">pose64</span><span class="p">)</span>
+        <span class="n">transform</span> <span class="o">=</span> <span class="n">viser_tf</span><span class="o">.</span><span class="n">SE3</span><span class="o">.</span><span class="n">from_matrix</span><span class="p">(</span><span class="n">cam_to_world</span><span class="p">)</span>
+        <span class="n">handle</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">add_camera_frustum</span><span class="p">(</span>
+            <span class="n">name</span><span class="p">,</span>
+            <span class="n">fov</span><span class="o">=</span><span class="n">fov</span><span class="p">,</span>
+            <span class="n">aspect</span><span class="o">=</span><span class="n">w</span> <span class="o">/</span> <span class="n">h</span><span class="p">,</span>
+            <span class="n">scale</span><span class="o">=</span><span class="n">scale</span><span class="p">,</span>
+            <span class="n">image</span><span class="o">=</span><span class="n">image</span><span class="p">,</span>
+            <span class="n">wxyz</span><span class="o">=</span><span class="n">transform</span><span class="o">.</span><span class="n">rotation</span><span class="p">()</span><span class="o">.</span><span class="n">wxyz</span><span class="p">,</span>
+            <span class="n">position</span><span class="o">=</span><span class="n">transform</span><span class="o">.</span><span class="n">translation</span><span class="p">(),</span>
+        <span class="p">)</span>
+        <span class="n">handle</span><span class="o">.</span><span class="n">visible</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">show_cameras</span><span class="o">.</span><span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frustums</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">handle</span></div>
+
+
+<div class="viewcode-block" id="Viewer.add_lines">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.add_lines">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_lines</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">segments</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">color</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">255</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+        <span class="n">line_width</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Upsert named line segments in one color.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: scene node name.</span>
+<span class="sd">            segments: (M, 2, 3) segment endpoints.</span>
+<span class="sd">            color: RGB 0-255.</span>
+<span class="sd">            line_width: pixels.</span>
+<span class="sd">        """</span>
+        <span class="n">segments</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">segments</span><span class="p">)</span>
+        <span class="n">rgb</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">color</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+        <span class="n">colors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">rgb</span><span class="p">,</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">segments</span><span class="p">),</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">add_line_segments</span><span class="p">(</span>
+            <span class="n">name</span><span class="p">,</span> <span class="n">points</span><span class="o">=</span><span class="n">segments</span><span class="p">,</span> <span class="n">colors</span><span class="o">=</span><span class="n">colors</span><span class="p">,</span> <span class="n">line_width</span><span class="o">=</span><span class="n">line_width</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Viewer.add_mesh">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.add_mesh">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_mesh</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">vertices</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">faces</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">colors</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">textured</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">trimesh</span><span class="o">.</span><span class="n">Trimesh</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Upsert a named mesh; picking, labels and the heat overlay index its vertices.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: scene node name.</span>
+<span class="sd">            vertices: (V, 3) positions.</span>
+<span class="sd">            faces: (F, 3) vertex indices.</span>
+<span class="sd">            colors: (V, 3) uint8 vertex colors.</span>
+<span class="sd">            textured: optional display mesh of the same surface, shown instead; picks stay on `vertices`.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Ray-cast scene over the pick geometry</span>
+        <span class="n">rays</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">t</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">RaycastingScene</span><span class="p">()</span>
+        <span class="n">vertices32</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">core</span><span class="o">.</span><span class="n">Tensor</span><span class="p">(</span><span class="n">vertices</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span>
+        <span class="n">faces32</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">core</span><span class="o">.</span><span class="n">Tensor</span><span class="p">(</span><span class="n">faces</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">uint32</span><span class="p">))</span>
+        <span class="n">rays</span><span class="o">.</span><span class="n">add_triangles</span><span class="p">(</span><span class="n">vertices32</span><span class="p">,</span> <span class="n">faces32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">meshes</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">vertices</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">rays</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">heat_shifts</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="c1"># Display the texture when given, else the vertex colors</span>
+        <span class="n">shown</span> <span class="o">=</span> <span class="n">textured</span>
+
+        <span class="k">if</span> <span class="n">shown</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">shown</span> <span class="o">=</span> <span class="n">trimesh</span><span class="o">.</span><span class="n">Trimesh</span><span class="p">(</span>
+                <span class="n">vertices</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">vertex_colors</span><span class="o">=</span><span class="n">colors</span><span class="p">,</span> <span class="n">process</span><span class="o">=</span><span class="kc">False</span>
+            <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">add_mesh_trimesh</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">shown</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Viewer.add_label_list">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.add_label_list">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_label_list</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">words</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+        <span class="n">weights</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+        <span class="n">on_select</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]],</span> <span class="kc">None</span><span class="p">],</span>
+        <span class="n">top_n</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">20</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        GUI buttons for a mesh's heaviest words; a click hands the word to `on_select`.</span>
+
+<span class="sd">        - "Clear" hands None; re-adding replaces the mesh's earlier list</span>
+<span class="sd">        - each button shows its weight rounded, e.g. `grass (~28.7k)`</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: mesh node name; titles the folder.</span>
+<span class="sd">            words: candidate words.</span>
+<span class="sd">            weights: (len(words),) weight per word, e.g. summed probability over vertices.</span>
+<span class="sd">            on_select: called with the clicked word, or None from "Clear".</span>
+<span class="sd">            top_n: words listed, heaviest first.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Heaviest words first</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argsort</span><span class="p">(</span><span class="o">-</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">weights</span><span class="p">),</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"stable"</span><span class="p">)[:</span><span class="n">top_n</span><span class="p">]</span>
+
+        <span class="c1"># Replace an earlier list for this mesh</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">label_lists</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">label_lists</span><span class="p">[</span><span class="n">name</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+        <span class="n">folder</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_folder</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Labels: </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">folder</span><span class="p">:</span>
+            <span class="n">clear</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_button</span><span class="p">(</span><span class="s2">"Clear"</span><span class="p">)</span>
+            <span class="n">clear</span><span class="o">.</span><span class="n">on_click</span><span class="p">(</span><span class="k">lambda</span> <span class="n">_</span><span class="p">:</span> <span class="n">on_select</span><span class="p">(</span><span class="kc">None</span><span class="p">))</span>
+            <span class="n">buttons</span> <span class="o">=</span> <span class="p">[</span><span class="n">clear</span><span class="p">]</span>
+
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">order</span><span class="p">:</span>
+                <span class="n">word</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">words</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+                <span class="n">button</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_button</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">word</span><span class="si">}</span><span class="s2"> (~</span><span class="si">{</span><span class="n">_compact_count</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">weights</span><span class="p">[</span><span class="n">i</span><span class="p">]))</span><span class="si">}</span><span class="s2">)"</span>
+                <span class="p">)</span>
+                <span class="n">button</span><span class="o">.</span><span class="n">on_click</span><span class="p">(</span><span class="k">lambda</span> <span class="n">_</span><span class="p">,</span> <span class="n">word</span><span class="o">=</span><span class="n">word</span><span class="p">:</span> <span class="n">on_select</span><span class="p">(</span><span class="n">word</span><span class="p">))</span>
+                <span class="n">buttons</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">button</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">label_lists</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">folder</span><span class="p">,</span> <span class="n">buttons</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Viewer.show_heat">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.show_heat">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">show_heat</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">scores</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span>
+        <span class="n">floor</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="o">*</span><span class="p">,</span>
+        <span class="n">offset</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.25</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Overlay a per-vertex score on a mesh as a vertex-colored `&lt;name&gt;/heat` sub-mesh.</span>
+
+<span class="sd">        - faces with any vertex at or above `floor` are drawn; colors blend across each face</span>
+<span class="sd">        - faces touching a NaN vertex are skipped, so no heat blends onto vertices without data</span>
+<span class="sd">        - viridis over the drawn vertices' scores, min-max normalized</span>
+<span class="sd">        - the mesh itself is never re-sent: only the drawn sub-mesh goes over the wire</span>
+<span class="sd">        - lift direction: whole-mesh vertex normals times median edge length, computed once per mesh</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: mesh node name, already added with add_mesh.</span>
+<span class="sd">            scores: (V,) score per mesh vertex, NaN = no data: faces touching it are never drawn; None clears.</span>
+<span class="sd">            floor: score a face needs on one vertex to be drawn.</span>
+<span class="sd">            offset: shift along vertex normals, in median edge lengths, against z-fighting.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Drop the previous overlay</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">heats</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">heats</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">scores</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Faces reaching the floor and touching no NaN vertex, remapped onto the vertices they use</span>
+        <span class="n">vertices</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">meshes</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+        <span class="n">face_scores</span> <span class="o">=</span> <span class="n">scores</span><span class="p">[</span><span class="n">faces</span><span class="p">]</span>
+        <span class="n">keep</span> <span class="o">=</span> <span class="p">(</span><span class="n">face_scores</span> <span class="o">&gt;=</span> <span class="n">floor</span><span class="p">)</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">&amp;</span> <span class="o">~</span><span class="n">np</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">face_scores</span><span class="p">)</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">keep</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="k">return</span>
+
+        <span class="n">used</span><span class="p">,</span> <span class="n">inverse</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">faces</span><span class="p">[</span><span class="n">keep</span><span class="p">],</span> <span class="n">return_inverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">sub_faces</span> <span class="o">=</span> <span class="n">inverse</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+
+        <span class="c1"># Viridis over the drawn scores</span>
+        <span class="n">rgb</span> <span class="o">=</span> <span class="n">apply_viridis</span><span class="p">(</span><span class="n">scores</span><span class="p">[</span><span class="n">used</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+
+        <span class="c1"># Whole-mesh lift direction, computed on the first overlay of this mesh</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">heat_shifts</span><span class="p">:</span>
+            <span class="n">surface</span> <span class="o">=</span> <span class="n">trimesh</span><span class="o">.</span><span class="n">Trimesh</span><span class="p">(</span><span class="n">vertices</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">process</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">heat_shifts</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">np</span><span class="o">.</span><span class="n">median</span><span class="p">(</span><span class="n">surface</span><span class="o">.</span><span class="n">edges_unique_length</span><span class="p">)</span> <span class="o">*</span> <span class="n">surface</span><span class="o">.</span><span class="n">vertex_normals</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Lift off the base surface along vertex normals</span>
+        <span class="n">lifted</span> <span class="o">=</span> <span class="n">vertices</span><span class="p">[</span><span class="n">used</span><span class="p">]</span> <span class="o">+</span> <span class="n">offset</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">heat_shifts</span><span class="p">[</span><span class="n">name</span><span class="p">][</span><span class="n">used</span><span class="p">]</span>
+        <span class="n">heat</span> <span class="o">=</span> <span class="n">trimesh</span><span class="o">.</span><span class="n">Trimesh</span><span class="p">(</span><span class="n">lifted</span><span class="p">,</span> <span class="n">sub_faces</span><span class="p">,</span> <span class="n">vertex_colors</span><span class="o">=</span><span class="n">rgb</span><span class="p">,</span> <span class="n">process</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">heats</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">add_mesh_trimesh</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">/heat"</span><span class="p">,</span> <span class="n">heat</span><span class="p">)</span></div>
+
+
+    <span class="c1">########################################################################</span>
+    <span class="c1"># Picking</span>
+    <span class="c1">########################################################################</span>
+
+<div class="viewcode-block" id="Viewer.on_click">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.on_click">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">on_click</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">callback</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">],</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Call `callback` with the vertex nearest where a click first hits the mesh.</span>
+
+<span class="sd">        - one scene-wide click handler serves every mesh; the nearest hit across meshes wins</span>
+<span class="sd">        - no per-node handler, so viser draws no hover outline on the mesh</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            name: mesh node name, already added with add_mesh.</span>
+<span class="sd">            callback: receives the picked vertex index.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Register the scene-wide click handler once; mode switches must not stack it</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_click_registered</span><span class="p">:</span>
+            <span class="n">register</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">on_click</span><span class="p">()</span>
+            <span class="n">register</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_dispatch_click</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_click_registered</span> <span class="o">=</span> <span class="kc">True</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">mesh_clicks</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">callback</span></div>
+
+
+<div class="viewcode-block" id="Viewer.pick">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.pick">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">pick</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">origin</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span> <span class="n">direction</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Clickable mesh and vertex a ray hits first.</span>
+
+<span class="sd">        - only meshes registered with `on_click` are tested</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            origin: ray origin, world frame.</span>
+<span class="sd">            direction: unit ray direction, world frame.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (mesh name, vertex index) of the hit nearest the origin, or None on a miss.</span>
+<span class="sd">        """</span>
+        <span class="n">best_t</span><span class="p">,</span> <span class="n">best</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">inf</span><span class="p">,</span> <span class="kc">None</span>
+
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">mesh_clicks</span><span class="p">:</span>
+            <span class="n">hit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pick_vertex</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">origin</span><span class="p">,</span> <span class="n">direction</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">hit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">hit</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">best_t</span><span class="p">:</span>
+                <span class="n">best_t</span><span class="p">,</span> <span class="n">best</span> <span class="o">=</span> <span class="n">hit</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">hit</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+        <span class="k">return</span> <span class="n">best</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_dispatch_click</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">:</span> <span class="n">viser</span><span class="o">.</span><span class="n">SceneClickEvent</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Hand the clicked vertex of the nearest-hit clickable mesh to its callback; misses are ignored.</span>
+<span class="sd">        """</span>
+        <span class="n">best</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pick</span><span class="p">(</span><span class="n">event</span><span class="o">.</span><span class="n">ray_origin</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">ray_direction</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">best</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">name</span><span class="p">,</span> <span class="n">vertex</span> <span class="o">=</span> <span class="n">best</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mesh_clicks</span><span class="p">[</span><span class="n">name</span><span class="p">](</span><span class="n">vertex</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_pick_vertex</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">origin</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">,</span> <span class="n">direction</span><span class="p">:</span> <span class="nb">tuple</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Ray distance and vertex of the first-hit triangle nearest the hit point.</span>
+
+<span class="sd">        - None when the ray misses the mesh</span>
+<span class="sd">        """</span>
+        <span class="n">vertices</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">rays</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">meshes</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+        <span class="n">ray</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">core</span><span class="o">.</span><span class="n">Tensor</span><span class="p">([[</span><span class="o">*</span><span class="n">origin</span><span class="p">,</span> <span class="o">*</span><span class="n">direction</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">o3d</span><span class="o">.</span><span class="n">core</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">hit</span> <span class="o">=</span> <span class="n">rays</span><span class="o">.</span><span class="n">cast_rays</span><span class="p">(</span><span class="n">ray</span><span class="p">)</span>
+        <span class="n">t</span> <span class="o">=</span> <span class="n">hit</span><span class="p">[</span><span class="s2">"t_hit"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">np</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="c1"># Hit point, then the triangle corner nearest it</span>
+        <span class="n">triangle</span> <span class="o">=</span> <span class="n">faces</span><span class="p">[</span><span class="n">hit</span><span class="p">[</span><span class="s2">"primitive_ids"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()]</span>
+        <span class="n">point</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">origin</span><span class="p">)</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">direction</span><span class="p">)</span>
+        <span class="n">distances</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">vertices</span><span class="p">[</span><span class="n">triangle</span><span class="p">]</span> <span class="o">-</span> <span class="n">point</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">nearest</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argmin</span><span class="p">(</span><span class="n">distances</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">t</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">triangle</span><span class="p">[</span><span class="n">nearest</span><span class="p">])</span>
+
+    <span class="c1">########################################################################</span>
+    <span class="c1"># Keep-alive</span>
+    <span class="c1">########################################################################</span>
+
+<div class="viewcode-block" id="Viewer.serve_forever">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.Viewer.serve_forever">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">serve_forever</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">poll</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Block so the viser server thread outlives the caller; Ctrl-C or setting `_stop` exits.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            poll: seconds between stop checks.</span>
+<span class="sd">        """</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stop</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_stop</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">poll</span><span class="p">)</span>
+
+        <span class="k">except</span> <span class="ne">KeyboardInterrupt</span><span class="p">:</span>
+            <span class="k">pass</span></div>
+
+
+    <span class="c1">########################################################################</span>
+    <span class="c1"># GUI handlers</span>
+    <span class="c1">########################################################################</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_apply_camera_visibility</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Show or hide every frustum to match the checkbox.</span>
+<span class="sd">        """</span>
+        <span class="k">for</span> <span class="n">handle</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">frustums</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="n">handle</span><span class="o">.</span><span class="n">visible</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">show_cameras</span><span class="o">.</span><span class="n">value</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_resend_points</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">point_size</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Re-send every cloud with the current color mode, at `point_size` or its own size.</span>
+
+<span class="sd">        - viser sets colors and point size at add time only</span>
+<span class="sd">        """</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">own_size</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+            <span class="n">size</span> <span class="o">=</span> <span class="n">own_size</span> <span class="k">if</span> <span class="n">point_size</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">point_size</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_points</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">point_size</span><span class="o">=</span><span class="n">size</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_reset_view</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Point every client's camera at the scene centroid from one extent back along -Z.</span>
+
+<span class="sd">        - the scene is every point cloud and mesh vertex; up axis comes from set_up_direction</span>
+<span class="sd">        """</span>
+        <span class="n">clouds</span> <span class="o">=</span> <span class="p">[</span><span class="n">points</span> <span class="k">for</span> <span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="n">points</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">points</span><span class="o">.</span><span class="n">values</span><span class="p">()]</span>
+        <span class="n">clouds</span> <span class="o">+=</span> <span class="p">[</span><span class="n">vertices</span> <span class="k">for</span> <span class="p">(</span><span class="n">vertices</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">)</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">meshes</span><span class="o">.</span><span class="n">values</span><span class="p">()]</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">clouds</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Centroid and bounding-box diagonal of everything shown</span>
+        <span class="n">pts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span><span class="n">clouds</span><span class="p">)</span>
+        <span class="n">center</span> <span class="o">=</span> <span class="n">pts</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">extent</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ptp</span><span class="p">(</span><span class="n">pts</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)))</span>
+
+        <span class="c1"># A single point has no extent; back off one unit</span>
+        <span class="k">if</span> <span class="n">extent</span> <span class="o">==</span> <span class="mf">0.0</span><span class="p">:</span>
+            <span class="n">extent</span> <span class="o">=</span> <span class="mf">1.0</span>
+
+        <span class="k">for</span> <span class="n">client</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">get_clients</span><span class="p">()</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="n">client</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">look_at</span> <span class="o">=</span> <span class="n">center</span>
+            <span class="n">client</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">position</span> <span class="o">=</span> <span class="n">center</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="n">extent</span><span class="p">])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_flat_color</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">n</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Deterministic color from the name's hash, broadcast to (n, 3) uint8.</span>
+<span class="sd">        """</span>
+        <span class="n">rng</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">default_rng</span><span class="p">(</span><span class="n">zlib</span><span class="o">.</span><span class="n">crc32</span><span class="p">(</span><span class="n">name</span><span class="o">.</span><span class="n">encode</span><span class="p">()))</span>
+        <span class="n">color</span> <span class="o">=</span> <span class="n">rng</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">color</span><span class="p">,</span> <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span></div>
+
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Helpers</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_compact_count</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Short count for a button label: 950 -&gt; "950", 28718 -&gt; "28.7k".</span>
+<span class="sd">    """</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="o">&lt;</span> <span class="mi">1000</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">"</span>
+
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">value</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1000</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">k"</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_chart</span><span class="p">(</span><span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">words</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">probs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    SVG bar chart of word probabilities, pinned to the viewport's top left.</span>
+
+<span class="sd">    - x: words, labels tilted 35 degrees; y: probability on a fixed 0-1 axis</span>
+<span class="sd">    """</span>
+    <span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">left</span><span class="p">,</span> <span class="n">bottom</span><span class="p">,</span> <span class="n">top</span> <span class="o">=</span> <span class="mi">420</span><span class="p">,</span> <span class="mi">230</span><span class="p">,</span> <span class="mi">34</span><span class="p">,</span> <span class="mi">80</span><span class="p">,</span> <span class="mi">24</span>
+    <span class="n">plot_h</span> <span class="o">=</span> <span class="n">height</span> <span class="o">-</span> <span class="n">bottom</span> <span class="o">-</span> <span class="n">top</span>
+    <span class="n">step</span> <span class="o">=</span> <span class="p">(</span><span class="n">width</span> <span class="o">-</span> <span class="n">left</span> <span class="o">-</span> <span class="mi">8</span><span class="p">)</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">parts</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="sa">f</span><span class="s1">'&lt;text x="</span><span class="si">{</span><span class="n">left</span><span class="si">}</span><span class="s1">" y="15" fill="#ddd" font-size="12" font-weight="bold"&gt;</span><span class="si">{</span><span class="n">title</span><span class="si">}</span><span class="s1">&lt;/text&gt;'</span>
+    <span class="p">]</span>
+
+    <span class="c1"># Gridlines and y ticks every 0.25</span>
+    <span class="k">for</span> <span class="n">tick</span> <span class="ow">in</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.75</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">):</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">top</span> <span class="o">+</span> <span class="n">plot_h</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">tick</span><span class="p">)</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">'&lt;line x1="</span><span class="si">{</span><span class="n">left</span><span class="si">}</span><span class="s1">" x2="</span><span class="si">{</span><span class="n">width</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">8</span><span class="si">}</span><span class="s1">" y1="</span><span class="si">{</span><span class="n">y</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" y2="</span><span class="si">{</span><span class="n">y</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" stroke="#555" stroke-width="0.5"/&gt;'</span>
+        <span class="p">)</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">'&lt;text x="</span><span class="si">{</span><span class="n">left</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">4</span><span class="si">}</span><span class="s1">" y="</span><span class="si">{</span><span class="n">y</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">3</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" fill="#aaa" font-size="9" text-anchor="end"&gt;</span><span class="si">{</span><span class="n">tick</span><span class="si">:</span><span class="s1">.2f</span><span class="si">}</span><span class="s1">&lt;/text&gt;'</span>
+        <span class="p">)</span>
+
+    <span class="c1"># One bar per word, its label tilted under it</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">word</span><span class="p">,</span> <span class="n">p</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">words</span><span class="p">,</span> <span class="n">probs</span><span class="p">)):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">left</span> <span class="o">+</span> <span class="n">i</span> <span class="o">*</span> <span class="n">step</span>
+        <span class="n">bar_h</span> <span class="o">=</span> <span class="n">plot_h</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+        <span class="n">cx</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="n">step</span> <span class="o">/</span> <span class="mi">2</span>
+        <span class="n">base</span> <span class="o">=</span> <span class="n">top</span> <span class="o">+</span> <span class="n">plot_h</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">'&lt;rect x="</span><span class="si">{</span><span class="n">x</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">2</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" y="</span><span class="si">{</span><span class="n">base</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">bar_h</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" width="</span><span class="si">{</span><span class="n">step</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="mi">4</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" height="</span><span class="si">{</span><span class="n">bar_h</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" fill="#ff5000"/&gt;'</span>
+        <span class="p">)</span>
+        <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">'&lt;text x="</span><span class="si">{</span><span class="n">cx</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" y="</span><span class="si">{</span><span class="n">base</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">10</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">" fill="#ddd" font-size="10" text-anchor="end" '</span>
+            <span class="sa">f</span><span class="s1">'transform="rotate(-35 </span><span class="si">{</span><span class="n">cx</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="n">base</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">10</span><span class="si">:</span><span class="s1">.1f</span><span class="si">}</span><span class="s1">)"&gt;</span><span class="si">{</span><span class="n">word</span><span class="si">}</span><span class="s1">&lt;/text&gt;'</span>
+        <span class="p">)</span>
+
+    <span class="n">svg</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">'&lt;svg width="</span><span class="si">{</span><span class="n">width</span><span class="si">}</span><span class="s1">" height="</span><span class="si">{</span><span class="n">height</span><span class="si">}</span><span class="s1">"&gt;</span><span class="si">{</span><span class="s2">""</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span><span class="si">}</span><span class="s1">&lt;/svg&gt;'</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="s1">'&lt;div style="position:fixed;top:12px;left:12px;z-index:10;padding:6px;'</span>
+        <span class="sa">f</span><span class="s1">'background:#1a1b1ee6;border-radius:6px"&gt;</span><span class="si">{</span><span class="n">svg</span><span class="si">}</span><span class="s1">&lt;/div&gt;'</span>
+    <span class="p">)</span>
+
+
+<span class="c1">########################################################################</span>
+<span class="c1"># Scene: mesh + optional semantics</span>
+<span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_find_stores</span><span class="p">(</span><span class="n">backend_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Lifted stores holding mesh-vertex arrays, extractor name -&gt; store path.</span>
+
+<span class="sd">    - listed: `&lt;backend&gt;/semantics/*_lifted.zarr` with `vertex_word_ids` or `vertex_features`</span>
+<span class="sd">    - a store lifted onto another mesh.ply (`mesh_sha256` differs) is stale and skipped</span>
+<span class="sd">    """</span>
+    <span class="n">mesh_sha256</span> <span class="o">=</span> <span class="n">file_sha256</span><span class="p">(</span><span class="n">backend_dir</span> <span class="o">/</span> <span class="s2">"mesh.ply"</span><span class="p">)</span>
+    <span class="n">stores</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">((</span><span class="n">backend_dir</span> <span class="o">/</span> <span class="s2">"semantics"</span><span class="p">)</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*_lifted.zarr"</span><span class="p">)):</span>
+        <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+
+        <span class="c1"># Points-only stores (dinov2) have nothing on the mesh</span>
+        <span class="k">if</span> <span class="s2">"vertex_word_ids"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">store</span> <span class="ow">and</span> <span class="s2">"vertex_features"</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">store</span><span class="p">:</span>
+            <span class="k">continue</span>
+
+        <span class="c1"># Stale against the mesh: skip, a semantics re-run rewrites it</span>
+        <span class="k">if</span> <span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"mesh_sha256"</span><span class="p">)</span> <span class="o">!=</span> <span class="n">mesh_sha256</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"</span><span class="si">%s</span><span class="s2"> was lifted onto another mesh.ply; re-run semantics with that extractor"</span><span class="p">,</span>
+                <span class="n">path</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">continue</span>
+
+        <span class="n">stores</span><span class="p">[</span><span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"extractor"</span><span class="p">]]</span> <span class="o">=</span> <span class="n">path</span>
+
+    <span class="k">return</span> <span class="n">stores</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_split</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Comma-separated entries, stripped, empties dropped.</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">part</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">","</span><span class="p">)</span> <span class="k">if</span> <span class="n">part</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_word_mode</span><span class="p">(</span><span class="n">viewer</span><span class="p">:</span> <span class="n">Viewer</span><span class="p">,</span> <span class="n">store_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Word query, mass-ranked label list and click probe over an ocr_lens store; returns GUI handles.</span>
+
+<span class="sd">    - heat: per vertex, summed probability of the query words within its stored top-k</span>
+<span class="sd">    - unobserved vertices (top probability 0) score NaN and probe as unobserved</span>
+<span class="sd">    - probe: the clicked vertex's top-10 scene terms (words in some observed vertex's top-10), renormalized</span>
+<span class="sd">    """</span>
+    <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">store_path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+    <span class="n">word_ids</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">store</span><span class="p">[</span><span class="s2">"vertex_word_ids"</span><span class="p">])</span>
+    <span class="n">word_probs</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">store</span><span class="p">[</span><span class="s2">"vertex_word_probs"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"words"</span><span class="p">])</span>
+    <span class="n">row_of</span> <span class="o">=</span> <span class="p">{</span><span class="n">word</span><span class="p">:</span> <span class="n">row</span> <span class="k">for</span> <span class="n">row</span><span class="p">,</span> <span class="n">word</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">words</span><span class="p">)}</span>
+    <span class="n">observed</span> <span class="o">=</span> <span class="n">word_probs</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span>
+
+    <span class="c1"># Scene terms: every word in some observed vertex's top-10</span>
+    <span class="n">is_term</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+    <span class="n">is_term</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">word_ids</span><span class="p">[</span><span class="n">observed</span><span class="p">,</span> <span class="p">:</span><span class="mi">10</span><span class="p">])]</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="c1"># Probe chart, query box, floor, Search and the unknown-word note</span>
+    <span class="n">panel</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_html</span><span class="p">(</span><span class="s2">""</span><span class="p">)</span>
+    <span class="n">query</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_text</span><span class="p">(</span><span class="s2">"Query"</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="s2">""</span><span class="p">)</span>
+    <span class="n">floor</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_slider</span><span class="p">(</span>
+        <span class="s2">"Query min p"</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="mf">0.3</span>
+    <span class="p">)</span>
+    <span class="n">search_button</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_button</span><span class="p">(</span><span class="s2">"Search"</span><span class="p">)</span>
+    <span class="n">note</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_markdown</span><span class="p">(</span><span class="s2">""</span><span class="p">)</span>
+    <span class="n">vertices</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">meshes</span><span class="p">[</span><span class="s2">"mesh"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">marker_radius</span> <span class="o">=</span> <span class="mf">0.005</span> <span class="o">*</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ptp</span><span class="p">(</span><span class="n">vertices</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="n">_</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Draw the summed probability of the query words as heat; faces under the floor hidden.</span>
+<span class="sd">        """</span>
+        <span class="n">typed</span> <span class="o">=</span> <span class="p">[</span><span class="n">word</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">_split</span><span class="p">(</span><span class="n">query</span><span class="o">.</span><span class="n">value</span><span class="p">)]</span>
+        <span class="n">known</span> <span class="o">=</span> <span class="p">[</span><span class="n">word</span> <span class="k">for</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">typed</span> <span class="k">if</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">row_of</span><span class="p">]</span>
+        <span class="n">unknown</span> <span class="o">=</span> <span class="p">[</span><span class="n">word</span> <span class="k">for</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">typed</span> <span class="k">if</span> <span class="n">word</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">row_of</span><span class="p">]</span>
+        <span class="n">note</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"not in vocabulary: </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">unknown</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span> <span class="k">if</span> <span class="n">unknown</span> <span class="k">else</span> <span class="s2">""</span>
+
+        <span class="c1"># Empty query clears; a word outside a vertex's top-k reads as 0 there</span>
+        <span class="n">scores</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">known</span><span class="p">:</span>
+            <span class="n">hit</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">word_ids</span><span class="p">,</span> <span class="p">[</span><span class="n">row_of</span><span class="p">[</span><span class="n">word</span><span class="p">]</span> <span class="k">for</span> <span class="n">word</span> <span class="ow">in</span> <span class="n">known</span><span class="p">])</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="p">(</span><span class="n">word_probs</span> <span class="o">*</span> <span class="n">hit</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">scores</span><span class="p">[</span><span class="o">~</span><span class="n">observed</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span>
+
+        <span class="n">viewer</span><span class="o">.</span><span class="n">show_heat</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="n">scores</span><span class="p">,</span> <span class="n">floor</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">select</span><span class="p">(</span><span class="n">word</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Put a label-list word in the query box (Clear empties it) and search.</span>
+<span class="sd">        """</span>
+        <span class="n">query</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">word</span> <span class="ow">or</span> <span class="s2">""</span>
+        <span class="n">search</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">show</span><span class="p">(</span><span class="n">vertex</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Mark the clicked vertex and chart its top-10 scene terms in the top left.</span>
+<span class="sd">        """</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">add_icosphere</span><span class="p">(</span>
+            <span class="s2">"/probe"</span><span class="p">,</span>
+            <span class="n">radius</span><span class="o">=</span><span class="n">marker_radius</span><span class="p">,</span>
+            <span class="n">color</span><span class="o">=</span><span class="p">(</span><span class="mi">255</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">255</span><span class="p">),</span>
+            <span class="n">position</span><span class="o">=</span><span class="n">vertices</span><span class="p">[</span><span class="n">vertex</span><span class="p">],</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">observed</span><span class="p">[</span><span class="n">vertex</span><span class="p">]:</span>
+            <span class="n">panel</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">_chart</span><span class="p">(</span><span class="sa">f</span><span class="s2">"vertex </span><span class="si">{</span><span class="n">vertex</span><span class="si">}</span><span class="s2">: unobserved"</span><span class="p">,</span> <span class="p">[],</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Scene terms among its stored words, already sorted, renormalized</span>
+        <span class="n">ids</span> <span class="o">=</span> <span class="n">word_ids</span><span class="p">[</span><span class="n">vertex</span><span class="p">]</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">word_probs</span><span class="p">[</span><span class="n">vertex</span><span class="p">]</span>
+        <span class="n">keep</span> <span class="o">=</span> <span class="n">is_term</span><span class="p">[</span><span class="n">ids</span><span class="p">]</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">probs</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">ids</span> <span class="o">=</span> <span class="n">ids</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span>
+        <span class="n">probs</span> <span class="o">=</span> <span class="n">probs</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span> <span class="o">/</span> <span class="n">probs</span><span class="p">[</span><span class="n">keep</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+        <span class="n">panel</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">_chart</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">"vertex </span><span class="si">{</span><span class="n">vertex</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="p">[</span><span class="n">words</span><span class="p">[</span><span class="n">j</span><span class="p">]</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">ids</span><span class="p">[:</span><span class="mi">10</span><span class="p">]],</span> <span class="n">probs</span><span class="p">[:</span><span class="mi">10</span><span class="p">]</span>
+        <span class="p">)</span>
+
+    <span class="c1"># Words ranked by probability mass (expected vertex count); a click on the mesh probes</span>
+    <span class="n">mass</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">bincount</span><span class="p">(</span>
+        <span class="n">word_ids</span><span class="o">.</span><span class="n">ravel</span><span class="p">(),</span> <span class="n">weights</span><span class="o">=</span><span class="n">word_probs</span><span class="o">.</span><span class="n">ravel</span><span class="p">(),</span> <span class="n">minlength</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">viewer</span><span class="o">.</span><span class="n">add_label_list</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="n">words</span><span class="p">,</span> <span class="n">mass</span><span class="p">,</span> <span class="n">select</span><span class="p">)</span>
+    <span class="n">search_button</span><span class="o">.</span><span class="n">on_click</span><span class="p">(</span><span class="n">search</span><span class="p">)</span>
+    <span class="n">viewer</span><span class="o">.</span><span class="n">on_click</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="n">show</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">panel</span><span class="p">,</span> <span class="n">query</span><span class="p">,</span> <span class="n">floor</span><span class="p">,</span> <span class="n">search_button</span><span class="p">,</span> <span class="n">note</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_text_mode</span><span class="p">(</span><span class="n">viewer</span><span class="p">:</span> <span class="n">Viewer</span><span class="p">,</span> <span class="n">store_path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Text query GUI over a queryable extractor's lifted store; returns its handles.</span>
+
+<span class="sd">    - features decoded once on entry; the extractor is built on the first Search</span>
+<span class="sd">    - features move to the extractor's device once, so each Search copies nothing</span>
+<span class="sd">    - unobserved vertices (all-zero raw codes) score NaN: decoded zero codes are not zero</span>
+<span class="sd">    - both die with the handles' callbacks when the mode is switched away</span>
+<span class="sd">    """</span>
+    <span class="n">store</span> <span class="o">=</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">store_path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="s2">"extractor"</span><span class="p">]</span>
+    <span class="n">kwargs</span> <span class="o">=</span> <span class="n">store</span><span class="o">.</span><span class="n">attrs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"extractor_kwargs"</span><span class="p">,</span> <span class="p">{})</span>
+    <span class="n">observed</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">store</span><span class="p">[</span><span class="s2">"vertex_features"</span><span class="p">])</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">features</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">read_point_features</span><span class="p">(</span><span class="n">store_path</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"vertex_features"</span><span class="p">))</span>
+    <span class="n">extractor</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># Query, negatives (Talk2DINO's "object" convention), floor, Search</span>
+    <span class="n">query</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_text</span><span class="p">(</span><span class="s2">"Query"</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="s2">""</span><span class="p">)</span>
+    <span class="n">negatives</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_text</span><span class="p">(</span><span class="s2">"Negatives"</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="s2">"object"</span><span class="p">)</span>
+    <span class="n">floor</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_slider</span><span class="p">(</span>
+        <span class="s2">"Query min score"</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">initial_value</span><span class="o">=</span><span class="mf">0.5</span>
+    <span class="p">)</span>
+    <span class="n">search_button</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_button</span><span class="p">(</span><span class="s2">"Search"</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">search</span><span class="p">(</span><span class="n">_</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Draw the contrastive score of the query against the negatives as heat.</span>
+<span class="sd">        """</span>
+        <span class="k">nonlocal</span> <span class="n">extractor</span><span class="p">,</span> <span class="n">features</span>
+        <span class="n">positives</span> <span class="o">=</span> <span class="n">_split</span><span class="p">(</span><span class="n">query</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+        <span class="c1"># Empty query clears</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">positives</span><span class="p">:</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">show_heat</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">floor</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="n">extractor</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">extractor</span> <span class="o">=</span> <span class="n">BaseFeatureExtractor</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+            <span class="n">features</span> <span class="o">=</span> <span class="n">features</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">extractor</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+            <span class="n">scores</span> <span class="o">=</span> <span class="n">extractor</span><span class="o">.</span><span class="n">score_queries</span><span class="p">(</span>
+                <span class="n">features</span><span class="p">,</span> <span class="n">positives</span><span class="p">,</span> <span class="n">_split</span><span class="p">(</span><span class="n">negatives</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="n">scores</span> <span class="o">=</span> <span class="n">scores</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="n">scores</span><span class="p">[</span><span class="o">~</span><span class="n">observed</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">nan</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">show_heat</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="n">scores</span><span class="p">,</span> <span class="n">floor</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="n">search_button</span><span class="o">.</span><span class="n">on_click</span><span class="p">(</span><span class="n">search</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">query</span><span class="p">,</span> <span class="n">negatives</span><span class="p">,</span> <span class="n">floor</span><span class="p">,</span> <span class="n">search_button</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_build</span><span class="p">(</span>
+    <span class="n">viewer</span><span class="p">:</span> <span class="n">Viewer</span><span class="p">,</span> <span class="n">backend_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">textured</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">viser</span><span class="o">.</span><span class="n">GuiDropdownHandle</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Add the mesh and, when vertex stores exist, the Semantics dropdown that switches modes.</span>
+
+<span class="sd">    - default selection: ocr_lens when listed, else the first by name; `none` clears</span>
+<span class="sd">    - switching clears heat and probe, removes the previous mode's GUI and handlers, builds the new one</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        viewer: viewer to populate.</span>
+<span class="sd">        backend_dir: `&lt;scene&gt;/&lt;backend&gt;` holding mesh.ply.</span>
+<span class="sd">        textured: show texture/mesh.obj; picks stay on mesh.ply.</span>
+<span class="sd">        texture_size: displayed texture edge, pixels.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The Semantics dropdown, or None when no store has vertex arrays.</span>
+<span class="sd">    """</span>
+    <span class="c1"># mesh.ply with its vertex colors, light grey when it has none</span>
+    <span class="n">mesh</span> <span class="o">=</span> <span class="n">trimesh</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">backend_dir</span> <span class="o">/</span> <span class="s2">"mesh.ply"</span><span class="p">,</span> <span class="n">process</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">vertices</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">vertices</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">faces</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">faces</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">mesh</span><span class="o">.</span><span class="n">visual</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="s2">"vertex"</span><span class="p">:</span>
+        <span class="n">colors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">visual</span><span class="o">.</span><span class="n">vertex_colors</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">])</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">colors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">vertices</span><span class="p">),</span> <span class="mi">3</span><span class="p">),</span> <span class="mi">200</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">)</span>
+
+    <span class="c1"># Corner-split OBJ of the same surface, when asked; texture downscaled for display</span>
+    <span class="n">shown</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">textured</span><span class="p">:</span>
+        <span class="n">shown</span> <span class="o">=</span> <span class="n">trimesh</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">backend_dir</span> <span class="o">/</span> <span class="s2">"texture"</span> <span class="o">/</span> <span class="s2">"mesh.obj"</span><span class="p">,</span> <span class="n">process</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="n">material</span> <span class="o">=</span> <span class="n">shown</span><span class="o">.</span><span class="n">visual</span><span class="o">.</span><span class="n">material</span>
+        <span class="n">material</span><span class="o">.</span><span class="n">image</span> <span class="o">=</span> <span class="n">material</span><span class="o">.</span><span class="n">image</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">texture_size</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">),</span> <span class="n">Image</span><span class="o">.</span><span class="n">LANCZOS</span>
+        <span class="p">)</span>
+
+    <span class="n">viewer</span><span class="o">.</span><span class="n">add_mesh</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="n">vertices</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">textured</span><span class="o">=</span><span class="n">shown</span><span class="p">)</span>
+    <span class="n">stores</span> <span class="o">=</span> <span class="n">_find_stores</span><span class="p">(</span><span class="n">backend_dir</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">stores</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">initial</span> <span class="o">=</span> <span class="s2">"ocr_lens"</span> <span class="k">if</span> <span class="s2">"ocr_lens"</span> <span class="ow">in</span> <span class="n">stores</span> <span class="k">else</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">stores</span><span class="p">))</span>
+    <span class="n">dropdown</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_dropdown</span><span class="p">(</span>
+        <span class="s2">"Semantics"</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="p">(</span><span class="s2">"none"</span><span class="p">,</span> <span class="o">*</span><span class="n">stores</span><span class="p">),</span> <span class="n">initial_value</span><span class="o">=</span><span class="n">initial</span>
+    <span class="p">)</span>
+    <span class="n">handles</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">switch</span><span class="p">(</span><span class="n">_</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Tear down the current mode, then build the selected one.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Heat, probe, label list and click handler of the previous mode</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">show_heat</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">scene</span><span class="o">.</span><span class="n">remove_by_name</span><span class="p">(</span><span class="s2">"/probe"</span><span class="p">)</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">mesh_clicks</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="s2">"mesh"</span> <span class="ow">in</span> <span class="n">viewer</span><span class="o">.</span><span class="n">label_lists</span><span class="p">:</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">label_lists</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">"mesh"</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">handle</span> <span class="ow">in</span> <span class="n">handles</span><span class="p">:</span>
+            <span class="n">handle</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+        <span class="n">handles</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="n">pytorch_gc</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">dropdown</span><span class="o">.</span><span class="n">value</span> <span class="o">==</span> <span class="s2">"none"</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Word arrays select word mode, codes text mode</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">stores</span><span class="p">[</span><span class="n">dropdown</span><span class="o">.</span><span class="n">value</span><span class="p">]</span>
+        <span class="n">mode</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">_word_mode</span>
+            <span class="k">if</span> <span class="s2">"vertex_word_ids"</span> <span class="ow">in</span> <span class="n">zarr</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">)</span>
+            <span class="k">else</span> <span class="n">_text_mode</span>
+        <span class="p">)</span>
+        <span class="n">handles</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">mode</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">path</span><span class="p">))</span>
+
+    <span class="n">dropdown</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span><span class="n">switch</span><span class="p">)</span>
+    <span class="n">switch</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">dropdown</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_find_backends</span><span class="p">(</span><span class="n">root</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Meshed backends under an outputs root, `&lt;scene&gt;/&lt;backend&gt;` -&gt; backend dir.</span>
+
+<span class="sd">    - listed: every `&lt;root&gt;/&lt;scene&gt;/&lt;backend&gt;/mesh.ply`, sorted by label</span>
+<span class="sd">    """</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">:</span> <span class="n">path</span><span class="o">.</span><span class="n">parent</span>
+        <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">root</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*/*/mesh.ply"</span><span class="p">))</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_browse</span><span class="p">(</span>
+    <span class="n">viewer</span><span class="p">:</span> <span class="n">Viewer</span><span class="p">,</span> <span class="n">backends</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">],</span> <span class="n">textured</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">:</span> <span class="nb">int</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">viser</span><span class="o">.</span><span class="n">GuiDropdownHandle</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Add a Scene dropdown over meshed backends; switching rebuilds the mesh and its Semantics.</span>
+
+<span class="sd">    - starts on the first backend by label</span>
+<span class="sd">    - switching sets the old Semantics dropdown to `none` (its own teardown), removes it, then builds anew</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        viewer: viewer to populate.</span>
+<span class="sd">        backends: `&lt;scene&gt;/&lt;backend&gt;` label -&gt; backend dir, as `_find_backends` returns.</span>
+<span class="sd">        textured: show each backend's texture/mesh.obj; picks stay on mesh.ply.</span>
+<span class="sd">        texture_size: displayed texture edge, pixels.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The Scene dropdown.</span>
+<span class="sd">    """</span>
+    <span class="n">scene</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_dropdown</span><span class="p">(</span><span class="s2">"Scene"</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">backends</span><span class="p">))</span>
+    <span class="n">semantics</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">switch</span><span class="p">(</span><span class="n">_</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Tear down the current backend's Semantics, then build the selected backend.</span>
+<span class="sd">        """</span>
+        <span class="c1"># The Semantics dropdown's `none` clears heat, probe, labels and mode GUI</span>
+        <span class="k">for</span> <span class="n">dropdown</span> <span class="ow">in</span> <span class="n">semantics</span><span class="p">:</span>
+            <span class="n">dropdown</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="s2">"none"</span>
+            <span class="n">dropdown</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+        <span class="n">semantics</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+        <span class="c1"># Same node name: the selected mesh upserts over the shown one</span>
+        <span class="n">dropdown</span> <span class="o">=</span> <span class="n">_build</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">backends</span><span class="p">[</span><span class="n">scene</span><span class="o">.</span><span class="n">value</span><span class="p">],</span> <span class="n">textured</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">dropdown</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">semantics</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">dropdown</span><span class="p">)</span>
+
+        <span class="n">viewer</span><span class="o">.</span><span class="n">_reset_view</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"scene: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">scene</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="n">scene</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span><span class="n">switch</span><span class="p">)</span>
+    <span class="n">switch</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">scene</span>
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Serve one backend's mesh, or every meshed backend under a root, with semantics; blocks.</span>
+
+<span class="sd">    - a path holding mesh.ply is one backend; any other path is an outputs root with a Scene dropdown</span>
+<span class="sd">    """</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span>
+        <span class="n">description</span><span class="o">=</span><span class="vm">__doc__</span><span class="p">,</span> <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">"path"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="n">Path</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"&lt;scene&gt;/&lt;backend&gt;, or an outputs root of scenes"</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--port"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">"--textured"</span><span class="p">,</span>
+        <span class="n">action</span><span class="o">=</span><span class="s2">"store_true"</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">"show texture/mesh.obj over the same surface"</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">"--texture-size"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"displayed texture edge, pixels"</span>
+    <span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+
+    <span class="c1"># One backend, or a root whose meshed backends fill the Scene dropdown</span>
+    <span class="n">single</span> <span class="o">=</span> <span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">path</span> <span class="o">/</span> <span class="s2">"mesh.ply"</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
+    <span class="n">backends</span> <span class="o">=</span> <span class="p">{}</span> <span class="k">if</span> <span class="n">single</span> <span class="k">else</span> <span class="n">_find_backends</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">single</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">backends</span><span class="p">:</span>
+        <span class="n">parser</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">"no mesh.ply in </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="si">}</span><span class="s2"> or its &lt;scene&gt;/&lt;backend&gt; dirs"</span><span class="p">)</span>
+
+    <span class="n">viewer</span> <span class="o">=</span> <span class="n">Viewer</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">port</span><span class="p">)</span>
+    <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">configure_theme</span><span class="p">(</span><span class="n">control_layout</span><span class="o">=</span><span class="s2">"fixed"</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">single</span><span class="p">:</span>
+        <span class="n">_build</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">textured</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">texture_size</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">_browse</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">backends</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">textured</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">texture_size</span><span class="p">)</span>
+
+    <span class="n">viewer</span><span class="o">.</span><span class="n">serve_forever</span><span class="p">()</span></div>
+
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

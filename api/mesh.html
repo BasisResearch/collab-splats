@@ -1,0 +1,1402 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Mesh &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api/mesh';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Splats" href="splats.html" />
+    <link rel="prev" title="Geometry" href="geometry.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button type="button" class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item pst-sidebar-collapse"><button type="button" id="pst-collapse-sidebar-button" aria-expanded="true" aria-controls="pst-primary-sidebar">
+  <svg class="pst-icon" role="img" aria-hidden="true" focusable="false" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+    <path fill="currentColor" d="M3 15.5C2.36232 15.5 1.74874 15.2564 1.28478 14.8189C0.820828 14.3815 0.541576 13.7832 0.504167 13.1467L0.5 13L0.5 3C0.499965 2.36232 0.743605 1.74874 1.18107 1.28478C1.61854 0.820828 2.21676 0.541576 2.85333 0.504167L3 0.5L13 0.5C13.6377 0.499965 14.2513 0.743605 14.7152 1.18107C15.1792 1.61854 15.4584 2.21676 15.4958 2.85333L15.5 3L15.5 13C15.5 13.6377 15.2564 14.2513 14.8189 14.7152C14.3815 15.1792 13.7832 15.4584 13.1467 15.4958L13 15.5L3 15.5ZM3 13.8333L10.5 13.8333L10.5 2.16667L3 2.16667C2.79589 2.16669 2.59889 2.24163 2.44636 2.37726C2.29383 2.5129 2.19638 2.69979 2.1725 2.9025L2.16667 3L2.16667 13C2.16669 13.2041 2.24163 13.4011 2.37726 13.5536C2.5129 13.7062 2.69979 13.8036 2.9025 13.8275L3 13.8333ZM6.65583 10.325L6.5775 10.2558L4.91083 8.58917C4.76735 8.44567 4.68116 8.25476 4.66843 8.05223C4.65569 7.84971 4.71729 7.6495 4.84167 7.48917L4.91083 7.41083L6.5775 5.74417C6.72747 5.59471 6.9287 5.50794 7.14032 5.50148C7.35194 5.49502 7.55809 5.56935 7.7169 5.70937C7.8757 5.8494 7.97525 6.04463 7.99533 6.25539C8.01541 6.46616 7.95451 6.67667 7.825 6.84417L7.75583 6.9225L6.67917 8L7.75583 9.0775C7.89931 9.22099 7.98551 9.41191 7.99824 9.61443C8.01097 9.81695 7.94938 10.0172 7.825 10.1775L7.75583 10.2558C7.61234 10.3993 7.42142 10.4855 7.2189 10.4982C7.01638 10.511 6.81617 10.4494 6.65583 10.325Z"/>
+  </svg>
+  <span class="pst-collapse-sidebar-label">Collapse Sidebar</span>
+  <span class="pst-expand-sidebar-label">Expand Sidebar</span>
+</button></div>
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="reconstructor.html">Reconstructor</a></li>
+<li class="toctree-l1"><a class="reference internal" href="preproc.html">Preprocessing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="semantics.html">Semantics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="pointcloud.html">Point Cloud</a></li>
+<li class="toctree-l1"><a class="reference internal" href="localization.html">Localization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="geometry.html">Geometry</a></li>
+<li class="toctree-l1 current active"><a aria-current="page" class="current reference internal" href="#">Mesh</a></li>
+<li class="toctree-l1"><a class="reference internal" href="splats.html">Splats</a></li>
+<li class="toctree-l1"><a class="reference internal" href="utils.html">Utilities</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Mesh</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="mesh">
+<h1>Mesh<a class="headerlink" href="#mesh" title="Link to this heading">#</a></h1>
+<p>TSDF meshing from posed depth + RGB, then cleaning, decimation and texturing. Every entry point
+takes plain arrays, never a <code class="docutils literal notranslate"><span class="pre">PointcloudResult</span></code>: only the caller knows which resolution grid
+it is on. <code class="docutils literal notranslate"><span class="pre">collab_splats.mesh</span></code> exports <code class="docutils literal notranslate"><span class="pre">compute_tsdf_voxel_size</span></code>, <code class="docutils literal notranslate"><span class="pre">create_tsdf_mesh</span></code>,
+<code class="docutils literal notranslate"><span class="pre">clean_repair_mesh</span></code>, <code class="docutils literal notranslate"><span class="pre">prepare_mesh</span></code> and <code class="docutils literal notranslate"><span class="pre">create_texture_mesh</span></code>. The pipeline runs it as
+the <code class="docutils literal notranslate"><span class="pre">mesh</span></code> stage (<code class="docutils literal notranslate"><span class="pre">mesh:</span></code> in the yaml, <code class="docutils literal notranslate"><span class="pre">--stages</span> <span class="pre">mesh</span></code>; keys in <a class="reference internal" href="../configuration.html"><span class="doc">Reconstruction Pipeline Configs</span></a>);
+the <code class="docutils literal notranslate"><span class="pre">04_mesh</span></code> tutorial walks through fusion, cleaning and texturing.</p>
+<section id="fusion">
+<h2>Fusion<a class="headerlink" href="#fusion" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">open3d</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">o3d</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.mesh</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">clean_repair_mesh</span><span class="p">,</span>
+    <span class="n">compute_tsdf_voxel_size</span><span class="p">,</span>
+    <span class="n">create_tsdf_mesh</span><span class="p">,</span>
+    <span class="n">prepare_mesh</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">voxel_size</span> <span class="o">=</span> <span class="n">compute_tsdf_voxel_size</span><span class="p">(</span><span class="n">depths</span><span class="p">,</span> <span class="n">c2w</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">depth_fx</span><span class="o">=</span><span class="n">model_fx</span><span class="p">)</span>
+<span class="n">mesh</span> <span class="o">=</span> <span class="n">create_tsdf_mesh</span><span class="p">(</span>
+    <span class="n">depths</span><span class="p">,</span>  <span class="c1"># (N, H, W) float32, 0 = no observation</span>
+    <span class="n">rgbs</span><span class="p">,</span>  <span class="c1"># (N, H, W, 3) uint8</span>
+    <span class="n">c2w</span><span class="p">,</span>  <span class="c1"># (N, 4, 4) camera-to-world</span>
+    <span class="n">K</span><span class="p">,</span>  <span class="c1"># (N, 3, 3) pixel-center, at the depth resolution</span>
+    <span class="n">voxel_size</span><span class="o">=</span><span class="n">voxel_size</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">cleaned</span><span class="p">,</span> <span class="n">real</span> <span class="o">=</span> <span class="n">clean_repair_mesh</span><span class="p">(</span><span class="n">mesh</span><span class="p">,</span> <span class="n">c2w</span><span class="p">)</span>  <span class="c1"># real: floater-cut surface, no hull or fill</span>
+<span class="n">prepared</span> <span class="o">=</span> <span class="n">prepare_mesh</span><span class="p">(</span><span class="n">cleaned</span><span class="p">,</span> <span class="n">voxel_size</span><span class="o">=</span><span class="n">voxel_size</span><span class="p">,</span> <span class="n">max_faces</span><span class="o">=</span><span class="mi">1_500_000</span><span class="p">)</span>
+<span class="n">o3d</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">write_triangle_mesh</span><span class="p">(</span><span class="s2">"scene/mesh.ply"</span><span class="p">,</span> <span class="n">prepared</span><span class="p">)</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>No file IO in <code class="docutils literal notranslate"><span class="pre">collab_splats.mesh</span></code> except the texture writer. The stage deletes a stale
+<code class="docutils literal notranslate"><span class="pre">mesh.ply</span></code> before fusing and writes it last, after texturing: <code class="docutils literal notranslate"><span class="pre">mesh.ply</span></code> is the done
+marker, so a run that fails partway leaves none and is re-run, never skipped.</p></li>
+<li><p>The voxel is derived, never set. The world has no fixed scale (feedforward depth is roughly
+unit scale, a COLMAP-scale reconstruction one to two orders of magnitude larger), so an
+absolute voxel or depth cutoff tuned on one scene empties or explodes the next.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">compute_tsdf_voxel_size</span></code>: <code class="docutils literal notranslate"><span class="pre">depth_px</span></code> (<code class="docutils literal notranslate"><span class="pre">mesh.voxel_depth_px</span></code>, <code class="docutils literal notranslate"><span class="pre">4</span></code>) depth-pixel
+footprints, <code class="docutils literal notranslate"><span class="pre">depth</span> <span class="pre">/</span> <span class="pre">depth_fx</span></code>, at the <code class="docutils literal notranslate"><span class="pre">ref_percentile</span></code> depth
+(<code class="docutils literal notranslate"><span class="pre">mesh.voxel_ref_percentile</span></code>, <code class="docutils literal notranslate"><span class="pre">50</span></code>). <code class="docutils literal notranslate"><span class="pre">depth_fx</span></code> is the focal of the grid the depth was
+predicted on: the model grid for feedforward, since depth upsampled to the frame grid carries
+no finer detail. It then counts the 16³ surface blocks the voxel would allocate and coarsens
+by the square root of the overshoot until they fit <code class="docutils literal notranslate"><span class="pre">max_gb</span></code> (<code class="docutils literal notranslate"><span class="pre">8</span></code>).</p></li>
+<li><p>Depth cutoff: before sizing the voxel, the stage zeroes depth beyond the
+<code class="docutils literal notranslate"><span class="pre">mesh.depth_trunc_percentile</span></code> (<code class="docutils literal notranslate"><span class="pre">99</span></code>, in (0, 99]) percentile of positive depth; a far tail crashes Open3D.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sdf_trunc</span></code> defaults to <code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">×</span> <span class="pre">voxel_size</span></code>; the stage passes
+<code class="docutils literal notranslate"><span class="pre">mesh.sdf_trunc_mult</span> <span class="pre">×</span> <span class="pre">voxel_size</span></code> (<code class="docutils literal notranslate"><span class="pre">6.0</span></code>). A band narrower than one voxel raises.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">create_tsdf_mesh</span></code> runs on CUDA when Open3D has it, else on the CPU, and raises rather than
+fusing quietly wrong (<code class="docutils literal notranslate"><span class="pre">validate_views</span></code>): non-uint8 RGB, view-count or resolution
+mismatches, and a principal point outside the depth grid. Pairing one grid’s depth with the
+other grid’s <code class="docutils literal notranslate"><span class="pre">K</span></code> otherwise collapses the mesh instead of failing. An out-of-scale
+<code class="docutils literal notranslate"><span class="pre">depth_trunc</span></code> is not checked: Open3D treats it as a legitimately empty volume.</p></li>
+</ul>
+<section id="composing-the-inputs">
+<h3>Composing the inputs<a class="headerlink" href="#composing-the-inputs" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">mesh.source</span></code> picks the depth: <code class="docutils literal notranslate"><span class="pre">feedforward</span></code> (default) or <code class="docutils literal notranslate"><span class="pre">splats</span></code>.</p>
+<p><strong>Feedforward, at frame resolution.</strong> <code class="docutils literal notranslate"><span class="pre">frame_depths</span></code> (<code class="docutils literal notranslate"><span class="pre">collab_splats.pointcloud.utils</span></code>)
+confidence-masks the model-grid depth and guided-upsamples it onto the frames, so the full-res
+<code class="docutils literal notranslate"><span class="pre">result.intrinsics</span></code> is the <code class="docutils literal notranslate"><span class="pre">K</span></code> to fuse with:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">invert_poses</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.pointcloud.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">frame_depths</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.preproc</span><span class="w"> </span><span class="kn">import</span> <span class="n">frame_idx_from_path</span><span class="p">,</span> <span class="n">read_frames</span>
+
+<span class="n">image_ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame_idx_from_path</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">image_paths</span><span class="p">]</span>
+<span class="n">rgbs</span> <span class="o">=</span> <span class="n">read_frames</span><span class="p">(</span><span class="n">images_dir</span><span class="p">,</span> <span class="n">image_ids</span><span class="p">)</span>
+<span class="n">depths</span> <span class="o">=</span> <span class="n">frame_depths</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">rgbs</span><span class="p">,</span> <span class="n">conf_percentile</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">c2w</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">)</span>
+<span class="n">K</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">intrinsics</span>  <span class="c1"># full-res; depth_fx from result.model_intrinsics</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">result</span></code> is the <code class="docutils literal notranslate"><span class="pre">PointcloudResult</span></code> from <code class="docutils literal notranslate"><span class="pre">pointcloud.zarr</span></code>. It stores <code class="docutils literal notranslate"><span class="pre">K</span></code> twice:
+<code class="docutils literal notranslate"><span class="pre">intrinsics</span></code> on the frame grid and <code class="docutils literal notranslate"><span class="pre">model_intrinsics</span></code> on the model grid. Mixing one
+grid’s depth with the other grid’s <code class="docutils literal notranslate"><span class="pre">K</span></code> is the collapse above.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">conf_percentile</span></code> is <code class="docutils literal notranslate"><span class="pre">mesh.conf_percentile</span></code> (<code class="docutils literal notranslate"><span class="pre">10</span></code>; <code class="docutils literal notranslate"><span class="pre">null</span></code> = off). A reconstruction
+with no confidence array (<code class="docutils literal notranslate"><span class="pre">sfm</span></code>) fuses unmasked and logs it.</p></li>
+<li><p>At model resolution (notebooks, evals): <code class="docutils literal notranslate"><span class="pre">result.depth</span></code>, <code class="docutils literal notranslate"><span class="pre">result.images</span></code> transposed to
+<code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">H,</span> <span class="pre">W,</span> <span class="pre">3)</span></code> and scaled to uint8, <code class="docutils literal notranslate"><span class="pre">invert_poses(result.extrinsics)</span></code> and
+<code class="docutils literal notranslate"><span class="pre">result.model_intrinsics</span></code>. No lift.</p></li>
+</ul>
+<p><strong>From a trained splat.</strong> <code class="docutils literal notranslate"><span class="pre">render_tsdf_inputs</span></code> (<code class="docutils literal notranslate"><span class="pre">collab_splats.splats.checkpoint</span></code>) renders
+every training camera from the splats stage’s <code class="docutils literal notranslate"><span class="pre">ckpt.pt</span></code>, at frame resolution, with the poses
+they were rendered from, pose-opt deltas included. Nothing to lift or re-pose. The stage never auto-runs the splats stage; a missing
+checkpoint raises.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.splats.checkpoint</span><span class="w"> </span><span class="kn">import</span> <span class="n">render_tsdf_inputs</span>
+
+<span class="n">depths</span><span class="p">,</span> <span class="n">rgbs</span><span class="p">,</span> <span class="n">c2w</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">image_ids</span> <span class="o">=</span> <span class="n">render_tsdf_inputs</span><span class="p">(</span><span class="n">backend_dir</span> <span class="o">/</span> <span class="s2">"splats"</span> <span class="o">/</span> <span class="s2">"ckpt.pt"</span><span class="p">,</span> <span class="n">images_dir</span><span class="p">)</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">image_ids</span></code>: the source frame index of each row, in the checkpoint’s render order (not
+filename order), the same values <code class="docutils literal notranslate"><span class="pre">read_frames</span></code> takes; per-view artifacts (sky masks,
+per-frame scores) line up through it.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">K</span></code> comes back pixel-center; depth is zeroed where alpha is 0.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">depth_source</span></code> picks the 2dgs depth: <code class="docutils literal notranslate"><span class="pre">&quot;expected&quot;</span></code> (default, used by the stage) is the
+alpha-weighted <code class="docutils literal notranslate"><span class="pre">depth</span></code>, defined wherever anything contributes but smeared across depth
+discontinuities; <code class="docutils literal notranslate"><span class="pre">&quot;median&quot;</span></code> is <code class="docutils literal notranslate"><span class="pre">median_depth</span></code>, sharper but blank wherever no gaussian
+crosses the median, which opens holes on grazing ground. A 3dgs checkpoint has only
+<code class="docutils literal notranslate"><span class="pre">depth</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">images_dir</span></code> swaps the rendered RGB for the source keyframes matched by image id, as the
+stage does; omit it to fuse the render’s own color.</p></li>
+</ul>
+<p><strong>Masking sky.</strong> Sky has no surface, but every depth source assigns it one, so it fuses as a
+backdrop and seeds floaters. <code class="docutils literal notranslate"><span class="pre">mesh.mask_sky</span></code> (<code class="docutils literal notranslate"><span class="pre">true</span></code>) zeroes depth wherever the sky
+segmenter fires, before fusion, on both sources:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.segmentation</span><span class="w"> </span><span class="kn">import</span> <span class="n">sky_masks</span>
+
+<span class="n">masks</span> <span class="o">=</span> <span class="n">sky_masks</span><span class="p">(</span><span class="n">images_dir</span><span class="p">,</span> <span class="n">idxs</span><span class="o">=</span><span class="n">image_ids</span><span class="p">,</span> <span class="n">cache_dir</span><span class="o">=</span><span class="n">scene_dir</span> <span class="o">/</span> <span class="s2">"sky"</span><span class="p">)</span>  <span class="c1"># (N, H, W) bool</span>
+<span class="n">depths</span><span class="p">[</span><span class="n">masks</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.0</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">idxs</span></code> takes source frame indices in the order wanted; the stage passes each source’s
+<code class="docutils literal notranslate"><span class="pre">image_ids</span></code>. Sky probabilities cache as PNGs under <code class="docutils literal notranslate"><span class="pre">&lt;scene&gt;/sky/</span></code>, so a re-run pays for
+inference once.</p></li>
+<li><p>Backend: <code class="docutils literal notranslate"><span class="pre">skywater</span></code>, a SegFormer MiT-B2 registered as <code class="docutils literal notranslate"><span class="pre">BaseSegmentation.get(&quot;skywater&quot;)</span></code>.</p></li>
+<li><p>Masking applies to mesh depth only, never to the splats stage’s depth targets, which do take
+<code class="docutils literal notranslate"><span class="pre">mesh.conf_percentile</span></code>: the asymmetry is deliberate.</p></li>
+</ul>
+<p id="module-collab_splats.mesh.tsdf">Depth + RGB views fused into a mesh.</p>
+<ul class="simple">
+<li><p>create_tsdf_mesh: the entry point, Open3D VoxelBlockGrid (CUDA when available) then extract</p></li>
+<li><p>compute_tsdf_voxel_size: voxel edge from the depth’s own pixel footprint, coarsened to a memory budget</p></li>
+<li><p>no file IO: the caller writes the mesh once it is final</p></li>
+</ul>
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.tsdf.compute_tsdf_voxel_size">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.tsdf.</span></span><span class="sig-name descname"><span class="pre">compute_tsdf_voxel_size</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">depths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">K</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">depth_fx</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">depth_px</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">4.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ref_percentile</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">50.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_gb</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">8.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">stride</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">8</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/tsdf.html#compute_tsdf_voxel_size"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.tsdf.compute_tsdf_voxel_size" title="Link to this definition">#</a></dt>
+<dd><p>TSDF voxel edge from the depth’s own resolution, coarsened until the grid fits a memory budget.</p>
+<ul class="simple">
+<li><p>one depth pixel spans depth / depth_fx world units; the voxel is depth_px of them at the ref_percentile depth</p></li>
+<li><p>so the voxel follows the scene’s scale and the depth resolution, with no world-unit constant</p></li>
+<li><p>if the surface’s 16³ voxel blocks would exceed max_gb, the voxel is coarsened until they fit</p></li>
+<li><p>block count scales with 1 / voxel², so each step coarsens by the square root of the overshoot</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>depths</strong> – (N, H, W) depth in world units, 0 = no observation.</p></li>
+<li><p><strong>c2w</strong> – (N, 4, 4) camera-to-world poses.</p></li>
+<li><p><strong>K</strong> – (N, 3, 3) intrinsics at the depths’ resolution.</p></li>
+<li><p><strong>depth_fx</strong> – focal length in pixels of the grid the depth was predicted on.</p></li>
+<li><p><strong>depth_px</strong> – voxel edge in depth-pixel footprints.</p></li>
+<li><p><strong>ref_percentile</strong> – depth percentile the footprint is taken at; lower favors near surfaces.</p></li>
+<li><p><strong>max_gb</strong> – memory budget for the voxel blocks the surface occupies.</p></li>
+<li><p><strong>stride</strong> – pixel subsample per axis for the depth statistics and the block count.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Voxel edge in world units.</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – depths holds no positive depth.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.tsdf.create_tsdf_mesh">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.tsdf.</span></span><span class="sig-name descname"><span class="pre">create_tsdf_mesh</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">depths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">rgbs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">K</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">depth_trunc</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sdf_trunc</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/tsdf.html#create_tsdf_mesh"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.tsdf.create_tsdf_mesh" title="Link to this definition">#</a></dt>
+<dd><p>Integrate depth + RGB views into a VoxelBlockGrid and extract its mesh.</p>
+<ul class="simple">
+<li><p>runs on CUDA:0 when Open3D has CUDA, else on the CPU; same grid, same mesh</p></li>
+<li><p>the block hashmap starts at 10k blocks and grows on its own</p></li>
+<li><p>Open3D floors projected u, v (pixel-corner), so K shifts +0.5 once here</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>depths</strong> – (N, H, W) depth in world units, 0 = no observation.</p></li>
+<li><p><strong>rgbs</strong> – (N, H, W, 3) uint8 RGB at the same resolution as depths.</p></li>
+<li><p><strong>c2w</strong> – (N, 4, 4) camera-to-world poses.</p></li>
+<li><p><strong>K</strong> – (N, 3, 3) pixel-center intrinsics at the depth resolution.</p></li>
+<li><p><strong>voxel_size</strong> – TSDF voxel edge in world units.</p></li>
+<li><p><strong>depth_trunc</strong> – depth beyond this (world units) is ignored; None keeps every depth.</p></li>
+<li><p><strong>sdf_trunc</strong> – truncation band in world units; None = 4 × voxel_size.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The extracted mesh with per-vertex color.</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – sdf_trunc is narrower than voxel_size.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+<section id="cleaning">
+<h2>Cleaning<a class="headerlink" href="#cleaning" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">clean_repair_mesh(mesh,</span> <span class="pre">c2w=None,</span> <span class="pre">...,</span> <span class="pre">use_convex_hull=False)</span></code> returns <code class="docutils literal notranslate"><span class="pre">(cleaned,</span> <span class="pre">real)</span></code>:
+<code class="docutils literal notranslate"><span class="pre">remove_floaters</span></code> (in place), optionally <code class="docutils literal notranslate"><span class="pre">make_convex_hull</span></code>, then <code class="docutils literal notranslate"><span class="pre">fill_holes</span></code>. <code class="docutils literal notranslate"><span class="pre">real</span></code>
+is the mesh right after the floater cut, the texture occluder. Cleaning is not optional in the
+pipeline; <code class="docutils literal notranslate"><span class="pre">remove_floaters</span></code>, <code class="docutils literal notranslate"><span class="pre">make_convex_hull</span></code>, <code class="docutils literal notranslate"><span class="pre">fill_holes</span></code>, <code class="docutils literal notranslate"><span class="pre">trim_mesh_edges</span></code> and
+<code class="docutils literal notranslate"><span class="pre">bridge_mesh_edges</span></code> are public for callers who want one step alone.</p>
+<p>Every threshold is relative to the mesh’s own extent, never a world distance, so one default
+works on a metric scan and on a scale-free feedforward reconstruction alike.
+<code class="docutils literal notranslate"><span class="pre">get_scene_scale</span></code> is that extent: the diagonal of the 1st-99th-percentile bounding box,
+which ignores a stray far component.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">min_area_frac</span></code> (<code class="docutils literal notranslate"><span class="pre">6e-6</span></code>): components with area under this × scene_scale² go; scale is
+taken from the largest component alone.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max_gap_frac</span></code> (<code class="docutils literal notranslate"><span class="pre">0.01</span></code>): components whose centroid is further than this × scene_scale
+from the main body go, however large.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max_hole_perimeter_ratio</span></code> (<code class="docutils literal notranslate"><span class="pre">0.014</span></code>): holes with a perimeter under this × scene_scale are
+filled; anything bigger is a real opening (a doorway, the missing back of the scene).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">subdivide_fill</span></code> (<code class="docutils literal notranslate"><span class="pre">True</span></code>): patches are triangulated, then one meshlib <code class="docutils literal notranslate"><span class="pre">subdivideMesh</span></code>
+over all patches (to the mesh’s edge length) and one cotan <code class="docutils literal notranslate"><span class="pre">positionVertsSmoothly</span></code> of their
+new vertices, so a patch does not read as a flat fan. <code class="docutils literal notranslate"><span class="pre">False</span></code> leaves a flat lid.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max_plain_edges</span></code> (<code class="docutils literal notranslate"><span class="pre">8</span></code>, <code class="docutils literal notranslate"><span class="pre">fill_holes</span></code> only): loops with at most this many edges take a
+plain flat lid; <code class="docutils literal notranslate"><span class="pre">0</span></code> subdivides every patch.</p></li>
+<li><p>A component’s outer rim is never filled, whatever the bound: its widest loop, when that loop
+spans at least half the component’s bounding box. A sheet’s rim spans all of it; a hole in a
+closed surface spans a fraction, so a sphere with one hole still gets it filled.</p></li>
+</ul>
+<p><strong>Convex hull</strong> (<code class="docutils literal notranslate"><span class="pre">mesh.use_convex_hull</span></code>, <code class="docutils literal notranslate"><span class="pre">true</span></code> in <code class="docutils literal notranslate"><span class="pre">configs/base.yaml</span></code>; set <code class="docutils literal notranslate"><span class="pre">false</span></code>
+indoors and for objects). <code class="docutils literal notranslate"><span class="pre">make_convex_hull(mesh,</span> <span class="pre">c2w)</span></code> finds the ground plane from the camera
+path, cuts and trims the ragged outer edge, then patches the ground out to a rounded convex hull.
+A mesh with no dominant ground raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>; steps are in its docstring below.</p>
+<section id="preparing-mesh-ply">
+<h3>Preparing mesh.ply<a class="headerlink" href="#preparing-mesh-ply" title="Link to this heading">#</a></h3>
+<p>The stage always ships the prepared mesh, textured or not. <code class="docutils literal notranslate"><span class="pre">prepare_mesh(mesh,</span> <span class="pre">*,</span>
+<span class="pre">voxel_size,</span> <span class="pre">...)</span></code> returns a new mesh and leaves its input unmodified:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">fill_holes</span></code> at full density with <code class="docutils literal notranslate"><span class="pre">max_hole_perimeter_ratio</span></code> (<code class="docutils literal notranslate"><span class="pre">3.9</span></code>): outer rims stay
+open by rule, so the bound only stops the largest interior openings. With the convex hull
+on, more inlets are interior holes by now.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">decimate_mesh</span></code>: meshlib QEM to an error bound in voxels (<code class="docutils literal notranslate"><span class="pre">decimate_max_error</span></code>, <code class="docutils literal notranslate"><span class="pre">0.5</span></code>
+× <code class="docutils literal notranslate"><span class="pre">voxel_size</span></code>), so the budget follows the fusion resolution, not a triangle count; past
+<code class="docutils literal notranslate"><span class="pre">max_faces</span></code> (<code class="docutils literal notranslate"><span class="pre">mesh.max_faces</span></code>, <code class="docutils literal notranslate"><span class="pre">1500000</span></code>) a second pass decimates on to that count
+whatever error it costs, so texturing cost stays bounded.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">make_manifold</span></code>: split non-manifold vertices, drop degenerate, duplicate and fold-over
+faces.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fill_holes</span></code> again with <code class="docutils literal notranslate"><span class="pre">subdivide_fill=False</span></code>, then <code class="docutils literal notranslate"><span class="pre">make_manifold</span></code>: flat lids over
+the pinholes decimation and repair open, then a repair of what the lids fold.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">smooth_iterations</span></code> &gt; 0 only (<code class="docutils literal notranslate"><span class="pre">mesh.smooth_iterations</span></code>, <code class="docutils literal notranslate"><span class="pre">30</span></code>; function default <code class="docutils literal notranslate"><span class="pre">0</span></code>):
+meshlib <code class="docutils literal notranslate"><span class="pre">relaxKeepVolume</span></code>, then <code class="docutils literal notranslate"><span class="pre">make_manifold</span></code>. Last, so decimation never sees it;
+vertices move, faces stay.</p></li>
+</ol>
+<p>Filling only after decimation leaves fold-over faces.</p>
+<p id="module-collab_splats.mesh.clean">Mesh cleanup at full density, then preparation for UV unwrapping.</p>
+<ul class="simple">
+<li><p>clean_repair_mesh: remove_floaters, optional make_convex_hull, fill_holes</p></li>
+<li><p>remove_floaters: drop components that are small or far from the main body</p></li>
+<li><p>fill_holes: patch interior loops under a perimeter bound; the outer rim stays open</p></li>
+<li><p>make_convex_hull: trim_mesh_edges, patch the ground out to a rounded hull, bridge_mesh_edges</p></li>
+<li><p>prepare_mesh: fill_holes, decimate_mesh (error-bounded QEM), make_manifold into a clean manifold mesh</p></li>
+<li><p>thresholds are scene-relative: fractions of get_scene_scale, or cells of the median edge</p></li>
+</ul>
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.bridge_mesh_edges">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">bridge_mesh_edges</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">radius</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_loop_edges</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">40</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#bridge_mesh_edges"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.bridge_mesh_edges" title="Link to this definition">#</a></dt>
+<dd><p>Bridge narrow necks of the outer rim, so inlets become interior holes fill_holes can close.</p>
+<ul class="simple">
+<li><p>neck: two outer-rim vertices within radius in 3D, far apart along the rim both ways round</p></li>
+<li><p>widest separation first; one meshlib makeBridge (two faces) per pass</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – input mesh; not modified.</p></li>
+<li><p><strong>radius</strong> – largest 3D gap bridged, cells of the median edge length.</p></li>
+<li><p><strong>min_loop_edges</strong> – smallest separation along the rim, in rim edges, that counts as a neck.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>New mesh with the bridges added.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.clean_repair_mesh">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">clean_repair_mesh</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_area_frac</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">6e-06</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_gap_frac</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.01</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_hole_perimeter_ratio</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.014</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">subdivide_fill</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#bool" title="(in Python v3.15)"><span class="pre">bool</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_convex_hull</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#bool" title="(in Python v3.15)"><span class="pre">bool</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple" title="(in Python v3.15)"><span class="pre">tuple</span></a><span class="p"><span class="pre">[</span></span><span class="pre">open3d.geometry.TriangleMesh</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">open3d.geometry.TriangleMesh</span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#clean_repair_mesh"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.clean_repair_mesh" title="Link to this definition">#</a></dt>
+<dd><p>Remove floaters and fill small holes; also returns the surface right after the floater cut.</p>
+<ul class="simple">
+<li><p>the floater cut edits mesh in place; the hull and the hole fill build new meshes</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – fused mesh, edited in place by the floater cut.</p></li>
+<li><p><strong>c2w</strong> – see make_convex_hull; required when use_convex_hull is on.</p></li>
+<li><p><strong>min_area_frac</strong> – see remove_floaters.</p></li>
+<li><p><strong>max_gap_frac</strong> – see remove_floaters.</p></li>
+<li><p><strong>max_hole_perimeter_ratio</strong> – see fill_holes.</p></li>
+<li><p><strong>subdivide_fill</strong> – see fill_holes.</p></li>
+<li><p><strong>use_convex_hull</strong> – run make_convex_hull between the floater cut and the hole fill.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>only fused faces, no hull or hole fill.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The cleaned mesh, and mesh itself after the floater cut</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.decimate_mesh">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">decimate_mesh</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_error</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple" title="(in Python v3.15)"><span class="pre">tuple</span></a><span class="p"><span class="pre">[</span></span><span class="pre">open3d.geometry.TriangleMesh</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#decimate_mesh"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.decimate_mesh" title="Link to this definition">#</a></dt>
+<dd><p>QEM decimation to an absolute surface-deviation bound; vertices are removed, never moved.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – input mesh; not modified.</p></li>
+<li><p><strong>max_error</strong> – largest allowed surface deviation in world units.</p></li>
+<li><p><strong>max_faces</strong> – most faces to keep, reached past max_error if need be; None = no limit.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The decimated mesh and the result error in world units.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.fill_holes">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">fill_holes</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_hole_perimeter_ratio</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.014</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">subdivide_fill</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#bool" title="(in Python v3.15)"><span class="pre">bool</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_edge_splits</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">20000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_plain_edges</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">8</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#fill_holes"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.fill_holes" title="Link to this definition">#</a></dt>
+<dd><p>Fill interior boundary loops under a perimeter bound: small loops plain, the rest smooth patches.</p>
+<ul class="simple">
+<li><p>outer rim: a component’s widest loop spanning half its extent; never filled, whatever the bound</p></li>
+<li><p>scene_scale: diagonal of the 1st-99th percentile bounding box (get_scene_scale)</p></li>
+<li><p>patches: all triangulated, then one subdivide + cotan smooth; fillHoleNicely per hole scales with the mesh</p></li>
+<li><p>loops of at most max_plain_edges edges take meshlib’s plain fillHole: a flat lid</p></li>
+<li><p>vertex colors carry over; patch vertices take their nearest source vertex’s color</p></li>
+<li><p>a hole meshlib cannot fill stays open and is counted in the log</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – input mesh; not modified.</p></li>
+<li><p><strong>max_hole_perimeter_ratio</strong> – fill an interior hole iff its perimeter &lt; this × scene_scale.</p></li>
+<li><p><strong>subdivide_fill</strong> – subdivide and smooth each patch; off leaves a flat lid, far cheaper.</p></li>
+<li><p><strong>max_edge_splits</strong> – subdivision budget per patch; the batched subdivide gets this × patch count.</p></li>
+<li><p><strong>max_plain_edges</strong> – loops with at most this many edges get a plain flat lid; 0 = all subdivided.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>New mesh with those loops closed.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.get_scene_scale">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">get_scene_scale</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">vertices</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#get_scene_scale"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.get_scene_scale" title="Link to this definition">#</a></dt>
+<dd><p>Robust scene extent: diagonal of the 1st-99th percentile bounding box.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>vertices</strong> – (V, 3) positions.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Scene extent in world units.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.make_convex_hull">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">make_convex_hull</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">hull_round</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">20</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">outline_open</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">8</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rim_max_dz</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rim_max_edge</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">bridge_radius</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_piece_faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1000</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_up_cos</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.7</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#make_convex_hull"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.make_convex_hull" title="Link to this definition">#</a></dt>
+<dd><p>Trim the ragged outer edge, then patch the ground out to a rounded convex hull.</p>
+<ul class="simple">
+<li><p>lengths are in cells: pixels of the top-down image of the mesh, one median edge length each</p></li>
+<li><p>ground: first of 3 RANSAC planes near the camera-path normal, up on the cameras’ side</p></li>
+<li><p>cut: faces outside the rounded hull, then trim_mesh_edges on the ragged outline</p></li>
+<li><p>patch: uncovered hull cells get a sheet pinned to the rim, pulled to the eroded ground</p></li>
+<li><p>join: clashing patch faces dropped, make_manifold, then bridge_mesh_edges closes inlets</p></li>
+<li><p>assumes a ground-dominated height field; indoor and object scenes should leave it off</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – input mesh; not modified.</p></li>
+<li><p><strong>c2w</strong> – (N, 4, 4) camera-to-world poses, OpenCV axes; they set the expected up and its sign.</p></li>
+<li><p><strong>hull_round</strong> – opening radius that rounds the hull’s corners, cells.</p></li>
+<li><p><strong>outline_open</strong> – see trim_mesh_edges.</p></li>
+<li><p><strong>rim_max_dz</strong> – join a rim vertex only within this of its neighbors’ median height, cells.</p></li>
+<li><p><strong>rim_max_edge</strong> – drop patch triangles touching the rim with a 3D edge over this, cells.</p></li>
+<li><p><strong>bridge_radius</strong> – see bridge_mesh_edges (radius).</p></li>
+<li><p><strong>min_piece_faces</strong> – pieces with fewer faces are dropped.</p></li>
+<li><p><strong>min_up_cos</strong> – smallest <code class="docutils literal notranslate"><span class="pre">|plane</span> <span class="pre">normal</span> <span class="pre">.</span> <span class="pre">expected</span> <span class="pre">up|</span></code> that counts as ground.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>trimmed, patched out to the hull, manifold.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>New mesh</p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – the mesh has no dominant ground plane.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.make_manifold">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">make_manifold</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#make_manifold"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.make_manifold" title="Link to this definition">#</a></dt>
+<dd><p>Repair a mesh to a clean manifold; the input is left untouched.</p>
+<ul class="simple">
+<li><p>duplicate and fold-over faces pass Open3D’s manifold check</p></li>
+<li><p>Open3D’s remove_duplicated_triangles misses a duplicate with reversed winding</p></li>
+<li><p>zero-area faces (distinct ids at one position) are dropped; remove_degenerate_triangles misses them</p></li>
+<li><p>bowtie vertices: one copy per extra fan, all fans found in one corner-graph pass</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>mesh</strong> – input mesh.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>New mesh with no degenerate, duplicate, fold-over or non-manifold parts.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.prepare_mesh">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">prepare_mesh</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_hole_perimeter_ratio</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">3.9</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">decimate_max_error</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">smooth_iterations</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#prepare_mesh"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.prepare_mesh" title="Link to this definition">#</a></dt>
+<dd><p>Fill, decimate and repair a cleaned mesh into a clean manifold mesh; the input is not modified.</p>
+<ul class="simple">
+<li><p>fill at full density, decimate, make_manifold; lid the pinholes that opens, repair again</p></li>
+<li><p>smoothing runs last so decimation never sees it; a final repair drops the faces it folds</p></li>
+<li><p>outer rims stay open whatever max_hole_perimeter_ratio (see fill_holes)</p></li>
+<li><p>max_faces caps the decimated face count, past the error bound, so texturing time stays bounded</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – the cleaned mesh, the first one clean_repair_mesh returns.</p></li>
+<li><p><strong>voxel_size</strong> – TSDF voxel the mesh was fused at; sets the decimation bound.</p></li>
+<li><p><strong>max_hole_perimeter_ratio</strong> – patch holes with a perimeter under this × scene_scale.</p></li>
+<li><p><strong>decimate_max_error</strong> – decimation bound as a multiple of voxel_size.</p></li>
+<li><p><strong>smooth_iterations</strong> – volume-keeping relax passes; 0 skips smoothing.</p></li>
+<li><p><strong>max_faces</strong> – most faces to keep after decimation; None = no limit.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The filled, decimated, manifold mesh.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.remove_floaters">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">remove_floaters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_area_frac</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">6e-06</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_gap_frac</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.01</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gap_kdtree_points</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">200000</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#remove_floaters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.remove_floaters" title="Link to this definition">#</a></dt>
+<dd><p>Drop connected components that are tiny or far from the largest one; edits in place.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – mesh edited in place.</p></li>
+<li><p><strong>min_area_frac</strong> – keep components with area &gt;= this × scene_scale².</p></li>
+<li><p><strong>max_gap_frac</strong> – keep components whose centroid is within this × scene_scale of the main body.</p></li>
+<li><p><strong>gap_kdtree_points</strong> – cap on main-body vertices indexed for the gap query (stride-subsampled).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The same mesh.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.clean.trim_mesh_edges">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.clean.</span></span><span class="sig-name descname"><span class="pre">trim_mesh_edges</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">outline_open</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">8</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_up_cos</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.7</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/clean.html#trim_mesh_edges"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.clean.trim_mesh_edges" title="Link to this definition">#</a></dt>
+<dd><p>Cut the ragged outer edge: rim-connected regions outside the smoothed top-down outline.</p>
+<ul class="simple">
+<li><p>outline: the mesh’s coverage mask in the top-down image, closed, opened, largest region, holes filled</p></li>
+<li><p>a region outside the outline survives unless it is edge-connected to the outer rim</p></li>
+<li><p>only faces are removed; vertices and their colors are kept as they are</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – input mesh; not modified.</p></li>
+<li><p><strong>c2w</strong> – see make_convex_hull.</p></li>
+<li><p><strong>outline_open</strong> – opening radius that smooths the outline, cells of the median edge length.</p></li>
+<li><p><strong>min_up_cos</strong> – see make_convex_hull.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>New mesh with the same vertices and the trimmed faces.</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – the mesh has no dominant ground plane.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+<section id="texturing">
+<h2>Texturing<a class="headerlink" href="#texturing" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">create_texture_mesh(mesh,</span> <span class="pre">occluder,</span> <span class="pre">out_dir,</span> <span class="pre">rgbs,</span> <span class="pre">c2w,</span> <span class="pre">K,</span> <span class="pre">*,</span> <span class="pre">voxel_size)</span></code> bakes the views
+into one albedo atlas (<code class="docutils literal notranslate"><span class="pre">mesh.texture</span></code>, <code class="docutils literal notranslate"><span class="pre">true</span></code>; CUDA only, the stage refuses before fusion
+without it). <code class="docutils literal notranslate"><span class="pre">mesh</span></code> is the prepared mesh, unwrapped as is; <code class="docutils literal notranslate"><span class="pre">occluder</span></code> is the <code class="docutils literal notranslate"><span class="pre">real</span></code> mesh
+<code class="docutils literal notranslate"><span class="pre">clean_repair_mesh</span></code> returns, so hole-fill patches never hide a real surface. The stage writes
+to <code class="docutils literal notranslate"><span class="pre">&lt;backend&gt;/texture/</span></code>.</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">unwrap_view_charts</span></code>: the source images are the charts. Each face takes the view in which
+it owns at least 75% (<code class="docutils literal notranslate"><span class="pre">frac</span></code>) of its projected pixels in that view’s nvdiffrast face-id
+buffer, smoothed toward its neighbors’ views; its UVs are its pixel coordinates there. The
+z-buffer gives each pixel to one face, so faces in one camera chart cannot overlap. Unseen
+faces get one flat patch per connected group. Charts are tiled and packed; flipped or
+overwritten faces regroup into flat patches and are repacked.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">project_images_to_texture</span></code>: nvdiffrast rasterizes the atlas into per-texel world position
+and normal. Occlusion is a per-view nvdiffrast depth render of the occluder: a texel is
+hidden when its nearest raster pixel holds a surface nearer by more than a voxel. Bilinear
+samples (<code class="docutils literal notranslate"><span class="pre">grid_sample</span></code>) are weighted by pixel size at the texel. Each image splits into a
+Gaussian-blurred base (<code class="docutils literal notranslate"><span class="pre">blur_pix_sigma=16</span></code> source pixels) and its detail; detail comes
+only from views that resolve the texel nearly as finely as its best (<code class="docutils literal notranslate"><span class="pre">view_ratio=1.5</span></code>),
+the base averages every view that sees it, so per-frame exposure does not step where the
+sharp views change. <code class="docutils literal notranslate"><span class="pre">fill_missing_pixels</span></code> (push-pull) fills every texel no view reached.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_dilate_chart_gutters</span></code>: chart edge texels grow into their own padding, so bilinear
+lookups never pull in a neighboring chart.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">write_textured_obj</span></code> (<code class="docutils literal notranslate"><span class="pre">collab_splats.utils.io</span></code>): <code class="docutils literal notranslate"><span class="pre">mesh.obj</span></code> + <code class="docutils literal notranslate"><span class="pre">mesh.mtl</span></code> +
+<code class="docutils literal notranslate"><span class="pre">albedo.png</span></code>. Each position and smooth normal is written once and faces index
+<code class="docutils literal notranslate"><span class="pre">v</span></code>/<code class="docutils literal notranslate"><span class="pre">vt</span></code>/<code class="docutils literal notranslate"><span class="pre">vn</span></code> separately, at 6 decimals. UV seams add <code class="docutils literal notranslate"><span class="pre">vt</span></code> entries, never
+positions: the OBJ’s <code class="docutils literal notranslate"><span class="pre">v</span></code> lines are the prepared mesh’s vertices. White diffuse
+(<code class="docutils literal notranslate"><span class="pre">Kd</span> <span class="pre">1</span> <span class="pre">1</span> <span class="pre">1</span></code>): a grey <code class="docutils literal notranslate"><span class="pre">Kd</span></code> darkens the texture in every viewer.</p></li>
+</ol>
+<p id="module-collab_splats.mesh.texture">Texture a fused mesh: one albedo atlas baked from the source views.</p>
+<ul class="simple">
+<li><p>input: prepare_mesh output (clean.py)</p></li>
+<li><p>unwrap_view_charts: UV atlas from camera-projection charts (nvdiffrast face ids)</p></li>
+<li><p>project_images_to_texture: per-view depth test; detail from the sharpest views, blurred base from all, then fill</p></li>
+<li><p>_dilate_chart_gutters: chart edges copied into their own padding</p></li>
+<li><p>write_textured_obj (utils/io.py): mesh.obj + mesh.mtl + albedo.png</p></li>
+</ul>
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.texture.create_texture_mesh">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.texture.</span></span><span class="sig-name descname"><span class="pre">create_texture_mesh</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">occluder</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">out_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path" title="(in Python v3.15)"><span class="pre">Path</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#str" title="(in Python v3.15)"><span class="pre">str</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">rgbs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">K</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">voxel_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">tex_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">8192</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path" title="(in Python v3.15)"><span class="pre">Path</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/texture.html#create_texture_mesh"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.texture.create_texture_mesh" title="Link to this definition">#</a></dt>
+<dd><p>Unwrap and texture a prepared mesh.</p>
+<ul class="simple">
+<li><p>occlusion is tested against the occluder, so hole-fill patches never hide a real surface</p></li>
+<li><p>voxel_size is the occlusion tolerance</p></li>
+<li><p>writes out_dir/mesh.obj + mesh.mtl + albedo.png via write_textured_obj</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – prepare_mesh output.</p></li>
+<li><p><strong>occluder</strong> – the real surface, the second mesh clean_repair_mesh returns, with no hull or hole fill.</p></li>
+<li><p><strong>out_dir</strong> – directory to create.</p></li>
+<li><p><strong>rgbs</strong> – (N, H, W, 3) uint8 views that were fused.</p></li>
+<li><p><strong>c2w</strong> – (N, 4, 4) camera-to-world poses.</p></li>
+<li><p><strong>K</strong> – (N, 3, 3) intrinsics at image resolution.</p></li>
+<li><p><strong>voxel_size</strong> – TSDF voxel the mesh was fused at, world units.</p></li>
+<li><p><strong>tex_size</strong> – atlas edge in texels.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to out_dir/mesh.obj.</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#RuntimeError" title="(in Python v3.15)"><strong>RuntimeError</strong></a> – no CUDA device; nvdiffrast rasterizes on CUDA only.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.texture.project_images_to_texture">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.texture.</span></span><span class="sig-name descname"><span class="pre">project_images_to_texture</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">verts</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">normals</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">uvs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">rgbs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">K</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">tex_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">occlusion_eps</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">occluder</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple" title="(in Python v3.15)"><span class="pre">tuple</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">view_ratio</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">blur_pix_sigma</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">16.0</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/texture.html#project_images_to_texture"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.texture.project_images_to_texture" title="Link to this definition">#</a></dt>
+<dd><p>Visibility-weighted projection of images into a mesh’s UV atlas.</p>
+<ul class="simple">
+<li><p>texels no view reaches take a push-pull fill from their seen surroundings</p></li>
+<li><p>a hole-filled mesh hides its own observed surface, so pass the pre-fill mesh as occluder</p></li>
+<li><p>view_ratio 1.0 is single-best-view (sharpest, seam-prone); large values average everything</p></li>
+<li><p>each image splits into a blurred base (blur_pix_sigma) and the detail left over</p></li>
+<li><p>base color averages every view that sees the texel, so color does not jump where the sharpest view changes</p></li>
+<li><p>detail comes only from the view_ratio views, so the texture stays sharp</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>verts</strong> – (P, 3) vertex positions.</p></li>
+<li><p><strong>faces</strong> – (F, 3) vertex indices.</p></li>
+<li><p><strong>normals</strong> – (P, 3) vertex normals; texels facing away from a view take nothing from it.</p></li>
+<li><p><strong>uvs</strong> – (F, 3, 2) per-corner UVs in [0, 1], v up (from unwrap_view_charts).</p></li>
+<li><p><strong>rgbs</strong> – (N, H, W, 3) uint8 images.</p></li>
+<li><p><strong>c2w</strong> – (N, 4, 4) camera-to-world poses.</p></li>
+<li><p><strong>K</strong> – (N, 3, 3) intrinsics at image resolution.</p></li>
+<li><p><strong>tex_size</strong> – atlas edge in texels.</p></li>
+<li><p><strong>occlusion_eps</strong> – depth-test tolerance in world units (≈ voxel size); stops self-occlusion.</p></li>
+<li><p><strong>occluder</strong> – (verts, faces) to depth-test against instead of the mesh.</p></li>
+<li><p><strong>view_ratio</strong> – keep views whose pixel size at the texel is within this factor of the texel’s best.</p></li>
+<li><p><strong>blur_pix_sigma</strong> – base band Gaussian sigma in source pixels; 0 takes the whole image from the view_ratio views.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>(tex_size, tex_size, 3) uint8 albedo.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.texture.unwrap_view_charts">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.texture.</span></span><span class="sig-name descname"><span class="pre">unwrap_view_charts</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">K</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">image_hw</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple" title="(in Python v3.15)"><span class="pre">tuple</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tex_size</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">frac</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.75</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">small_px</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">4.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rel_tol</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.01</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.25</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rounds</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">40</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tile_m</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pad</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_owned</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#float" title="(in Python v3.15)"><span class="pre">float</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">0.5</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple" title="(in Python v3.15)"><span class="pre">tuple</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/texture.html#unwrap_view_charts"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.texture.unwrap_view_charts" title="Link to this definition">#</a></dt>
+<dd><p>UV atlas whose charts are the source images themselves.</p>
+<ul class="simple">
+<li><p>a face may take a view only if it owns its pixels in that view’s face-id buffer</p></li>
+<li><p>the z-buffer gives each pixel to one face, so faces in one camera chart cannot overlap</p></li>
+<li><p>faces no view fully sees get one flat patch per connected group, along its mean normal</p></li>
+<li><p>flipped or overwritten faces regroup into flat patches the same way; any still broken become single charts</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mesh</strong> – prepare_mesh output.</p></li>
+<li><p><strong>c2w</strong> – (V, 4, 4) camera-to-world poses.</p></li>
+<li><p><strong>K</strong> – (V, 3, 3) intrinsics at image resolution.</p></li>
+<li><p><strong>image_hw</strong> – (height, width) of the views.</p></li>
+<li><p><strong>tex_size</strong> – atlas edge in texels.</p></li>
+<li><p><strong>frac</strong> – share of its projected area a face must own for the view to count.</p></li>
+<li><p><strong>small_px</strong> – faces under this projected area use a centroid depth test instead.</p></li>
+<li><p><strong>rel_tol</strong> – relative depth tolerance of that centroid test.</p></li>
+<li><p><strong>alpha</strong> – smoothing lets a face switch to a neighbor’s view scoring &gt;= alpha of its best.</p></li>
+<li><p><strong>rounds</strong> – smoothing rounds.</p></li>
+<li><p><strong>tile_m</strong> – charts are cut into tiles of this world size, so no box spans the atlas.</p></li>
+<li><p><strong>pad</strong> – gutter texels around each chart box.</p></li>
+<li><p><strong>min_owned</strong> – a face owning under this share of its expected texels is overwritten.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>(F, 3, 2) float32 UVs in [0, 1] with v up, and (C, 4) chart boxes x, y, w, h in texels.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="vertex-features">
+<h2>Vertex features<a class="headerlink" href="#vertex-features" title="Link to this heading">#</a></h2>
+<p>The semantics stage (after mesh) lifts features straight onto the vertices with
+<code class="docutils literal notranslate"><span class="pre">collab_splats.semantics.lifting.lift_features</span></code>, passing a result whose <code class="docutils literal notranslate"><span class="pre">points</span></code> are the
+vertices and no <code class="docutils literal notranslate"><span class="pre">pixel_indices</span></code>: each vertex projects into every frame and
+averages the depth-consistent samples; a vertex no frame sees stays zero (unobserved). They are
+stored as <code class="docutils literal notranslate"><span class="pre">vertex_features</span></code> in <code class="docutils literal notranslate"><span class="pre">&lt;scene&gt;/&lt;backend&gt;/semantics/&lt;extractor&gt;_lifted.zarr</span></code>, which
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">&lt;scene&gt;/&lt;backend&gt;</span></code> shows on the mesh.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">collab_splats.semantics.lifting.transfer_features(targets,</span> <span class="pre">points,</span> <span class="pre">features,</span> <span class="pre">k=5,</span> <span class="pre">max_dist=0.03)</span></code>: Gaussian-weighted
+k-NN scatter of point features onto targets; pass the points themselves to smooth.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">collab_splats.semantics.utils.cluster_points</span></code>, given the vertex positions, groups
+high-scoring vertices into spatially connected clusters.</p></li>
+</ul>
+</section>
+<section id="utilities">
+<h2>Utilities<a class="headerlink" href="#utilities" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">to_meshlib</span></code> / <code class="docutils literal notranslate"><span class="pre">from_meshlib</span></code> convert to and from meshlib; <code class="docutils literal notranslate"><span class="pre">face_edge_ids</span></code>,
+<code class="docutils literal notranslate"><span class="pre">adjacent_face_pairs</span></code>, <code class="docutils literal notranslate"><span class="pre">face_components</span></code> and <code class="docutils literal notranslate"><span class="pre">face_areas</span></code> give face connectivity;
+<code class="docutils literal notranslate"><span class="pre">validate_views</span></code> is the view-array contract shared by <code class="docutils literal notranslate"><span class="pre">create_tsdf_mesh</span></code> and
+<code class="docutils literal notranslate"><span class="pre">create_texture_mesh</span></code>.</p>
+<p id="module-collab_splats.mesh.utils">Mesh helpers shared across tsdf, clean and texture.</p>
+<ul class="simple">
+<li><p>to_meshlib / from_meshlib: Open3D &lt;-&gt; meshlib conversion</p></li>
+<li><p>face_edge_ids / adjacent_face_pairs / face_components / face_areas: per-face geometry and connectivity</p></li>
+<li><p>validate_views: the view-array contract for fusion and texturing</p></li>
+</ul>
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.utils.adjacent_face_pairs">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.utils.</span></span><span class="sig-name descname"><span class="pre">adjacent_face_pairs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_verts</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/utils.html#adjacent_face_pairs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.utils.adjacent_face_pairs" title="Link to this definition">#</a></dt>
+<dd><p>Edge-adjacent face pairs, one per consecutive pair of faces sharing an edge.</p>
+<ul class="simple">
+<li><p>an edge shared by k faces gives k - 1 pairs, enough to connect them all</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>faces</strong> – (F, 3) vertex indices.</p></li>
+<li><p><strong>n_verts</strong> – vertex count.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>(P, 2) face indices.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.utils.face_areas">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.utils.</span></span><span class="sig-name descname"><span class="pre">face_areas</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">verts</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/utils.html#face_areas"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.utils.face_areas" title="Link to this definition">#</a></dt>
+<dd><p>Surface area of every triangle, half its edge cross-product norm.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>verts</strong> – (V, 3) positions.</p></li>
+<li><p><strong>faces</strong> – (F, 3) vertex indices.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>(F,) areas in world units squared.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.utils.face_components">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.utils.</span></span><span class="sig-name descname"><span class="pre">face_components</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">verts</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple" title="(in Python v3.15)"><span class="pre">tuple</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/utils.html#face_components"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.utils.face_components" title="Link to this definition">#</a></dt>
+<dd><p>Edge-connected components of a face array, as Open3D’s cluster_connected_triangles returns them.</p>
+<ul class="simple">
+<li><p>scipy connected_components over adjacent_face_pairs; same partition as Open3D, far faster</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>verts</strong> – (V, 3) positions.</p></li>
+<li><p><strong>faces</strong> – (F, 3) vertex indices.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>(ids, sizes, areas)
+- ids: (F,) component of each face
+- sizes: (C,) face count per component
+- areas: (C,) surface area per component</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.utils.face_edge_ids">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.utils.</span></span><span class="sig-name descname"><span class="pre">face_edge_ids</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">faces</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">n_verts</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#int" title="(in Python v3.15)"><span class="pre">int</span></a></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">directed</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/functions.html#bool" title="(in Python v3.15)"><span class="pre">bool</span></a></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/utils.html#face_edge_ids"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.utils.face_edge_ids" title="Link to this definition">#</a></dt>
+<dd><p>An id for each of a face’s 3 edges, (F, 3); two faces sharing an edge get the same id.</p>
+<ul class="simple">
+<li><p>id of edge a-&gt;b: a * n_verts + b, so id // n_verts and id % n_verts give its ends back</p></li>
+<li><p>directed on: a-&gt;b and b-&gt;a get different ids (winding matters)</p></li>
+<li><p>directed off: a-&gt;b and b-&gt;a share one id, the smaller end first</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>faces</strong> – (F, 3) vertex indices.</p></li>
+<li><p><strong>n_verts</strong> – vertex count, the id radix.</p></li>
+<li><p><strong>directed</strong> – keep edge direction in the id.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>(F, 3) int64 edge ids.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.utils.from_meshlib">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.utils.</span></span><span class="sig-name descname"><span class="pre">from_meshlib</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mmesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">meshlib.mrmeshpy.Mesh</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">source</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">open3d.geometry.TriangleMesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/utils.html#from_meshlib"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.utils.from_meshlib" title="Link to this definition">#</a></dt>
+<dd><p>Open3D mesh from a meshlib one; vertex colors from source’s nearest vertex.</p>
+<ul class="simple">
+<li><p>packs mmesh first: getNumpyFaces writes deleted face slots as zero rows</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>mmesh</strong> – meshlib mesh; packed in place.</p></li>
+<li><p><strong>source</strong> – mesh whose vertex colors carry over, if it has any.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>New Open3D mesh.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.utils.to_meshlib">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.utils.</span></span><span class="sig-name descname"><span class="pre">to_meshlib</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">mesh</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">open3d.geometry.TriangleMesh</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">meshlib.mrmeshpy.Mesh</span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/utils.html#to_meshlib"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.utils.to_meshlib" title="Link to this definition">#</a></dt>
+<dd><p>meshlib copy of an Open3D mesh’s vertices and faces.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>mesh</strong> – source mesh; not modified.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>New meshlib mesh.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="collab_splats.mesh.utils.validate_views">
+<span class="sig-prename descclassname"><span class="pre">collab_splats.mesh.utils.</span></span><span class="sig-name descname"><span class="pre">validate_views</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rgbs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">c2w</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">K</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a></span></em>, <em class="sig-param"><span class="n"><span class="pre">depths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#tuple" title="(in Python v3.15)"><span class="pre">tuple</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.ndarray.html#numpy.ndarray" title="(in NumPy v2.5)"><span class="pre">ndarray</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/collab_splats/mesh/utils.html#validate_views"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.mesh.utils.validate_views" title="Link to this definition">#</a></dt>
+<dd><p>Coerce the view arrays and reject dtype, count and resolution mismatches.</p>
+<ul class="simple">
+<li><p>shared by create_tsdf_mesh and create_texture_mesh</p></li>
+<li><p>depths, when given, must match the rgbs resolution</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rgbs</strong> – (N, H, W, 3) uint8 views.</p></li>
+<li><p><strong>c2w</strong> – (N, 4, 4) camera-to-world poses.</p></li>
+<li><p><strong>K</strong> – (N, 3, 3) intrinsics at the rgbs resolution.</p></li>
+<li><p><strong>depths</strong> – optional (N, H, W) depth maps.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>rgbs, c2w and K (float64) and depths as numpy arrays; depths stays None when not given.</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – dtype, view count or resolution mismatch.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="geometry.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Geometry</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="splats.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Splats</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#fusion">Fusion</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#composing-the-inputs">Composing the inputs</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.tsdf.compute_tsdf_voxel_size"><code class="docutils literal notranslate"><span class="pre">compute_tsdf_voxel_size()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.tsdf.create_tsdf_mesh"><code class="docutils literal notranslate"><span class="pre">create_tsdf_mesh()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cleaning">Cleaning</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#preparing-mesh-ply">Preparing mesh.ply</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.bridge_mesh_edges"><code class="docutils literal notranslate"><span class="pre">bridge_mesh_edges()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.clean_repair_mesh"><code class="docutils literal notranslate"><span class="pre">clean_repair_mesh()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.decimate_mesh"><code class="docutils literal notranslate"><span class="pre">decimate_mesh()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.fill_holes"><code class="docutils literal notranslate"><span class="pre">fill_holes()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.get_scene_scale"><code class="docutils literal notranslate"><span class="pre">get_scene_scale()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.make_convex_hull"><code class="docutils literal notranslate"><span class="pre">make_convex_hull()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.make_manifold"><code class="docutils literal notranslate"><span class="pre">make_manifold()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.prepare_mesh"><code class="docutils literal notranslate"><span class="pre">prepare_mesh()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.remove_floaters"><code class="docutils literal notranslate"><span class="pre">remove_floaters()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.clean.trim_mesh_edges"><code class="docutils literal notranslate"><span class="pre">trim_mesh_edges()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#texturing">Texturing</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.texture.create_texture_mesh"><code class="docutils literal notranslate"><span class="pre">create_texture_mesh()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.texture.project_images_to_texture"><code class="docutils literal notranslate"><span class="pre">project_images_to_texture()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.texture.unwrap_view_charts"><code class="docutils literal notranslate"><span class="pre">unwrap_view_charts()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#vertex-features">Vertex features</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#utilities">Utilities</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.utils.adjacent_face_pairs"><code class="docutils literal notranslate"><span class="pre">adjacent_face_pairs()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.utils.face_areas"><code class="docutils literal notranslate"><span class="pre">face_areas()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.utils.face_components"><code class="docutils literal notranslate"><span class="pre">face_components()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.utils.face_edge_ids"><code class="docutils literal notranslate"><span class="pre">face_edge_ids()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.utils.from_meshlib"><code class="docutils literal notranslate"><span class="pre">from_meshlib()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.utils.to_meshlib"><code class="docutils literal notranslate"><span class="pre">to_meshlib()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#collab_splats.mesh.utils.validate_views"><code class="docutils literal notranslate"><span class="pre">validate_views()</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../_sources/api/mesh.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

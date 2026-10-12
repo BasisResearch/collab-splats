@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>collab_splats.semantics.compression &#8212; collab-splats</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=18bd87630a240e9c25be" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=18bd87630a240e9c25be"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be" />
+
+    <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/collab_splats/semantics/compression';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button type="button" class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class=" navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">collab-splats</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class=" navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button type="button" class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../installation.html">
+    Installation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docker.html">
+    Docker image
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../usage.html">
+    Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Reconstruction Pipeline Configs
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorials/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api/index.html">
+    API Reference
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button type="button" class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button type="button" class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/BasisResearch/collab-splats" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">collab_splats.semantics.compression</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for collab_splats.semantics.compression</h1><div class="highlight"><pre>
+<span></span><span class="sd">"""</span>
+<span class="sd">Lightweight feature autoencoder for compressing patch features before 3D lifting.</span>
+
+<span class="sd">- trained once on every frame's patch features, streamed in blocks, then used to cut the</span>
+<span class="sd">  dimensionality of the semantic features stored per point</span>
+<span class="sd">- compression takes either shape, decompression only points</span>
+<span class="sd">- encode: spatial patch maps (D, H, W) -&gt; (latent_dim, H, W)</span>
+<span class="sd">- per_point_encode / per_point_decode: flat point arrays (P, D) &lt;-&gt; (P, latent_dim)</span>
+<span class="sd">"""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Iterator</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">nn</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">zarr</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Tensor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tqdm.auto</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.torch_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">batch_iterator</span><span class="p">,</span> <span class="n">get_device</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">########################################################################</span>
+<span class="c1"># FeatureAutoencoder</span>
+<span class="c1">########################################################################</span>
+
+
+<div class="viewcode-block" id="FeatureAutoencoder">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.compression.FeatureAutoencoder">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">FeatureAutoencoder</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Two-layer MLP autoencoder for compressing semantic patch features.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        input_dim: width of the features being compressed.</span>
+<span class="sd">        latent_dim: width of the codes written to disk.</span>
+<span class="sd">    """</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">input_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">latent_dim</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+
+        <span class="c1"># Hidden width is derived, never configured: twice the latent dim, floor 64</span>
+        <span class="n">hidden_dim</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">latent_dim</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">input_dim</span> <span class="o">=</span> <span class="n">input_dim</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">latent_dim</span> <span class="o">=</span> <span class="n">latent_dim</span>
+
+        <span class="c1"># encoder: input_dim -&gt; hidden_dim -&gt; latent_dim</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">input_dim</span><span class="p">,</span> <span class="n">hidden_dim</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_dim</span><span class="p">,</span> <span class="n">latent_dim</span><span class="p">),</span>
+        <span class="p">)</span>
+
+        <span class="c1"># decoder as two submodules, not one Sequential: keeps checkpoint state_dict keys</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">decoder_hidden</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">latent_dim</span><span class="p">,</span> <span class="n">hidden_dim</span><span class="p">),</span> <span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">()</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">decoder_out</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">hidden_dim</span><span class="p">,</span> <span class="n">input_dim</span><span class="p">)</span>
+
+        <span class="c1"># Fit quality from the last fit(), on the training set; trust only when epochs_run &gt; 0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">recon_cosine</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">recon_mse</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">epochs_run</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Image branch — spatial patch maps (D, H, W)</span>
+    <span class="c1">####################################################################</span>
+
+    <span class="c1"># No image decode: lifted codes are decoded per point (per_point_decode)</span>
+
+<div class="viewcode-block" id="FeatureAutoencoder.encode">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.compression.FeatureAutoencoder.encode">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">encode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">feature_map</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Encode a spatial patch map.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            feature_map: (input_dim, H, W).</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (latent_dim, H, W).</span>
+<span class="sd">        """</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">feature_map</span><span class="o">.</span><span class="n">shape</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span><span class="p">(</span><span class="n">feature_map</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">T</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">latent_dim</span><span class="p">,</span> <span class="n">H</span><span class="p">,</span> <span class="n">W</span><span class="p">)</span></div>
+
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Point branch — flat point arrays (P, D)</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="FeatureAutoencoder.per_point_encode">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.compression.FeatureAutoencoder.per_point_encode">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">per_point_encode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">feats</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Encode flat point features.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            feats: (P, input_dim).</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (P, latent_dim).</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">encoder</span><span class="p">(</span><span class="n">feats</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FeatureAutoencoder.per_point_decode">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.compression.FeatureAutoencoder.per_point_decode">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">per_point_decode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">codes</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Decode flat point codes.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            codes: (P, latent_dim).</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (P, input_dim).</span>
+<span class="sd">        """</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">decoder_out</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">decoder_hidden</span><span class="p">(</span><span class="n">codes</span><span class="p">))</span></div>
+
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">()</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">iter_decode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">codes</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">65_536</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Iterator</span><span class="p">[</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Decode flat point codes one chunk at a time, on this autoencoder's device and dtype.</span>
+
+<span class="sd">        - peak memory is one (batch_size, input_dim) chunk, never the full (P, input_dim)</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            codes: (P, latent_dim), on any device.</span>
+<span class="sd">            batch_size: codes per chunk.</span>
+
+<span class="sd">        Yields:</span>
+<span class="sd">            (c, input_dim) decoded chunks, in order.</span>
+<span class="sd">        """</span>
+        <span class="n">param</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+
+        <span class="k">for</span> <span class="p">(</span><span class="n">chunk</span><span class="p">,)</span> <span class="ow">in</span> <span class="n">batch_iterator</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">codes</span><span class="p">):</span>
+            <span class="n">chunk</span> <span class="o">=</span> <span class="n">chunk</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">param</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">param</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+            <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">per_point_decode</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Training</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="FeatureAutoencoder.fit">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.compression.FeatureAutoencoder.fit">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fit</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">features</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="n">zarr</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+        <span class="n">epochs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1024</span><span class="p">,</span>
+        <span class="n">lr</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-3</span><span class="p">,</span>
+        <span class="n">on_epoch</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">target_cosine</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">read_gb</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Train in place on MSE(recon, x) + (1 - cosine(recon, x)), streaming axis-0 blocks.</span>
+
+<span class="sd">        - axis 1 = features; axis 0 + trailing axes = samples ((N, D) rows or (N, D, H, W) patch maps)</span>
+<span class="sd">        - each epoch reads every item: blocks of about read_gb in random order, rows shuffled per block</span>
+<span class="sd">        - a zarr never sits in memory whole; a tensor trains on its own device, others on get_device()</span>
+<span class="sd">        - fit quality lands on `self` as recon_cosine, recon_mse, epochs_run (training set, optimistic)</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            features: tensor, ndarray or zarr array, feature width on axis 1.</span>
+<span class="sd">            epochs: epoch ceiling.</span>
+<span class="sd">            batch_size: mini-batch size.</span>
+<span class="sd">            lr: Adam learning rate.</span>
+<span class="sd">            on_epoch: callback(epoch, epochs, avg_loss), once per epoch; a progress hook for UIs.</span>
+<span class="sd">            target_cosine: stop once mean reconstruction cosine reaches this; None runs all epochs.</span>
+<span class="sd">            read_gb: float32 size of one axis-0 block, in GiB.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            ValueError: if `features` has no samples.</span>
+<span class="sd">        """</span>
+        <span class="n">n_items</span><span class="p">,</span> <span class="n">dim</span> <span class="o">=</span> <span class="n">features</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">per_item</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">features</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">2</span><span class="p">:])</span>
+
+        <span class="c1"># Empty input raises a clear ValueError, not a ZeroDivisionError at the epoch mean</span>
+        <span class="k">if</span> <span class="n">n_items</span> <span class="o">*</span> <span class="n">per_item</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">"fit() requires at least one sample; got features with shape </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">features</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+            <span class="p">)</span>
+
+        <span class="n">device</span> <span class="o">=</span> <span class="n">features</span><span class="o">.</span><span class="n">device</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">features</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">)</span> <span class="k">else</span> <span class="n">get_device</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+        <span class="n">optimizer</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="n">lr</span><span class="p">)</span>
+
+        <span class="c1"># Axis-0 blocks of about read_gb float32</span>
+        <span class="n">item_gb</span> <span class="o">=</span> <span class="n">per_item</span> <span class="o">*</span> <span class="n">dim</span> <span class="o">*</span> <span class="mi">4</span> <span class="o">/</span> <span class="mi">2</span><span class="o">**</span><span class="mi">30</span>
+        <span class="n">items_per_block</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">read_gb</span> <span class="o">/</span> <span class="n">item_gb</span><span class="p">))</span>
+        <span class="n">starts</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">n_items</span><span class="p">,</span> <span class="n">items_per_block</span><span class="p">))</span>
+
+        <span class="n">pbar</span> <span class="o">=</span> <span class="n">tqdm</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">epochs</span><span class="p">),</span> <span class="n">desc</span><span class="o">=</span><span class="s2">"fit autoencoder"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"epoch"</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="n">pbar</span><span class="p">:</span>
+            <span class="c1"># Loss, cosine, mse sums stay on device; one host sync per epoch</span>
+            <span class="n">epoch_sums</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">n_batches</span> <span class="o">=</span> <span class="mi">0</span>
+
+            <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">torch</span><span class="o">.</span><span class="n">randperm</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">starts</span><span class="p">))</span><span class="o">.</span><span class="n">tolist</span><span class="p">():</span>
+                <span class="c1"># Read one block as (rows, dim) float32 on device</span>
+                <span class="n">start</span> <span class="o">=</span> <span class="n">starts</span><span class="p">[</span><span class="n">b</span><span class="p">]</span>
+                <span class="n">block</span> <span class="o">=</span> <span class="n">features</span><span class="p">[</span><span class="n">start</span> <span class="p">:</span> <span class="n">start</span> <span class="o">+</span> <span class="n">items_per_block</span><span class="p">]</span>
+
+                <span class="c1"># zarr and ndarray slices arrive as numpy; tensors stay on their device</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">block</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">):</span>
+                    <span class="n">block</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">block</span><span class="p">))</span>
+
+                <span class="n">block</span> <span class="o">=</span> <span class="n">block</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+                <span class="n">block</span> <span class="o">=</span> <span class="n">block</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">block</span><span class="p">),</span> <span class="n">dim</span><span class="p">,</span> <span class="n">per_item</span><span class="p">)</span>
+                <span class="n">block</span> <span class="o">=</span> <span class="n">block</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="n">block</span> <span class="o">=</span> <span class="n">block</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dim</span><span class="p">)</span>
+
+                <span class="c1"># Shuffle rows within the block for unbiased mini-batches</span>
+                <span class="n">perm</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randperm</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">block</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+                <span class="k">for</span> <span class="n">first</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">block</span><span class="p">),</span> <span class="n">batch_size</span><span class="p">):</span>
+                    <span class="n">x</span> <span class="o">=</span> <span class="n">block</span><span class="p">[</span><span class="n">perm</span><span class="p">[</span><span class="n">first</span> <span class="p">:</span> <span class="n">first</span> <span class="o">+</span> <span class="n">batch_size</span><span class="p">]]</span>
+
+                    <span class="n">recon</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">decoder_out</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">decoder_hidden</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">encoder</span><span class="p">(</span><span class="n">x</span><span class="p">)))</span>
+                    <span class="n">mse</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">mse_loss</span><span class="p">(</span><span class="n">recon</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>
+                    <span class="n">cos</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">cosine_similarity</span><span class="p">(</span><span class="n">recon</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+                    <span class="n">loss</span> <span class="o">=</span> <span class="n">mse</span> <span class="o">+</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">cos</span><span class="p">)</span>
+
+                    <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+                    <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+                    <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+                    <span class="n">batch_stats</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+                        <span class="p">[</span><span class="n">loss</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">cos</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span> <span class="n">mse</span><span class="o">.</span><span class="n">detach</span><span class="p">()]</span>
+                    <span class="p">)</span>
+                    <span class="n">epoch_sums</span> <span class="o">+=</span> <span class="n">batch_stats</span><span class="o">.</span><span class="n">double</span><span class="p">()</span>
+                    <span class="n">n_batches</span> <span class="o">+=</span> <span class="mi">1</span>
+
+            <span class="c1"># At least one sample (checked above), so n_batches &gt;= 1</span>
+            <span class="n">epoch_loss</span><span class="p">,</span> <span class="n">epoch_cos</span><span class="p">,</span> <span class="n">epoch_mse</span> <span class="o">=</span> <span class="n">epoch_sums</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+            <span class="n">avg_loss</span> <span class="o">=</span> <span class="n">epoch_loss</span> <span class="o">/</span> <span class="n">n_batches</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">recon_cosine</span> <span class="o">=</span> <span class="n">epoch_cos</span> <span class="o">/</span> <span class="n">n_batches</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">recon_mse</span> <span class="o">=</span> <span class="n">epoch_mse</span> <span class="o">/</span> <span class="n">n_batches</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">epochs_run</span> <span class="o">=</span> <span class="n">epoch</span> <span class="o">+</span> <span class="mi">1</span>
+
+            <span class="n">pbar</span><span class="o">.</span><span class="n">set_postfix</span><span class="p">(</span><span class="n">loss</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">avg_loss</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">cos</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">recon_cosine</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                <span class="s2">"epoch </span><span class="si">%d</span><span class="s2">/</span><span class="si">%d</span><span class="s2">  loss=</span><span class="si">%.6f</span><span class="s2">  cos=</span><span class="si">%.4f</span><span class="s2">"</span><span class="p">,</span>
+                <span class="n">epoch</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+                <span class="n">epochs</span><span class="p">,</span>
+                <span class="n">avg_loss</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">recon_cosine</span><span class="p">,</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">on_epoch</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">on_epoch</span><span class="p">(</span><span class="n">epoch</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">epochs</span><span class="p">,</span> <span class="n">avg_loss</span><span class="p">)</span>
+
+            <span class="c1"># Early stop once reconstruction is good enough; epochs is the ceiling</span>
+            <span class="k">if</span> <span class="n">target_cosine</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">recon_cosine</span> <span class="o">&gt;=</span> <span class="n">target_cosine</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                    <span class="s2">"target cosine </span><span class="si">%.4f</span><span class="s2"> reached at epoch </span><span class="si">%d</span><span class="s2">/</span><span class="si">%d</span><span class="s2"> (cos=</span><span class="si">%.4f</span><span class="s2">) — stopping"</span><span class="p">,</span>
+                    <span class="n">target_cosine</span><span class="p">,</span>
+                    <span class="n">epoch</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span>
+                    <span class="n">epochs</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">recon_cosine</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">break</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span></div>
+
+
+    <span class="c1">####################################################################</span>
+    <span class="c1"># Persistence</span>
+    <span class="c1">####################################################################</span>
+
+<div class="viewcode-block" id="FeatureAutoencoder.save">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.compression.FeatureAutoencoder.save">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Write the checkpoint to a weights file path.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            path: destination `.pt` file — its parent dir is created if missing.</span>
+<span class="sd">        """</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># Serialize from CPU so the checkpoint is device-agnostic</span>
+        <span class="c1"># - the restore sits in a finally: a failed write must not strand the model on CPU</span>
+        <span class="c1"># - the next forward pass would raise a device mismatch far from the save that caused it</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="s2">"input_dim"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_dim</span><span class="p">,</span>
+                    <span class="s2">"latent_dim"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">latent_dim</span><span class="p">,</span>
+                    <span class="s2">"state_dict"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span>
+                    <span class="s2">"recon_cosine"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">recon_cosine</span><span class="p">,</span>
+                    <span class="s2">"recon_mse"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">recon_mse</span><span class="p">,</span>
+                    <span class="s2">"epochs_run"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">epochs_run</span><span class="p">,</span>
+                <span class="p">},</span>
+                <span class="n">path</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"saved autoencoder → </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FeatureAutoencoder.load">
+<a class="viewcode-back" href="../../../api/semantics.html#collab_splats.semantics.compression.FeatureAutoencoder.load">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">"FeatureAutoencoder"</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Read a checkpoint from a weights file path.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            path: the `.pt` file written by `save`.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            An eval-mode FeatureAutoencoder with the checkpoint's weights and fit metrics.</span>
+
+<span class="sd">        Raises:</span>
+<span class="sd">            KeyError: when the checkpoint lacks a key `save` writes (older checkpoints must be refit).</span>
+<span class="sd">        """</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">payload</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">map_location</span><span class="o">=</span><span class="s2">"cpu"</span><span class="p">,</span> <span class="n">weights_only</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">ae</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span><span class="n">input_dim</span><span class="o">=</span><span class="n">payload</span><span class="p">[</span><span class="s2">"input_dim"</span><span class="p">],</span> <span class="n">latent_dim</span><span class="o">=</span><span class="n">payload</span><span class="p">[</span><span class="s2">"latent_dim"</span><span class="p">])</span>
+        <span class="n">ae</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="s2">"state_dict"</span><span class="p">])</span>
+        <span class="n">ae</span><span class="o">.</span><span class="n">recon_cosine</span> <span class="o">=</span> <span class="n">payload</span><span class="p">[</span><span class="s2">"recon_cosine"</span><span class="p">]</span>
+        <span class="n">ae</span><span class="o">.</span><span class="n">recon_mse</span> <span class="o">=</span> <span class="n">payload</span><span class="p">[</span><span class="s2">"recon_mse"</span><span class="p">]</span>
+        <span class="n">ae</span><span class="o">.</span><span class="n">epochs_run</span> <span class="o">=</span> <span class="n">payload</span><span class="p">[</span><span class="s2">"epochs_run"</span><span class="p">]</span>
+        <span class="n">ae</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"loaded autoencoder ← </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">ae</span></div>
+</div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=18bd87630a240e9c25be"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=18bd87630a240e9c25be"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2026, Basis Research Institute.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.23.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

@@ -21,9 +21,13 @@ if str(_project_root) not in _sys.path:
 import importlib  # noqa: E402
 import sys  # noqa: E402
 
-import pkg_resources  # noqa: E402
+# Best-effort: a semantics-only env may carry setuptools >= 81, which has no pkg_resources
+try:
+    import pkg_resources  # noqa: E402
+except ImportError:
+    pkg_resources = None
 
-if not hasattr(pkg_resources, "packaging"):
+if pkg_resources is not None and not hasattr(pkg_resources, "packaging"):
     import packaging as _packaging
 
     pkg_resources.packaging = _packaging

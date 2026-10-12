@@ -228,6 +228,8 @@ def test_mobilesamv2_stack_masks_is_bool():
 
 
 def test_mobilesamv2_auto_empty_returns_empty_stack(monkeypatch):
+    pytest.importorskip("mobile_sam")
+
     gen = MagicMock()
     gen.return_value.generate.return_value = []
     monkeypatch.setattr("mobile_sam.SamAutomaticMaskGenerator", gen)

@@ -110,20 +110,27 @@ cd collab-splats
 bash setup.sh
 ```
 
-`setup.sh` is safe to re-run; it only builds what is missing. For a lighter install, sync extras individually:
+`setup.sh` is safe to re-run; it only builds what is missing. On RunPod the `/workspace` network volume hides the image's own checkout: clone into `/workspace` (as above), then run `bash setup.sh` there. For a lighter install, sync extras individually:
 
 ```sh
-uv sync                          # core deps only
-uv sync --extra feedforward      # + feedforward models (VGGT-X, MapAnything, ...)
-uv sync --extra gpu              # + CUDA wheels used to compile bae / gsplat
-uv sync --extra dashboard        # + dashboard
-uv sync --extra dev              # + lint / test tooling
-uv sync --all-extras             # everything (what setup.sh does)
+uv sync                                         # light core only (numpy, scipy, zarr, ...)
+uv sync --extra semantics                       # + 2D features and segmentation (CPU or GPU, no CUDA build)
+uv sync --extra reconstruction --extra remote   # + full pipeline and the reconstruct CLI (CUDA toolkit)
+uv sync --extra feedforward                     # + feedforward models (VGGT-X, MapAnything, ...)
+uv sync --extra instantsfm                      # + InstantSfM backend (needs libsuitesparse-dev)
+uv sync --extra gpu                             # + CUDA wheels used to compile bae / gsplat
+uv sync --extra dashboard                       # + dashboard
+uv sync --extra dev                             # + lint / test tooling
+uv sync --all-extras                            # everything (what setup.sh does)
 ```
+
+**Semantics only** (another project, CPU or GPU, no CUDA toolkit): run this from outside this repo, so uv does not apply our cu121 overrides:
+
+    uv pip install 'collab_splats[semantics] @ git+https://github.com/BasisResearch/collab-splats@<commit>'
 
 > **Use `setup.sh`, not a bare `uv sync`, and never `uv pip install ... @ git+...`.**
 > - The CUDA extensions build from source and need `nvcc` + `build-essential`; `setup.sh` points the build at your CUDA toolkit and warns if `nvcc` is missing.
-> - `uv pip install` ignores this project's `[tool.uv]` config and resolves the wrong package sources.
+> - Inside this repo, `uv pip install` applies our `[tool.uv]` overrides; outside it, git dependencies resolve without them (no cu121 torch, no pinned sources).
 
 All later commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`.
 
@@ -135,8 +142,12 @@ The dashboard and `reconstruct remote` read and write scenes through an rclone r
 
 ```sh
 brew install rclone jq                                                  # macOS
-curl https://rclone.org/install.sh | sudo bash && sudo apt install jq   # Linux (apt's rclone is too old)
+curl -fsSLo rclone.zip https://downloads.rclone.org/v1.75.2/rclone-v1.75.2-linux-amd64.zip \
+  && unzip -q rclone.zip && sudo install -m 0755 rclone-v1.75.2-linux-amd64/rclone /usr/local/bin/ \
+  && sudo apt-get install -y jq                                         # Linux (apt's rclone is too old)
 ```
+
+The Docker image ships both, so skip this step there.
 
 Save the GCS service-account key to `collab-data/config-local/collab-data.json`, then run the setup script from the collab-data repo:
 

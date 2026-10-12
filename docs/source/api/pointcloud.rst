@@ -152,14 +152,14 @@ positioning, global BA) with VDA depth as priors. A split solve keeps cluster 0 
        min_num_view_per_track: null # null = upstream's 3; higher lowers BA memory
        min_registered_frac: 0.5
 
-**Install.** ``setup.sh`` installs ``instantsfm`` from a pinned git commit (``d3e599e``) with
-``--no-deps`` (upstream pins ``numpy==1.26.4``; the lock runs numpy 2.x), plus ``pyceres==2.3``,
-``scikit-sparse==0.4.15`` (needs ``libsuitesparse-dev``) and ``easydict==1.13``. It clones
-Video-Depth-Anything into ``third_party/Video-Depth-Anything`` at ``4f5ae23`` (source only). The
-metric checkpoint (``depth-anything/Metric-Video-Depth-Anything-Large``, ~1.5 GB) is pulled from
-the Hugging Face hub on first use and cached under ``HF_HOME``; with no network then, the first
-sfm run fails with a ``RuntimeError`` naming the repo. Plain ``uv sync`` prunes the
-``--no-deps`` packages; re-run that ``setup.sh`` block afterwards.
+**Install.** The ``instantsfm`` extra (in ``setup.sh``'s ``uv sync --all-extras``) locks
+``instantsfm`` at a pinned git commit (``d3e599e``) with its upstream requirements blanked
+(upstream pins ``numpy==1.26.4``; the lock runs numpy 2.x), plus ``pyceres==2.3``,
+``scikit-sparse==0.4.15`` (needs ``libsuitesparse-dev``) and ``easydict==1.13``. ``setup.sh``
+clones Video-Depth-Anything into ``third_party/Video-Depth-Anything`` at ``4f5ae23`` (source
+only). The metric checkpoint (``depth-anything/Metric-Video-Depth-Anything-Large``, ~1.5 GB) is
+pulled from the Hugging Face hub on first use and cached under ``HF_HOME``; with no network then,
+the first sfm run fails with a ``RuntimeError`` naming the repo.
 
 **Licenses.** InstantSfM is CC-BY-NC-4.0 (research use only). VDA code is Apache-2.0; the VDA
 metric weights are CC-BY-NC-4.0.

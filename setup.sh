@@ -11,6 +11,9 @@ PYTHON="$VENV/bin/python"
 export PIP_ROOT_USER_ACTION=ignore
 export UV_PROJECT_ENVIRONMENT="$VENV"
 
+# uv from PATH: the Docker image puts it in /root/.local/bin, other installs elsewhere
+command -v uv >/dev/null || { echo "setup.sh: uv not on PATH — install it first (README §1)." >&2; exit 1; }
+
 # CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim, nvdiffrast)
 # - toolkit is the user's to provide (README §4); setup.sh never installs system packages
 # - honors a pre-set CUDA_HOME (conda, /usr/local/cuda-12.1); default /usr/local/cuda
@@ -30,6 +33,13 @@ Or build the toolkit with micromamba (verified 2026-08-22):
   ln -sfn libcudart.so.12 /opt/cuda-nvcc-12.1/lib/libcudart.so   # solver leaves it dangling
   ln -sfn lib /opt/cuda-nvcc-12.1/lib64 && ln -sfn /opt/cuda-nvcc-12.1 /usr/local/cuda
 MSG
+}
+
+# uv sync failed: CUDA toolkit recipe when nvcc is missing, plus the InstantSfM system lib
+sync_failed() {
+    [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help
+    echo "setup.sh: uv sync failed. scikit-sparse (instantsfm extra) also needs libsuitesparse-dev: apt-get install -y libsuitesparse-dev" >&2
+    exit 1
 }
 
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
@@ -56,7 +66,7 @@ if [ "$HAVE_NVCC" = 1 ]; then
     CCCL_PREFIX="${CCCL_PREFIX:-/opt/cccl-12.6.77}"
     CCCL_INC="$CCCL_PREFIX/nvidia/cuda_cccl/include"
     if [ ! -f "$CCCL_INC/cuda/std/optional" ]; then
-        /root/.local/bin/uv pip install --target "$CCCL_PREFIX" nvidia-cuda-cccl-cu12==12.6.77
+        uv pip install --target "$CCCL_PREFIX" nvidia-cuda-cccl-cu12==12.6.77
     fi
     if [ -f "$CCCL_INC/cuda/std/optional" ]; then
         export NVCC_PREPEND_FLAGS="-I$CCCL_INC ${NVCC_PREPEND_FLAGS:-}"
@@ -102,18 +112,19 @@ cd "$SCRIPT_DIR"
 # Dependency-only pass: Docker caches the slow CUDA compiles in their own layer
 # - needs only pyproject.toml + uv.lock, so source edits never invalidate it
 if [ "${SETUP_DEPS_ONLY:-0}" = 1 ]; then
-    /root/.local/bin/uv sync --locked --all-extras --no-install-project \
-        || { [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help; exit 1; }
+    uv sync --locked --all-extras --no-install-project \
+        || sync_failed
     echo "=== setup complete (dependencies only) ==="
     exit 0
 fi
 
-/root/.local/bin/uv sync --locked --all-extras \
-    || { [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help; exit 1; }
+uv sync --locked --all-extras \
+    || sync_failed
 
-# WordNet corpus for the ocr_lens vocabulary; best-effort like the weight pre-fetches
-"$PYTHON" -m nltk.downloader wordnet \
-    || echo "WARN: WordNet download failed — run: python -m nltk.downloader wordnet"
+# WordNet corpus for the ocr_lens vocabulary, on the persistent models volume; best-effort
+export NLTK_DATA="${NLTK_DATA:-/workspace/models/nltk_data}"
+"$PYTHON" -c "import nltk, os; nltk.download('wordnet', download_dir=os.environ['NLTK_DATA'], quiet=True)" \
+    || echo "WARN: WordNet download failed — run: python -c \"import nltk; nltk.download('wordnet', download_dir='$NLTK_DATA')\""
 
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
 # Best-effort: a build stage without network/system libs skips it and
@@ -129,20 +140,6 @@ EOF
 # - best-effort like vismatch: the builder stage lacks libGL, so a cv2 import there fails
 bash "$SCRIPT_DIR/setup/hloc.sh" --prefetch \
     || echo "WARN: hloc weights pre-fetch failed — weights will download on first use."
-
-# --- InstantSfM backend (optional, CC-BY-NC-4.0 — research use) ------------------
-# Their pyproject pins numpy==1.26.4; --no-deps is load-bearing (we run numpy 2.x).
-# NOTE: plain `uv sync` prunes these (outside the lock) — rerun this block after any sync.
-# Best-effort like vismatch: the backend is optional, and scikit-sparse builds against
-# libsuitesparse-dev (in the Dockerfile apt lists; `apt-get install -y libsuitesparse-dev` on a bare host).
-# easydict is VDA's only hard runtime dep missing from the lock (dpt_temporal.py); xformers is
-# optional upstream (falls back to plain attention) and decord is only used by its video reader.
-echo "=== install InstantSfM backend (instantsfm --no-deps, pyceres, scikit-sparse, easydict) ==="
-{
-    /root/.local/bin/uv pip install --python "$PYTHON" --no-deps \
-        'git+https://github.com/cre185/InstantSfM@d3e599e1a42b4c5a806a84d9f383e1005d25f61b' \
-    && /root/.local/bin/uv pip install --python "$PYTHON" pyceres==2.3 scikit-sparse==0.4.15 easydict==1.13
-} || echo "WARN: InstantSfM backend not installed (optional; needs libsuitesparse-dev) — re-run setup.sh to retry."
 
 # --- Video Depth Anything (metric) — source clone only, not pip-installable ------
 # Imported from the clone root via sys.path (collab_splats/pointcloud/depth.py::estimate_depth).
@@ -177,8 +174,10 @@ for pattern in ("gsplat/csrc*.so", "_nvdiffrast_c*.so"):
     assert glob.glob(f"{site}/{pattern}"), f"FAIL: no AOT build matching {pattern} in {site}"
 print("[OK] gsplat + nvdiffrast AOT extensions present")
 try:
-    from collab_splats.pointcloud import VGGTXCreator, MapAnythingCreator, VGGTOmegaCreator
-    print("[OK] full creator chain imports")
+    from collab_splats.pointcloud import get_creator
+    for name in ("vggtx", "mapanything", "vggt_omega", "loger"):
+        get_creator(name)
+    print("[OK] creators resolve: vggtx, mapanything, vggt_omega, loger")
 except Exception as e:  # OSError: missing X11/GL; RuntimeError: vggt touches CUDA at import
     print(f"[WARN] creator import deferred to runtime (no GPU/system lib in build stage): {e}")
 PYEOF

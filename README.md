@@ -4,6 +4,8 @@ This package provides an interface for 3D scene reconstruction & semantic featur
 
 ## Quickstart
 
+### Start the container
+
 We run our package via a Docker image available at `tommybotch/collab-splats:release` (see [System requirements](#4-system-requirements)). Pull and start it:
 
 ```bash
@@ -21,6 +23,8 @@ docker run --gpus all -it \
 # Inside the container (the venv is already active)
 cd /workspace/collab-splats
 ```
+
+### Run on local videos
 
 Our pipeline runs from a `yaml` config. We provide `configs/base.yaml`, which reconstructs the scene with a feedforward model ([VGGT Omega](https://arxiv.org/abs/2605.15195)), creates a textured mesh, and lifts queryable semantics ([Talk2Dino](https://arxiv.org/abs/2411.19331) and OCR lens).
 
@@ -46,18 +50,43 @@ reconstruct local --config configs/my_run.yaml --output-root /PATH/TO/OUTPUT/ /P
 
 Every key is documented in [configs/README.md](configs/README.md).
 
-## Package Organization
+### Process scenes on GCloud
 
-Each module is one stage of the pipeline; `reconstructor.py` chains them from the config:
-- **preproc**: keyframe extraction, quality assessment (blur / exposure), frame filtering
-- **pointcloud**: Structure-from-Motion (COLMAP, hloc, InstantSfM) or feedforward (VGGT-X, VGGT-Omega, MapAnything, LoGeR)
-- **geometry**: bundle adjustment, loop closure, reconstruction quality report
-- **mesh**: TSDF fusion, cleanup, texturing
-- **splats**: Gaussian splatting (3DGS / 2DGS)
-- **semantics**: VLM feature extraction, segmentation, 2D-to-3D lifting, text queries
-- **localization**: locate a query image within a reconstruction
+Setup (the image already has `rclone` and `jq`):
 
-Supporting code: `utils/` (shared helpers), `viewer.py` + `dashboard/` (browser viewers), `remote.py` (cloud scene sync), `configs/` (pipeline configs), `evals/` (benchmarks).
+1. Clone the private [collab-data](https://github.com/BasisResearch/collab-data) repo to `/workspace/collab-data`.
+2. Ask a maintainer for the GCS service-account key and save it as `/workspace/collab-data/config-local/collab-data.json`.
+3. Create the `collab-data` rclone remote, then check it lists the curated scenes:
+
+```bash
+(cd /workspace/collab-data && ./scripts/setup_local_rclone.sh)
+rclone lsd collab-data:environments-curated
+```
+
+Using `reconstruct remote` automatically links to the `environments-curated` bucket and requires ```collab-data``` access with the rclone remote (see [Private dependency](#3-private-dependency-collab-data)). For each scene it pulls the video, reconstructs it, pushes the outputs to `environments-processed/<scene>/`, verifies the push, then deletes the local copy:
+
+```bash
+# Named scenes (the curated directory names)
+reconstruct remote --output-root /workspace/outputs \
+  2026_07_20-birds-C0043 2026_07_21-rats-C0100
+
+# Everything in the bucket
+reconstruct remote --output-root /workspace/outputs --all
+
+# Keep the local copy for inspection
+reconstruct remote --output-root /workspace/outputs --all --keep-local
+```
+
+Re-run one stage on scenes we already processed by naming only that stage; it pulls the scene back from `environments-processed` instead of rebuilding it:
+
+```bash
+reconstruct remote --output-root /workspace/outputs \
+  --stages mesh --overwrite --config configs/my_run.yaml --all
+```
+
+- `--all` re-runs every curated scene (every processed scene when re-running one stage) and overwrites its processed outputs; nothing is skipped.
+- Nothing local is deleted until the push verifies, and the curated video stays in the bucket.
+- Exit codes, leaf stages and failure handling are in [configs/README.md](configs/README.md#remote-scenes).
 
 ## Output Structure
 
@@ -81,6 +110,8 @@ Each scene writes to `<output-root>/<name>/`. Frames and 2D caches are shared; e
     └── semantics/<extractor>_lifted.zarr   # semantics on mesh vertices
 ```
 
+### Viewing completed reconstructions
+
 View the mesh and query its semantics in the browser (`http://localhost:8080`, add `--textured` for the textured mesh):
 
 ```bash
@@ -102,7 +133,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
 
 ### 2. Install the package
 
-We install everything with `setup.sh`. It creates the venv at `/opt/venv/reconstruction`, installs all dependencies, and compiles the CUDA extensions (`bae`, `gsplat`):
+We install everything with `setup.sh`. It creates the venv at `/opt/venv/reconstruction`, installs all dependencies, and compiles the CUDA extensions (`bae`, `gsplat`, `fused-ssim`, `nvdiffrast`):
 
 ```sh
 git clone https://github.com/BasisResearch/collab-splats.git
@@ -118,7 +149,8 @@ uv sync --extra semantics                       # + features and segmentation (n
 uv sync --extra reconstruction --extra remote   # + full pipeline and CLI
 uv sync --extra feedforward                     # + feedforward models (VGGT-X, MapAnything, ...)
 uv sync --extra instantsfm                      # + InstantSfM backend (needs libsuitesparse-dev)
-uv sync --extra gpu                             # + CUDA wheels used to compile bae / gsplat
+uv sync --extra hloc                            # + hloc backend
+uv sync --extra gpu                             # + CUDA headers / libs torch does not ship
 uv sync --extra dashboard                       # + dashboard
 uv sync --extra dev                             # + lint / test tooling
 uv sync --all-extras                            # everything (what setup.sh does)
@@ -176,9 +208,9 @@ Save the GCS service-account key to `collab-data/config-local/collab-data.json`,
 
 You provide these; `setup.sh` never installs system packages.
 
-- **NVIDIA GPU + driver** for VGGT-X, splats and mesh texturing. Other stages fall back to CPU, but slowly and untested.
+- **NVIDIA GPU + driver** for the feedforward models, splats and mesh texturing. Other stages fall back to CPU, but slowly and untested.
 - **build-essential** (gcc/g++) + a CUDA toolkit to compile the extensions.
-- Optional: `ffmpeg`, `exiftool`, `rclone` for the video and data scripts.
+- Optional: `ffmpeg` + `exiftool` for the curated-video scripts; `rclone` + `jq` for GCloud scenes.
 
 ### 5. Docker image
 
@@ -210,6 +242,19 @@ docker push tommybotch/collab-splats:release
   "builder": { "gc": { "enabled": true, "defaultKeepStorage": "150GB" } }
   ```
 - Never run `docker builder prune`, `docker system prune -a` or "Clean / Purge data": they delete the cached compile.
+
+## Package Organization
+
+Each module is one stage of the pipeline; `reconstructor.py` chains them from the config:
+- **preproc**: keyframe extraction, quality assessment (blur / exposure), frame filtering
+- **pointcloud**: Structure-from-Motion (COLMAP, hloc, InstantSfM) or feedforward (VGGT-X, VGGT-Omega, MapAnything, LoGeR)
+- **geometry**: bundle adjustment, loop closure, reconstruction quality report
+- **mesh**: TSDF fusion, cleanup, texturing
+- **splats**: Gaussian splatting (3DGS / 2DGS)
+- **semantics**: VLM feature extraction, segmentation, 2D-to-3D lifting, text queries
+- **localization**: locate a query image within a reconstruction
+
+Supporting code: `utils/` (shared helpers), `viewer.py` + `dashboard/` (browser viewers), `remote.py` (cloud scene sync), `configs/` (pipeline configs), `evals/` (benchmarks).
 
 ## Python API
 
@@ -245,23 +290,11 @@ python -m collab_splats.dashboard
 
 Then open `http://localhost:7860` (change with `--port`, `--host`, `--base-dir`). Restart it to pick up code changes.
 
-## Live Scene Viewer
+## Adding Curated Videos
 
-`collab_splats.viewer.Viewer` streams point clouds and cameras from a running job to the browser (no display needed on the host). Re-adding a name replaces it:
+Raw video files are added to the `environments-curated` bucket via `scripts/preprocess_gdrive_videos.py`. This script creates one directory per video, and extracts the camera metadata (GPS, IMU) that video editing removes. All requires `ffmpeg` + `exiftool`.
 
-```python
-from collab_splats.viewer import Viewer
-from collab_splats.pointcloud.utils import subsample_points
-
-viewer = Viewer(port=8080)  # open http://<host>:8080
-points, colors = subsample_points(points, colors, max_points=50_000)
-viewer.add_points("submap_0", points, colors)
-viewer.add_frustum("submap_0/cams/frame_0", pose_w2c, intrinsic)
-```
-
-## Curated Videos
-
-We curate raw environment videos into the `environments-curated` bucket. `scripts/preprocess_gdrive_videos.py` makes one folder per video and restores the camera metadata (GPS, IMU) that editing strips; `scripts/push_curated.sh` uploads the result. Both need `ffmpeg` + `exiftool` and skip work already done:
+The processing pipeline is illustrated below:
 
 ```sh
 python scripts/preprocess_gdrive_videos.py --dry-run   # ../gdrive-src -> ../environments-curated
@@ -272,36 +305,9 @@ python scripts/preprocess_gdrive_videos.py --only GH010234   # one clip
 ./scripts/push_curated.sh
 ```
 
-## Processing GCloud Data
-
-We process curated scenes straight from the `environments-curated` bucket with `reconstruct remote`. It needs the rclone remote (see [Private dependency](#3-private-dependency-collab-data)). For each scene it pulls the video, reconstructs it, pushes the outputs to `environments-processed/<scene>/`, verifies the push, then deletes the local copy:
-
-```bash
-# Named scenes (the curated directory names)
-reconstruct remote --output-root /workspace/outputs \
-  2026_07_20-birds-C0043 2026_07_21-rats-C0100
-
-# Everything in the bucket
-reconstruct remote --output-root /workspace/outputs --all
-
-# Keep the local copy for inspection
-reconstruct remote --output-root /workspace/outputs --all --keep-local
-```
-
-Re-run one stage on scenes we already processed by naming only that stage; it pulls the scene back from `environments-processed` instead of rebuilding it:
-
-```bash
-reconstruct remote --output-root /workspace/outputs \
-  --stages mesh --overwrite --config configs/my_run.yaml --all
-```
-
-- `--all` re-runs every curated scene and overwrites its processed outputs; nothing is skipped.
-- Nothing local is deleted until the push verifies, and the curated video stays in the bucket.
-- Exit codes, leaf stages and failure handling are in [configs/README.md](configs/README.md#remote-scenes).
-
 ## Evaluation
 
-We benchmark against ground-truth datasets with `evals/eval.py`:
+During design of the package modules, we used standard 3D reconstruction benchmarks to understand the benefits of given pipeline configuraitons. Ground-truth datasets can be benchmarked with `evals/eval.py`:
 
 ```bash
 python -m evals.eval --config evals/configs/7scenes.yaml --dry-run

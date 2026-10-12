@@ -5,7 +5,7 @@ specified (e.g., `MYFILE.yaml`), the file only overrides what differs from `base
 
 - [Overriding defaults](#overriding-defaults)
 - [Stages](#stages)
-- Options by stage: [`preproc`](#preproc) · [`pointcloud`](#pointcloud) ([SfM](#sfm-backends) · [`bundle_adjustment`](#bundle_adjustment) · [`loop_closure`](#loop_closure)) · [`mesh`](#mesh) · [`semantics`](#semantics) · [`splats`](#splats) · [`localization`](#localization) · [`reconstruction_quality_report`](#reconstruction_quality_report)
+- Options by stage: [`preproc`](#preproc) · [`pointcloud`](#pointcloud) · [`mesh`](#mesh) · [`semantics`](#semantics) · [`splats`](#splats) · [`localization`](#localization) · [`reconstruction_quality_report`](#reconstruction_quality_report)
 
 ---
 
@@ -102,7 +102,10 @@ pointcloud:
 | `pointcloud.<backend>.mv_rel_thresh` | float | `0.01` | Feedforward only: cross-view agreement tolerance, as a fraction of depth |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points (sfm also drops them from the COLMAP export) |
 
-### SfM backends
+SfM backends, refinement and loop closure each have their own options:
+
+<details>
+<summary><code>pointcloud.colmap</code>: classic incremental SfM</summary>
 
 ```yaml
 # Classic SfM (refine is skipped; loop closure is feedforward only)
@@ -118,6 +121,14 @@ pointcloud:
 | `pointcloud.colmap.num_retrieved` | int | `20` | `*retrieval`: vocab-tree neighbors per image |
 | `pointcloud.colmap.num_threads` | int | `8` | SIFT + mapper threads (colmap's default OOMs) |
 | `pointcloud.colmap.min_registered_frac` | float | `0.5` | Below this share registered: `RuntimeError`; above: keep the registered frames |
+
+</details>
+
+<details>
+<summary><code>pointcloud.hloc</code>: incremental SfM with learned features</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
 | `pointcloud.hloc.pairing` | str | `sequential+retrieval` | As `colmap.pairing` |
 | `pointcloud.hloc.overlap` | int | `10` | As `colmap.overlap` |
 | `pointcloud.hloc.num_retrieved` | int | `20` | `*retrieval`: global-descriptor neighbors per image |
@@ -126,6 +137,14 @@ pointcloud:
 | `pointcloud.hloc.matcher_conf` | str | `superpoint+lightglue` | hloc matcher conf |
 | `pointcloud.hloc.num_threads` | int | `8` | Mapper threads |
 | `pointcloud.hloc.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
+
+</details>
+
+<details>
+<summary><code>pointcloud.instantsfm</code>: global SfM</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
 | `pointcloud.instantsfm.pairing` | str | `exhaustive` | As `colmap.pairing` |
 | `pointcloud.instantsfm.overlap` | int | `10` | As `colmap.overlap` |
 | `pointcloud.instantsfm.num_retrieved` | int | `20` | As `colmap.num_retrieved` |
@@ -133,7 +152,10 @@ pointcloud:
 | `pointcloud.instantsfm.num_threads` | int | `8` | CPU SIFT threads |
 | `pointcloud.instantsfm.random_seed` | int\|null | `null` | Seed InstantSfM's random init; `null` = upstream (unseeded) |
 
-### `bundle_adjustment`
+</details>
+
+<details>
+<summary><code>pointcloud.bundle_adjustment</code>: the <code>refine</code> stage</summary>
 
 The `refine` stage refines feedforward poses against feature tracks and rewrites the pointcloud in place, so the point count can change. After `--stages refine`, re-run `semantics` with `--overwrite`.
 
@@ -166,7 +188,10 @@ pointcloud:
 | `pointcloud.bundle_adjustment.use_photometric` | bool | `true` | Brightness matching between overlapping frames; `ValueError` with `increment_size > 0` |
 | `pointcloud.bundle_adjustment.device` | str\|null | `null` | CUDA device; `null` = auto |
 
-### `loop_closure`
+</details>
+
+<details>
+<summary><code>pointcloud.loop_closure</code>: long videos</summary>
 
 Loop closure splits a long video into windows, reconstructs each, and joins them through a pose graph with loop edges between revisited places. `true` turns it on with the defaults below; a dict sets keys.
 
@@ -194,6 +219,8 @@ pointcloud:
 | `pointcloud.loop_closure.viz_max_points` | int | `50000` | Viewer point cap per submap |
 | `pointcloud.viz.enabled` | bool | `false` | Live viser viewer during loop closure |
 | `pointcloud.viz.port` | int | `8080` | Viewer port |
+
+</details>
 
 ---
 
@@ -249,9 +276,6 @@ semantics:
 
 `3dgs` keeps thin structure and trains faster; `2dgs` (surface-aligned) gives better surfaces.
 
-- no `losses` block: each primitive gets its preset: `depth`, `normal_consistency` (from step 7000), `appearance_reg`, plus `opacity_reg` + `scale_reg` (`3dgs`) or `distortion` (`2dgs`, from step 3000)
-- a `losses` block replaces the preset, so list every loss you want, each with a `weight`
-
 ```yaml
 # 2DGS as the mesh source
 splats:
@@ -279,6 +303,12 @@ mesh:
 | `splats.resolution_schedule` | int | `3000` | Steps per resolution doubling |
 | `splats.normalize_scene` | bool | `false` | Train in a normalized frame; outputs map back to world units |
 | `splats.log_every` | int | `500` | Steps between loss logs |
+
+<details>
+<summary>Learning rates</summary>
+
+| Key | Type | Default | Description |
+|---|---|---|---|
 | `splats.means_lr` | float | `1.6e-4` | Means (× scene scale) |
 | `splats.scales_lr` | float | `5.0e-3` | Scales |
 | `splats.quats_lr` | float | `1.0e-3` | Rotations |
@@ -287,10 +317,23 @@ mesh:
 | `splats.shN_lr` | float | `1.25e-4` | Higher-order SH |
 | `splats.pose_lr` | float | `1.0e-5` | Poses (× scene scale) |
 | `splats.appearance_lr` | float | `1.0e-3` | Appearance |
+
+</details>
+
+<details>
+<summary><code>splats.losses</code></summary>
+
+- no `losses` block: each primitive gets its preset: `depth`, `normal_consistency` (from step 7000), `appearance_reg`, plus `opacity_reg` + `scale_reg` (`3dgs`) or `distortion` (`2dgs`, from step 3000)
+- a `losses` block replaces the preset, so list every loss you want, each with a `weight`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
 | `splats.losses.<name>.weight` | float | preset | `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`, `appearance_reg` |
 | `splats.losses.<name>.start` | int | `0` | Step the loss switches on |
 | `splats.losses.appearance_reg.weight` | float | `1.0e-3` | Regularizer on `appearance_opt` |
 | `splats.losses.normal_consistency.depth_ratio` | float | `0.0` | `2dgs` only: median-depth normal blend, in [0, 1] |
+
+</details>
 
 ---
 

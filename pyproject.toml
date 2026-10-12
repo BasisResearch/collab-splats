@@ -59,6 +59,11 @@ dependencies = [
     # Parquet reader for score_ocr_heads' mini-imagenet backgrounds (was transitive)
     "pyarrow",
     "timm>=0.9,<2.0",
+    # Talk2DINOv3 HF remote code imports clip, einops, omegaconf; transformers refuses the model without them
+    # clip as a PEP 508 direct URL: git-dependency consumers never read [tool.uv.sources], PyPI `clip` is unrelated
+    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+    "einops",
+    "omegaconf",
     "opencv-python",
     "scikit-learn",
     "kornia",

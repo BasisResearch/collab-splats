@@ -9,18 +9,15 @@ Pose and geometry backend: shared camera math, bundle adjustment, loop closure, 
 - metrics: report-only quality tables on arrays; loop_closure: submap pose graph around a creator
 """
 
-from collab_splats.geometry.bundle_adjustment import (
-    BundleAdjustment,
-    BundleAdjustmentConfig,
-)
 from collab_splats.geometry.projection import reprojection_error
 
 
 def __getattr__(name: str) -> type:
     """
-    Lazy LoopClosure and LoopClosureConfig, breaking a load-time cycle.
+    Lazy BundleAdjustment and LoopClosure classes.
 
-    - cycle: loop_closure.wrapper -> collab_splats.pointcloud -> geometry.transforms
+    - BundleAdjustment(Config): bundle_adjustment imports bae, a CUDA extension semantics never needs
+    - LoopClosure(Config): breaks the cycle loop_closure.wrapper -> collab_splats.pointcloud -> geometry.transforms
 
     Args:
         name: attribute requested from the package.
@@ -31,6 +28,12 @@ def __getattr__(name: str) -> type:
     Raises:
         AttributeError: any other name.
     """
+    if name in ("BundleAdjustment", "BundleAdjustmentConfig"):
+        # Import on first access: keeps bae out of `import collab_splats.geometry`
+        from collab_splats.geometry import bundle_adjustment
+
+        return getattr(bundle_adjustment, name)
+
     if name in ("LoopClosure", "LoopClosureConfig"):
         # Import on first access to break the load-time cycle
         from collab_splats.geometry import loop_closure

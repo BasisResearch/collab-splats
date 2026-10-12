@@ -15,14 +15,16 @@ export UV_PROJECT_ENVIRONMENT="$VENV"
 command -v uv >/dev/null || { echo "setup.sh: uv not on PATH — install it first (README §1)." >&2; exit 1; }
 
 # CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim, nvdiffrast)
-# - toolkit is the user's to provide (README §4); setup.sh never installs system packages
+# - toolkit is the user's to provide (docs/source/installation.md#system-requirements)
+# - setup.sh never installs system packages
 # - honors a pre-set CUDA_HOME (conda, /usr/local/cuda-12.1); default /usr/local/cuda
 # - no nvcc: warn and continue — an already-built env (runtime Docker image) compiles nothing;
 #   a failed `uv sync` then prints the recipe below
 cuda_toolkit_help() {
     cat >&2 <<'MSG'
 setup.sh: uv sync failed with no nvcc under $CUDA_HOME — bae, gsplat, fused-ssim and nvdiffrast
-build from source and need it. The CUDA toolkit is yours to provide (README §4). Options:
+build from source and need it. The CUDA toolkit is yours to provide
+(docs/source/installation.md#system-requirements). Options:
 Use the Docker image (every extension prebuilt), or the nvidia/cuda:12.1.1-devel image (it supplies
 nvcc + dev headers, but NOT a new enough CCCL — setup.sh overlays that), or install just the two
 apt packages the image ships (verified 2026-09-06 on a bare host, exact match to torch cu121):
@@ -121,8 +123,8 @@ fi
 uv sync --locked --all-extras \
     || sync_failed
 
-# WordNet corpus for the ocr_lens vocabulary into $NLTK_DATA (image: models volume), else ~/nltk_data
-"$PYTHON" -c "import nltk, os, sys; sys.exit(0 if nltk.download('wordnet', download_dir=os.environ.get('NLTK_DATA'), quiet=True) else 1)" \
+# WordNet corpus for the ocr_lens vocabulary into $NLTK_DATA, else the venv (ships in the image's venv copy)
+"$PYTHON" -c "import nltk, os, sys; sys.exit(0 if nltk.download('wordnet', download_dir=os.environ.get('NLTK_DATA') or os.path.join(sys.prefix, 'nltk_data'), quiet=True) else 1)" \
     || echo "WARN: WordNet download failed — run: python -m nltk.downloader wordnet"
 
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.

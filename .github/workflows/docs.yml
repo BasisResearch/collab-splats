@@ -2,7 +2,7 @@ name: docs
 
 on:
   push:
-    branches: [main]
+    branches: [main, clean/final]
   pull_request:
     branches: [main]
 
@@ -35,7 +35,7 @@ jobs:
         run: sphinx-build -b html docs/source docs/_build/html --keep-going
 
       - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/clean/final')
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

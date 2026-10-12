@@ -24,9 +24,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# 2D features + segmentation: CPU or GPU, no CUDA build, no bae (collab-data mesh_semantics installs this)
+# 2D features + segmentation: CPU or GPU, no CUDA build
 semantics = [
-    # Plain torch: uv consumers get the cu121 index from [tool.uv.sources] unless they pass --no-sources
     "torch",
     "torchvision",
     "transformers>=4.30,<5.0",
@@ -36,16 +35,11 @@ semantics = [
     "scikit-image",
     "kornia",
     "safetensors",
-    # av — PyAV, the decode path in preproc/video.py (semantics.store reaches preproc)
-    "av>=17.0",
-    # WordNet lemmas for the ocr_lens decode vocabulary
-    "nltk>=3.8",
-    # Parquet reader for score_ocr_heads' mini-imagenet backgrounds
-    "pyarrow",
-    # Pinned: unpinned resolves an old release that needs pretrainedmodels
-    "segmentation-models-pytorch==0.5.0",
-    # Talk2DINOv3 HF remote code imports clip, einops, omegaconf; transformers refuses the model without them
-    # clip as a PEP 508 direct URL: pip and --no-sources consumers skip [tool.uv.sources], PyPI `clip` is unrelated
+    "av>=17.0",                          # PyAV frame decode (preproc)
+    "nltk>=3.8",                         # WordNet vocabulary for ocr_lens
+    "pyarrow",                           # parquet backgrounds for score_ocr_heads
+    "segmentation-models-pytorch==0.5.0",  # unpinned resolves a release needing pretrainedmodels
+    # Talk2DINOv3 remote code needs clip, einops, omegaconf; clip as a direct URL (PyPI `clip` is unrelated)
     "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
     "einops",
     "omegaconf",
@@ -54,94 +48,57 @@ semantics = [
 # Full pipeline: pointcloud, BA, splats, mesh, localization; needs the CUDA toolchain (setup.sh)
 reconstruction = [
     "collab_splats[semantics]",
-    # setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,
-    # which setuptools 70+ removed. See [build-system] comment.
-    "setuptools<70.0",
-    # wheel + ninja must be IN the venv (not build-extras): bae/gsplat build with
-    # no-build-isolation, which uses the project venv as the build env. Without wheel,
-    # setuptools<70 has no bdist_wheel command. ninja gives fast parallel CUDA compiles.
-    "wheel",
+    "setuptools<70.0",                   # maskclip_onnx needs pkg_resources.packaging
+    "wheel",                             # no-build-isolation builds run in the venv
     "ninja",
-    # cu121 wheels have no darwin build; darwin resolves plain torch through semantics
     "torch==2.5.1+cu121; sys_platform != 'darwin'",
     "torchvision==0.20.1+cu121; sys_platform != 'darwin'",
-    # ftfy: maskclip_onnx imports it without declaring it
-    "ftfy",
+    "ftfy",                              # undeclared maskclip_onnx import
     "seaborn",
     "ultralytics",
     "pyvista[jupyter]",
-    # viser — websocket 3D viewer for live scene visualization (collab_splats/viewer.py)
-    "viser>=1.0",
-    # Texture bake: nvdiffrast rasterizes the UV atlas and each view's occlusion depth,
-    # meshlib decimates and patches holes.
-    # nvdiffrast ships no wheel; at this rev it compiles its CUDA extension at INSTALL (AOT),
-    # so it needs nvcc at build time only (see setup.sh) and no build isolation (below).
-    "meshlib==3.1.4.297",
+    "viser>=1.0",                        # 3D web viewer
+    "meshlib==3.1.4.297",                # mesh decimation + hole patching
+    # nvdiffrast: texture bake rasterizer; compiles its CUDA extension at install (needs nvcc)
     "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast@253ac4fcea7de5f396371124af597e6cc957bfae",
     "trimesh",
     "pydantic==2.10.6",
-    # pycolmap-cuda12, pinned at 4.1.1
-    # - GPU SIFT wheel: replaces the colmap CLI
-    # - not 4.2: shared-focal two-view estimator, ~14x verification CPU for single-camera scenes
-    "pycolmap-cuda12==4.1.1",
-    # BasisResearch fork, `basis` branch: batched extract + match() + match_batch()
+    "pycolmap-cuda12==4.1.1",            # GPU SIFT; 4.2 is ~14x slower verifying single-camera scenes
+    # BasisResearch fork, `basis` branch: batched extract + match_batch
     "vismatch @ git+https://github.com/BasisResearch/vismatch@865d91a52ff23f60096188e0e0a748911768535d",
     "mobile_sam",
-    # torchpack: implicit dep of mobilesamv2 (loaded via torch.hub for SAM segmentation).
-    # mobilesamv2/efficientvit/models/nn/drop.py imports torchpack.distributed at module level,
-    # so it must be installed before any import of mobilesamv2.
-    "torchpack",
-    # gsplat: upstream, built from source against the cu121 toolchain (see [tool.uv.sources])
-    "gsplat",
-    # fused-ssim: CUDA fast path for gsplat.losses.ssim_loss (else a slow torch fallback); needs nvcc
-    "fused-ssim",
+    "torchpack",                         # undeclared mobilesamv2 import
+    "gsplat",                            # built from source, see [tool.uv.sources]
+    "fused-ssim",                        # CUDA SSIM for gsplat losses
     "maskclip_onnx",
-    # pypose<0.9 required: pypose 0.9+ adds _ensure_sparse_backend_version() which runs at
-    # `import pypose` and hard-rejects any bae != 0.2 (strict version.parse inequality), so it
-    # raises ImportError against our pinned bae 0.2.5. The guard is absent in <=0.7.5 (no 0.8.x
-    # exists). We use only pp.SE3 / pp.mat2SE3 / pp.optim (stable since 0.4), so the older line
-    # is functionally equivalent. Upper bound, not an exact pin, so patch releases still float.
-    "pypose<0.9",
-    # cuDSS runtime dep for bae. Must be declared before bae for clarity (pip installs
-    # wheels before source builds regardless of order, so cudss headers are present when
-    # bae's find_cudss_root() runs at compile time). Pinned for ABI stability.
-    "nvidia-cudss-cu12==0.6.0.5",
-    # bae: pypose BA CUDA extension. Source pinned via [tool.uv.sources]; PyPI 'bae' (2.0.x) is a
-    # different package. Built with no-build-isolation (see [tool.uv]) against the system CUDA
-    # toolkit's nvcc at $CUDA_HOME (setup.sh warns if missing; the Docker image ships bae prebuilt).
-    # USE_CUDSS defaults to "1" in bae 0.2.5.
-    "bae",
-    # open3d: fit_dominant_plane (imported lazily by geometry.transforms)
+    "pypose<0.9",                        # 0.9+ rejects bae 0.2.x at import
+    "nvidia-cudss-cu12==0.6.0.5",        # cuDSS for bae
+    "bae",                               # BA CUDA extension; PyPI `bae` is unrelated, see [tool.uv.sources]
     "open3d",
 ]
 
-# reconstruct CLI and dashboard GCS access: private collab-data (path dep at /workspace/collab-data)
+# reconstruct remote + dashboard GCS access: private collab-data clone at /workspace/collab-data
 remote = [
     "collab_data @ file:///workspace/collab-data",
 ]
 
-# InstantSfM sfm backend + VDA runtime dep; instantsfm's own requires-dist is blanked below
+# InstantSfM sfm backend (its own requires-dist is blanked below)
 instantsfm = [
     "instantsfm",
     "pyceres==2.3",
-    # scikit-sparse builds against libsuitesparse-dev (Dockerfile apt lists)
-    "scikit-sparse==0.4.15",
-    # easydict: Video-Depth-Anything's only runtime dep missing from the lock (dpt_temporal.py)
-    "easydict==1.13",
+    "scikit-sparse==0.4.15",             # needs libsuitesparse-dev
+    "easydict==1.13",                    # Video-Depth-Anything runtime dep
 ]
+
+# Feedforward backends; git sources pinned in [tool.uv.sources]
 feedforward = [
-    # vggt (VGGT-X), vggt-omega, mapanything, lightglue, salad — git deps from
-    # [tool.uv.sources], installed by `uv sync` (setup.sh); lightglue is mapanything's colmap extra
     "uniception==0.1.7",
     "viser>=0.2.23",
     "evo",
     "safetensors",
     "open3d",
-    # stable 4.3 carries SL4; gtsam-develop nightlies drop off PyPI after ~10 releases
-    "gtsam>=4.3.0",
-    # salad (Dominic101/salad) source pinned via [tool.uv.sources].
-    # pytorch-metric-learning is salad's only non-torch runtime dep.
-    "pytorch-metric-learning",
+    "gtsam>=4.3.0",                      # 4.3 carries SL4
+    "pytorch-metric-learning",           # salad runtime dep
     "vggt",
     "vggt-omega",
     "mapanything",
@@ -149,16 +106,11 @@ feedforward = [
     "salad",
 ]
 
-# hloc @ c13273b for the `hloc` sfm backend: editable path source on the setup/hloc.sh clone
-# - editable, not a git install: hloc's superpoint/superglue sys.path-append ../../third_party
+# hloc sfm backend: editable clone from setup/hloc.sh
 hloc = ["hloc"]
 
+# CUDA headers/libs torch does not vendor; NOT a compiler, builds need a system toolkit
 gpu = [
-  # NOT a working compiler. Measured 2026-09-06: every nvidia-cuda-nvcc-cu12 wheel (12.1 … 12.8)
-  # ships only ptxas, and the cccl wheel this pin resolves to predates <cuda/std/optional>, which
-  # gsplat d2f5c0f needs. A SYSTEM toolkit (nvidia/cuda:*-devel, or cuda-nvcc-12-1 +
-  # cuda-libraries-dev-12-1) plus setup.sh's CCCL 12.6.77 overlay is the supported path — this
-  # extra only rounds out the headers/libs torch does not vendor.
   "cuda-toolkit[all]==12.1.1",
 ]
 
@@ -211,10 +163,7 @@ find = { include = ["collab_splats", "collab_splats.*"] }
 "collab_splats.semantics.features" = ["assets/*.pt"]
 
 [build-system]
-# setuptools<70.0 required: maskclip_onnx uses `from pkg_resources import packaging`,
-# which setuptools 70+ removed (pkg_resources.packaging dropped as a submodule).
-# The standalone `packaging` package is still available; only the shim was removed.
-# Do not upgrade past 69.x until maskclip_onnx is updated or replaced.
+# setuptools<70: maskclip_onnx imports pkg_resources.packaging, removed in 70
 requires = ["setuptools<70.0"]
 build-backend = "setuptools.build_meta"
 
@@ -232,15 +181,10 @@ flake8 = [
 ignore_missing_imports = true
 warn_unused_ignores = true
 exclude = "build"
-# One call per line rebinds a name to a new type; let mypy follow the rebinding
 allow_redefinition = true
-# Empty-container annotations are style, not behavior
 disable_error_code = ["var-annotated"]
 
 [tool.pytest.ini_options]
-# importlib mode: avoids prepending test parent dirs to sys.path.
-# --doctest-modules removed: no doctests in codebase; it scanned all importable
-# CUDA modules causing multi-minute startup.
 addopts = "--import-mode=importlib -m 'not gpu'"
 testpaths = ["./tests"]
 pythonpath = ["."]
@@ -252,7 +196,7 @@ markers = [
 [tool.isort]
 profile = "black"
 skip_gitignore = true
-# Import groups: stdlib, general third-party, model/method upstreams, then our own code
+# Import groups: stdlib, third-party, model upstreams, our code
 sections = ["FUTURE", "STDLIB", "THIRDPARTY", "MODELS", "FIRSTPARTY", "LOCALFOLDER"]
 known_first_party = ["collab_splats", "evals", "tests"]
 known_models = [
@@ -282,35 +226,22 @@ known_models = [
 ##############################
 
 [tool.uv]
-# Force the cu121 torch stack + numpy>=2 regardless of what transitive deps pin.
-# Replaces the per-package `--no-deps` hacks in the old setup scripts:
-#   VGGT-X pinned torch==2.3.1; vggt-omega pinned numpy<2.
+# Force the torch stack, numpy and a few pins over what transitive deps declare
 override-dependencies = [
     "torch==2.5.1+cu121; sys_platform != 'darwin'",
     "torch==2.5.1; sys_platform == 'darwin'",
     "torchvision==0.20.1+cu121; sys_platform != 'darwin'",
     "torchvision==0.20.1; sys_platform == 'darwin'",
     "numpy>=2,<2.2",
-    # vismatch hard-pins uniception==0.1.1 (its ufm model) and lightning==2.3.3 (its edm
-    # model). We need uniception 0.1.7 (MapAnything imports 15 symbols absent in 0.1.1)
-    # and lightning>=2.6. Overrides replace vismatch's constraints during resolution;
-    # ufm/edm are blocklisted in LocalMatcher. Measured 2026-08-17.
-    "uniception==0.1.7",
-    "lightning>=2.6",
-    # vismatch requires setuptools>=83 (upstream 8c90e65, packaging only, no runtime import);
-    # we keep setuptools<70 for maskclip_onnx's pkg_resources (see [build-system])
-    "setuptools<70.0",
-    # hloc requires plain `pycolmap`, which would overwrite pycolmap-cuda12's module; drop it
-    "pycolmap; sys_platform == 'never'",
+    "uniception==0.1.7",                 # vismatch pins 0.1.1; MapAnything needs 0.1.7
+    "lightning>=2.6",                    # vismatch pins 2.3.3
+    "setuptools<70.0",                   # vismatch asks >=83 (packaging only)
+    "pycolmap; sys_platform == 'never'", # hloc's plain pycolmap would clobber pycolmap-cuda12
 ]
-# bae + gsplat + fused-ssim + nvdiffrast import torch at build time → must build without isolation.
+# CUDA extensions import torch at build time
 no-build-isolation-package = ["bae", "gsplat", "fused-ssim", "nvdiffrast"]
 
-# Static metadata: uv never builds these just to read their deps
-# - the four CUDA extensions need torch at build time (no-build-isolation), so a fresh venv
-#   cannot answer uv's resolve-time metadata query
-# - collab-data's setup.py changes per commit; only its core deps matter here
-# - instantsfm: upstream pins numpy 1.26 / opencv / scipy / viser exactly; our lock owns those
+# Static metadata so uv never builds these to read their deps
 [[tool.uv.dependency-metadata]]
 name = "bae"
 version = "0.2.5"
@@ -336,6 +267,7 @@ name = "collab-data"
 version = "0.0.1"
 requires-dist = ["gcsfs", "loguru"]
 
+# instantsfm pins numpy 1.26 etc. exactly; our lock owns those
 [[tool.uv.dependency-metadata]]
 name = "instantsfm"
 version = "0.3.0"
@@ -349,14 +281,9 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }]
 torchvision = [{ index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }]
-# InstantSfM pinned commit; upstream pins numpy==1.26.4 and more, so its requires-dist is blanked (dependency-metadata)
 instantsfm = { git = "https://github.com/cre185/InstantSfM", rev = "d3e599e1a42b4c5a806a84d9f383e1005d25f61b" }
-# Upstream gsplat, main @ 2026-07-09 (version string 1.5.3; the v1.5.3 TAG lacks gsplat.losses and
-# extra_signals). Newest rev that builds on torch 2.5.1+cu121: 4561ac4 (2026-06-01) needs CCCL
-# `cuda::ceil_div` (CUDA >= 12.3) and 31f5b3d (2026-06-08) needs `c10d::wait_tensor` (torch >= 2.7).
-# Headers still need CCCL >= 2.2 for <cuda/std/optional> — see setup.sh. Bump deliberately.
+# gsplat main @ 2026-07-09: newest rev that builds on torch 2.5.1+cu121; needs the CCCL overlay in setup.sh
 gsplat = { git = "https://github.com/nerfstudio-project/gsplat.git", rev = "d2f5c0f" }
-# fused-ssim main @ 2026-08-23; the CUDA SSIM kernel gsplat.losses.ssim_loss prefers when importable
 fused-ssim = { git = "https://github.com/rahul-goel/fused-ssim.git", rev = "a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" }
 mobile_sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
 maskclip_onnx = { git = "https://github.com/RogerQi/maskclip_onnx.git" }
@@ -366,5 +293,5 @@ vggt-omega = { git = "https://github.com/facebookresearch/vggt-omega.git", rev =
 mapanything = { git = "https://github.com/facebookresearch/map-anything.git" }
 lightglue = { git = "https://github.com/cvg/LightGlue.git" }
 salad = { git = "https://github.com/Dominic101/salad.git" }
-# setup/hloc.sh clone, pinned c13273b; must exist before any resolve (setup.sh clones it first)
+# setup/hloc.sh clone @ c13273b; must exist before any resolve
 hloc = { path = "third_party/hloc", editable = true }

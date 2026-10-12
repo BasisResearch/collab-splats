@@ -6,7 +6,7 @@ This package provides an interface for 3D scene reconstruction & semantic featur
 
 ### Start the container
 
-We run our package via a Docker image available at `tommybotch/collab-splats:release` (see [System requirements](#4-system-requirements)). Pull and start it:
+We run our package via a Docker image available at `tommybotch/collab-splats:release` (see [System requirements](docs/source/installation.md#system-requirements)). Pull and start it:
 
 ```bash
 # Pull the image (private repo: log in first)
@@ -63,7 +63,7 @@ Setup (the image already has `rclone` and `jq`):
 rclone lsd collab-data:environments-curated
 ```
 
-Using `reconstruct remote` automatically links to the `environments-curated` bucket and requires ```collab-data``` access with the rclone remote (see [Private dependency](#3-private-dependency-collab-data)). For each scene it pulls the video, reconstructs it, pushes the outputs to `environments-processed/<scene>/`, verifies the push, then deletes the local copy:
+Using `reconstruct remote` automatically links to the `environments-curated` bucket and requires ```collab-data``` access with the rclone remote (see [Private dependency](docs/source/installation.md#private-dependency-collab-data)). For each scene it pulls the video, reconstructs it, pushes the outputs to `environments-processed/<scene>/`, verifies the push, then deletes the local copy:
 
 ```bash
 # Named scenes (the curated directory names)
@@ -141,176 +141,11 @@ cd collab-splats
 bash setup.sh
 ```
 
-`setup.sh` is safe to re-run; it only builds what is missing. On RunPod, the `/workspace` volume hides the image's own checkout, so clone into `/workspace` and run `setup.sh` there. For a lighter install, sync extras individually:
+For extras, the semantics-only install and system requirements, see [Installation](docs/source/installation.md).
 
-```sh
-uv sync                                         # core deps only
-uv sync --extra semantics                       # + features and segmentation (no CUDA build)
-uv sync --extra reconstruction --extra remote   # + full pipeline and CLI
-uv sync --extra feedforward                     # + feedforward models (VGGT-X, MapAnything, ...)
-uv sync --extra instantsfm                      # + InstantSfM backend (needs libsuitesparse-dev)
-uv sync --extra hloc                            # + hloc backend
-uv sync --extra gpu                             # + CUDA headers / libs torch does not ship
-uv sync --extra dashboard                       # + dashboard
-uv sync --extra dev                             # + lint / test tooling
-uv sync --all-extras                            # everything (what setup.sh does)
-```
+## Learn more
 
-> **Use `setup.sh`, not a bare `uv sync`.**
-> - The CUDA extensions build from source and need `nvcc` + `build-essential`; `setup.sh` points the build at your CUDA toolkit and warns if `nvcc` is missing.
-> - `uv pip install` from outside this repo skips our dependency overrides, so it does not match `uv.lock`.
-
-#### Semantics only
-
-Other projects can install just the semantics stack. It needs no CUDA toolkit and skips `bae`, `pycolmap`, `open3d`, `gsplat` and `collab-data`:
-
-```sh
-uv pip install 'collab_splats[semantics] @ git+https://github.com/BasisResearch/collab-splats@<commit>'
-```
-
-uv still reads our package sources, so on Linux this pulls torch from the CUDA 12.1 index. To use your own torch (e.g. CPU-only), add `--no-sources` and pick torch yourself:
-
-```sh
-uv pip install --no-sources --index-strategy unsafe-best-match \
-  --extra-index-url https://download.pytorch.org/whl/cpu \
-  'torch==2.5.1+cpu' 'torchvision==0.20.1+cpu' \
-  'collab_splats[semantics] @ git+https://github.com/BasisResearch/collab-splats@<commit>'
-```
-
-In another uv project, set `no-sources = true` under its `[tool.uv]` instead.
-
-This covers the `talk2dino` and `dinov2` features and the `insid3` and `skywater` segmenters. `maskclip` and `mobilesamv2` need the `reconstruction` extra, and `sam3` has its own install.
-
-All later commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`.
-
-### 3. Private dependency (collab-data)
-
-`collab-data` is a private BasisResearch repo that must sit at `/workspace/collab-data`. `setup.sh` clones it there if missing (needs GitHub credentials).
-
-The dashboard and `reconstruct remote` read and write scenes through an rclone remote named `collab-data` (Google Cloud Storage). Install `rclone` and `jq`:
-
-```sh
-brew install rclone jq                                                  # macOS
-curl -fsSLo rclone.zip https://downloads.rclone.org/v1.75.2/rclone-v1.75.2-linux-amd64.zip \
-  && unzip -q rclone.zip && sudo install -m 0755 rclone-v1.75.2-linux-amd64/rclone /usr/local/bin/ \
-  && sudo apt-get install -y jq                                         # Linux (apt's rclone is too old)
-```
-
-The Docker image already has both.
-
-Save the GCS service-account key to `collab-data/config-local/collab-data.json`, then run the setup script from the collab-data repo:
-
-```sh
-./scripts/setup_local_rclone.sh
-```
-
-### 4. System requirements
-
-You provide these; `setup.sh` never installs system packages.
-
-- **NVIDIA GPU + driver** for the feedforward models, splats and mesh texturing. Other stages fall back to CPU, but slowly and untested.
-- **build-essential** (gcc/g++) + a CUDA toolkit to compile the extensions.
-- Optional: `ffmpeg` + `exiftool` for the curated-video scripts; `rclone` + `jq` for GCloud scenes.
-
-### 5. Docker image
-
-We build the image with the same `setup.sh`, with every CUDA extension compiled ahead of time. Build it from the collab-splats checkout, with `collab-data` cloned beside it (`../collab-data`):
-
-```sh
-docker build --platform=linux/amd64 --progress=plain --build-context collab-data=../collab-data --build-arg MAX_JOBS=4 -t collab-splats:release .
-docker run --gpus all -it collab-splats:release bash
-```
-
-Push it to Docker Hub (keep the repo private: the image contains `collab-data`):
-
-```sh
-docker tag collab-splats:release tommybotch/collab-splats:release
-docker push tommybotch/collab-splats:release
-```
-
-- **First build takes ~2.5 h**; later builds take minutes unless `pyproject.toml`, `uv.lock`, `setup.sh` or `collab-data` change.
-- **`MAX_JOBS`**: Docker memory in GB / 8, at most 6.
-- **GPUs**: Ampere/Ada (A100, A40, L40, RTX 30xx/40xx) and Hopper (H100). Not supported: Volta/Turing, Blackwell.
-
-**Apple Silicon (Docker Desktop):**
-
-- General: use the **Apple Virtualization framework** with **Rosetta** on (Docker VMM falls back to QEMU, which crashes the build).
-- Resources: disk limit **≥ 250 GB**.
-- Docker Engine: raise the build cache so the compiled layer is kept between builds:
-
-  ```json
-  "builder": { "gc": { "enabled": true, "defaultKeepStorage": "150GB" } }
-  ```
-- Never run `docker builder prune`, `docker system prune -a` or "Clean / Purge data": they delete the cached compile.
-
-## Package Organization
-
-Each module is one stage of the pipeline; `reconstructor.py` chains them from the config:
-- **preproc**: keyframe extraction, quality assessment (blur / exposure), frame filtering
-- **pointcloud**: Structure-from-Motion (COLMAP, hloc, InstantSfM) or feedforward (VGGT-X, VGGT-Omega, MapAnything, LoGeR)
-- **geometry**: bundle adjustment, loop closure, reconstruction quality report
-- **mesh**: TSDF fusion, cleanup, texturing
-- **splats**: Gaussian splatting (3DGS / 2DGS)
-- **semantics**: VLM feature extraction, segmentation, 2D-to-3D lifting, text queries
-- **localization**: locate a query image within a reconstruction
-
-Supporting code: `utils/` (shared helpers), `viewer.py` + `dashboard/` (browser viewers), `remote.py` (cloud scene sync), `configs/` (pipeline configs), `evals/` (benchmarks).
-
-## Python API
-
-The CLI wraps `Reconstructor`, which we can also run directly:
-
-```python
-from collab_splats.reconstructor import Reconstructor
-
-scene = Reconstructor({"input_path": "video.mp4", "output_path": "out/"})
-scene.run()
-print(scene.outputs)
-```
-
-Our tutorials in `docs/source/tutorials/` walk through each stage on one shared scene:
-
-| Stage | Tutorial |
-|-------|----------|
-| preproc | [Preprocessing](docs/source/tutorials/01_preprocessing/preprocessing.ipynb) |
-| pointcloud, quality report | [Reconstruction](docs/source/tutorials/02_pointcloud/reconstruction.ipynb) |
-| refine | [Refinement](docs/source/tutorials/02_pointcloud/refinement.ipynb) |
-| splats | [Train splats](docs/source/tutorials/03_splats/train_splats.ipynb) |
-| mesh | [Mesh](docs/source/tutorials/04_mesh/mesh.ipynb) |
-| semantics | [Features](docs/source/tutorials/05_semantics/feature_extraction.ipynb) · [Segmentation](docs/source/tutorials/05_semantics/segmentation.ipynb) · [Lifting and query](docs/source/tutorials/05_semantics/lifting_and_query.ipynb) · [OCR lens](docs/source/tutorials/05_semantics/ocr_lens.ipynb) |
-| localize | [Localization](docs/source/tutorials/06_localization/localization.ipynb) |
-
-## Dashboard
-
-We provide a browser dashboard to pick a remote scene and backend, run stages, view the pointcloud or mesh, and query semantics by text. It needs the dashboard extra (`uv sync --extra dashboard`) and the rclone remote:
-
-```bash
-python -m collab_splats.dashboard
-```
-
-Then open `http://localhost:7860` (change with `--port`, `--host`, `--base-dir`). Restart it to pick up code changes.
-
-## Adding Curated Videos
-
-Raw video files are added to the `environments-curated` bucket via `scripts/preprocess_gdrive_videos.py`. This script creates one directory per video, and extracts the camera metadata (GPS, IMU) that video editing removes. All requires `ffmpeg` + `exiftool`.
-
-The processing pipeline is illustrated below:
-
-```sh
-python scripts/preprocess_gdrive_videos.py --dry-run   # ../gdrive-src -> ../environments-curated
-python scripts/preprocess_gdrive_videos.py
-python scripts/preprocess_gdrive_videos.py --only GH010234   # one clip
-
-./scripts/push_curated.sh --dry-run
-./scripts/push_curated.sh
-```
-
-## Evaluation
-
-During design of the package modules, we used standard 3D reconstruction benchmarks to understand the benefits of given pipeline configuraitons. Ground-truth datasets can be benchmarked with `evals/eval.py`:
-
-```bash
-python -m evals.eval --config evals/configs/7scenes.yaml --dry-run
-```
-
-Results land in `evals/results/`; datasets and grid configs are described in [evals/README.md](evals/README.md).
+- [Installation](docs/source/installation.md): extras, semantics-only install, collab-data, system requirements
+- [Docker image](docs/source/docker.md): build and push the image, Apple Silicon setup
+- [Configuration](configs/README.md): every config key and stage
+- [Usage](docs/source/usage.md): package organization, Python API and tutorials, dashboard, adding curated videos, evaluation

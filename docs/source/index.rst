@@ -7,7 +7,9 @@ Feedforward reconstruction, Gaussian splats, semantics, and mesh export — buil
    :maxdepth: 1
    :caption: Getting Started
 
-   getting_started
+   installation
+   docker
+   usage
    configuration
 
 .. toctree::

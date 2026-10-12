@@ -267,6 +267,13 @@ class Reconstructor:
         defaults = yaml.safe_load(text) or {}
         merged = merge({}, defaults, config)
 
+        # track_kwargs replaces base.yaml's whole: a vggsfm run must drop the matcher-only keys
+        ba = config.get("pointcloud", {}).get("bundle_adjustment")
+        if isinstance(ba, dict) and "track_kwargs" in ba:
+            merged["pointcloud"]["bundle_adjustment"]["track_kwargs"] = dict(
+                ba["track_kwargs"] or {}
+            )
+
         # Validate, then store the fully-populated config
         self.config = self.validate_config(merged)
         self._result: PointcloudResult | None = None

@@ -2193,3 +2193,31 @@ def test_undistort_rewrites_frames_at_the_undistorted_camera_dims(
         undistorted_camera.height,
         undistorted_camera.width,
     )
+
+
+@pytest.mark.parametrize("track_kwargs", [{}, None])
+def test_track_kwargs_replaces_base(tmp_path, track_kwargs):
+    """
+    A run's track_kwargs replaces base.yaml's, so vggsfm drops the matcher-only keys.
+    """
+    ba = {"enabled": True, "track_source": "vggsfm", "track_kwargs": track_kwargs}
+    recon = Reconstructor(
+        _make_config(tmp_path, {"pointcloud": {"bundle_adjustment": ba}})
+    )
+
+    assert recon.config["pointcloud"]["bundle_adjustment"]["track_kwargs"] == {}
+
+
+def test_track_kwargs_kept_when_unset(tmp_path):
+    """
+    A run that omits track_kwargs keeps base.yaml's matcher defaults.
+    """
+    ba = {"enabled": True}
+    recon = Reconstructor(
+        _make_config(tmp_path, {"pointcloud": {"bundle_adjustment": ba}})
+    )
+
+    assert (
+        recon.config["pointcloud"]["bundle_adjustment"]["track_kwargs"]["pairing"]
+        == "exhaustive"
+    )

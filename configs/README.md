@@ -1,6 +1,6 @@
 # Reconstruction Pipeline Configs
 
-All pipelines start from default template `base.yaml` –– this file holds the defaults for each stage. If a separate file is
+All pipelines start from default template `base.yaml` — this file holds the defaults for each stage. If a separate file is
 specified (e.g., `MYFILE.yaml`), the file only overrides what differs from `base.yaml`. Running the pipeline and its outputs are covered in the [main README](../README.md#quickstart).
 
 - [Overriding default arguments](#overriding-default-arguments)
@@ -37,7 +37,7 @@ reconstruct local --config configs/my_run.yaml --output-root /PATH/TO/OUTPUT/ /P
 reconstruct local --set splats.enabled=true --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
 ```
 
-### Rerun files after changing a config
+### Re-running after a config change
 
 We re-run only the stages a change affects with `--stages` and `--overwrite`:
 
@@ -49,7 +49,7 @@ reconstruct local --config configs/remesh.yaml --stages mesh --overwrite \
 
 - a named stage whose output exists is a `ValueError` without `--overwrite` (`preproc` / `pointcloud` just skip)
 - stages turned on by `enabled` flags skip when their output exists, so an interrupted run resumes
-- `semantics` re-runs on its own after a new mesh, `localize` after `refine`; re-run anything else that depends on the change (see [Stages](#stages))
+- `localize` re-runs on its own after `refine`; re-run anything else that depends on the change (see [Stages](#stages))
 
 ### Reproducing a run
 
@@ -69,7 +69,7 @@ reconstruct local --config /PATH/TO/OUTPUT/<name>/vggt_omega/run_config.yaml \
 
 ## Stages
 
-| stage | default | requires |
+| Stage | Default | Requires |
 |---|---|---|
 | `preproc` | always | |
 | `pointcloud` | always | `preproc` |
@@ -96,7 +96,7 @@ Preproc measures the video once, then selects keyframes from that measurement.
 
 Each sampler has one density knob; `max_frames` is the count for `uniform` and a ceiling for the others:
 
-| `frame_selection` | knob | holds constant |
+| `frame_selection` | Knob | Holds constant |
 |---|---|---|
 | `fps` | `fps` | time between frames, so the baseline is fixed; count floats |
 | `uniform` | `max_frames` | frame count; spacing floats |
@@ -122,7 +122,7 @@ preproc:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `preproc.frame_selection` | str | `fps` | `fps`, `uniform` or `optical_flow` |
 | `preproc.fps` | float | `2.0` | `fps` only: samples per second |
 | `preproc.min_frames` | int\|null | `null` | `fps` only: floor on the count |
@@ -146,7 +146,7 @@ pointcloud:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `pointcloud.method` | str | `feedforward` | `feedforward` or `sfm` |
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, `loger`; sfm: `instantsfm`, `colmap`, `hloc` |
 | `pointcloud.<backend>` | dict | `{}` | Kwargs for the selected backend only; unknown keys are a `TypeError` |
@@ -165,7 +165,7 @@ pointcloud:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `pointcloud.colmap.pairing` | str | `sequential+retrieval` | `sequential`, `retrieval`, `sequential+retrieval` or `exhaustive` |
 | `pointcloud.colmap.overlap` | int | `10` | `sequential*`: pair each frame with the next N |
 | `pointcloud.colmap.num_retrieved` | int | `20` | `*retrieval`: vocab-tree neighbors per image |
@@ -192,7 +192,6 @@ The `refine` stage refines the feedforward poses against feature tracks, rewrite
 
 - after `--stages refine`, re-run `semantics` with `--overwrite` (its rows index the old points), and `mesh` / `localize` / the report if they matter
 - `<backend>/colmap/refine.json` holds the last BA config and loss history
-- `bundle_adjustment: false` turns it off
 
 ```yaml
 # Reprojection + depth only, no photometric term
@@ -202,7 +201,7 @@ pointcloud:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `pointcloud.bundle_adjustment.enabled` | bool | `true` | Run `refine`; skipped for `method: sfm` |
 | `pointcloud.bundle_adjustment.strategy` | str | `global` | With loop closure only: `global`, `window` (inside each LC window) or `window+global` |
 | `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | `xfeat` or `loma` matcher tracks on full-res frames, or `vggsfm` (set `track_kwargs: {}`) |
@@ -225,7 +224,7 @@ pointcloud:
 
 ### `loop_closure`
 
-Loop closure splits a long video into windows, reconstructs each, and joins them through a pose graph with loop edges between revisited places. It is off by default; `true` turns it on with the defaults below, a dict sets keys.
+Loop closure splits a long video into windows, reconstructs each, and joins them through a pose graph with loop edges between revisited places. `true` turns it on with the defaults below; a dict sets keys.
 
 ```yaml
 # Long video: windows of 50 frames, no loop retrieval
@@ -236,7 +235,7 @@ pointcloud:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `pointcloud.loop_closure` | bool\|dict | `false` | Run loop closure (`ValueError` with `method: sfm` or `backend: loger`) |
 | `pointcloud.loop_closure.retrieval` | str | `dino-salad` | `dino-salad` or `megaloc` (`megaloc` needs its own threshold) |
 | `pointcloud.loop_closure.submap_size` | int | `20` | Window stride; shorter scenes skip windowing |
@@ -271,7 +270,7 @@ mesh:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `mesh.enabled` | bool | `true` | Fuse a TSDF mesh into `<backend>/mesh.ply` |
 | `mesh.source` | str | `feedforward` | Fuse `pointcloud.zarr` depth, or `splats` rendered depth (needs the splats stage) |
 | `mesh.voxel_depth_px` | float | `4.0` | Voxel edge in depth pixels at the reference depth; smaller is finer |
@@ -299,7 +298,7 @@ semantics:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `semantics.enabled` | bool | `true` | Extract and lift features |
 | `semantics.extractors` | list[str] | `[talk2dino, ocr_lens]` | `talk2dino`, `dinov2`, `maskclip`, `ocr_lens` |
 | `semantics.n_components` | int\|null | `128` | Autoencoder latent dim; `null` = no compression |
@@ -310,7 +309,7 @@ semantics:
 
 ## `splats`
 
-Gaussian splatting is off by default. `3dgs` keeps thin structure and trains faster; `2dgs` (surface-aligned) gives better surfaces.
+`3dgs` keeps thin structure and trains faster; `2dgs` (surface-aligned) gives better surfaces.
 
 ```yaml
 # 2DGS as the mesh source
@@ -322,7 +321,7 @@ mesh:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `splats.enabled` | bool | `false` | Train Gaussian splats |
 | `splats.primitive` | str | `3dgs` | `3dgs` or `2dgs` |
 | `splats.representation` | str | `vanilla` | `vanilla` or `scaffold` (set `losses.opacity_reg` weight 0) |
@@ -343,7 +342,7 @@ mesh:
 ### Learning rates
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `splats.means_lr` | float | `1.6e-4` | Means (× scene scale) |
 | `splats.scales_lr` | float | `5.0e-3` | Scales |
 | `splats.quats_lr` | float | `1.0e-3` | Rotations |
@@ -370,7 +369,7 @@ splats:
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `splats.losses.<name>.weight` | float | preset | `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`, `appearance_reg` |
 | `splats.losses.<name>.start` | int | `0` | Step the loss switches on |
 | `splats.losses.appearance_reg.weight` | float | `1.0e-3` | Regularizer on `appearance_opt` |
@@ -383,12 +382,13 @@ splats:
 The `localize` stage caches per-frame features so query images can be located in the scene later. The retrieval model is stored with the cache, so queries always match it.
 
 ```yaml
+# LoMa matcher instead of XFeat
 localization:
   matcher: loma
 ```
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `localization.enabled` | bool | `true` | Build the localization database |
 | `localization.matcher` | str | `xfeat` | A batch-capable vismatch model, e.g. `xfeat` or `loma` |
 | `localization.retrieval` | str | `megaloc` | `megaloc` or `dino-salad` |
@@ -400,21 +400,21 @@ localization:
 `reconstruction_quality_report.json` scores the reconstruction without ground truth. It is report-only: nothing in it feeds back into the pipeline. Tables and columns are in [geometry.rst](../docs/source/api/geometry.rst).
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+|---|---|---|---|
 | `reconstruction_quality_report.min_pair_overlap` | float | `0.0` | Skip pairs whose frustum overlap is below this; `0` = every pair |
 
 ---
 
 ## Remote scenes
 
-`reconstruct remote` takes the same options as `local` (except `--keep-viewer`), plus `--all` and `--keep-local`. Commands are in the [main README](../README.md#processing-gcloud-data).
+`reconstruct remote` takes the same options as `local` (except `--keep-viewer`), plus `--all` and `--keep-local`. Commands are in the [main README](../README.md#remote-video-processing).
 
 - scene ids: any flat path-safe name (`YYYY_MM_DD-PARENTFOLDER-VIDEONAME` by convention)
 - a failed scene keeps its local dir and the batch goes on; the push only copies, so nothing remote is deleted
 - after any failure we re-probe rclone; if it is unreachable we stop and report the rest `SKIPPED`
 - credentials come from the `collab-data` rclone remote only
 
-| exit | meaning |
+| Exit | Meaning |
 |---|---|
 | 0 | every scene succeeded |
 | 1 | one or more scenes failed; the rest still ran |
@@ -429,7 +429,7 @@ Naming only *leaf* stages in `--stages` (`refine`, `mesh`, `semantics`, `splats`
 - any set with `preproc` or `pointcloud` rebuilds from the curated video
 - `--all` lists `environments-processed` for a leaf re-run, `environments-curated` otherwise
 
-| situation | outcome |
+| Situation | Outcome |
 |---|---|
 | scene has no processed outputs | `FileNotFoundError` |
 | no `pointcloud.backend` override and not exactly one `<backend>/run_config.yaml` | `ValueError` listing the backends |
@@ -438,8 +438,4 @@ Naming only *leaf* stages in `--stages` (`refine`, `mesh`, `semantics`, `splats`
 
 ### What we push
 
-Everything in the scene except (`PUSH_EXCLUDES` in `remote.py`):
-
-- videos (`*.mp4`, `*.mov`, `*.avi`; the source is already in `environments-curated`)
-- `semantics/*_features.zarr` (temporary full-width features)
-- the SfM match databases (`colmap/instantsfm.db`, `colmap/colmap.db`, `colmap/hloc/`); the `colmap/sparse/0` model is pushed
+Everything in the scene except videos, temporary full-width features (`semantics/*_features.zarr`) and the SfM match databases (`PUSH_EXCLUDES` in `remote.py`).

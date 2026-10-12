@@ -42,7 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # uv manages the Python install and the venv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# uv pinned: setup.sh and uv.lock are tested against this release
+RUN curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh
 ENV PATH=/root/.local/bin:${PATH}
 
 RUN uv python install ${PYTHON_VERSION} \
@@ -90,14 +91,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends --no-install-su
         libx11-6 libxext6 libsm6 libice6 \
         libhdf5-dev xvfb \
         build-essential ffmpeg libsuitesparse-dev \
-        wget curl unzip xz-utils git vim htop tmux less \
+        wget curl unzip xz-utils git vim htop tmux less jq \
         openssh-server gnupg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl https://rclone.org/install.sh | bash
+# rclone pinned from the release zip: install.sh takes no version argument, apt's rclone is too old
+ARG RCLONE_VERSION=1.75.2
+RUN curl -fsSLo /tmp/rclone.zip https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip \
+ && unzip -q /tmp/rclone.zip -d /tmp \
+ && install -m 0755 /tmp/rclone-v${RCLONE_VERSION}-linux-amd64/rclone /usr/local/bin/rclone \
+ && rm -rf /tmp/rclone.zip /tmp/rclone-v${RCLONE_VERSION}-linux-amd64
 
 # uv — manages the venv post-build (setup.sh reruns, uv pip into the venv)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# uv pinned: setup.sh and uv.lock are tested against this release
+RUN curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh
 ENV PATH=/root/.local/bin:${PATH}
 
 # venv + the uv-managed interpreter it points at
@@ -114,6 +121,7 @@ ENV CUDA_HOME=/usr/local/cuda \
     LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
     TORCH_HOME=/workspace/models \
     HF_HOME=/workspace/models \
+    NLTK_DATA=/workspace/models/nltk_data \
     CUDA_CACHE_MAXSIZE=4294967296
 
 # Smoke test: torch imports and the AOT extensions survived the stage copy
@@ -141,6 +149,7 @@ RUN echo "PermitRootLogin yes"        >> /etc/ssh/sshd_config && \
 RUN { \
     echo 'export TORCH_HOME="/workspace/models"'; \
     echo 'export HF_HOME="/workspace/models"'; \
+    echo 'export NLTK_DATA="/workspace/models/nltk_data"'; \
     echo 'export CUDA_HOME=/usr/local/cuda'; \
     echo 'export CUDA_ROOT=/usr/local/cuda'; \
     echo 'export PATH="/usr/local/cuda/bin:${PATH}"'; \

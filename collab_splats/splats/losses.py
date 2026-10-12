@@ -26,7 +26,7 @@ def default_losses(primitive: str) -> dict[str, dict]:
         primitive: "3dgs" or "2dgs".
 
     Returns:
-        A new `{name: spec}`, safe to edit in place.
+        A new ``{name -> spec}`` dict, safe to edit in place.
     """
     losses = {
         "depth": {"weight": 0.01},

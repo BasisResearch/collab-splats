@@ -12,3 +12,4 @@ API Reference
    geometry
    mesh
    splats
+   utils

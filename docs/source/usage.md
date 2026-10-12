@@ -70,4 +70,4 @@ During design of the package modules, we used standard 3D reconstruction benchma
 python -m evals.eval --config evals/configs/7scenes.yaml --dry-run
 ```
 
-Results land in `evals/results/`; datasets and grid configs are described in [evals/README.md](../../evals/README.md).
+Results land in `evals/results/`; datasets and grid configs are described in [evals/README.md](https://github.com/BasisResearch/collab-splats/blob/main/evals/README.md).

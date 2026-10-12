@@ -9,12 +9,20 @@ resolution, and the seed points come from ``pointcloud.zarr``. The pipeline runs
 the result. ``SplatsConfig`` mirrors the ``splats:`` yaml block minus ``enabled``; its fields below
 are the full key list.
 
-``train`` builds one model, ``Gaussians`` or ``Scaffold`` (chosen by ``representation``), and one
-``CameraOpt``. The two model classes expose the same members, so the loop does not branch on the
-representation. ``CameraOpt`` holds a pose delta and a per-image color affine, toggled by
-``pose_opt`` / ``appearance_opt``; a half that is off passes its input through. Each step refines
-the camera, renders, applies the color affine, composites over a random background, computes the
-losses, steps every optimizer, then every scheduler, then lets the model densify itself.
+``train`` builds one model (``Gaussians`` or ``Scaffold``, per ``representation``) and one
+``CameraOpt`` (pose delta and per-image color affine, toggled by ``pose_opt`` /
+``appearance_opt``). Both models expose the same members, so the loop never branches on
+representation.
+
+.. automodule:: collab_splats.splats
+   :no-members:
+
+.. autodata:: collab_splats.splats.GSPLAT_COMMIT
+
+   gsplat commit pinned in ``pyproject.toml``; a test checks they match.
+
+``collab_splats.splats.utils`` (scene scale, coarse-to-fine targets, view schedule) is internal
+to the trainer and not documented here.
 
 Primitive and representation
 ----------------------------
@@ -47,11 +55,15 @@ Outputs
 
 - ``splats.ply``: binary Gaussian ply. Under ``scaffold`` it is baked, each anchor offset decoded
   once at that anchor's mean observed view direction, so it is a fixed-view snapshot.
-- ``ckpt.pt``: the reloadable model, with ``splats`` (the parameters), ``config``, ``cam_to_world``, ``intrinsics``,
-  ``image_ids``, ``image_size``, ``appearance`` and, under ``scaffold``, ``mlps`` and
-  ``voxel_size``. ``intrinsics`` are stored in gsplat's pixel-corner convention. Pose deltas are folded into ``cam_to_world`` before the write, so reloading cannot apply
-  them twice. ``load_checkpoint`` plus ``render_views`` reproduce every training-view render;
-  the mesh stage consumes the model this way (``render_tsdf_inputs``).
+- ``ckpt.pt``: the reloadable model, with ``splats`` (the parameters), ``config``,
+  ``cam_to_world``, ``intrinsics``, ``image_ids``, ``image_size``, ``appearance`` and, under
+  ``scaffold``, ``mlps`` and ``voxel_size``:
+
+  - ``intrinsics`` in gsplat's pixel-corner convention
+  - pose deltas folded into ``cam_to_world``, so reloading cannot apply them twice
+  - ``load_checkpoint`` plus ``render_views`` reproduce every training-view render; the mesh
+    stage consumes the model this way (``render_tsdf_inputs``)
+
 - ``splats_quality_report.json``: the config, mean and per-frame PSNR / SSIM, wall time, the
   final-step loss snapshot and ``n_gaussians`` (the anchor count under ``scaffold``, plus the
   per-frame decoded count ``n_decoded``).
@@ -59,13 +71,9 @@ Outputs
 Losses
 ------
 
-``losses:`` is a schedule, ``name: {weight[, start, end, end_weight]}``. A loss contributes when
-its weight at the step is above 0 and its input exists (``depth`` needs a target, ``distortion``
-needs ``2dgs``). The weight is 0 before ``start``; with ``end`` it decays log-linearly from
-``weight`` at ``start`` to ``end_weight`` at ``end``, then holds. The photometric loss (0.8 L1 + 0.2 (1 - SSIM)) is always
-on. Registered: ``depth``, ``normal_consistency``, ``distortion``, ``opacity_reg``,
-``scale_reg``, ``appearance_reg``. Under ``scaffold`` the two regularizers read the decoded
-opacities and log-scales off the render.
+``losses:`` is a per-step schedule (``name: {weight[, start, end, end_weight]}``; log-linear decay
+between ``start`` and ``end``); the photometric 0.8 L1 + 0.2 (1 - SSIM) is always on. Keys and
+presets: :doc:`/configuration`.
 
 Modules
 -------

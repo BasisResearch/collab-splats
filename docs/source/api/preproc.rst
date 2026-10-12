@@ -2,8 +2,29 @@ Preprocessing
 =============
 
 Video preprocessing: the canonical keyframe store (``frames``), PyAV decode and
-video metadata (``video``), capture-quality measurement (``qa``), and keyframe
-selection (``sampling``).
+video metadata (``video``), capture-quality measurement (``qa``), keyframe
+selection (``sampling``) and lens calibration (``undistort``).
+
+Quickstart
+----------
+
+The preprocess stage decodes the video once into ``<output_path>/images/frame_NNNNNN.png``:
+lossless PNGs named by source frame index. Selection settings land in
+``<backend>/run_config.yaml``, per-frame quality in ``video_quality_report.json``. Every pixel
+consumer reads this directory; nothing re-decodes the video.
+
+.. code-block:: python
+
+   from collab_splats.preproc import frame_paths, read_frames
+
+   paths = frame_paths(run_dir / "images")       # sorted, one path per selected frame
+   imgs = read_frames(run_dir / "images")        # (N, H, W, 3) uint8 RGB
+
+Frame arrays crossing the public API are RGB; ``analysis_gray`` takes BGR.
+
+See :doc:`../tutorials/01_preprocessing/preprocessing` for the frame-selection walkthrough
+(fps vs. uniform vs. optical-flow sampling, blur/exposure gating). Sampling plots live in
+``collab_splats.preproc.viz`` (notebook-only, not documented here).
 
 .. automodule:: collab_splats.preproc.frames
    :members:
@@ -21,33 +42,6 @@ selection (``sampling``).
    :members:
    :show-inheritance:
 
-Quickstart
-----------
-
-The preprocess stage decodes the source video exactly once and writes
-``output_path/images/frame_NNNNNN.png`` — a COLMAP-style directory of lossless
-PNGs named by SOURCE video frame index. The selection settings live in
-``<backend>/run_config.yaml`` and the per-frame quality in ``video_quality_report.json``.
-This is the sole persistent frame artifact. Every pixel consumer (pointcloud,
-semantics, localization) reads the directory instead of re-decoding
-the video, and path-locked consumers take the directory itself, so nothing
-stages a second copy.
-
-.. code-block:: python
-
-   from collab_splats.preproc import frame_paths, read_frames
-
-   paths = frame_paths(run_dir / "images")       # sorted, one path per selected frame
-   imgs = read_frames(run_dir / "images")        # (N, H, W, 3) uint8 RGB
-
-Every function in this module takes and returns **RGB**; the BGR conversions
-``cv2`` needs happen inside ``frames.py`` and nowhere else.
-
-``pointcloud.zarr`` (written by the pointcloud stage) keeps its own
-model-resolution ``images`` tensor — that is not a duplicate of the keyframe
-directory; it is used directly by mesh extraction, bundle adjustment, and point
-colorization at the model's inference resolution.
-
-See ``docs/source/tutorials/01_preprocessing/keyframe_extraction.ipynb`` for
-the full frame-selection walkthrough (fps vs. uniform vs. optical-flow sampling,
-blur/exposure gating).
+.. automodule:: collab_splats.preproc.undistort
+   :members:
+   :show-inheritance:

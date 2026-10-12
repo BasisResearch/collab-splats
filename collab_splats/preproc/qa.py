@@ -425,8 +425,9 @@ def compute_video_quality(
         ransac_thresh_px: inlier threshold for the parallax fits.
 
     Returns:
-        {"video": {path, mtime, **get_video_info}, "params": {motion_stride and the four tuning kwargs},
-        "frames": {column: list per frame}, "pairs": {column: list per pair}}.
+        Report dict: ``video`` (path, mtime and the get_video_info fields), ``params``
+        (motion_stride and the four tuning kwargs), ``frames`` (column -> per-frame list)
+        and ``pairs`` (column -> per-pair list).
 
     Raises:
         FileNotFoundError: the video does not exist.

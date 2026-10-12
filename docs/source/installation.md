@@ -1,6 +1,6 @@
 # Installation
 
-Install with `bash setup.sh` (see the [README](../../README.md#install)). `setup.sh` is safe to re-run; it only builds what is missing. On RunPod, the `/workspace` volume hides the image's own checkout, so clone into `/workspace` and run `setup.sh` there. For a lighter install, sync extras individually:
+Install with `bash setup.sh` (see the [README](https://github.com/BasisResearch/collab-splats#install)). `setup.sh` is safe to re-run; it only builds what is missing. On RunPod, the `/workspace` volume hides the image's own checkout, so clone into `/workspace` and run `setup.sh` there. For a lighter install, sync extras individually:
 
 ```sh
 uv sync                                         # core deps only

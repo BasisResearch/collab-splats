@@ -10,6 +10,7 @@ from collab_splats.pointcloud.sfm.colmap import ColmapCreator
 from collab_splats.pointcloud.sfm.hloc import HlocCreator
 from collab_splats.pointcloud.sfm.instantsfm import InstantSfMCreator
 
+#: Backend config key -> SfM creator class.
 SFM_CREATORS = {
     "instantsfm": InstantSfMCreator,
     "colmap": ColmapCreator,

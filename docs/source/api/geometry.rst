@@ -64,10 +64,6 @@ Metrics
 ``compute_reconstruction_quality`` is the entry point; the Reconstructor stage owns
 the zarr load and the ``reconstruction_quality_report.json`` write.
 
-.. automodule:: collab_splats.geometry.metrics
-   :members:
-   :show-inheritance:
-
 Report columns
 ~~~~~~~~~~~~~~
 
@@ -116,7 +112,10 @@ marks a value that does not exist, never a failure.
 ``depth_residual_histogram`` (model grid): ``counts`` and ``bin_edges`` over
 ``r / (1 + |r|)``; invert an edge with ``u / (1 - |u|)``.
 
-.. list-table:: ``photometric_pairs`` — original grid, one row per pair ``i < j`` at gap ``j - i`` in ``separations`` (default 1, 2, 5, 10, 20); null without ``images/``
+``photometric_pairs`` scores each pair ``i < j`` whose gap ``j - i`` is in ``separations``
+(default 1, 2, 5, 10, 20); the table is null without ``images/``.
+
+.. list-table:: ``photometric_pairs``: original grid, one row per pair at each gap in ``separations``
    :header-rows: 1
    :widths: 30 70
 
@@ -131,6 +130,10 @@ marks a value that does not exist, never a failure.
 
 ``reconstruction_quality_ncc.png`` beside the report plots this table by gap.
 
+.. automodule:: collab_splats.geometry.metrics
+   :members:
+   :show-inheritance:
+
 .. automodule:: collab_splats.geometry.viz
    :members:
 
@@ -143,13 +146,7 @@ its submodules. ``LoopClosureConfig.retrieval`` names the retrieval backend in
 the registry: ``"dino-salad"`` (default) or ``"megaloc"``, which needs its own
 ``lc_retrieval_threshold``.
 
-.. automodule:: collab_splats.geometry.loop_closure.graph
-   :members:
-   :show-inheritance:
-
-.. automodule:: collab_splats.geometry.loop_closure.submap
-   :members:
-   :show-inheritance:
+``geometry.loop_closure.map`` and ``matching`` are internal.
 
 Quickstart
 ~~~~~~~~~~
@@ -165,8 +162,15 @@ Quickstart
    lc = LoopClosure(base, config=LoopClosureConfig())
    result = lc.create_pointcloud(Path("path/to/images"), Path("path/to/out"), Path("path/to/out/colmap/sparse/0"))
 
-See ``docs/source/tutorials/02_pointcloud/slam_loop_closure.ipynb`` for the full
-walkthrough (candidate matching, plots).
+See :doc:`../tutorials/02_pointcloud/refinement` for the loop-closure walkthrough.
+
+.. automodule:: collab_splats.geometry.loop_closure.graph
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.geometry.loop_closure.submap
+   :members:
+   :show-inheritance:
 
 .. automodule:: collab_splats.geometry.loop_closure.wrapper
    :members:

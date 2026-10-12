@@ -1,12 +1,12 @@
 Semantics
 =========
 
-Feature extraction, lifting, compression and segmentation. Everything public is importable from
-``collab_splats.semantics``. The pipeline's ``semantics:`` block (``extractors``, ``n_components``,
+Feature extraction, lifting, compression and segmentation. Most of the public API is importable
+from ``collab_splats.semantics``; lifting and ``ocr_lens`` live in their submodules. The pipeline's ``semantics:`` block (``extractors``, ``n_components``,
 ``target_cosine``, ``max_epochs``) drives the stage: it runs after the mesh stage, builds each
 listed extractor with its defaults in order (default ``[talk2dino, ocr_lens]``), one model
-resident at a time, and writes one set of stores per extractor. The ``05_semantics`` tutorials walk through extraction, lifting and
-query, the OCR lens and segmentation.
+resident at a time, and writes one set of stores per extractor. The ``05_semantics`` tutorials
+walk through extraction, lifting and query, the OCR lens and segmentation.
 
 Feature extractors
 ------------------
@@ -29,7 +29,7 @@ list of images and returns a list of unit-norm (D, H_p, W_p) float32 CPU tensors
   black image at the same patch grid; it takes and returns a list, L2-renormalized. Validated for
   dinov2 and talk2dino; other extractors log a warning. ``get_bias_visualization(H_p, W_p)``
   shows what was removed and needs a prior ``debias`` at that grid.
-- ``features_to_rgb`` (PCA to RGB) is in ``collab_splats.utils.image``.
+- ``features_to_rgb`` (PCA to RGB) is in :mod:`collab_splats.utils.image`.
 
 .. automodule:: collab_splats.semantics.features
    :members:
@@ -55,7 +55,7 @@ Compression
 ``FeatureAutoencoder(input_dim, latent_dim)`` compresses ViT-width features to the latent width
 stored on disk. ``fit`` trains in place on a tensor, array or zarr array (streamed) and returns
 nothing; ``recon_cosine``, ``recon_mse`` and ``epochs_run`` land on the instance and in the
-checkpoint. They are measured on the training set, so they are optimistic at small N.
+checkpoint (training-set values; optimistic at small N).
 ``encode`` works on patch maps or points (``per_point_encode``); decoding is per point only
 (``per_point_decode``, ``iter_decode``): the pipeline encodes maps, lifts the latent maps, and
 decodes per point on read. ``save`` takes a ``.pt`` file path; ``load`` is a classmethod.
@@ -80,8 +80,8 @@ Three zarr stores per extractor:
   ``autoencoder.pt``; attrs ``input_dim``, ``latent_dim``, ``extractor``, ``extractor_kwargs``.
   When ``mesh.ply`` exists it also holds ``vertex_features`` (queryable extractors) or
   ``vertex_word_ids`` / ``vertex_word_probs`` with attr ``words`` (``ocr_lens``), and attr
-  ``mesh_sha256``; a new mesh makes the stage re-run. Written by ``write_point_features``
-  through a ``.tmp`` dir renamed into place, so a failed write leaves nothing behind.
+  ``mesh_sha256``; a new mesh makes the stage re-run. Written atomically by
+  ``write_point_features``.
 
 ``n_components: null`` keeps full-width features in ``_codes.zarr`` (``latent_dim`` null, no
 autoencoder, no temporary store). ``read_point_features(store_path, name="features")`` decodes a
@@ -106,11 +106,30 @@ Four backends behind ``BaseSegmentation.get(name)``:
   It is a gated model: request access at https://huggingface.co/facebook/sam3, run
   ``huggingface-cli login``, and install from https://github.com/facebookresearch/sam3; until
   then construction raises ``ImportError`` with those steps.
-- ``skywater``: SegFormer sky masks. ``sky_masks(images_dir, ...)`` returns (N, H, W) bool and
-  caches probabilities in a sibling ``sky/`` dir; the mesh stage uses it for ``mesh.mask_sky``.
+- ``skywater``: SegFormer sky masks. ``sky_masks(images_dir, idxs, cache_dir=...)`` returns (N, H, W)
+  bool and caches sky probability PNGs in ``cache_dir`` (the pipeline uses ``<scene>/sky/``); the
+  mesh stage uses it for ``mesh.mask_sky``.
 
 Backends without text support raise ``NotImplementedError`` from ``segment_with_text``.
 
 .. automodule:: collab_splats.semantics.segmentation
    :members:
    :show-inheritance:
+
+Utilities
+---------
+
+``compute_semantic_contrast`` and ``cluster_points`` (spatially connected clusters of
+high-scoring points).
+
+.. automodule:: collab_splats.semantics.utils
+   :members:
+
+Viewer
+------
+
+``python -m collab_splats.viewer <scene>/<backend>`` serves the mesh with a Semantics dropdown;
+point it at an outputs root for a Scene dropdown.
+
+.. automodule:: collab_splats.viewer
+   :members:

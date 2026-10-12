@@ -424,16 +424,18 @@ def make_convex_hull(
     Trim the ragged outer edge, then patch the ground out to a rounded convex hull.
 
     - lengths are in cells: pixels of the top-down image of the mesh, one median edge length each
-    - ground: the largest RANSAC plane facing the cameras' up, on the cameras' side
+    - ground: first of 3 RANSAC planes near the camera-path normal, up on the cameras' side
+    - cut: faces outside the rounded hull, then trim_mesh_edges on the ragged outline
+    - patch: uncovered hull cells get a sheet pinned to the rim, pulled to the eroded ground
+    - join: clashing patch faces dropped, make_manifold, then bridge_mesh_edges closes inlets
     - assumes a ground-dominated height field; indoor and object scenes should leave it off
-    - necks of the outer rim are bridged, so inlets become interior holes fill_holes can close
 
     Args:
         mesh: input mesh; not modified.
         c2w: (N, 4, 4) camera-to-world poses, OpenCV axes; they set the expected up and its sign.
         hull_round: opening radius that rounds the hull's corners, cells.
         outline_open: see trim_mesh_edges.
-        rim_max_dz: join a rim vertex only within this of its neighbours' median height, cells.
+        rim_max_dz: join a rim vertex only within this of its neighbors' median height, cells.
         rim_max_edge: drop patch triangles touching the rim with a 3D edge over this, cells.
         bridge_radius: see bridge_mesh_edges (radius).
         min_piece_faces: pieces with fewer faces are dropped.

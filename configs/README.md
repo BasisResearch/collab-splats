@@ -1,11 +1,11 @@
 # Reconstruction Pipeline Configs
 
 All pipelines start from default template `base.yaml` — this file holds the defaults for each stage. If a separate file is
-specified (e.g., `MYFILE.yaml`), the file only overrides what differs from `base.yaml`. Running the pipeline and its outputs are covered in the [main README](../README.md#quickstart).
+specified (e.g., `MYFILE.yaml`), the file only overrides what differs from `base.yaml`. Running the pipeline and its outputs are covered in the [main README](https://github.com/BasisResearch/collab-splats#quickstart).
 
 - [Overriding defaults](#overriding-defaults)
 - [Stages](#stages)
-- Options by stage: [`preproc`](#preproc) · [`pointcloud`](#pointcloud) · [`mesh`](#mesh) · [`semantics`](#semantics) · [`splats`](#splats) · [`localization`](#localization) · [`reconstruction_quality_report`](#reconstruction_quality_report)
+- Options by stage: [`preproc`](#preproc) · [`pointcloud`](#pointcloud) · [`mesh`](#mesh) · [`semantics`](#semantics) · [`splats`](#splats) · [`localization`](#localization) · [`reconstruction_quality_report`](#reconstruction-quality-report)
 
 ---
 
@@ -100,7 +100,7 @@ preproc:
 
 ## `pointcloud`
 
-We pick a method (`feedforward` or `sfm`) and a backend. Each backend's kwargs go under its own name and apply only when it is selected; the blocks are documented in [pointcloud.rst](../docs/source/api/pointcloud.rst#backends).
+We pick a method (`feedforward` or `sfm`) and a backend. Each backend's kwargs go under its own name and apply only when it is selected; backend details are in the [pointcloud API docs](https://basisresearch.github.io/collab-splats/api/pointcloud.html).
 
 ```yaml
 # Another feedforward model
@@ -242,7 +242,7 @@ pointcloud:
 
 ## `mesh`
 
-We fuse depth into a TSDF volume, clean and smooth the mesh, then texture it. The voxel size follows the scene's depth, so the defaults hold across scales; the reasoning behind each knob is in [mesh.rst](../docs/source/api/mesh.rst).
+We fuse depth into a TSDF volume, clean and smooth the mesh, then texture it. The voxel size follows the scene's depth, so the defaults hold across scales; the reasoning behind each knob is in the [mesh API docs](https://basisresearch.github.io/collab-splats/api/mesh.html).
 
 ```yaml
 # Indoor scene or object: no ground hull
@@ -293,7 +293,7 @@ mesh:
 
 ## `semantics`
 
-We extract 2D features per frame, compress them with an autoencoder, and lift them onto the points (and the mesh vertices when a mesh exists). Extractors run in order and each writes its own store, so they coexist. Details in [semantics.rst](../docs/source/api/semantics.rst).
+We extract 2D features per frame, compress them with an autoencoder, and lift them onto the points (and the mesh vertices when a mesh exists). Extractors run in order and each writes its own store, so they coexist. Details in the [semantics API docs](https://basisresearch.github.io/collab-splats/api/semantics.html).
 
 ```yaml
 # Talk2DINO only, uncompressed
@@ -404,9 +404,9 @@ localization:
 
 ---
 
-## `reconstruction_quality_report`
+## Reconstruction quality report
 
-`reconstruction_quality_report.json` scores the reconstruction without ground truth. It is report-only: nothing in it feeds back into the pipeline. Tables and columns are in [geometry.rst](../docs/source/api/geometry.rst).
+`reconstruction_quality_report.json` scores the reconstruction without ground truth. It is report-only: nothing in it feeds back into the pipeline. Tables and columns are in the [geometry API docs](https://basisresearch.github.io/collab-splats/api/geometry.html#report-columns).
 
 | Key | Type | Default | Description |
 |---|---|---|---|

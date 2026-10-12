@@ -40,7 +40,7 @@ def lift_features(
 
     - each point in result.points projects into every frame; only visible points are sampled,
       so each frame costs its visible count, not P
-    - masked by depth_residual's in-bounds + depth consistency (|residual| / |z_proj| < depth_tol)
+    - masked by depth_residual's in-bounds + depth consistency (``|residual| / |z_proj| < depth_tol``)
     - weighted by confidence at the same rounded pixel the depth test reads, then mean-reduced
     - points visible nowhere fall back to a source-frame sample at their pixel_indices entry
     - without pixel_indices (e.g. mesh vertices) they stay zero: unobserved

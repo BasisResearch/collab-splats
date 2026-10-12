@@ -70,6 +70,8 @@ autodoc_mock_imports = [
     "param",
     "pyvista",
     "gtsam",
+    "viser",
+    "collab_data",
     "huggingface_hub",
     "mergedeep",
     "transformers",

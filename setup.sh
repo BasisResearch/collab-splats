@@ -121,10 +121,9 @@ fi
 uv sync --locked --all-extras \
     || sync_failed
 
-# WordNet corpus for the ocr_lens vocabulary, on the persistent models volume; best-effort
-export NLTK_DATA="${NLTK_DATA:-/workspace/models/nltk_data}"
-"$PYTHON" -c "import nltk, os; nltk.download('wordnet', download_dir=os.environ['NLTK_DATA'], quiet=True)" \
-    || echo "WARN: WordNet download failed — run: python -c \"import nltk; nltk.download('wordnet', download_dir='$NLTK_DATA')\""
+# WordNet corpus for the ocr_lens vocabulary into $NLTK_DATA (image: models volume), else ~/nltk_data
+"$PYTHON" -c "import nltk, os, sys; sys.exit(0 if nltk.download('wordnet', download_dir=os.environ.get('NLTK_DATA'), quiet=True) else 1)" \
+    || echo "WARN: WordNet download failed — run: python -m nltk.downloader wordnet"
 
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
 # Best-effort: a build stage without network/system libs skips it and

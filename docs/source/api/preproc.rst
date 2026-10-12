@@ -23,8 +23,8 @@ consumer reads this directory; nothing re-decodes the video.
 Frame arrays crossing the public API are RGB; ``analysis_gray`` takes BGR.
 
 See :doc:`../tutorials/01_preprocessing/preprocessing` for the frame-selection walkthrough
-(fps vs. uniform vs. optical-flow sampling, blur/exposure gating). Sampling plots live in
-``collab_splats.preproc.viz`` (notebook-only, not documented here).
+(fps vs. uniform vs. optical-flow sampling, blur/exposure gating). Quality plots live in
+``collab_splats.preproc.viz``; the preprocess stage writes ``photometric.png`` and ``motion.png``.
 
 .. automodule:: collab_splats.preproc.frames
    :members:

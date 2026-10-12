@@ -1,7 +1,7 @@
 collab-splats
 =============
 
-Feedforward reconstruction, Gaussian splats, semantics, and mesh export — built on gsplat.
+Video-to-3D reconstruction (feedforward or SfM), meshing, Gaussian splats and semantic lifting.
 
 .. toctree::
    :maxdepth: 1

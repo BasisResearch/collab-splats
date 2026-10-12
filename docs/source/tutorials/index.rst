@@ -11,18 +11,18 @@ After pulling code changes, delete ``data/tutorial_scene/`` so the stages are re
 The scene uses a small profile (96 frames, short training); production values are in
 ``configs/base.yaml``.
 
-=================================== ===============================
+=================================== ======================================================================
 Stage                               Page
-=================================== ===============================
+=================================== ======================================================================
 ``preproc``                         01 · Preprocessing
 ``pointcloud``                      02 · Reconstruction
 ``reconstruction_quality_report``   02 · Reconstruction
 ``refine``                          02 · Refinement
-``splats``                          03 · Train splats
+``splats``                          03 · Training Splats
 ``mesh``                            04 · Mesh
-``semantics``                       05 · Lifting and query, OCR lens
+``semantics``                       05 · Feature Extraction, Segmentation, Lifting and Query, OCR Lens
 ``localize``                        06 · Localization
-=================================== ===============================
+=================================== ======================================================================
 
 .. toctree::
    :maxdepth: 1

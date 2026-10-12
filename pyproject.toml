@@ -107,8 +107,8 @@ reconstruction = [
     # bae's find_cudss_root() runs at compile time). Pinned for ABI stability.
     "nvidia-cudss-cu12==0.6.0.5",
     # bae: pypose BA CUDA extension. Source pinned via [tool.uv.sources]; PyPI 'bae' (2.0.x) is a
-    # different package. Built with no-build-isolation (see [tool.uv]) against the pip cuda-toolkit
-    # nvcc — CUDA_HOME is wired to the venv's nvidia/cuda_nvcc dir in setup.sh.
+    # different package. Built with no-build-isolation (see [tool.uv]) against the system CUDA
+    # toolkit's nvcc at $CUDA_HOME (setup.sh warns if missing; the Docker image ships bae prebuilt).
     # USE_CUDSS defaults to "1" in bae 0.2.5.
     "bae",
     # open3d: fit_dominant_plane (imported lazily by geometry.transforms)

@@ -15,7 +15,7 @@ evals/
 
 ## Get data
 
-Paths below match `configs/`; run from the repo root.
+Paths below match `evals/configs/`; run from the repo root.
 
 ```bash
 # 7-Scenes: scene zip holds one zip per sequence; unzip exit 1 is a harmless size warning
@@ -36,6 +36,8 @@ cd /tmp/co3d/co3d && python download_dataset.py --download_folder "$OLDPWD/data/
 
 ## Grid config
 
+Excerpt of `evals/configs/cross_model_chess.yaml` (the full grid adds `vggtx` and `mapanything` pairs):
+
 ```yaml
 name: cross_model_chess
 output_dir: evals/results/cross_model_chess
@@ -52,8 +54,9 @@ conditions:                  # label -> override merged over base
 ```
 
 A flag under test (sky masking, BA, a backend) is one more condition, not a script.
-With `loop_closure` on, `bundle_adjustment` refines each window; without it, a BA
-condition runs single-pass and needs a `max_frames` the backend fits in one go.
+With `loop_closure` on, the default `bundle_adjustment.strategy: global` runs BA (the `refine`
+stage) over all frames after the windows; `strategy: window` refines inside each window instead.
+Without loop closure, BA runs single-pass and needs a `max_frames` the backend fits in one go.
 
 ## Run
 

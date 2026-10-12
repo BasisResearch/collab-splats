@@ -1,7 +1,7 @@
 """
 Matplotlib plots for keyframe sampling and the quality report.
 
-- not re-exported from collab_splats.preproc, so pipeline imports skip matplotlib
+- not re-exported from collab_splats.preproc; the preprocess stage imports it for its quality plots
 """
 
 from __future__ import annotations

@@ -13,7 +13,7 @@ specified (e.g., `MYFILE.yaml`), the file only overrides what differs from `base
 
 Three layers, applied in order (later wins):
 
-1. `base.yaml`
+1. `base.yaml`, or `--base-config FILE.yaml` in its place
 2. `--config MYFILE.yaml`: merged key by key over `base.yaml`
 3. `--set key=value`: one dotted key, repeatable
 
@@ -27,6 +27,7 @@ semantics:
   enabled: false
 ```
 
+- `input_path` and `output_path` are required; the CLI sets them from each input and `<output-root>/<scene>`, overriding any config value
 - every backend folder saves its merged config as `<backend>/run_config.yaml`; pass it to `--config` to reproduce a run
 - after changing a config, re-run only the affected stages with `--stages <stage> --overwrite`
 
@@ -38,7 +39,7 @@ semantics:
 |---|---|---|
 | `preproc` | always | |
 | `pointcloud` | always | `preproc` |
-| `refine` | on (feedforward only) | `pointcloud` |
+| `refine` | on (feedforward only; off under loop closure with `strategy: window`) | `pointcloud` |
 | `splats` | off | `pointcloud` |
 | `mesh` | on | `pointcloud` (`splats` too with `mesh.source: splats`) |
 | `semantics` | on | `pointcloud` |
@@ -47,7 +48,8 @@ semantics:
 
 - `on` / `off` stages switch with their `enabled` key (`refine`: `pointcloud.bundle_adjustment.enabled`; `localize`: `localization.enabled`)
 - stages run in table order; `--stages` runs a stage even when its flag is off
-- `enabled` stages skip when their output exists, so an interrupted run resumes; a stage named in `--stages` needs `--overwrite`
+- a stage whose output exists is skipped, so an interrupted run resumes; `--overwrite` rebuilds it
+- in `--stages`, a done leaf stage (any but `preproc` and `pointcloud`) is a `ValueError` without `--overwrite`; a done `preproc` or `pointcloud` is skipped
 - `semantics` re-lifts onto a new mesh from its cached 2D features
 
 ---
@@ -57,9 +59,10 @@ semantics:
 Preproc measures every frame once (`video_quality_report.json`, reused; delete it to re-measure), then picks keyframes that pass `preproc.quality`.
 
 - `fps` (default): fixed time between frames, so the baseline between frames stays the same for any video length
-- `uniform`: exactly `max_frames`, evenly spaced
+- `uniform`: exactly `max_frames`, evenly spaced; fewer when fewer frames pass the gate
 - `optical_flow`: spaced by motion, up to `max_frames`
 - `max_frames: 300` is VGGT-Omega's GPU limit; it caps `fps` past ~2.5 min at `fps: 2.0`
+- a directory input takes every image in filename order; only `undistort` applies
 
 ```yaml
 # Fixed 150 frames, evenly spaced
@@ -114,6 +117,7 @@ pointcloud:
 | `pointcloud.backend` | str | `vggt_omega` | feedforward: `vggt_omega`, `vggtx`, `mapanything`, `loger`; sfm: `instantsfm`, `colmap`, `hloc` |
 | `pointcloud.<backend>` | dict | `{}` | Kwargs for the selected backend only; unknown keys are a `TypeError` |
 | `pointcloud.max_points` | int | `500000` | Final point cap after cleaning; lower it on small machines |
+| `pointcloud.<backend>.conf_percentile` | float | `50` (`vggtx`, `mapanything`: `35`) | Feedforward only: drop depth at or below this confidence percentile |
 | `pointcloud.<backend>.min_views` | int | `0` | Feedforward only: cross-view depth filter; `0` = off |
 | `pointcloud.<backend>.mv_rel_thresh` | float | `0.01` | Feedforward only: cross-view agreement tolerance, as a fraction of depth |
 | `pointcloud.clean.enabled` | bool | `true` | Remove outlier points (sfm also drops them from the COLMAP export) |
@@ -167,13 +171,15 @@ pointcloud:
 | `pointcloud.instantsfm.min_registered_frac` | float | `0.5` | As `colmap.min_registered_frac` |
 | `pointcloud.instantsfm.num_threads` | int | `8` | CPU SIFT threads |
 | `pointcloud.instantsfm.random_seed` | int\|null | `null` | Seed InstantSfM's random init; `null` = upstream (unseeded) |
+| `pointcloud.instantsfm.retriangulation` | bool | `false` | Retriangulate and re-run BA after the global solve |
+| `pointcloud.instantsfm.min_num_view_per_track` | int\|null | `null` | Drop tracks seen in fewer views (`>= 2`); `null` = upstream's 3 |
 
 </details>
 
 <details>
 <summary><code>pointcloud.bundle_adjustment</code>: the <code>refine</code> stage</summary>
 
-The `refine` stage refines feedforward poses against feature tracks and rewrites the pointcloud in place, so the point count can change. After `--stages refine`, re-run `semantics` with `--overwrite`.
+The `refine` stage refines feedforward poses against feature tracks and rewrites the pointcloud in place, so the point count can change. The zarr is rewritten whole, which drops the localization database; after `--stages refine`, re-run every later stage that ran (`splats`, `mesh`, `semantics`, `localize`, `reconstruction_quality_report`) with `--overwrite`.
 
 ```yaml
 # Reprojection + depth only, no photometric term
@@ -184,10 +190,11 @@ pointcloud:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pointcloud.bundle_adjustment.enabled` | bool | `true` | Run `refine`; skipped for `method: sfm` |
+| `pointcloud.bundle_adjustment.enabled` | bool | `true` | Run `refine`; skipped for `method: sfm` and under loop closure with `strategy: window` |
 | `pointcloud.bundle_adjustment.strategy` | str | `global` | With loop closure only: `global`, `window` (inside each LC window) or `window+global` |
 | `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | `xfeat` or `loma` matcher tracks on full-res frames, or `vggsfm` (set `track_kwargs: {}`) |
-| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{pairing: exhaustive, seed_fraction: 1.0}` | Passed to `extract_tracks`: `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction`; with `sequential+retrieval` also `window`, `retrieval`, `retrieval_k` |
+| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{pairing: exhaustive, seed_fraction: 1.0}` | Passed to `extract_tracks`; matchers: `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction`, `min_matches`, `max_transfer_px`, with `sequential+retrieval` also `window`, `retrieval`, `retrieval_k`, `retrieval_nms`; `vggsfm`: `max_query_pts`, `query_frame_num`, `fine_tracking` |
+| `pointcloud.bundle_adjustment.tracks_cache_dir` | str\|null | `null` | Track-cache directory, reused while frames, points and track settings match; `null` = always extract |
 | `pointcloud.bundle_adjustment.vis_thresh` | float | `0.2` | Min track score per observation |
 | `pointcloud.bundle_adjustment.max_reproj_error` | float\|null | `4.0` | Pre-solve reprojection gate in px; `null` = off |
 | `pointcloud.bundle_adjustment.min_inliers_per_frame` | int | `64` | Frames below this sit out the solve |
@@ -222,6 +229,7 @@ pointcloud:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `pointcloud.loop_closure` | bool\|dict | `false` | Run loop closure (`ValueError` with `method: sfm` or `backend: loger`) |
+| `pointcloud.loop_closure.enabled` | bool | `true` | In a dict: `false` keeps the keys but turns loop closure off |
 | `pointcloud.loop_closure.retrieval` | str | `dino-salad` | `dino-salad` or `megaloc` (`megaloc` needs its own threshold) |
 | `pointcloud.loop_closure.submap_size` | int | `20` | Window stride; shorter scenes skip windowing |
 | `pointcloud.loop_closure.submap_overlap` | int | `1` | Frames shared by consecutive windows |
@@ -233,7 +241,7 @@ pointcloud:
 | `pointcloud.loop_closure.conf_percentile` | float | `25.0` | Confidence percentile gating scale points |
 | `pointcloud.loop_closure.loop_edge_timing` | str | `deferred` | `deferred` (after the window loop) or `live`; `viz.enabled` forces `live` |
 | `pointcloud.loop_closure.viz_max_points` | int | `50000` | Viewer point cap per submap |
-| `pointcloud.viz.enabled` | bool | `false` | Live viser viewer during loop closure |
+| `pointcloud.viz.enabled` | bool | `false` | Live viser viewer during loop closure; ignored without it |
 | `pointcloud.viz.port` | int | `8080` | Viewer port |
 
 </details>
@@ -262,7 +270,7 @@ mesh:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `mesh.depth_trunc_percentile` | float | `99` | Zero depth beyond this percentile; required, in (0, 99] |
-| `mesh.conf_percentile` | float\|null | `10` | Drop depth below this confidence percentile; `null` = off |
+| `mesh.conf_percentile` | float\|null | `10` | Drop depth below this confidence percentile; `null` = off. Also masks the splats depth targets |
 | `mesh.mask_sky` | bool | `true` | Zero sky depth before fusing |
 
 </details>
@@ -293,7 +301,7 @@ mesh:
 
 ## `semantics`
 
-We extract 2D features per frame, compress them with an autoencoder, and lift them onto the points (and the mesh vertices when a mesh exists). Extractors run in order and each writes its own store, so they coexist. Details in the [semantics API docs](https://basisresearch.github.io/collab-splats/api/semantics.html).
+We extract 2D features per frame, compress them with an autoencoder, and lift them onto the points; with a mesh, `talk2dino`, `maskclip` and `ocr_lens` also lift onto its vertices. Extractors run in order and each writes its own store, so they coexist. Details in the [semantics API docs](https://basisresearch.github.io/collab-splats/api/semantics.html).
 
 ```yaml
 # Talk2DINO only, uncompressed
@@ -330,8 +338,8 @@ mesh:
 |---|---|---|---|
 | `splats.enabled` | bool | `false` | Train Gaussian splats |
 | `splats.primitive` | str | `3dgs` | `3dgs` or `2dgs` |
-| `splats.representation` | str | `vanilla` | `vanilla` or `scaffold` (set `losses.opacity_reg` weight 0) |
-| `splats.scaffold` | dict | absent | Scaffold overrides: `n_offsets`, `feat_dim`, `voxel_multiplier`, `update_from`, `update_until`, `refine_every`, `grad_threshold`, `min_opacity`, `update_init_factor`, `success_threshold`, `appearance_dim`, `mlp_bf16` |
+| `splats.representation` | str | `vanilla` | `vanilla` or `scaffold` |
+| `splats.scaffold` | dict | absent | Scaffold overrides: `n_offsets`, `feat_dim`, `voxel_multiplier`, `update_from`, `update_until`, `refine_every`, `grad_threshold`, `min_opacity`, `update_init_factor`, `success_threshold`, `appearance_dim`, `mlp_bf16`; also `voxel_size`, `start_stat`, `update_depth`, `update_hierarchy_factor`, `lr_max_steps` and learning rates (`*_lr`, `*_lr_final`) |
 | `splats.max_steps` | int | `30000` | Training iterations |
 | `splats.pose_opt` | bool | `true` | Refine camera poses jointly |
 | `splats.appearance_opt` | bool | `false` | Per-image affine color (train views only) |
@@ -343,8 +351,8 @@ mesh:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `splats.init_opacity` | float | `0.1` | Initial opacity |
-| `splats.sh_degree` | int | `3` | Max spherical-harmonics degree |
-| `splats.sh_degree_interval` | int | `1000` | Steps between SH-degree increments |
+| `splats.sh_degree` | int | `3` | `vanilla` only (a non-default value is a `ValueError` under `scaffold`): max spherical-harmonics degree |
+| `splats.sh_degree_interval` | int | `1000` | `vanilla` only: steps between SH-degree increments |
 | `splats.cap_max` | int | `1000000` | `3dgs` + `vanilla` only: Gaussian budget |
 | `splats.grow_grad2d` | float | `2.0e-4` | `2dgs` + `vanilla` only: densification threshold |
 | `splats.num_downscales` | int | `2` | Coarse-to-fine: start at `1/2^n` resolution; `0` = off |
@@ -379,6 +387,8 @@ mesh:
 |---|---|---|---|
 | `splats.losses.<name>.weight` | float | preset | `depth`, `normal_consistency`, `distortion`, `opacity_reg`, `scale_reg`, `appearance_reg` |
 | `splats.losses.<name>.start` | int | `0` | Step the loss switches on |
+| `splats.losses.<name>.end` | int | absent | Decay the weight log-linearly from `start` to `end`, then hold; needs `end_weight` |
+| `splats.losses.<name>.end_weight` | float | absent | Weight from `end` on; `> 0` |
 | `splats.losses.appearance_reg.weight` | float | `1.0e-3` | Regularizer on `appearance_opt` |
 | `splats.losses.normal_consistency.depth_ratio` | float | `0.0` | `2dgs` only: median-depth normal blend, in [0, 1] |
 

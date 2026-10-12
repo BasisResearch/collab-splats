@@ -14,7 +14,7 @@ docker login -u <DOCKERHUB_USER>
 docker pull tommybotch/collab-splats:release
 
 # Start a shell with your inputs, outputs and a model cache mounted
-docker run --gpus all -it \
+docker run --gpus all -it -p 8080:8080 \
   -v /PATH/TO/INPUT:/PATH/TO/INPUT \
   -v /PATH/TO/OUTPUT:/PATH/TO/OUTPUT \
   -v /PATH/TO/MODELS:/workspace/models \
@@ -79,24 +79,27 @@ reconstruct remote --output-root /workspace/outputs \
 
 ## Output Structure
 
-Each scene writes to `<output-root>/<name>/`. Frames and 2D caches are shared; each reconstruction backend gets its own folder:
+Each scene writes to `<output-root>/<scene>/`. Frames and 2D caches are shared; each reconstruction backend gets its own folder:
 
 ```
-<output-root>/<name>/
+<output-root>/<scene>/
 ├── images/                         # keyframes
 ├── video_quality_report.json       # capture quality (blur, exposure, motion)
+├── photometric.png, motion.png     # capture quality plots
 ├── sky/                            # cached sky masks
-├── semantics/                      # cached 2D features
+├── semantics/<extractor>_codes.zarr    # cached 2D features
 └── <backend>/                      # one folder per backend
     ├── run_config.yaml             # config used for this run
+    ├── depth_vda/                  # VDA depth priors (sfm backends only)
     ├── pointcloud.zarr             # poses, intrinsics, depth, points
     ├── sparse_pc.ply               # pointcloud for viewing
     ├── colmap/sparse/0/            # COLMAP export
     ├── reconstruction_quality_report.json
+    ├── reconstruction_quality_ncc.png
     ├── mesh.ply                    # mesh
     ├── texture/                    # textured mesh (mesh.obj + albedo.png)
-    ├── splats/ckpt.pt              # Gaussian splats (if enabled)
-    └── semantics/<extractor>_lifted.zarr   # semantics on mesh vertices
+    ├── splats/                     # Gaussian splats, if enabled (ckpt.pt, splats.ply, splats_quality_report.json)
+    └── semantics/<extractor>_lifted.zarr   # point features (+ mesh-vertex features when meshed)
 ```
 
 ### Viewing completed reconstructions
@@ -104,7 +107,7 @@ Each scene writes to `<output-root>/<name>/`. Frames and 2D caches are shared; e
 View the mesh and query its semantics in the browser (`http://localhost:8080`, add `--textured` for the textured mesh):
 
 ```bash
-python -m collab_splats.viewer /PATH/TO/OUTPUT/<name>/<backend>
+python -m collab_splats.viewer /PATH/TO/OUTPUT/<scene>/<backend>
 ```
 
 Point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene dropdown.
@@ -116,8 +119,7 @@ Point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene drop
 We use [uv](https://docs.astral.sh/uv/) for environment and dependency management. Install it once:
 
 ```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS / Linux
-# or: brew install uv
+curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh   # macOS / Linux; 0.12.19 is the tested release
 ```
 
 ### 2. Install the package

@@ -1,7 +1,7 @@
 """
 Camera localization: pose of a query image in a known reconstruction.
 
-- retrieval: DINO-SALAD global descriptors rank reference frames
+- retrieval: DINO-SALAD or MegaLoc global descriptors rank reference frames
 - extractors: vismatch xfeat / loma features, cached and matched pair by pair
 - localizer: matched ref px -> world_points lookup -> pycolmap absolute pose
 """

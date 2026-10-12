@@ -88,8 +88,7 @@ confidence-masks the model-grid depth and guided-upsamples it onto the frames, s
 
 **From a trained splat.** ``render_tsdf_inputs`` (``collab_splats.splats.checkpoint``) renders
 every training camera from the splats stage's ``ckpt.pt``, at frame resolution, with the poses
-they were rendered from, pose-opt deltas included. Nothing to lift or re-pose, and
-``splats.zarr`` is not an input. The stage never auto-runs the splats stage; a missing
+they were rendered from, pose-opt deltas included. Nothing to lift or re-pose. The stage never auto-runs the splats stage; a missing
 checkpoint raises.
 
 .. code-block:: python

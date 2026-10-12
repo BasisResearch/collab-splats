@@ -1,7 +1,7 @@
 """
 Semantic features for reconstructed scenes: extract, compress, store, query, segment.
 
-- features: patch-feature extractors (dinov2, maskclip, talk2dino) behind one registry
+- features: patch-feature extractors (dinov2, maskclip, talk2dino, ocr_lens) behind one registry
 - segmentation: mask backends (insid3, mobilesamv2, sam3, skywater) behind one registry
 - compression: FeatureAutoencoder, per-point codes for the lifted store
 - store: the 2D cache and the lifted per-point store

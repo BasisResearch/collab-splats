@@ -1,8 +1,8 @@
 Utilities
 =========
 
-Shared helpers: image IO and resizing, COLMAP model IO, atomic JSON, torch batching and
-registries.
+Shared helpers: image coercion and resizing (``image``), image/zarr IO and atomic JSON
+(``io``), COLMAP model IO (``colmap``), torch batching and registries.
 
 .. automodule:: collab_splats.utils.image
    :members:

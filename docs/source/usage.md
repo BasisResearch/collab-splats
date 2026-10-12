@@ -8,14 +8,14 @@ Each module is one stage of the pipeline; `reconstructor.py` chains them from th
 - **geometry**: bundle adjustment, loop closure, reconstruction quality report
 - **mesh**: TSDF fusion, cleanup, texturing
 - **splats**: Gaussian splatting (3DGS / 2DGS)
-- **semantics**: VLM feature extraction, segmentation, 2D-to-3D lifting, text queries
+- **semantics**: image feature extraction (DINOv2, CLIP-aligned Talk2DINO / MaskCLIP), segmentation, 2D-to-3D lifting, text queries
 - **localization**: locate a query image within a reconstruction
 
 Supporting code: `utils/` (shared helpers), `viewer.py` + `dashboard/` (browser viewers), `remote.py` (cloud scene sync), `configs/` (pipeline configs), `evals/` (benchmarks).
 
 ## Python API
 
-The CLI wraps `Reconstructor`, which we can also run directly:
+The `reconstruct` CLI wraps `Reconstructor`, which we can also run directly (CLI flags and config keys: [Configuration](configuration.md)):
 
 ```python
 from collab_splats.reconstructor import Reconstructor
@@ -30,26 +30,26 @@ Our tutorials in `docs/source/tutorials/` walk through each stage on one shared 
 | Stage | Tutorial |
 |-------|----------|
 | preproc | [Preprocessing](tutorials/01_preprocessing/preprocessing.ipynb) |
-| pointcloud, quality report | [Reconstruction](tutorials/02_pointcloud/reconstruction.ipynb) |
+| pointcloud, reconstruction_quality_report | [Reconstruction](tutorials/02_pointcloud/reconstruction.ipynb) |
 | refine | [Refinement](tutorials/02_pointcloud/refinement.ipynb) |
-| splats | [Train splats](tutorials/03_splats/train_splats.ipynb) |
+| splats | [Training Splats](tutorials/03_splats/train_splats.ipynb) |
 | mesh | [Mesh](tutorials/04_mesh/mesh.ipynb) |
-| semantics | [Features](tutorials/05_semantics/feature_extraction.ipynb) · [Segmentation](tutorials/05_semantics/segmentation.ipynb) · [Lifting and query](tutorials/05_semantics/lifting_and_query.ipynb) · [OCR lens](tutorials/05_semantics/ocr_lens.ipynb) |
+| semantics | [Feature Extraction](tutorials/05_semantics/feature_extraction.ipynb) · [Segmentation](tutorials/05_semantics/segmentation.ipynb) · [Lifting and Query](tutorials/05_semantics/lifting_and_query.ipynb) · [OCR Lens](tutorials/05_semantics/ocr_lens.ipynb) |
 | localize | [Localization](tutorials/06_localization/localization.ipynb) |
 
 ## Dashboard
 
-We provide a browser dashboard to pick a remote scene and backend, run stages, view the pointcloud or mesh, and query semantics by text. It needs the dashboard extra (`uv sync --extra dashboard`) and the rclone remote:
+We provide a browser dashboard to pick a remote scene and backend, run stages, view the pointcloud or mesh, and query semantics by text. It imports the whole pipeline, so it needs the full install (`bash setup.sh`), plus the rclone remote:
 
 ```bash
-python -m collab_splats.dashboard
+collab-dashboard            # or: python -m collab_splats.dashboard
 ```
 
-Then open `http://localhost:7860` (change with `--port`, `--host`, `--base-dir`). Restart it to pick up code changes.
+Then open `http://localhost:7860` (change with `--port`, `--host`, `--base-dir`). When browsing via an IP or forwarded hostname, add `--websocket-origin <host>:<port>` (or `'*'`), otherwise the page loads but never renders. Restart it to pick up code changes.
 
 ## Adding Curated Videos
 
-Raw video files are added to the `environments-curated` bucket via `scripts/preprocess_gdrive_videos.py`. This script creates one directory per video, and extracts the camera metadata (GPS, IMU) that video editing removes. All requires `ffmpeg` + `exiftool`.
+Raw video files are prepared for the `environments-curated` bucket with `scripts/preprocess_gdrive_videos.py`. This script writes one local directory per video and keeps the camera metadata (GPS, IMU) that video editing removes; `scripts/push_curated.sh` (or `--push`) uploads the result. The script requires `ffmpeg` + `exiftool`.
 
 The processing pipeline is illustrated below:
 
@@ -64,7 +64,7 @@ python scripts/preprocess_gdrive_videos.py --only GH010234   # one clip
 
 ## Evaluation
 
-During design of the package modules, we used standard 3D reconstruction benchmarks to understand the benefits of given pipeline configuraitons. Ground-truth datasets can be benchmarked with `evals/eval.py`:
+During design of the package modules, we used standard 3D reconstruction benchmarks to understand the benefits of given pipeline configurations. Ground-truth datasets can be benchmarked with `evals/eval.py`:
 
 ```bash
 python -m evals.eval --config evals/configs/7scenes.yaml --dry-run

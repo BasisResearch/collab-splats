@@ -47,7 +47,7 @@ SCENE_CONFIG = {
         "max_steps": 3000,
         # Halve the downscale every 300 steps: full res from step 600, not never
         "resolution_schedule": 300,
-        # Scaffold + 2dgs losses per base.yaml, start steps scaled to 3000
+        # Replaces default_losses("2dgs"): drops depth + appearance_reg, starts scaled 30000 -> 3000
         "losses": {
             "opacity_reg": {"weight": 0},
             "scale_reg": {"weight": 0},

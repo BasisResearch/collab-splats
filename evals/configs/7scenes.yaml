@@ -1,6 +1,6 @@
 # 7-Scenes grid: three sequences x two backbones x windowed baseline / loop closure
 # - run from the repo root: python -m evals.eval --config evals/configs/7scenes.yaml
-# - no BA cells: the grid compares windowed vs loop closure only
+# - BA is on in every cell (base.yaml default); the grid varies windowed vs loop closure
 name: 7scenes
 output_dir: evals/results/7scenes_grid
 

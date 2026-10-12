@@ -5,19 +5,28 @@ Install with `bash setup.sh` (see the [README](https://github.com/BasisResearch/
 ```sh
 uv sync                                         # core deps only
 uv sync --extra semantics                       # + features and segmentation (no CUDA build)
-uv sync --extra reconstruction --extra remote   # + full pipeline and CLI
-uv sync --extra feedforward                     # + feedforward models (VGGT-X, MapAnything, ...)
+uv sync --extra reconstruction --extra feedforward --extra remote   # + full pipeline and CLI
 uv sync --extra instantsfm                      # + InstantSfM backend (needs libsuitesparse-dev)
 uv sync --extra hloc                            # + hloc backend
 uv sync --extra gpu                             # + CUDA headers / libs torch does not ship
 uv sync --extra dashboard                       # + dashboard
+uv sync --extra docs                            # + Sphinx docs build
 uv sync --extra dev                             # + lint / test tooling
 uv sync --all-extras                            # everything (what setup.sh does)
 ```
 
+Every `uv sync` needs the two path sources in the lock to exist first; `setup.sh` creates both:
+
+- `collab-data` at `/workspace/collab-data` (see [Private dependency](#private-dependency-collab-data)).
+- the hloc clone in `third_party/hloc`: run `bash setup/hloc.sh`.
+
+The `loger` backend is a source clone, not a package: run `bash setup/loger.sh`.
+
 > **Use `setup.sh`, not a bare `uv sync`.**
 > - The CUDA extensions build from source and need `nvcc` + `build-essential`; `setup.sh` points the build at your CUDA toolkit and warns if `nvcc` is missing.
 > - `uv pip install` from outside this repo skips our dependency overrides, so it does not match `uv.lock`.
+
+All later commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`.
 
 ## Semantics only
 
@@ -38,9 +47,7 @@ uv pip install --no-sources --index-strategy unsafe-best-match \
 
 In another uv project, set `no-sources = true` under its `[tool.uv]` instead.
 
-This covers the `talk2dino` and `dinov2` features and the `insid3` and `skywater` segmenters. `maskclip` and `mobilesamv2` need the `reconstruction` extra, and `sam3` has its own install.
-
-All later commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`.
+This covers the `talk2dino`, `dinov2` and `ocr_lens` features and the `insid3` and `skywater` segmenters. `maskclip` and `mobilesamv2` need the `reconstruction` extra, and `sam3` has its own install. `ocr_lens` also needs the WordNet corpus (`setup.sh` downloads it): `python -m nltk.downloader wordnet`.
 
 ## Private dependency (collab-data)
 
@@ -69,5 +76,6 @@ You provide these; `setup.sh` never installs system packages.
 
 - **NVIDIA GPU + driver** for the feedforward models, splats and mesh texturing. Other stages fall back to CPU, but slowly and untested.
 - **build-essential** (gcc/g++) + a CUDA toolkit to compile the extensions.
+- **libsuitesparse-dev** for `scikit-sparse` (the `instantsfm` extra).
 - Optional: `ffmpeg` + `exiftool` for the curated-video scripts; `rclone` + `jq` for GCloud scenes.
 

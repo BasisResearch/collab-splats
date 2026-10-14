@@ -270,7 +270,7 @@ mesh:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `mesh.depth_trunc_percentile` | float | `99` | Zero depth beyond this percentile; required, in (0, 99] |
-| `mesh.conf_percentile` | float\|null | `10` | Drop depth below this confidence percentile; `null` = off. Also masks the splats depth targets |
+| `mesh.conf_percentile` | float\|null | `20` | Drop depth below this confidence percentile; `null` = off. With `mask_sky`, ranks non-sky pixels only. Also masks the splats depth targets |
 | `mesh.mask_sky` | bool | `true` | Zero sky depth before fusing |
 
 </details>

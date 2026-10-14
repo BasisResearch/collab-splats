@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+import cv2
 import numpy as np
 import open3d as o3d
 import torch
@@ -131,7 +132,11 @@ def confidence_mask(conf: np.ndarray, percentile: float) -> np.ndarray:
 
 
 def frame_depths(
-    result: PointcloudResult, rgbs: np.ndarray, *, conf_percentile: float | None
+    result: PointcloudResult,
+    rgbs: np.ndarray,
+    *,
+    conf_percentile: float | None,
+    exclude: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Model-grid depth, confidence-masked, lifted onto the frame grid.
@@ -144,6 +149,7 @@ def frame_depths(
         result: reconstruction carrying depth, confidence and original_coords.
         rgbs: frames in the result's row order, (N, H, W, 3) uint8.
         conf_percentile: drop depth below this confidence percentile; None keeps every pixel.
+        exclude: (N, H, W) frame-grid bool; these pixels are left out of the percentile and dropped.
 
     Returns:
         (N, H, W) float32 depth on the frame grid; 0 marks no depth.
@@ -164,13 +170,40 @@ def frame_depths(
         )
     elif conf_percentile is not None:
         confidence = to_numpy(result.confidence)
-        keep = confidence_mask(confidence, conf_percentile)
+
+        # Percentile over the kept pixels only, so excluded sky does not fill the low end
+        if exclude is None:
+            keep = confidence_mask(confidence, conf_percentile)
+        else:
+            excluded = _to_model_grid(exclude, result.original_coords, depth.shape[1:])
+            keep = np.zeros_like(excluded)
+            keep[~excluded] = confidence_mask(confidence[~excluded], conf_percentile)
+
         depth = np.where(keep, depth, 0.0).astype(np.float32)
 
     # Lift onto the frame grid through each row's crop box
     crop_boxes = np.asarray(result.original_coords)[:, :4]
 
     return upsample_depths(depth, rgbs, crop_boxes)
+
+
+def _to_model_grid(
+    mask: np.ndarray, original_coords: np.ndarray, shape: tuple[int, int]
+) -> np.ndarray:
+    """
+    Frame-grid bool masks resampled onto the model grid through each row's crop box.
+
+    - a model pixel is set when over half the frame pixels under it are
+    """
+    boxes = np.asarray(original_coords)[:, :4].round().astype(int)
+    h, w = shape
+    out = np.empty((len(mask), h, w), dtype=bool)
+
+    for i, (x0, y0, x1, y1) in enumerate(boxes):
+        crop = mask[i, y0:y1, x0:x1].astype(np.float32)
+        out[i] = cv2.resize(crop, (w, h), interpolation=cv2.INTER_AREA) > 0.5
+
+    return out
 
 
 def subsample_points(mask: np.ndarray, max_points: int, seed: int = 0) -> np.ndarray:

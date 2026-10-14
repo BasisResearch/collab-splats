@@ -1230,6 +1230,14 @@ class Reconstructor:
             attrs=attrs,
         )
 
+    def _sky_masks(self, image_ids: list[int]) -> np.ndarray:
+        """
+        Cached sky masks for these keyframes, on the frame grid.
+        """
+        return sky_masks(
+            self.images_dir, idxs=image_ids, cache_dir=self.images_dir.parent / "sky"
+        )
+
     def mesh(self) -> None:
         """
         Fuse depth and RGB into a TSDF mesh.ply, clean and prepare it, and optionally texture it.
@@ -1284,6 +1292,7 @@ class Reconstructor:
                 ckpt, self.images_dir
             )
             depth_fx = float(np.median(intrinsics[:, 0, 0]))
+            sky = self._sky_masks(image_ids) if cfg["mask_sky"] else None
 
         # Feedforward source: the zarr's depth on the zarr's own frames
         elif source == "feedforward":
@@ -1292,8 +1301,11 @@ class Reconstructor:
             )
             image_ids = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
             rgbs = frames.read_frames(self.images_dir, image_ids)
+
+            # Sky first, so the confidence percentile ranks only the pixels that can fuse
+            sky = self._sky_masks(image_ids) if cfg["mask_sky"] else None
             depths = frame_depths(
-                pointcloud, rgbs, conf_percentile=cfg["conf_percentile"]
+                pointcloud, rgbs, conf_percentile=cfg["conf_percentile"], exclude=sky
             )
             c2w = invert_poses(pointcloud.extrinsics)
             intrinsics = pointcloud.intrinsics
@@ -1311,13 +1323,7 @@ class Reconstructor:
             )
 
         # Sky fuses as a backdrop and seeds floaters; the share is of pixels that had depth
-        if cfg["mask_sky"]:
-            sky = sky_masks(
-                self.images_dir,
-                idxs=image_ids,
-                cache_dir=self.images_dir.parent / "sky",
-            )
-
+        if sky is not None:
             if sky.shape != depths.shape:
                 raise ValueError(
                     f"Sky masks are {sky.shape} but depths are {depths.shape}; "

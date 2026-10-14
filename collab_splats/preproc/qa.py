@@ -8,6 +8,7 @@ Capture quality report: per-frame photometry and per-pair motion.
 
 import json
 import logging
+import multiprocessing
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -486,7 +487,10 @@ def compute_video_quality(
     if len(ranges) == 1:
         results = [measure(ranges[0])]
     else:
-        with ProcessPoolExecutor(len(ranges)) as pool:
+        # Spawn, not fork: a forked worker deadlocks in cv2 if the parent already used cv2
+        spawn = multiprocessing.get_context("spawn")
+
+        with ProcessPoolExecutor(len(ranges), mp_context=spawn) as pool:
             results = list(pool.map(measure, ranges))
 
     # pool.map yields in submission order, and the ranges were built in ascending

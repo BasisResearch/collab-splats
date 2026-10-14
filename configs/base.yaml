@@ -11,8 +11,12 @@ output_path: null
 
 preproc:
   frame_selection: fps   # fps | uniform | optical_flow
-  fps: 2.0
+  fps: 4.0
   max_frames: 300        # vggt_omega OOMs above ~300
+  on_empty_slot: drop    # fps: a slot with no frame passing quality stays empty
+  quality:               # filter_frame_quality thresholds
+    sharpness_k: 2.0
+    max_clipped_frac: 0.25
   n_workers: 16          # 1 during GPU runs
   undistort: false
 

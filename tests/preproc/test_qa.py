@@ -1,5 +1,7 @@
 import json
 import logging
+import subprocess
+import sys
 
 import cv2
 import numpy as np
@@ -667,6 +669,25 @@ def test_video_quality_rejects_a_bad_worker_count(tiny_video):
         compute_video_quality(tiny_video, workers=0)
 
 
+def test_video_quality_workers_survive_a_parent_that_already_ran_cv2(tiny_video):
+    """
+    A forked pool hangs in cv2.setNumThreads once the parent warmed cv2's thread pool.
+
+    - reconstruct remote --all ran every scene after the first into this deadlock
+    - fresh interpreter, so the warm-up is not masked by earlier tests
+    """
+    code = f"""
+import cv2, numpy as np
+from collab_splats.preproc.qa import compute_video_quality
+img = np.zeros((2000, 2000, 3), np.uint8)
+for _ in range(5):
+    cv2.GaussianBlur(img, (31, 31), 0)
+report = compute_video_quality({tiny_video!r}, motion_stride=2, workers=3)
+assert len(report["frames"]["frame_idx"]) == 60
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
+
+
 def test_measure_photometry_and_motion_emits_only_the_frames_it_owns(tiny_video):
     """
     A range's lead-in frames are decoded to be somebody's partner, not measured.
@@ -696,7 +717,7 @@ def test_video_quality_refuses_non_contiguous_ranges(tiny_video, monkeypatch):
 
     class InlinePool:
         # Runs map in-process, so the fake below never has to pickle
-        def __init__(self, n_workers):
+        def __init__(self, n_workers, mp_context=None):
             pass
 
         def __enter__(self):

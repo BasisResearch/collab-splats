@@ -384,6 +384,20 @@ def test_sample_fps_ceiling_decimates_rather_than_truncating(tiny_video, clean_r
     assert records[-1]["frame_idx"] >= 50
 
 
+def test_sample_fps_ceiling_respreads_evenly_in_time(tiny_video):
+    # First half fails the gate: picks stay on the time grid, the bad half's slots drop
+    report = _synthetic_report(60)
+    for i in range(30):
+        report["frames"]["clipped_low_frac"][i] = 1.0
+
+    _, records = sample_fps(
+        tiny_video, fps=30.0, max_frames=10, report=report, on_empty_slot="drop"
+    )
+
+    picked = [r["frame_idx"] for r in records]
+    assert picked == [33, 39, 46, 52, 59]
+
+
 def test_sample_fps_floor_respreads_over_whole_video(tiny_video, clean_report):
     # 1 fps on a 2s video = 2 targets, below the floor → re-spread at min_frames
     frames, records = sample_fps(

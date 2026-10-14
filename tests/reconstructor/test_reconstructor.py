@@ -113,6 +113,8 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "fps": 2.0,
         "min_frames": 5,
         "max_frames": 50,
+        "on_empty_slot": "drop",
+        "quality": {"sharpness_k": 2.0, "max_clipped_frac": 0.25},
         "report": report,
     }
 
@@ -126,6 +128,7 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
         "sampler": "uniform",
         "workers": workers,
         "max_frames": 50,
+        "quality": {"sharpness_k": 2.0, "max_clipped_frac": 0.25},
         "report": report,
     }
 
@@ -138,6 +141,7 @@ def test_preproc_dispatches_per_frame_selection(tmp_path, monkeypatch):
     assert calls == {
         "sampler": "optical_flow",
         "max_frames": 50,
+        "quality": {"sharpness_k": 2.0, "max_clipped_frac": 0.25},
         "report": report,
     }
 
@@ -237,8 +241,8 @@ def test_init_fills_defaults_from_base_yaml(tmp_path):
     rec = Reconstructor(partial)
     # min_frames is absent from base.yaml, so the sampler default applies
     assert "min_frames" not in rec.config["preproc"]
-    # fps comes from base.yaml (2.0), and fps is the default selection method
-    assert rec.config["preproc"]["fps"] == 2.0
+    # fps comes from base.yaml (4.0), and fps is the default selection method
+    assert rec.config["preproc"]["fps"] == 4.0
     assert rec.config["preproc"]["frame_selection"] == "fps"
     # backend comes from base.yaml (vggt_omega)
     assert rec.config["pointcloud"]["backend"] == "vggt_omega"

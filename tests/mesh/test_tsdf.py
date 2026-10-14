@@ -78,6 +78,7 @@ def test_create_tsdf_mesh_sdf_trunc_defaults_to_four_voxels(monkeypatch):
 
         def compute_unique_block_coordinates(self, *args):
             seen.append(args[-1])
+            return o3d.core.Tensor(np.zeros((1, 3), np.int32))
 
         def integrate(self, *args):
             seen.append(args[-1])
@@ -90,7 +91,46 @@ def test_create_tsdf_mesh_sdf_trunc_defaults_to_four_voxels(monkeypatch):
     monkeypatch.setattr(o3d.t.geometry, "VoxelBlockGrid", _Recorder)
     depths, rgbs, c2w, K = _views(n=1)
     create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.01, depth_trunc=2.0)
-    assert seen == [0.01, pytest.approx(4.0), pytest.approx(4.0)]
+    # Probe grid, then one tile's grid
+    assert seen == [0.01, pytest.approx(4.0), 0.01, pytest.approx(4.0)]
+
+
+def _canonical(mesh):
+    """
+    Vertex rows deduplicated by position, and triangles as sorted position tuples.
+
+    - Open3D emits duplicate vertices at block borders; tiling welds them, so compare by position
+    """
+    v = np.asarray(mesh.vertices)
+    used = np.unique(np.asarray(mesh.triangles))
+    tris = np.sort(v[np.asarray(mesh.triangles)].reshape(-1, 3, 3), axis=1).reshape(
+        -1, 9
+    )
+    attrs = np.hstack(
+        [v, np.asarray(mesh.vertex_normals), np.asarray(mesh.vertex_colors)]
+    )
+    _, first = np.unique(v[used], axis=0, return_index=True)
+    return attrs[used][first], tris[np.lexsort(tris.T[::-1])]
+
+
+def test_create_tsdf_mesh_tiles_to_the_single_grid_mesh(monkeypatch):
+    # Bumpy plane seen from 4 shifted views; 40 blocks per grid forces several tiles
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=4, h=48, w=48)
+    yy, xx = np.mgrid[:48, :48]
+    depths = depths * (1 + 0.1 * np.sin(xx / 5.0) * np.cos(yy / 7.0)).astype(np.float32)
+    rgbs[..., 0] = (xx * 5).astype(np.uint8)
+    args = (depths, rgbs, c2w, K)
+
+    single = create_tsdf_mesh(*args, voxel_size=0.01, depth_trunc=2.0)
+    tiled = create_tsdf_mesh(*args, voxel_size=0.01, depth_trunc=2.0, max_blocks=40)
+
+    single_v, single_t = _canonical(single)
+    tiled_v, tiled_t = _canonical(tiled)
+    assert len(single.triangles) == len(tiled.triangles) > 0
+    assert np.array_equal(single_t, tiled_t)
+    assert np.array_equal(single_v[:, :3], tiled_v[:, :3])
+    assert np.allclose(single_v[:, 3:], tiled_v[:, 3:], atol=1e-6)
 
 
 def test_create_tsdf_mesh_refuses_a_band_narrower_than_a_voxel():

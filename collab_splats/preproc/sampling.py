@@ -465,7 +465,7 @@ def sample_fps(
     # Constant-rate grid at fps; stride floors at 1
     targets = list(range(0, total, max(1, int(round(native_fps / fps)))))
 
-    # Clamp the count into [min_frames, max_frames] by re-spreading, never truncating
+    # Clamp the count into [min_frames, max_frames] by re-spreading evenly in time, never truncating
     requested = len(targets)
     bounded = requested
     if max_frames is not None:
@@ -474,7 +474,7 @@ def sample_fps(
         bounded = max(bounded, min(min_frames, total))
 
     if bounded != requested:
-        targets = _spread(pool, bounded)
+        targets = np.linspace(0, total - 1, bounded).round().astype(int).tolist()
         logger.warning(
             "fps=%.3f wanted %d frames, outside [min_frames=%s, max_frames=%s]; re-spread to "
             "%d frames over the whole video (effective %.3f fps)",

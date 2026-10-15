@@ -707,9 +707,6 @@
 
 <span class="sd">    Returns:</span>
 <span class="sd">        New mesh with the same vertices and the trimmed faces.</span>
-
-<span class="sd">    Raises:</span>
-<span class="sd">        ValueError: the mesh has no dominant ground plane.</span>
 <span class="sd">    """</span>
     <span class="n">verts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">vertices</span><span class="p">)</span>
     <span class="n">faces</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">triangles</span><span class="p">)</span>
@@ -847,7 +844,7 @@
 <span class="sd">    Trim the ragged outer edge, then patch the ground out to a rounded convex hull.</span>
 
 <span class="sd">    - lengths are in cells: pixels of the top-down image of the mesh, one median edge length each</span>
-<span class="sd">    - ground: first of 3 RANSAC planes near the camera-path normal, up on the cameras' side</span>
+<span class="sd">    - ground: first of 3 RANSAC planes facing the camera up, else the largest; up on the cameras' side</span>
 <span class="sd">    - cut: faces outside the rounded hull, then trim_mesh_edges on the ragged outline</span>
 <span class="sd">    - patch: uncovered hull cells get a sheet pinned to the rim, pulled to the eroded ground</span>
 <span class="sd">    - join: clashing patch faces dropped, make_manifold, then bridge_mesh_edges closes inlets</span>
@@ -862,13 +859,11 @@
 <span class="sd">        rim_max_edge: drop patch triangles touching the rim with a 3D edge over this, cells.</span>
 <span class="sd">        bridge_radius: see bridge_mesh_edges (radius).</span>
 <span class="sd">        min_piece_faces: pieces with fewer faces are dropped.</span>
-<span class="sd">        min_up_cos: smallest ``|plane normal . expected up|`` that counts as ground.</span>
+<span class="sd">        min_up_cos: smallest ``|plane normal . expected up|`` that counts as ground;</span>
+<span class="sd">            below it on every plane, the largest plane is used.</span>
 
 <span class="sd">    Returns:</span>
 <span class="sd">        New mesh: trimmed, patched out to the hull, manifold.</span>
-
-<span class="sd">    Raises:</span>
-<span class="sd">        ValueError: the mesh has no dominant ground plane.</span>
 <span class="sd">    """</span>
     <span class="n">verts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">vertices</span><span class="p">)</span>
     <span class="n">faces</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">triangles</span><span class="p">)</span>
@@ -1377,43 +1372,48 @@
     <span class="o">*</span><span class="p">,</span>
     <span class="n">min_up_cos</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
     <span class="n">max_planes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
-    <span class="n">flat_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.25</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Rotation into ground coordinates (rows x, y, up) and the center it is taken about.</span>
 
-<span class="sd">    - expected up: normal of the plane the camera centers span; mean camera up if the path is a line</span>
+<span class="sd">    - expected up: mean of the camera path's plane normal and the axis camera right vectors avoid</span>
 <span class="sd">    - ground: first of max_planes RANSAC planes (fixed seed, earlier inliers removed) facing expected up</span>
+<span class="sd">    - no plane faces expected up: the largest plane, with a warning</span>
 <span class="sd">    - up points to the side the cameras are on; flipping rows 1 and 2 together keeps it right-handed</span>
 <span class="sd">    """</span>
     <span class="n">centers</span> <span class="o">=</span> <span class="n">c2w</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="n">right</span> <span class="o">=</span> <span class="n">c2w</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
 
-    <span class="c1"># Expected up: the camera path's plane normal, or the mean camera up when the path is not flat</span>
-    <span class="n">spread</span><span class="p">,</span> <span class="n">axes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">eigh</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">cov</span><span class="p">(</span><span class="n">centers</span><span class="o">.</span><span class="n">T</span><span class="p">))</span>
-
-    <span class="k">if</span> <span class="n">spread</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">flat_ratio</span> <span class="o">*</span> <span class="n">spread</span><span class="p">[</span><span class="mi">1</span><span class="p">]:</span>
-        <span class="n">expected</span> <span class="o">=</span> <span class="n">axes</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">expected</span> <span class="o">=</span> <span class="o">-</span><span class="n">c2w</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-        <span class="n">expected</span> <span class="o">/=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">expected</span><span class="p">)</span>
+    <span class="c1"># Expected up: path-plane normal and right-vector normal, sign-aligned and averaged</span>
+    <span class="n">path_up</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">eigh</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">cov</span><span class="p">(</span><span class="n">centers</span><span class="o">.</span><span class="n">T</span><span class="p">))[</span><span class="mi">1</span><span class="p">][:,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">right_up</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">eigh</span><span class="p">(</span><span class="n">right</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">right</span><span class="p">)[</span><span class="mi">1</span><span class="p">][:,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">expected</span> <span class="o">=</span> <span class="n">path_up</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">path_up</span> <span class="o">@</span> <span class="n">right_up</span><span class="p">)</span> <span class="o">*</span> <span class="n">right_up</span>
+    <span class="n">expected</span> <span class="o">/=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">expected</span><span class="p">)</span>
 
     <span class="c1"># First RANSAC plane that faces expected up; walls and slopes are removed and refit</span>
     <span class="n">o3d</span><span class="o">.</span><span class="n">utility</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
     <span class="n">keep</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">verts</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
     <span class="n">cosines</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">planes</span> <span class="o">=</span> <span class="p">[]</span>
 
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_planes</span><span class="p">):</span>
+    <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">planes</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">max_planes</span> <span class="ow">and</span> <span class="n">keep</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="mi">3</span><span class="p">:</span>
         <span class="n">rot</span><span class="p">,</span> <span class="n">t</span> <span class="o">=</span> <span class="n">fit_dominant_plane</span><span class="p">(</span><span class="n">verts</span><span class="p">[</span><span class="n">keep</span><span class="p">])</span>
+        <span class="n">planes</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">rot</span><span class="p">,</span> <span class="n">t</span><span class="p">))</span>
         <span class="n">cosines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">rot</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">@</span> <span class="n">expected</span><span class="p">)),</span> <span class="mi">3</span><span class="p">))</span>
 
         <span class="k">if</span> <span class="n">cosines</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">min_up_cos</span><span class="p">:</span>
             <span class="k">break</span>
 
         <span class="n">keep</span> <span class="o">&amp;=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">verts</span> <span class="o">@</span> <span class="n">rot</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">+</span> <span class="n">t</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span> <span class="o">&gt;=</span> <span class="mf">0.02</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">"no dominant ground plane (|plane normal . camera up| = </span><span class="si">{</span><span class="n">cosines</span><span class="si">}</span><span class="s2">, "</span>
-            <span class="sa">f</span><span class="s2">"below </span><span class="si">{</span><span class="n">min_up_cos</span><span class="si">}</span><span class="s2">) — leave use_convex_hull off for this scene."</span>
+
+    <span class="c1"># No plane faces expected up: the largest is the ground</span>
+    <span class="k">if</span> <span class="n">cosines</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">min_up_cos</span><span class="p">:</span>
+        <span class="n">rot</span><span class="p">,</span> <span class="n">t</span> <span class="o">=</span> <span class="n">planes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">"ground plane: no plane faces the camera up (|normal . up| = </span><span class="si">%s</span><span class="s2">, below </span><span class="si">%s</span><span class="s2">); "</span>
+            <span class="s2">"using the largest plane"</span><span class="p">,</span>
+            <span class="n">cosines</span><span class="p">,</span>
+            <span class="n">min_up_cos</span><span class="p">,</span>
         <span class="p">)</span>
 
     <span class="c1"># Up toward the cameras</span>

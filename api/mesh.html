@@ -503,7 +503,7 @@ confidence-masks the model-grid depth and guided-upsamples it onto the frames, s
 
 <span class="n">image_ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">frame_idx_from_path</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">image_paths</span><span class="p">]</span>
 <span class="n">rgbs</span> <span class="o">=</span> <span class="n">read_frames</span><span class="p">(</span><span class="n">images_dir</span><span class="p">,</span> <span class="n">image_ids</span><span class="p">)</span>
-<span class="n">depths</span> <span class="o">=</span> <span class="n">frame_depths</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">rgbs</span><span class="p">,</span> <span class="n">conf_percentile</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">depths</span> <span class="o">=</span> <span class="n">frame_depths</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="n">rgbs</span><span class="p">,</span> <span class="n">conf_percentile</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">exclude</span><span class="o">=</span><span class="n">sky</span><span class="p">)</span>
 <span class="n">c2w</span> <span class="o">=</span> <span class="n">invert_poses</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">)</span>
 <span class="n">K</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">intrinsics</span>  <span class="c1"># full-res; depth_fx from result.model_intrinsics</span>
 </pre></div>
@@ -512,8 +512,13 @@ confidence-masks the model-grid depth and guided-upsamples it onto the frames, s
 <li><p><code class="docutils literal notranslate"><span class="pre">result</span></code> is the <code class="docutils literal notranslate"><span class="pre">PointcloudResult</span></code> from <code class="docutils literal notranslate"><span class="pre">pointcloud.zarr</span></code>. It stores <code class="docutils literal notranslate"><span class="pre">K</span></code> twice:
 <code class="docutils literal notranslate"><span class="pre">intrinsics</span></code> on the frame grid and <code class="docutils literal notranslate"><span class="pre">model_intrinsics</span></code> on the model grid. Mixing one
 grid’s depth with the other grid’s <code class="docutils literal notranslate"><span class="pre">K</span></code> is the collapse above.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">conf_percentile</span></code> is <code class="docutils literal notranslate"><span class="pre">mesh.conf_percentile</span></code> (<code class="docutils literal notranslate"><span class="pre">10</span></code>; <code class="docutils literal notranslate"><span class="pre">null</span></code> = off). A reconstruction
+<li><p><code class="docutils literal notranslate"><span class="pre">conf_percentile</span></code> is <code class="docutils literal notranslate"><span class="pre">mesh.conf_percentile</span></code> (<code class="docutils literal notranslate"><span class="pre">20</span></code>; <code class="docutils literal notranslate"><span class="pre">null</span></code> = off). A reconstruction
 with no confidence array (<code class="docutils literal notranslate"><span class="pre">sfm</span></code>) fuses unmasked and logs it.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sky</span></code> is the <code class="docutils literal notranslate"><span class="pre">sky_masks</span></code> stack when <code class="docutils literal notranslate"><span class="pre">mesh.mask_sky</span></code> is on, else <code class="docutils literal notranslate"><span class="pre">None</span></code>. Passed as
+<code class="docutils literal notranslate"><span class="pre">exclude=</span></code>, the percentile ranks only non-sky pixels, so one setting cuts the same share of
+real surface whether a video is a quarter sky or none.</p></li>
+<li><p>With <code class="docutils literal notranslate"><span class="pre">mesh.mask_sky</span></code> the stage passes the sky masks as <code class="docutils literal notranslate"><span class="pre">exclude=</span></code>: the percentile ranks
+only non-sky pixels, so the same setting cuts the same share of real surface on every video.</p></li>
 <li><p>At model resolution (notebooks, evals): <code class="docutils literal notranslate"><span class="pre">result.depth</span></code>, <code class="docutils literal notranslate"><span class="pre">result.images</span></code> transposed to
 <code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">H,</span> <span class="pre">W,</span> <span class="pre">3)</span></code> and scaled to uint8, <code class="docutils literal notranslate"><span class="pre">invert_poses(result.extrinsics)</span></code> and
 <code class="docutils literal notranslate"><span class="pre">result.model_intrinsics</span></code>. No lift.</p></li>
@@ -658,8 +663,9 @@ closed surface spans a fraction, so a sphere with one hole still gets it filled.
 </ul>
 <p><strong>Convex hull</strong> (<code class="docutils literal notranslate"><span class="pre">mesh.use_convex_hull</span></code>, <code class="docutils literal notranslate"><span class="pre">true</span></code> in <code class="docutils literal notranslate"><span class="pre">configs/base.yaml</span></code>; set <code class="docutils literal notranslate"><span class="pre">false</span></code>
 indoors and for objects). <code class="docutils literal notranslate"><span class="pre">make_convex_hull(mesh,</span> <span class="pre">c2w)</span></code> finds the ground plane from the camera
-path, cuts and trims the ragged outer edge, then patches the ground out to a rounded convex hull.
-A mesh with no dominant ground raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>; steps are in its docstring below.</p>
+path and right vectors, cuts and trims the ragged outer edge, then patches the ground out to a
+rounded convex hull. When no RANSAC plane faces the camera up, the largest plane is the ground
+and a warning is logged; steps are in its docstring below.</p>
 <section id="preparing-mesh-ply">
 <h3>Preparing mesh.ply<a class="headerlink" href="#preparing-mesh-ply" title="Link to this heading">#</a></h3>
 <p>The stage always ships the prepared mesh, textured or not. <code class="docutils literal notranslate"><span class="pre">prepare_mesh(mesh,</span> <span class="pre">*,</span>
@@ -806,7 +812,7 @@ vertices move, faces stay.</p></li>
 <dd><p>Trim the ragged outer edge, then patch the ground out to a rounded convex hull.</p>
 <ul class="simple">
 <li><p>lengths are in cells: pixels of the top-down image of the mesh, one median edge length each</p></li>
-<li><p>ground: first of 3 RANSAC planes near the camera-path normal, up on the cameras’ side</p></li>
+<li><p>ground: first of 3 RANSAC planes facing the camera up, else the largest; up on the cameras’ side</p></li>
 <li><p>cut: faces outside the rounded hull, then trim_mesh_edges on the ragged outline</p></li>
 <li><p>patch: uncovered hull cells get a sheet pinned to the rim, pulled to the eroded ground</p></li>
 <li><p>join: clashing patch faces dropped, make_manifold, then bridge_mesh_edges closes inlets</p></li>
@@ -823,7 +829,8 @@ vertices move, faces stay.</p></li>
 <li><p><strong>rim_max_edge</strong> – drop patch triangles touching the rim with a 3D edge over this, cells.</p></li>
 <li><p><strong>bridge_radius</strong> – see bridge_mesh_edges (radius).</p></li>
 <li><p><strong>min_piece_faces</strong> – pieces with fewer faces are dropped.</p></li>
-<li><p><strong>min_up_cos</strong> – smallest <code class="docutils literal notranslate"><span class="pre">|plane</span> <span class="pre">normal</span> <span class="pre">.</span> <span class="pre">expected</span> <span class="pre">up|</span></code> that counts as ground.</p></li>
+<li><p><strong>min_up_cos</strong> – smallest <code class="docutils literal notranslate"><span class="pre">|plane</span> <span class="pre">normal</span> <span class="pre">.</span> <span class="pre">expected</span> <span class="pre">up|</span></code> that counts as ground;
+below it on every plane, the largest plane is used.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -831,9 +838,6 @@ vertices move, faces stay.</p></li>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p>New mesh</p>
-</dd>
-<dt class="field-even">Raises<span class="colon">:</span></dt>
-<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – the mesh has no dominant ground plane.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -924,9 +928,6 @@ vertices move, faces stay.</p></li>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
 <dd class="field-even"><p>New mesh with the same vertices and the trimmed faces.</p>
-</dd>
-<dt class="field-odd">Raises<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – the mesh has no dominant ground plane.</p>
 </dd>
 </dl>
 </dd></dl>

@@ -73,15 +73,20 @@ confidence-masks the model-grid depth and guided-upsamples it onto the frames, s
 
    image_ids = [frame_idx_from_path(p) for p in result.image_paths]
    rgbs = read_frames(images_dir, image_ids)
-   depths = frame_depths(result, rgbs, conf_percentile=10)
+   depths = frame_depths(result, rgbs, conf_percentile=20, exclude=sky)
    c2w = invert_poses(result.extrinsics)
    K = result.intrinsics  # full-res; depth_fx from result.model_intrinsics
 
 - ``result`` is the ``PointcloudResult`` from ``pointcloud.zarr``. It stores ``K`` twice:
   ``intrinsics`` on the frame grid and ``model_intrinsics`` on the model grid. Mixing one
   grid's depth with the other grid's ``K`` is the collapse above.
-- ``conf_percentile`` is ``mesh.conf_percentile`` (``10``; ``null`` = off). A reconstruction
+- ``conf_percentile`` is ``mesh.conf_percentile`` (``20``; ``null`` = off). A reconstruction
   with no confidence array (``sfm``) fuses unmasked and logs it.
+- ``sky`` is the ``sky_masks`` stack when ``mesh.mask_sky`` is on, else ``None``. Passed as
+  ``exclude=``, the percentile ranks only non-sky pixels, so one setting cuts the same share of
+  real surface whether a video is a quarter sky or none.
+- With ``mesh.mask_sky`` the stage passes the sky masks as ``exclude=``: the percentile ranks
+  only non-sky pixels, so the same setting cuts the same share of real surface on every video.
 - At model resolution (notebooks, evals): ``result.depth``, ``result.images`` transposed to
   ``(N, H, W, 3)`` and scaled to uint8, ``invert_poses(result.extrinsics)`` and
   ``result.model_intrinsics``. No lift.
@@ -162,8 +167,9 @@ which ignores a stray far component.
 
 **Convex hull** (``mesh.use_convex_hull``, ``true`` in ``configs/base.yaml``; set ``false``
 indoors and for objects). ``make_convex_hull(mesh, c2w)`` finds the ground plane from the camera
-path, cuts and trims the ragged outer edge, then patches the ground out to a rounded convex hull.
-A mesh with no dominant ground raises ``ValueError``; steps are in its docstring below.
+path and right vectors, cuts and trims the ragged outer edge, then patches the ground out to a
+rounded convex hull. When no RANSAC plane faces the camera up, the largest plane is the ground
+and a warning is logged; steps are in its docstring below.
 
 Preparing mesh.ply
 ~~~~~~~~~~~~~~~~~~

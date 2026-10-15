@@ -415,6 +415,7 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span>
 
+<span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">open3d</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">o3d</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
@@ -548,7 +549,11 @@
 <div class="viewcode-block" id="frame_depths">
 <a class="viewcode-back" href="../../../api/pointcloud.html#collab_splats.pointcloud.utils.frame_depths">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">frame_depths</span><span class="p">(</span>
-    <span class="n">result</span><span class="p">:</span> <span class="n">PointcloudResult</span><span class="p">,</span> <span class="n">rgbs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">conf_percentile</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="n">result</span><span class="p">:</span> <span class="n">PointcloudResult</span><span class="p">,</span>
+    <span class="n">rgbs</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">conf_percentile</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">exclude</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Model-grid depth, confidence-masked, lifted onto the frame grid.</span>
@@ -561,6 +566,7 @@
 <span class="sd">        result: reconstruction carrying depth, confidence and original_coords.</span>
 <span class="sd">        rgbs: frames in the result's row order, (N, H, W, 3) uint8.</span>
 <span class="sd">        conf_percentile: drop depth below this confidence percentile; None keeps every pixel.</span>
+<span class="sd">        exclude: (N, H, W) frame-grid bool; these pixels are left out of the percentile and dropped.</span>
 
 <span class="sd">    Returns:</span>
 <span class="sd">        (N, H, W) float32 depth on the frame grid; 0 marks no depth.</span>
@@ -581,7 +587,15 @@
         <span class="p">)</span>
     <span class="k">elif</span> <span class="n">conf_percentile</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">confidence</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">confidence</span><span class="p">)</span>
-        <span class="n">keep</span> <span class="o">=</span> <span class="n">confidence_mask</span><span class="p">(</span><span class="n">confidence</span><span class="p">,</span> <span class="n">conf_percentile</span><span class="p">)</span>
+
+        <span class="c1"># Percentile over the kept pixels only, so excluded sky does not fill the low end</span>
+        <span class="k">if</span> <span class="n">exclude</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">keep</span> <span class="o">=</span> <span class="n">confidence_mask</span><span class="p">(</span><span class="n">confidence</span><span class="p">,</span> <span class="n">conf_percentile</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">excluded</span> <span class="o">=</span> <span class="n">_to_model_grid</span><span class="p">(</span><span class="n">exclude</span><span class="p">,</span> <span class="n">result</span><span class="o">.</span><span class="n">original_coords</span><span class="p">,</span> <span class="n">depth</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+            <span class="n">keep</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">excluded</span><span class="p">)</span>
+            <span class="n">keep</span><span class="p">[</span><span class="o">~</span><span class="n">excluded</span><span class="p">]</span> <span class="o">=</span> <span class="n">confidence_mask</span><span class="p">(</span><span class="n">confidence</span><span class="p">[</span><span class="o">~</span><span class="n">excluded</span><span class="p">],</span> <span class="n">conf_percentile</span><span class="p">)</span>
+
         <span class="n">depth</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">keep</span><span class="p">,</span> <span class="n">depth</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
 
     <span class="c1"># Lift onto the frame grid through each row's crop box</span>
@@ -589,6 +603,25 @@
 
     <span class="k">return</span> <span class="n">upsample_depths</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">rgbs</span><span class="p">,</span> <span class="n">crop_boxes</span><span class="p">)</span></div>
 
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_to_model_grid</span><span class="p">(</span>
+    <span class="n">mask</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">original_coords</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">shape</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Frame-grid bool masks resampled onto the model grid through each row's crop box.</span>
+
+<span class="sd">    - a model pixel is set when over half the frame pixels under it are</span>
+<span class="sd">    """</span>
+    <span class="n">boxes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">original_coords</span><span class="p">)[:,</span> <span class="p">:</span><span class="mi">4</span><span class="p">]</span><span class="o">.</span><span class="n">round</span><span class="p">()</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+    <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">shape</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">mask</span><span class="p">),</span> <span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">bool</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="p">(</span><span class="n">x0</span><span class="p">,</span> <span class="n">y0</span><span class="p">,</span> <span class="n">x1</span><span class="p">,</span> <span class="n">y1</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">boxes</span><span class="p">):</span>
+        <span class="n">crop</span> <span class="o">=</span> <span class="n">mask</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">y0</span><span class="p">:</span><span class="n">y1</span><span class="p">,</span> <span class="n">x0</span><span class="p">:</span><span class="n">x1</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+        <span class="n">out</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">crop</span><span class="p">,</span> <span class="p">(</span><span class="n">w</span><span class="p">,</span> <span class="n">h</span><span class="p">),</span> <span class="n">interpolation</span><span class="o">=</span><span class="n">cv2</span><span class="o">.</span><span class="n">INTER_AREA</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">0.5</span>
+
+    <span class="k">return</span> <span class="n">out</span>
 
 
 <div class="viewcode-block" id="subsample_points">

@@ -290,9 +290,6 @@ def trim_mesh_edges(
 
     Returns:
         New mesh with the same vertices and the trimmed faces.
-
-    Raises:
-        ValueError: the mesh has no dominant ground plane.
     """
     verts = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
@@ -424,7 +421,7 @@ def make_convex_hull(
     Trim the ragged outer edge, then patch the ground out to a rounded convex hull.
 
     - lengths are in cells: pixels of the top-down image of the mesh, one median edge length each
-    - ground: first of 3 RANSAC planes near the camera-path normal, up on the cameras' side
+    - ground: first of 3 RANSAC planes facing the camera up, else the largest; up on the cameras' side
     - cut: faces outside the rounded hull, then trim_mesh_edges on the ragged outline
     - patch: uncovered hull cells get a sheet pinned to the rim, pulled to the eroded ground
     - join: clashing patch faces dropped, make_manifold, then bridge_mesh_edges closes inlets
@@ -439,13 +436,11 @@ def make_convex_hull(
         rim_max_edge: drop patch triangles touching the rim with a 3D edge over this, cells.
         bridge_radius: see bridge_mesh_edges (radius).
         min_piece_faces: pieces with fewer faces are dropped.
-        min_up_cos: smallest ``|plane normal . expected up|`` that counts as ground.
+        min_up_cos: smallest ``|plane normal . expected up|`` that counts as ground;
+            below it on every plane, the largest plane is used.
 
     Returns:
         New mesh: trimmed, patched out to the hull, manifold.
-
-    Raises:
-        ValueError: the mesh has no dominant ground plane.
     """
     verts = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
@@ -944,43 +939,48 @@ def _find_ground_plane(
     *,
     min_up_cos: float,
     max_planes: int = 3,
-    flat_ratio: float = 0.25,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Rotation into ground coordinates (rows x, y, up) and the center it is taken about.
 
-    - expected up: normal of the plane the camera centers span; mean camera up if the path is a line
+    - expected up: mean of the camera path's plane normal and the axis camera right vectors avoid
     - ground: first of max_planes RANSAC planes (fixed seed, earlier inliers removed) facing expected up
+    - no plane faces expected up: the largest plane, with a warning
     - up points to the side the cameras are on; flipping rows 1 and 2 together keeps it right-handed
     """
     centers = c2w[:, :3, 3]
+    right = c2w[:, :3, 0]
 
-    # Expected up: the camera path's plane normal, or the mean camera up when the path is not flat
-    spread, axes = np.linalg.eigh(np.cov(centers.T))
-
-    if spread[0] < flat_ratio * spread[1]:
-        expected = axes[:, 0]
-    else:
-        expected = -c2w[:, :3, 1].mean(axis=0)
-        expected /= np.linalg.norm(expected)
+    # Expected up: path-plane normal and right-vector normal, sign-aligned and averaged
+    path_up = np.linalg.eigh(np.cov(centers.T))[1][:, 0]
+    right_up = np.linalg.eigh(right.T @ right)[1][:, 0]
+    expected = path_up + np.sign(path_up @ right_up) * right_up
+    expected /= np.linalg.norm(expected)
 
     # First RANSAC plane that faces expected up; walls and slopes are removed and refit
     o3d.utility.random.seed(0)
     keep = np.ones(len(verts), dtype=bool)
     cosines = []
+    planes = []
 
-    for _ in range(max_planes):
+    while len(planes) < max_planes and keep.sum() >= 3:
         rot, t = fit_dominant_plane(verts[keep])
+        planes.append((rot, t))
         cosines.append(round(abs(float(rot[2] @ expected)), 3))
 
         if cosines[-1] >= min_up_cos:
             break
 
         keep &= np.abs(verts @ rot[2] + t[2]) >= 0.02
-    else:
-        raise ValueError(
-            f"no dominant ground plane (|plane normal . camera up| = {cosines}, "
-            f"below {min_up_cos}) — leave use_convex_hull off for this scene."
+
+    # No plane faces expected up: the largest is the ground
+    if cosines[-1] < min_up_cos:
+        rot, t = planes[0]
+        logger.warning(
+            "ground plane: no plane faces the camera up (|normal . up| = %s, below %s); "
+            "using the largest plane",
+            cosines,
+            min_up_cos,
         )
 
     # Up toward the cameras

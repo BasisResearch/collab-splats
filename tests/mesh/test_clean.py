@@ -373,7 +373,7 @@ def test_make_convex_hull_caps_patch_edges_that_touch_the_rim():
     assert longest.max() < 3.0 * res
 
 
-def test_make_convex_hull_rejects_a_mesh_without_ground():
+def test_find_ground_plane_warns_and_takes_the_largest_plane_without_ground(caplog):
     """Four dense walls of a room and no floor: every RANSAC plane is a wall."""
     side = o3d.geometry.TriangleMesh.create_box(5.0, 0.01, 3.0).subdivide_midpoint(4)
     room = o3d.geometry.TriangleMesh()
@@ -385,8 +385,11 @@ def test_make_convex_hull_rejects_a_mesh_without_ground():
             center=(0, 0, 0),
         )
 
-    with pytest.raises(ValueError, match="no dominant ground"):
-        make_convex_hull(room, _orbit_cameras(radius=1.5))
+    frame, _ = _find_ground_plane(
+        np.asarray(room.vertices), _orbit_cameras(radius=1.5), min_up_cos=0.7
+    )
+    assert abs(frame[2, 2]) < 0.1
+    assert "using the largest plane" in caplog.text
 
 
 def test_make_convex_hull_is_the_same_either_way_up():
@@ -437,8 +440,8 @@ def test_find_ground_plane_points_up_toward_the_cameras():
     np.testing.assert_allclose(np.linalg.det(frame), 1.0)
 
 
-def test_find_ground_plane_falls_back_to_the_camera_up_on_a_straight_path():
-    """Cameras on a line span no plane; their mean up, pitched 30 degrees off the ground normal, still passes."""
+def test_find_ground_plane_finds_the_ground_on_a_straight_path():
+    """Cameras on a line with one right vector: both up cues are degenerate, the ground is still found."""
     pitch = np.radians(30.0)
     forward = np.array([np.cos(pitch), 0.0, -np.sin(pitch)])
     line = np.stack(

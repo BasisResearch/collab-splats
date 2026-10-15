@@ -105,6 +105,11 @@ def create_tsdf_mesh(
     probe = o3d.t.geometry.VoxelBlockGrid(**grid_kwargs)
     view_blocks = []
     for i in range(n):
+        # A view with no valid depth (e.g. all sky) touches no block; Open3D raises on it
+        if not (depths[i] > 0).any():
+            view_blocks.append(np.empty((0, 3), np.int64))
+            continue
+
         depth = o3c.Tensor(depths[i], device=device)
         depth = o3d.t.geometry.Image(depth)
         blocks = probe.compute_unique_block_coordinates(

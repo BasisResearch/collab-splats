@@ -25,6 +25,14 @@ def test_create_tsdf_mesh_returns_a_colored_mesh():
     assert np.allclose(np.asarray(mesh.vertex_colors), 128 / 255, atol=0.05)
 
 
+def test_create_tsdf_mesh_skips_a_view_with_no_valid_depth():
+    """An all-zero depth view (e.g. all sky) touches no block; Open3D would raise on it."""
+    depths, rgbs, c2w, K = _views()
+    depths[1] = 0.0
+    mesh = create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.02, depth_trunc=2.0)
+    assert len(mesh.triangles) > 0
+
+
 def test_create_tsdf_mesh_falls_back_to_cpu_without_cuda(monkeypatch):
     depths, rgbs, c2w, K = _views()
     gpu = create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.02, depth_trunc=2.0)

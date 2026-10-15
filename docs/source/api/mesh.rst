@@ -167,8 +167,9 @@ which ignores a stray far component.
 
 **Convex hull** (``mesh.use_convex_hull``, ``true`` in ``configs/base.yaml``; set ``false``
 indoors and for objects). ``make_convex_hull(mesh, c2w)`` finds the ground plane from the camera
-path, cuts and trims the ragged outer edge, then patches the ground out to a rounded convex hull.
-A mesh with no dominant ground raises ``ValueError``; steps are in its docstring below.
+path and right vectors, cuts and trims the ragged outer edge, then patches the ground out to a
+rounded convex hull. When no RANSAC plane faces the camera up, the largest plane is the ground
+and a warning is logged; steps are in its docstring below.
 
 Preparing mesh.ply
 ~~~~~~~~~~~~~~~~~~

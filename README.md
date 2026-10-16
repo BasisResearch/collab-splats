@@ -111,7 +111,7 @@ python -m collab_splats.viewer local /PATH/TO/OUTPUT/<scene>/<backend>
 python -m collab_splats.viewer remote             # processed scenes from the bucket, pulled on pick
 ```
 
-`local` views scenes on disk: point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene dropdown. `remote` lists the processed bucket and pulls only the mesh, texture and lifted semantics of the scene you pick into `--cache` (default `~/.cache/collab_splats/viewer`).
+`local` views scenes on disk: point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene dropdown. `remote` lists the processed bucket and pulls only the mesh, texture and lifted semantics of the scene you pick into `--cache` (default `~/.cache/collab_splats/viewer`), and deletes them when the viewer exits.
 
 ## Install
 

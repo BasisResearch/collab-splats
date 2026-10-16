@@ -736,6 +736,36 @@ def test_main_remote_exits_when_the_bucket_cannot_be_listed(monkeypatch, capsys)
     assert "rclone is not available" in capsys.readouterr().err
 
 
+def test_main_remote_deletes_pulled_scenes_on_exit(tmp_path, monkeypatch):
+    # Listed scenes s1 (pulled) and s2 (never picked); an unrelated dir shares the cache
+    class _Listing:
+        def list_processed_scenes(self):
+            return ["s1", "s2"]
+
+    def _pull(viewer, source, scenes, cache_dir, textured, texture_size):
+        (cache_dir / "s1/omega").mkdir(parents=True)
+        _backend(cache_dir / "s1/omega")
+
+    def _exit_at_once(viewer):
+        viewer.server.stop()
+
+    handlers = {}
+    (tmp_path / "keep").mkdir()
+    monkeypatch.setattr(viewer_module, "SceneSource", _Listing)
+    monkeypatch.setattr(viewer_module, "_remote", _pull)
+    monkeypatch.setattr(viewer_module.Viewer, "serve_forever", _exit_at_once)
+    monkeypatch.setattr(viewer_module.signal, "signal", handlers.__setitem__)
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    viewer_module.main(["remote", "--cache", str(tmp_path), "--port", str(port)])
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["keep"]
+    assert set(handlers) == {viewer_module.signal.SIGTERM, viewer_module.signal.SIGHUP}
+
+
 def test_main_local_exits_on_a_root_without_meshes(tmp_path, capsys):
     with pytest.raises(SystemExit):
         viewer_module.main(["local", str(tmp_path)])

@@ -8,7 +8,7 @@ Browser 3D scene viewer over viser: arrays in, named scene nodes out.
   over its lifted stores' vertex arrays
 - `python -m collab_splats.viewer local <outputs root>`: a Scene dropdown over every meshed backend
 - `python -m collab_splats.viewer remote`: a Scene dropdown over processed scenes in the bucket;
-  a pick pulls the mesh, texture and lifted stores into `--cache`
+  a pick pulls the mesh, texture and lifted stores into `--cache`; pulled scenes are deleted on exit
 
 Usage:
     HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local \\
@@ -21,6 +21,8 @@ Usage:
 
 import argparse
 import logging
+import shutil
+import signal
 import threading
 import zlib
 from pathlib import Path
@@ -1035,7 +1037,7 @@ def _parser() -> argparse.ArgumentParser:
         "--cache",
         type=Path,
         default=Path("~/.cache/collab_splats/viewer"),
-        help="pulled scenes land in <cache>/<scene>",
+        help="pulled scenes land in <cache>/<scene>, deleted when the viewer exits",
     )
 
     return parser
@@ -1047,6 +1049,7 @@ def main(argv: list[str] | None = None) -> None:
 
     - local: a path holding mesh.ply is one backend; any other path is an outputs root
     - remote: a Scene dropdown over processed scene ids, pulled on pick
+    - remote: pulled scene dirs are deleted on exit (Ctrl-C, SIGTERM or SIGHUP)
 
     Args:
         argv: arguments after the program name; None reads sys.argv.
@@ -1079,20 +1082,27 @@ def main(argv: list[str] | None = None) -> None:
     viewer.server.gui.configure_theme(control_layout="fixed")
 
     if args.command == "remote":
-        _remote(
-            viewer,
-            source,
-            scenes,
-            args.cache.expanduser(),
-            args.textured,
-            args.texture_size,
-        )
+        cache = args.cache.expanduser()
+        _remote(viewer, source, scenes, cache, args.textured, args.texture_size)
     elif single:
         _build(viewer, args.path, args.textured, args.texture_size)
     else:
         _browse(viewer, backends, args.textured, args.texture_size)
 
-    viewer.serve_forever()
+    # SIGTERM and SIGHUP stop the server like Ctrl-C, so the cleanup below runs
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    signal.signal(signal.SIGHUP, signal.default_int_handler)
+
+    try:
+        viewer.serve_forever()
+
+    # Delete pulled scenes on exit; only scene-id dirs, never the cache root
+    finally:
+        if args.command == "remote":
+            for name in scenes:
+                shutil.rmtree(cache / name, ignore_errors=True)
+
+            logger.info("cleared pulled scenes from %s", cache)
 
 
 if __name__ == "__main__":

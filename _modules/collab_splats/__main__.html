@@ -556,13 +556,36 @@
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_prepare_scene</span><span class="p">(</span>
-    <span class="n">source</span><span class="p">:</span> <span class="n">SceneSource</span><span class="p">,</span> <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">scene_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="n">argparse</span><span class="o">.</span><span class="n">Namespace</span>
+    <span class="n">source</span><span class="p">:</span> <span class="n">SceneSource</span><span class="p">,</span>
+    <span class="n">scene</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">scene_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="n">args</span><span class="p">:</span> <span class="n">argparse</span><span class="o">.</span><span class="n">Namespace</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">semantics_includes</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"/images/**"</span><span class="p">,</span>
+        <span class="s2">"/semantics/*_codes.zarr/**"</span><span class="p">,</span>
+        <span class="s2">"/*/run_config.yaml"</span><span class="p">,</span>
+        <span class="s2">"/*/mesh.ply"</span><span class="p">,</span>
+        <span class="s2">"/*/colmap/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/zarr.json"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/points/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/colors/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/extrinsics/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/intrinsics/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/model_intrinsics/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/original_coords/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/pixel_indices/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/depth/**"</span><span class="p">,</span>
+        <span class="s2">"/*/pointcloud.zarr/confidence/**"</span><span class="p">,</span>
+        <span class="s2">"/*/semantics/*_lifted.zarr/zarr.json"</span><span class="p">,</span>
+    <span class="p">),</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Fetch a scene's inputs and return its config.</span>
 
 <span class="sd">    - full runs fetch the curated video</span>
 <span class="sd">    - leaf re-runs pull the processed scene and reuse one backend's run_config.yaml minus the re-run sections</span>
+<span class="sd">    - a semantics-only re-run pulls just what the stage reads; other leaf re-runs pull everything</span>
 <span class="sd">    - the backend is --set pointcloud.backend, else the only backend with a recorded config</span>
 <span class="sd">    """</span>
     <span class="n">paths</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"output_path"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">scene_dir</span><span class="p">)}</span>
@@ -574,13 +597,14 @@
         <span class="n">config</span><span class="p">[</span><span class="s2">"input_path"</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">video</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">config</span>
 
-    <span class="c1"># Leaf re-run: pull the processed scene, every member included</span>
+    <span class="c1"># Leaf re-run: pull the processed scene; semantics alone skips what it never reads</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">source</span><span class="o">.</span><span class="n">has_processed</span><span class="p">(</span><span class="n">scene</span><span class="p">):</span>
         <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
             <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">scene</span><span class="si">}</span><span class="s2"> has no processed outputs; run the full pipeline first"</span>
         <span class="p">)</span>
 
-    <span class="n">source</span><span class="o">.</span><span class="n">pull_processed</span><span class="p">(</span><span class="n">scene</span><span class="p">,</span> <span class="n">scene_dir</span><span class="p">,</span> <span class="n">on_line</span><span class="o">=</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">)</span>
+    <span class="n">includes</span> <span class="o">=</span> <span class="n">semantics_includes</span> <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">stages</span> <span class="o">==</span> <span class="p">[</span><span class="s2">"semantics"</span><span class="p">]</span> <span class="k">else</span> <span class="p">()</span>
+    <span class="n">source</span><span class="o">.</span><span class="n">pull_processed</span><span class="p">(</span><span class="n">scene</span><span class="p">,</span> <span class="n">scene_dir</span><span class="p">,</span> <span class="n">on_line</span><span class="o">=</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">,</span> <span class="n">includes</span><span class="o">=</span><span class="n">includes</span><span class="p">)</span>
 
     <span class="c1"># Backend: the typed one, else the only one the pulled scene recorded</span>
     <span class="n">backend</span> <span class="o">=</span> <span class="n">args</span><span class="o">.</span><span class="n">overrides</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"pointcloud"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"backend"</span><span class="p">)</span>

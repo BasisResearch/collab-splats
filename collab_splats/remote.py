@@ -357,6 +357,7 @@ class SceneSource:
         dest_dir: Path,
         excludes: tuple[str, ...] = (),
         on_line: Callable[[str], None] | None = None,
+        includes: tuple[str, ...] = (),
     ) -> Path:
         """
         Copy a scene's processed outputs into dest_dir.
@@ -366,16 +367,22 @@ class SceneSource:
             dest_dir: local directory, created if absent.
             excludes: rclone --exclude globs to skip.
             on_line: receives each rclone output line.
+            includes: rclone --include globs; when given, only matching files copy.
 
         Returns:
             dest_dir.
         """
-        # Create the destination, then copy the scene dir minus excludes
+        # Create the destination, then copy the scene dir filtered by includes/excludes
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         remote = self._path(self.processed, scene)
         self._require_client().copy(
-            remote, str(dest_dir), exclude=excludes, extra=STATS_ARGS, on_line=on_line
+            remote,
+            str(dest_dir),
+            include=includes,
+            exclude=excludes,
+            extra=STATS_ARGS,
+            on_line=on_line,
         )
 
         return dest_dir

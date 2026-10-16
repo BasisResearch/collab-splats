@@ -564,6 +564,13 @@ def test_pull_processed_copies_and_passes_exclude_flags(tmp_path):
     assert exclude == ("/images/**",)
 
 
+def test_pull_processed_passes_include_flags(tmp_path):
+    client = FakeClient()
+    SceneSource(client).pull_processed("s", tmp_path, includes=("/*/mesh.ply",))
+    _, _, _, include, exclude, _ = client.calls[0]
+    assert include == ("/*/mesh.ply",) and exclude == ()
+
+
 ########
 # Verify
 ########
@@ -759,6 +766,38 @@ def test_local_remote_push_verify_pull_round_trip(local_source, tmp_path):
 
     pulled = local_source.pull_processed("scene_a", tmp_path / "pulled")
     assert (pulled / "mesh.ply").read_bytes() == b"MESH"
+
+
+def test_local_remote_pull_with_includes_copies_only_matching_backend_files(
+    local_source, tmp_path
+):
+    # One backend's viewer files, plus outputs the viewer never reads and a nested mesh
+    backend = Path(local_source.processed) / "scene_a" / "omega"
+    for name in (
+        "mesh.ply",
+        "sub/mesh.ply",
+        "texture/mesh.obj",
+        "semantics/t2d_lifted.zarr/zarr.json",
+        "semantics/t2d.zarr/zarr.json",
+        "pointcloud.zarr/zarr.json",
+    ):
+        (backend / name).parent.mkdir(parents=True, exist_ok=True)
+        (backend / name).write_bytes(b"x")
+
+    (backend.parent / "mesh.ply").write_bytes(b"x")
+
+    pulled = local_source.pull_processed(
+        "scene_a",
+        tmp_path / "pulled",
+        includes=("/*/mesh.ply", "/*/texture/**", "/*/semantics/*_lifted.zarr/**"),
+    )
+
+    files = sorted(str(p.relative_to(pulled)) for p in pulled.rglob("*") if p.is_file())
+    assert files == [
+        "omega/mesh.ply",
+        "omega/semantics/t2d_lifted.zarr/zarr.json",
+        "omega/texture/mesh.obj",
+    ]
 
 
 def test_local_remote_missing_bucket_raises(local_source, tmp_path):

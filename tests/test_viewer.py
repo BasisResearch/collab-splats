@@ -26,6 +26,7 @@ from collab_splats.viewer import (
     _build,
     _find_backends,
     _find_stores,
+    _remote,
 )
 
 
@@ -700,8 +701,46 @@ def test_main_runs_as_a_module():
         capture_output=True,
         text=True,
         check=True,
-    )
-    assert "outputs root" in out.stdout and "--texture-size" in out.stdout
+    ).stdout
+
+    assert "local" in out and "remote" in out
+
+
+def test_parser_local_and_remote_help_name_their_options(capsys):
+    parser = viewer_module._parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["local", "--help"])
+
+    local = capsys.readouterr().out
+    assert "outputs root" in local and "--texture-size" in local
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["remote", "--help"])
+
+    remote = capsys.readouterr().out
+    assert "--cache" in remote and "--port" in remote
+
+
+def test_main_remote_exits_when_the_bucket_cannot_be_listed(monkeypatch, capsys):
+    class _Unreachable:
+        def list_processed_scenes(self):
+            raise RuntimeError("rclone is not available")
+
+    monkeypatch.setattr(viewer_module, "SceneSource", _Unreachable)
+
+    with pytest.raises(SystemExit) as exit_info:
+        viewer_module.main(["remote"])
+
+    assert exit_info.value.code == 2
+    assert "rclone is not available" in capsys.readouterr().err
+
+
+def test_main_local_exits_on_a_root_without_meshes(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        viewer_module.main(["local", str(tmp_path)])
+
+    assert "no mesh.ply" in capsys.readouterr().err
 
 
 def test_find_backends_lists_meshed_scene_backends_by_label(tmp_path):
@@ -747,3 +786,100 @@ def test_browse_switching_scenes_replaces_the_mesh_and_rebuilds_semantics(
     ]
     assert labels.count("Semantics") == 1 and labels.count("Query") == 1
     np.testing.assert_allclose(fresh_viewer.meshes["mesh"][0], vertices)
+
+
+class _FakeSource:
+    """
+    SceneSource stand-in: pull_processed records its call and writes one meshed backend.
+    """
+
+    def __init__(self, scale=1.0, fail=False):
+        self.pulls, self.scale, self.fail = [], scale, fail
+
+    def pull_processed(self, scene, dest_dir, includes=()):
+        self.pulls.append((scene, dest_dir, includes))
+
+        if self.fail:
+            raise RuntimeError("rclone copy failed (exit 7)")
+
+        vertices, faces, _ = _quad()
+        (dest_dir / "omega").mkdir(parents=True, exist_ok=True)
+        trimesh.Trimesh(vertices * self.scale, faces, process=False).export(
+            dest_dir / "omega" / "mesh.ply"
+        )
+        return dest_dir
+
+
+def test_remote_pulls_the_selected_scene_into_the_cache_and_shows_it(
+    tmp_path, fresh_viewer
+):
+    source = _FakeSource()
+    scene = _remote(
+        fresh_viewer, source, ["s1", "s2"], tmp_path, textured=False, texture_size=64
+    )
+
+    # Initial selection pulls s1 with the viewer's include globs
+    assert scene.options == ("s1", "s2") and scene.label == "Scene"
+    assert source.pulls == [
+        (
+            "s1",
+            tmp_path / "s1",
+            ("/*/mesh.ply", "/*/texture/**", "/*/semantics/*_lifted.zarr/**"),
+        )
+    ]
+    np.testing.assert_allclose(fresh_viewer.meshes["mesh"][0], _quad()[0])
+
+    # Picking s2 pulls it and swaps the mesh
+    source.scale = 2.0
+    scene.value = "s2"
+    assert source.pulls[-1][:2] == ("s2", tmp_path / "s2")
+    assert scene.label == "Scene" and scene.disabled is False
+    np.testing.assert_allclose(fresh_viewer.meshes["mesh"][0], _quad()[0] * 2)
+
+
+def test_remote_failed_pull_flags_the_label_and_keeps_the_shown_mesh(
+    tmp_path, fresh_viewer, caplog
+):
+    source = _FakeSource()
+    scene = _remote(
+        fresh_viewer, source, ["s1", "s2"], tmp_path, textured=False, texture_size=64
+    )
+
+    source.fail = True
+    scene.value = "s2"
+
+    assert scene.label == "Scene (pull failed)" and "exit 7" in caplog.text
+    assert scene.disabled is False
+    np.testing.assert_allclose(fresh_viewer.meshes["mesh"][0], _quad()[0])
+
+
+def test_remote_failed_build_flags_the_label_and_keeps_the_shown_mesh(
+    tmp_path, fresh_viewer, monkeypatch, caplog
+):
+    source = _FakeSource()
+    scene = _remote(
+        fresh_viewer, source, ["s1", "s2"], tmp_path, textured=False, texture_size=64
+    )
+
+    # s2 pulls a mesh, but building it fails
+    def _broken_build(*args, **kwargs):
+        raise ValueError("bad mesh")
+
+    monkeypatch.setattr(viewer_module, "_build", _broken_build)
+    source.scale = 2.0
+    scene.value = "s2"
+
+    assert scene.label == "Scene (load failed)" and "bad mesh" in caplog.text
+    assert scene.disabled is False
+    np.testing.assert_allclose(fresh_viewer.meshes["mesh"][0], _quad()[0])
+
+
+def test_remote_pull_without_a_mesh_counts_as_failed(tmp_path, fresh_viewer):
+    source = _FakeSource()
+    source.pull_processed = lambda scene, dest_dir, includes=(): dest_dir
+
+    scene = _remote(
+        fresh_viewer, source, ["s1"], tmp_path, textured=False, texture_size=64
+    )
+
+    assert scene.label == "Scene (pull failed)" and "mesh" not in fresh_viewer.meshes

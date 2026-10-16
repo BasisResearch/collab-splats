@@ -4,15 +4,19 @@ Browser 3D scene viewer over viser: arrays in, named scene nodes out.
 - nodes upsert by name: re-adding a name replaces the node, which is how callers refresh one
 - point clouds, camera frusta, line sets and meshes; meshes add vertex picking, label lists and a heat overlay
 - served at http://<host>:<port> over a websocket; no display needed on the host
-- `python -m collab_splats.viewer <scene>/<backend>`: the mesh, plus a Semantics dropdown
+- `python -m collab_splats.viewer local <scene>/<backend>`: the mesh, plus a Semantics dropdown
   over its lifted stores' vertex arrays
-- `python -m collab_splats.viewer <outputs root>`: a Scene dropdown over every meshed backend
+- `python -m collab_splats.viewer local <outputs root>`: a Scene dropdown over every meshed backend
+- `python -m collab_splats.viewer remote`: a Scene dropdown over processed scenes in the bucket;
+  a pick pulls the mesh, texture and lifted stores into `--cache`
 
 Usage:
-    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\
+    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local \\
         /workspace/outputs/<scene>/<backend> --port 8080
-    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\
+    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local \\
         /workspace/outputs --textured --port 8080
+    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer remote \\
+        --textured --port 8080
 """
 
 import argparse
@@ -32,6 +36,7 @@ import zarr
 from PIL import Image
 
 from collab_splats.geometry.transforms import invert_poses
+from collab_splats.remote import SceneSource
 from collab_splats.semantics.features import BaseFeatureExtractor
 from collab_splats.semantics.store import read_point_features
 from collab_splats.utils.io import file_sha256
@@ -836,6 +841,36 @@ def _find_backends(root: Path) -> dict[str, Path]:
     }
 
 
+def _swap(
+    viewer: Viewer,
+    semantics: list[viser.GuiDropdownHandle],
+    backend_dir: Path,
+    textured: bool,
+    texture_size: int,
+) -> None:
+    """
+    Replace the shown backend with backend_dir, Semantics dropdown included.
+
+    - the old Semantics dropdown's `none` clears heat, probe, labels and mode GUI before removal
+    - same node name: the new mesh upserts over the shown one
+    - `semantics` holds at most one dropdown; this call mutates it
+    """
+    # Tear down the shown backend's Semantics dropdown
+    for dropdown in semantics:
+        dropdown.value = "none"
+        dropdown.remove()
+
+    semantics.clear()
+
+    # Build the new backend and keep its dropdown for the next swap
+    dropdown = _build(viewer, backend_dir, textured, texture_size)
+
+    if dropdown is not None:
+        semantics.append(dropdown)
+
+    viewer._reset_view()
+
+
 def _browse(
     viewer: Viewer, backends: dict[str, Path], textured: bool, texture_size: int
 ) -> viser.GuiDropdownHandle:
@@ -859,22 +894,9 @@ def _browse(
 
     def switch(_=None) -> None:
         """
-        Tear down the current backend's Semantics, then build the selected backend.
+        Show the selected backend.
         """
-        # The Semantics dropdown's `none` clears heat, probe, labels and mode GUI
-        for dropdown in semantics:
-            dropdown.value = "none"
-            dropdown.remove()
-
-        semantics.clear()
-
-        # Same node name: the selected mesh upserts over the shown one
-        dropdown = _build(viewer, backends[scene.value], textured, texture_size)
-
-        if dropdown is not None:
-            semantics.append(dropdown)
-
-        viewer._reset_view()
+        _swap(viewer, semantics, backends[scene.value], textured, texture_size)
         logger.info("scene: %s", scene.value)
 
     scene.on_update(switch)
@@ -882,41 +904,190 @@ def _browse(
     return scene
 
 
-def main() -> None:
+def _remote(
+    viewer: Viewer,
+    source: SceneSource,
+    scenes: list[str],
+    cache_dir: Path,
+    textured: bool,
+    texture_size: int,
+    *,
+    includes: tuple[str, ...] = (
+        "/*/mesh.ply",
+        "/*/texture/**",
+        "/*/semantics/*_lifted.zarr/**",
+    ),
+) -> viser.GuiDropdownHandle:
     """
-    Serve one backend's mesh, or every meshed backend under a root, with semantics; blocks.
+    Add a Scene dropdown over processed scene ids; picking one pulls it, then shows it.
 
-    - a path holding mesh.ply is one backend; any other path is an outputs root with a Scene dropdown
+    - every pick re-runs the pull; rclone copy skips unchanged files, so a cached scene re-checks fast
+    - the scene's first backend by label is shown; others are logged
+    - the dropdown is disabled while a pick pulls and builds, so picks do not overlap
+    - the label carries state: `Scene (pulling…)`, then `Scene`
+    - failures label `Scene (pull failed)` or `Scene (load failed)`
+    - a failed pull or build keeps the shown mesh
+
+    Args:
+        viewer: viewer to populate.
+        source: processed-bucket source to pull from.
+        scenes: processed scene ids, the dropdown options.
+        cache_dir: pulled scenes land in `<cache_dir>/<scene>/<backend>`.
+        textured: show each backend's texture/mesh.obj; picks stay on mesh.ply.
+        texture_size: displayed texture edge, pixels.
+        includes: rclone include globs anchored at the scene dir; everything the viewer reads.
+
+    Returns:
+        The Scene dropdown.
     """
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "path", type=Path, help="<scene>/<backend>, or an outputs root of scenes"
-    )
-    parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument(
+    scene = viewer.server.gui.add_dropdown("Scene", options=tuple(scenes))
+    semantics = []
+
+    def switch(_=None) -> None:
+        """
+        Pull the selected scene into the cache, then show its first backend.
+        """
+        # Read the pick once; lock the dropdown until this pick is done
+        name = scene.value
+        scene_dir = cache_dir / name
+        scene.disabled = True
+        scene.label = "Scene (pulling…)"
+
+        try:
+            # Pull, then find the scene's meshed backends; a failure keeps the shown mesh
+            try:
+                source.pull_processed(name, scene_dir, includes=includes)
+                backends = {
+                    label: path
+                    for label, path in _find_backends(cache_dir).items()
+                    if label.startswith(f"{name}/")
+                }
+
+                if not backends:
+                    raise RuntimeError(f"no <backend>/mesh.ply pulled into {scene_dir}")
+
+            except RuntimeError as error:
+                scene.label = "Scene (pull failed)"
+                logger.error("scene %s: %s", name, error)
+                return
+
+            # Show the first backend; name the rest
+            label, backend_dir = next(iter(backends.items()))
+
+            if len(backends) > 1:
+                logger.info("scene %s: also has %s", name, sorted(backends)[1:])
+
+            # Build it; any failure keeps the shown mesh
+            load_failed = False
+
+            try:
+                _swap(viewer, semantics, backend_dir, textured, texture_size)
+                logger.info("scene: %s", label)
+            except Exception:
+                load_failed = True
+                logger.exception("scene %s: cannot load %s", name, backend_dir)
+
+            scene.label = "Scene (load failed)" if load_failed else "Scene"
+
+        finally:
+            scene.disabled = False
+
+    scene.on_update(switch)
+    switch()
+    return scene
+
+
+def _parser() -> argparse.ArgumentParser:
+    """
+    `viewer local ...` and `viewer remote ...` with shared serving options.
+    """
+    # Options every command takes
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument("--port", type=int, default=8080)
+    shared.add_argument(
         "--textured",
         action="store_true",
         help="show texture/mesh.obj over the same surface",
     )
-    parser.add_argument(
+    shared.add_argument(
         "--texture-size", type=int, default=4096, help="displayed texture edge, pixels"
     )
-    args = parser.parse_args()
+
+    # Top-level parser with one subcommand per source
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    # local: one backend dir or an outputs root
+    local = sub.add_parser(
+        "local", parents=[shared], help="serve a backend dir or an outputs root"
+    )
+    local.add_argument(
+        "path", type=Path, help="<scene>/<backend>, or an outputs root of scenes"
+    )
+
+    # remote: processed scenes from the bucket
+    remote = sub.add_parser(
+        "remote", parents=[shared], help="serve processed scenes from the bucket"
+    )
+    remote.add_argument(
+        "--cache",
+        type=Path,
+        default=Path("~/.cache/collab_splats/viewer"),
+        help="pulled scenes land in <cache>/<scene>",
+    )
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> None:
+    """
+    Serve local meshes, or processed scenes pulled from the bucket, with semantics; blocks.
+
+    - local: a path holding mesh.ply is one backend; any other path is an outputs root
+    - remote: a Scene dropdown over processed scene ids, pulled on pick
+
+    Args:
+        argv: arguments after the program name; None reads sys.argv.
+    """
+    parser = _parser()
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
 
-    # One backend, or a root whose meshed backends fill the Scene dropdown
-    single = (args.path / "mesh.ply").exists()
-    backends = {} if single else _find_backends(args.path)
+    # local: one backend, or a root whose meshed backends fill the Scene dropdown
+    if args.command == "local":
+        single = (args.path / "mesh.ply").exists()
+        backends = {} if single else _find_backends(args.path)
 
-    if not single and not backends:
-        parser.error(f"no mesh.ply in {args.path} or its <scene>/<backend> dirs")
+        if not single and not backends:
+            parser.error(f"no mesh.ply in {args.path} or its <scene>/<backend> dirs")
+
+    # remote: processed scene ids fill the Scene dropdown
+    else:
+        source = SceneSource()
+
+        try:
+            scenes = source.list_processed_scenes()
+        except RuntimeError as error:
+            parser.error(f"cannot list processed scenes: {error}")
+
+        if not scenes:
+            parser.error(f"no processed scenes in {source.processed}")
 
     viewer = Viewer(port=args.port)
     viewer.server.gui.configure_theme(control_layout="fixed")
 
-    if single:
+    if args.command == "remote":
+        _remote(
+            viewer,
+            source,
+            scenes,
+            args.cache.expanduser(),
+            args.textured,
+            args.texture_size,
+        )
+    elif single:
         _build(viewer, args.path, args.textured, args.texture_size)
     else:
         _browse(viewer, backends, args.textured, args.texture_size)

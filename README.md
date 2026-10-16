@@ -107,10 +107,11 @@ Each scene writes to `<output-root>/<scene>/`. Frames and 2D caches are shared; 
 View the mesh and query its semantics in the browser (`http://localhost:8080`, add `--textured` for the textured mesh):
 
 ```bash
-python -m collab_splats.viewer /PATH/TO/OUTPUT/<scene>/<backend>
+python -m collab_splats.viewer local /PATH/TO/OUTPUT/<scene>/<backend>
+python -m collab_splats.viewer remote             # processed scenes from the bucket, pulled on pick
 ```
 
-Point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene dropdown.
+`local` views scenes on disk: point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene dropdown. `remote` lists the processed bucket and pulls only the mesh, texture and lifted semantics of the scene you pick into `--cache` (default `~/.cache/collab_splats/viewer`).
 
 ## Install
 

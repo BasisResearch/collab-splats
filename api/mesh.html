@@ -1080,7 +1080,7 @@ positions: the OBJ’s <code class="docutils literal notranslate"><span class="p
 vertices and no <code class="docutils literal notranslate"><span class="pre">pixel_indices</span></code>: each vertex projects into every frame and
 averages the depth-consistent samples; a vertex no frame sees stays zero (unobserved). They are
 stored as <code class="docutils literal notranslate"><span class="pre">vertex_features</span></code> in <code class="docutils literal notranslate"><span class="pre">&lt;scene&gt;/&lt;backend&gt;/semantics/&lt;extractor&gt;_lifted.zarr</span></code>, which
-<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">&lt;scene&gt;/&lt;backend&gt;</span></code> shows on the mesh.</p>
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">local</span> <span class="pre">&lt;scene&gt;/&lt;backend&gt;</span></code> shows on the mesh.</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">collab_splats.semantics.lifting.transfer_features(targets,</span> <span class="pre">points,</span> <span class="pre">features,</span> <span class="pre">k=5,</span> <span class="pre">max_dist=0.03)</span></code>: Gaussian-weighted
 k-NN scatter of point features onto targets; pass the points themselves to smooth.</p></li>

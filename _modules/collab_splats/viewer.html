@@ -410,19 +410,25 @@
 <span class="sd">- nodes upsert by name: re-adding a name replaces the node, which is how callers refresh one</span>
 <span class="sd">- point clouds, camera frusta, line sets and meshes; meshes add vertex picking, label lists and a heat overlay</span>
 <span class="sd">- served at http://&lt;host&gt;:&lt;port&gt; over a websocket; no display needed on the host</span>
-<span class="sd">- `python -m collab_splats.viewer &lt;scene&gt;/&lt;backend&gt;`: the mesh, plus a Semantics dropdown</span>
+<span class="sd">- `python -m collab_splats.viewer local &lt;scene&gt;/&lt;backend&gt;`: the mesh, plus a Semantics dropdown</span>
 <span class="sd">  over its lifted stores' vertex arrays</span>
-<span class="sd">- `python -m collab_splats.viewer &lt;outputs root&gt;`: a Scene dropdown over every meshed backend</span>
+<span class="sd">- `python -m collab_splats.viewer local &lt;outputs root&gt;`: a Scene dropdown over every meshed backend</span>
+<span class="sd">- `python -m collab_splats.viewer remote`: a Scene dropdown over processed scenes in the bucket;</span>
+<span class="sd">  a pick pulls the mesh, texture and lifted stores into `--cache`; pulled scenes are deleted on exit</span>
 
 <span class="sd">Usage:</span>
-<span class="sd">    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\</span>
+<span class="sd">    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local \\</span>
 <span class="sd">        /workspace/outputs/&lt;scene&gt;/&lt;backend&gt; --port 8080</span>
-<span class="sd">    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer \\</span>
+<span class="sd">    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local \\</span>
 <span class="sd">        /workspace/outputs --textured --port 8080</span>
+<span class="sd">    HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer remote \\</span>
+<span class="sd">        --textured --port 8080</span>
 <span class="sd">"""</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">shutil</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">signal</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">zlib</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
@@ -438,6 +444,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">PIL</span><span class="w"> </span><span class="kn">import</span> <span class="n">Image</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">invert_poses</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.remote</span><span class="w"> </span><span class="kn">import</span> <span class="n">SceneSource</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.features</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseFeatureExtractor</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.semantics.store</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_point_features</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.utils.io</span><span class="w"> </span><span class="kn">import</span> <span class="n">file_sha256</span>
@@ -1272,6 +1279,36 @@
     <span class="p">}</span>
 
 
+<span class="k">def</span><span class="w"> </span><span class="nf">_swap</span><span class="p">(</span>
+    <span class="n">viewer</span><span class="p">:</span> <span class="n">Viewer</span><span class="p">,</span>
+    <span class="n">semantics</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">viser</span><span class="o">.</span><span class="n">GuiDropdownHandle</span><span class="p">],</span>
+    <span class="n">backend_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="n">textured</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+    <span class="n">texture_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Replace the shown backend with backend_dir, Semantics dropdown included.</span>
+
+<span class="sd">    - the old Semantics dropdown's `none` clears heat, probe, labels and mode GUI before removal</span>
+<span class="sd">    - same node name: the new mesh upserts over the shown one</span>
+<span class="sd">    - `semantics` holds at most one dropdown; this call mutates it</span>
+<span class="sd">    """</span>
+    <span class="c1"># Tear down the shown backend's Semantics dropdown</span>
+    <span class="k">for</span> <span class="n">dropdown</span> <span class="ow">in</span> <span class="n">semantics</span><span class="p">:</span>
+        <span class="n">dropdown</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="s2">"none"</span>
+        <span class="n">dropdown</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
+
+    <span class="n">semantics</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+    <span class="c1"># Build the new backend and keep its dropdown for the next swap</span>
+    <span class="n">dropdown</span> <span class="o">=</span> <span class="n">_build</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">backend_dir</span><span class="p">,</span> <span class="n">textured</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">dropdown</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">semantics</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">dropdown</span><span class="p">)</span>
+
+    <span class="n">viewer</span><span class="o">.</span><span class="n">_reset_view</span><span class="p">()</span>
+
+
 <span class="k">def</span><span class="w"> </span><span class="nf">_browse</span><span class="p">(</span>
     <span class="n">viewer</span><span class="p">:</span> <span class="n">Viewer</span><span class="p">,</span> <span class="n">backends</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">],</span> <span class="n">textured</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">:</span> <span class="nb">int</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">viser</span><span class="o">.</span><span class="n">GuiDropdownHandle</span><span class="p">:</span>
@@ -1295,22 +1332,9 @@
 
     <span class="k">def</span><span class="w"> </span><span class="nf">switch</span><span class="p">(</span><span class="n">_</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <span class="w">        </span><span class="sd">"""</span>
-<span class="sd">        Tear down the current backend's Semantics, then build the selected backend.</span>
+<span class="sd">        Show the selected backend.</span>
 <span class="sd">        """</span>
-        <span class="c1"># The Semantics dropdown's `none` clears heat, probe, labels and mode GUI</span>
-        <span class="k">for</span> <span class="n">dropdown</span> <span class="ow">in</span> <span class="n">semantics</span><span class="p">:</span>
-            <span class="n">dropdown</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="s2">"none"</span>
-            <span class="n">dropdown</span><span class="o">.</span><span class="n">remove</span><span class="p">()</span>
-
-        <span class="n">semantics</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
-
-        <span class="c1"># Same node name: the selected mesh upserts over the shown one</span>
-        <span class="n">dropdown</span> <span class="o">=</span> <span class="n">_build</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">backends</span><span class="p">[</span><span class="n">scene</span><span class="o">.</span><span class="n">value</span><span class="p">],</span> <span class="n">textured</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="n">dropdown</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">semantics</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">dropdown</span><span class="p">)</span>
-
-        <span class="n">viewer</span><span class="o">.</span><span class="n">_reset_view</span><span class="p">()</span>
+        <span class="n">_swap</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">semantics</span><span class="p">,</span> <span class="n">backends</span><span class="p">[</span><span class="n">scene</span><span class="o">.</span><span class="n">value</span><span class="p">],</span> <span class="n">textured</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">)</span>
         <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"scene: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">scene</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 
     <span class="n">scene</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span><span class="n">switch</span><span class="p">)</span>
@@ -1318,48 +1342,205 @@
     <span class="k">return</span> <span class="n">scene</span>
 
 
-<div class="viewcode-block" id="main">
-<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.main">[docs]</a>
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_remote</span><span class="p">(</span>
+    <span class="n">viewer</span><span class="p">:</span> <span class="n">Viewer</span><span class="p">,</span>
+    <span class="n">source</span><span class="p">:</span> <span class="n">SceneSource</span><span class="p">,</span>
+    <span class="n">scenes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">cache_dir</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="n">textured</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+    <span class="n">texture_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">includes</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">"/*/mesh.ply"</span><span class="p">,</span>
+        <span class="s2">"/*/texture/**"</span><span class="p">,</span>
+        <span class="s2">"/*/semantics/*_lifted.zarr/**"</span><span class="p">,</span>
+    <span class="p">),</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">viser</span><span class="o">.</span><span class="n">GuiDropdownHandle</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""</span>
-<span class="sd">    Serve one backend's mesh, or every meshed backend under a root, with semantics; blocks.</span>
+<span class="sd">    Add a Scene dropdown over processed scene ids; picking one pulls it, then shows it.</span>
 
-<span class="sd">    - a path holding mesh.ply is one backend; any other path is an outputs root with a Scene dropdown</span>
+<span class="sd">    - every pick re-runs the pull; rclone copy skips unchanged files, so a cached scene re-checks fast</span>
+<span class="sd">    - the scene's first backend by label is shown; others are logged</span>
+<span class="sd">    - the dropdown is disabled while a pick pulls and builds, so picks do not overlap</span>
+<span class="sd">    - the label carries state: `Scene (pulling…)`, then `Scene`</span>
+<span class="sd">    - failures label `Scene (pull failed)` or `Scene (load failed)`</span>
+<span class="sd">    - a failed pull or build keeps the shown mesh</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        viewer: viewer to populate.</span>
+<span class="sd">        source: processed-bucket source to pull from.</span>
+<span class="sd">        scenes: processed scene ids, the dropdown options.</span>
+<span class="sd">        cache_dir: pulled scenes land in `&lt;cache_dir&gt;/&lt;scene&gt;/&lt;backend&gt;`.</span>
+<span class="sd">        textured: show each backend's texture/mesh.obj; picks stay on mesh.ply.</span>
+<span class="sd">        texture_size: displayed texture edge, pixels.</span>
+<span class="sd">        includes: rclone include globs anchored at the scene dir; everything the viewer reads.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The Scene dropdown.</span>
 <span class="sd">    """</span>
-    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span>
-        <span class="n">description</span><span class="o">=</span><span class="vm">__doc__</span><span class="p">,</span> <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span>
-    <span class="p">)</span>
-    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
-        <span class="s2">"path"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="n">Path</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"&lt;scene&gt;/&lt;backend&gt;, or an outputs root of scenes"</span>
-    <span class="p">)</span>
-    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--port"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
-    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+    <span class="n">scene</span> <span class="o">=</span> <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">add_dropdown</span><span class="p">(</span><span class="s2">"Scene"</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">scenes</span><span class="p">))</span>
+    <span class="n">semantics</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">switch</span><span class="p">(</span><span class="n">_</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""</span>
+<span class="sd">        Pull the selected scene into the cache, then show its first backend.</span>
+<span class="sd">        """</span>
+        <span class="c1"># Read the pick once; lock the dropdown until this pick is done</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">scene</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">scene_dir</span> <span class="o">=</span> <span class="n">cache_dir</span> <span class="o">/</span> <span class="n">name</span>
+        <span class="n">scene</span><span class="o">.</span><span class="n">disabled</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="n">scene</span><span class="o">.</span><span class="n">label</span> <span class="o">=</span> <span class="s2">"Scene (pulling…)"</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># Pull, then find the scene's meshed backends; a failure keeps the shown mesh</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">source</span><span class="o">.</span><span class="n">pull_processed</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">scene_dir</span><span class="p">,</span> <span class="n">includes</span><span class="o">=</span><span class="n">includes</span><span class="p">)</span>
+                <span class="n">backends</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">label</span><span class="p">:</span> <span class="n">path</span>
+                    <span class="k">for</span> <span class="n">label</span><span class="p">,</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">_find_backends</span><span class="p">(</span><span class="n">cache_dir</span><span class="p">)</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">label</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">/"</span><span class="p">)</span>
+                <span class="p">}</span>
+
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">backends</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"no &lt;backend&gt;/mesh.ply pulled into </span><span class="si">{</span><span class="n">scene_dir</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+            <span class="k">except</span> <span class="ne">RuntimeError</span> <span class="k">as</span> <span class="n">error</span><span class="p">:</span>
+                <span class="n">scene</span><span class="o">.</span><span class="n">label</span> <span class="o">=</span> <span class="s2">"Scene (pull failed)"</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"scene </span><span class="si">%s</span><span class="s2">: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">error</span><span class="p">)</span>
+                <span class="k">return</span>
+
+            <span class="c1"># Show the first backend; name the rest</span>
+            <span class="n">label</span><span class="p">,</span> <span class="n">backend_dir</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">backends</span><span class="o">.</span><span class="n">items</span><span class="p">()))</span>
+
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">backends</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"scene </span><span class="si">%s</span><span class="s2">: also has </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">backends</span><span class="p">)[</span><span class="mi">1</span><span class="p">:])</span>
+
+            <span class="c1"># Build it; any failure keeps the shown mesh</span>
+            <span class="n">load_failed</span> <span class="o">=</span> <span class="kc">False</span>
+
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">_swap</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">semantics</span><span class="p">,</span> <span class="n">backend_dir</span><span class="p">,</span> <span class="n">textured</span><span class="p">,</span> <span class="n">texture_size</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"scene: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="n">load_failed</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s2">"scene </span><span class="si">%s</span><span class="s2">: cannot load </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">backend_dir</span><span class="p">)</span>
+
+            <span class="n">scene</span><span class="o">.</span><span class="n">label</span> <span class="o">=</span> <span class="s2">"Scene (load failed)"</span> <span class="k">if</span> <span class="n">load_failed</span> <span class="k">else</span> <span class="s2">"Scene"</span>
+
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">scene</span><span class="o">.</span><span class="n">disabled</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="n">scene</span><span class="o">.</span><span class="n">on_update</span><span class="p">(</span><span class="n">switch</span><span class="p">)</span>
+    <span class="n">switch</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">scene</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_parser</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    `viewer local ...` and `viewer remote ...` with shared serving options.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Options every command takes</span>
+    <span class="n">shared</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">add_help</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">shared</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">"--port"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
+    <span class="n">shared</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
         <span class="s2">"--textured"</span><span class="p">,</span>
         <span class="n">action</span><span class="o">=</span><span class="s2">"store_true"</span><span class="p">,</span>
         <span class="n">help</span><span class="o">=</span><span class="s2">"show texture/mesh.obj over the same surface"</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+    <span class="n">shared</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
         <span class="s2">"--texture-size"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">4096</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"displayed texture edge, pixels"</span>
     <span class="p">)</span>
-    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="c1"># Top-level parser with one subcommand per source</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span>
+        <span class="n">description</span><span class="o">=</span><span class="vm">__doc__</span><span class="p">,</span> <span class="n">formatter_class</span><span class="o">=</span><span class="n">argparse</span><span class="o">.</span><span class="n">RawDescriptionHelpFormatter</span>
+    <span class="p">)</span>
+    <span class="n">sub</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_subparsers</span><span class="p">(</span><span class="n">dest</span><span class="o">=</span><span class="s2">"command"</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># local: one backend dir or an outputs root</span>
+    <span class="n">local</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">"local"</span><span class="p">,</span> <span class="n">parents</span><span class="o">=</span><span class="p">[</span><span class="n">shared</span><span class="p">],</span> <span class="n">help</span><span class="o">=</span><span class="s2">"serve a backend dir or an outputs root"</span>
+    <span class="p">)</span>
+    <span class="n">local</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">"path"</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="n">Path</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"&lt;scene&gt;/&lt;backend&gt;, or an outputs root of scenes"</span>
+    <span class="p">)</span>
+
+    <span class="c1"># remote: processed scenes from the bucket</span>
+    <span class="n">remote</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span>
+        <span class="s2">"remote"</span><span class="p">,</span> <span class="n">parents</span><span class="o">=</span><span class="p">[</span><span class="n">shared</span><span class="p">],</span> <span class="n">help</span><span class="o">=</span><span class="s2">"serve processed scenes from the bucket"</span>
+    <span class="p">)</span>
+    <span class="n">remote</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">"--cache"</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="n">Path</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">"~/.cache/collab_splats/viewer"</span><span class="p">),</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">"pulled scenes land in &lt;cache&gt;/&lt;scene&gt;, deleted when the viewer exits"</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">parser</span>
+
+
+<div class="viewcode-block" id="main">
+<a class="viewcode-back" href="../../api/semantics.html#collab_splats.viewer.main">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Serve local meshes, or processed scenes pulled from the bucket, with semantics; blocks.</span>
+
+<span class="sd">    - local: a path holding mesh.ply is one backend; any other path is an outputs root</span>
+<span class="sd">    - remote: a Scene dropdown over processed scene ids, pulled on pick</span>
+<span class="sd">    - remote: pulled scene dirs are deleted on exit (Ctrl-C, SIGTERM or SIGHUP)</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        argv: arguments after the program name; None reads sys.argv.</span>
+<span class="sd">    """</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">_parser</span><span class="p">()</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>
     <span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
 
-    <span class="c1"># One backend, or a root whose meshed backends fill the Scene dropdown</span>
-    <span class="n">single</span> <span class="o">=</span> <span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">path</span> <span class="o">/</span> <span class="s2">"mesh.ply"</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
-    <span class="n">backends</span> <span class="o">=</span> <span class="p">{}</span> <span class="k">if</span> <span class="n">single</span> <span class="k">else</span> <span class="n">_find_backends</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="p">)</span>
+    <span class="c1"># local: one backend, or a root whose meshed backends fill the Scene dropdown</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">"local"</span><span class="p">:</span>
+        <span class="n">single</span> <span class="o">=</span> <span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">path</span> <span class="o">/</span> <span class="s2">"mesh.ply"</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
+        <span class="n">backends</span> <span class="o">=</span> <span class="p">{}</span> <span class="k">if</span> <span class="n">single</span> <span class="k">else</span> <span class="n">_find_backends</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="p">)</span>
 
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">single</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">backends</span><span class="p">:</span>
-        <span class="n">parser</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">"no mesh.ply in </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="si">}</span><span class="s2"> or its &lt;scene&gt;/&lt;backend&gt; dirs"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">single</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">backends</span><span class="p">:</span>
+            <span class="n">parser</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">"no mesh.ply in </span><span class="si">{</span><span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="si">}</span><span class="s2"> or its &lt;scene&gt;/&lt;backend&gt; dirs"</span><span class="p">)</span>
+
+    <span class="c1"># remote: processed scene ids fill the Scene dropdown</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">source</span> <span class="o">=</span> <span class="n">SceneSource</span><span class="p">()</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">scenes</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">list_processed_scenes</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">RuntimeError</span> <span class="k">as</span> <span class="n">error</span><span class="p">:</span>
+            <span class="n">parser</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">"cannot list processed scenes: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">scenes</span><span class="p">:</span>
+            <span class="n">parser</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">"no processed scenes in </span><span class="si">{</span><span class="n">source</span><span class="o">.</span><span class="n">processed</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
     <span class="n">viewer</span> <span class="o">=</span> <span class="n">Viewer</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">port</span><span class="p">)</span>
     <span class="n">viewer</span><span class="o">.</span><span class="n">server</span><span class="o">.</span><span class="n">gui</span><span class="o">.</span><span class="n">configure_theme</span><span class="p">(</span><span class="n">control_layout</span><span class="o">=</span><span class="s2">"fixed"</span><span class="p">)</span>
 
-    <span class="k">if</span> <span class="n">single</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">"remote"</span><span class="p">:</span>
+        <span class="n">cache</span> <span class="o">=</span> <span class="n">args</span><span class="o">.</span><span class="n">cache</span><span class="o">.</span><span class="n">expanduser</span><span class="p">()</span>
+        <span class="n">_remote</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">source</span><span class="p">,</span> <span class="n">scenes</span><span class="p">,</span> <span class="n">cache</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">textured</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">texture_size</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">single</span><span class="p">:</span>
         <span class="n">_build</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">textured</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">texture_size</span><span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="n">_browse</span><span class="p">(</span><span class="n">viewer</span><span class="p">,</span> <span class="n">backends</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">textured</span><span class="p">,</span> <span class="n">args</span><span class="o">.</span><span class="n">texture_size</span><span class="p">)</span>
 
-    <span class="n">viewer</span><span class="o">.</span><span class="n">serve_forever</span><span class="p">()</span></div>
+    <span class="c1"># SIGTERM and SIGHUP stop the server like Ctrl-C, so the cleanup below runs</span>
+    <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">default_int_handler</span><span class="p">)</span>
+    <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGHUP</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">default_int_handler</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">serve_forever</span><span class="p">()</span>
+
+    <span class="c1"># Delete pulled scenes on exit; only scene-id dirs, never the cache root</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">command</span> <span class="o">==</span> <span class="s2">"remote"</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">scenes</span><span class="p">:</span>
+                <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">cache</span> <span class="o">/</span> <span class="n">name</span><span class="p">,</span> <span class="n">ignore_errors</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"cleared pulled scenes from </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">cache</span><span class="p">)</span></div>
 
 
 

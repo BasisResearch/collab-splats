@@ -86,7 +86,7 @@ Three zarr stores per extractor:
 ``n_components: null`` keeps full-width features in ``_codes.zarr`` (``latent_dim`` null, no
 autoencoder, no temporary store). ``read_point_features(store_path, name="features")`` decodes a
 lifted store to (P, D) float32, L2-normalized; pass ``name="vertex_features"`` for the mesh
-vertices. ``python -m collab_splats.viewer <scene>/<backend>`` shows the lifted semantics on the
+vertices. ``python -m collab_splats.viewer local <scene>/<backend>`` shows the lifted semantics on the
 mesh.
 
 .. automodule:: collab_splats.semantics.store
@@ -128,8 +128,9 @@ high-scoring points).
 Viewer
 ------
 
-``python -m collab_splats.viewer <scene>/<backend>`` serves the mesh with a Semantics dropdown;
-point it at an outputs root for a Scene dropdown.
+``python -m collab_splats.viewer local <scene>/<backend>`` serves the mesh with a Semantics dropdown;
+point it at an outputs root for a Scene dropdown. ``python -m collab_splats.viewer remote`` serves
+processed scenes from the bucket, pulled into a local cache on pick.
 
 .. automodule:: collab_splats.viewer
    :members:

@@ -1222,7 +1222,7 @@ When <code class="docutils literal notranslate"><span class="pre">mesh.ply</span
 <p><code class="docutils literal notranslate"><span class="pre">n_components:</span> <span class="pre">null</span></code> keeps full-width features in <code class="docutils literal notranslate"><span class="pre">_codes.zarr</span></code> (<code class="docutils literal notranslate"><span class="pre">latent_dim</span></code> null, no
 autoencoder, no temporary store). <code class="docutils literal notranslate"><span class="pre">read_point_features(store_path,</span> <span class="pre">name=&quot;features&quot;)</span></code> decodes a
 lifted store to (P, D) float32, L2-normalized; pass <code class="docutils literal notranslate"><span class="pre">name=&quot;vertex_features&quot;</span></code> for the mesh
-vertices. <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">&lt;scene&gt;/&lt;backend&gt;</span></code> shows the lifted semantics on the
+vertices. <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">local</span> <span class="pre">&lt;scene&gt;/&lt;backend&gt;</span></code> shows the lifted semantics on the
 mesh.</p>
 <p id="module-collab_splats.semantics.store">Semantics stores: the 2D patch cache and the lifted per-point store.</p>
 <ul class="simple">
@@ -1834,22 +1834,27 @@ high-scoring points).</p>
 </section>
 <section id="viewer">
 <h2>Viewer<a class="headerlink" href="#viewer" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">&lt;scene&gt;/&lt;backend&gt;</span></code> serves the mesh with a Semantics dropdown;
-point it at an outputs root for a Scene dropdown.</p>
+<p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">local</span> <span class="pre">&lt;scene&gt;/&lt;backend&gt;</span></code> serves the mesh with a Semantics dropdown;
+point it at an outputs root for a Scene dropdown. <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">collab_splats.viewer</span> <span class="pre">remote</span></code> serves
+processed scenes from the bucket, pulled into a local cache on pick.</p>
 <p id="module-collab_splats.viewer">Browser 3D scene viewer over viser: arrays in, named scene nodes out.</p>
 <ul class="simple">
 <li><p>nodes upsert by name: re-adding a name replaces the node, which is how callers refresh one</p></li>
 <li><p>point clouds, camera frusta, line sets and meshes; meshes add vertex picking, label lists and a heat overlay</p></li>
 <li><p>served at <a class="reference external" href="http:/">http:/</a>/&lt;host&gt;:&lt;port&gt; over a websocket; no display needed on the host</p></li>
-<li><p><cite>python -m collab_splats.viewer &lt;scene&gt;/&lt;backend&gt;</cite>: the mesh, plus a Semantics dropdown
+<li><p><cite>python -m collab_splats.viewer local &lt;scene&gt;/&lt;backend&gt;</cite>: the mesh, plus a Semantics dropdown
 over its lifted stores’ vertex arrays</p></li>
-<li><p><cite>python -m collab_splats.viewer &lt;outputs root&gt;</cite>: a Scene dropdown over every meshed backend</p></li>
+<li><p><cite>python -m collab_splats.viewer local &lt;outputs root&gt;</cite>: a Scene dropdown over every meshed backend</p></li>
+<li><p><cite>python -m collab_splats.viewer remote</cite>: a Scene dropdown over processed scenes in the bucket;
+a pick pulls the mesh, texture and lifted stores into <cite>–cache</cite>; pulled scenes are deleted on exit</p></li>
 </ul>
 <dl class="simple">
 <dt>Usage:</dt><dd><dl class="simple">
-<dt>HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer </dt><dd><p>/workspace/outputs/&lt;scene&gt;/&lt;backend&gt; –port 8080</p>
+<dt>HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local </dt><dd><p>/workspace/outputs/&lt;scene&gt;/&lt;backend&gt; –port 8080</p>
 </dd>
-<dt>HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer </dt><dd><p>/workspace/outputs –textured –port 8080</p>
+<dt>HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local </dt><dd><p>/workspace/outputs –textured –port 8080</p>
+</dd>
+<dt>HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer remote </dt><dd><p>–textured –port 8080</p>
 </dd>
 </dl>
 </dd>
@@ -2036,11 +2041,18 @@ over its lifted stores’ vertex arrays</p></li>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="collab_splats.viewer.main">
-<span class="sig-prename descclassname"><span class="pre">collab_splats.viewer.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/viewer.html#main"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.viewer.main" title="Link to this definition">#</a></dt>
-<dd><p>Serve one backend’s mesh, or every meshed backend under a root, with semantics; blocks.</p>
+<span class="sig-prename descclassname"><span class="pre">collab_splats.viewer.</span></span><span class="sig-name descname"><span class="pre">main</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">argv</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#list" title="(in Python v3.15)"><span class="pre">list</span></a><span class="p"><span class="pre">[</span></span><a class="reference external" href="https://docs.python.org/3/builtins/stdtypes.html#str" title="(in Python v3.15)"><span class="pre">str</span></a><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference external" href="https://docs.python.org/3/builtins/constants.html#None" title="(in Python v3.15)"><span class="pre">None</span></a></span></span><a class="reference internal" href="../_modules/collab_splats/viewer.html#main"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#collab_splats.viewer.main" title="Link to this definition">#</a></dt>
+<dd><p>Serve local meshes, or processed scenes pulled from the bucket, with semantics; blocks.</p>
 <ul class="simple">
-<li><p>a path holding mesh.ply is one backend; any other path is an outputs root with a Scene dropdown</p></li>
+<li><p>local: a path holding mesh.ply is one backend; any other path is an outputs root</p></li>
+<li><p>remote: a Scene dropdown over processed scene ids, pulled on pick</p></li>
+<li><p>remote: pulled scene dirs are deleted on exit (Ctrl-C, SIGTERM or SIGHUP)</p></li>
 </ul>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>argv</strong> – arguments after the program name; None reads sys.argv.</p>
+</dd>
+</dl>
 </dd></dl>
 
 </section>

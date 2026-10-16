@@ -241,7 +241,7 @@ The semantics stage (after mesh) lifts features straight onto the vertices with
 vertices and no ``pixel_indices``: each vertex projects into every frame and
 averages the depth-consistent samples; a vertex no frame sees stays zero (unobserved). They are
 stored as ``vertex_features`` in ``<scene>/<backend>/semantics/<extractor>_lifted.zarr``, which
-``python -m collab_splats.viewer <scene>/<backend>`` shows on the mesh.
+``python -m collab_splats.viewer local <scene>/<backend>`` shows on the mesh.
 
 - ``collab_splats.semantics.lifting.transfer_features(targets, points, features, k=5, max_dist=0.03)``: Gaussian-weighted
   k-NN scatter of point features onto targets; pass the points themselves to smooth.

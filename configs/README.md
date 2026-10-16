@@ -315,7 +315,7 @@ semantics:
 | `semantics.enabled` | bool | `true` | Extract and lift features |
 | `semantics.extractors` | list[str] | `[talk2dino, ocr_lens]` | `talk2dino`, `dinov2`, `maskclip`, `ocr_lens` |
 | `semantics.n_components` | int\|null | `128` | Autoencoder latent dim; `null` = no compression |
-| `semantics.target_cosine` | float\|null | `null` | Stop training at this mean reconstruction cosine; `null` = run `max_epochs` |
+| `semantics.target_cosine` | float\|null | `0.975` | Stop training at this mean reconstruction cosine; `null` = run `max_epochs` |
 | `semantics.max_epochs` | int | `30` | Autoencoder epochs |
 
 ---

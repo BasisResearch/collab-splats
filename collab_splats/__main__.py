@@ -150,13 +150,36 @@ def _is_rerun(stages: list[str] | None) -> bool:
 
 
 def _prepare_scene(
-    source: SceneSource, scene: str, scene_dir: Path, args: argparse.Namespace
+    source: SceneSource,
+    scene: str,
+    scene_dir: Path,
+    args: argparse.Namespace,
+    *,
+    semantics_includes: tuple[str, ...] = (
+        "/images/**",
+        "/semantics/*_codes.zarr/**",
+        "/*/run_config.yaml",
+        "/*/mesh.ply",
+        "/*/colmap/**",
+        "/*/pointcloud.zarr/zarr.json",
+        "/*/pointcloud.zarr/points/**",
+        "/*/pointcloud.zarr/colors/**",
+        "/*/pointcloud.zarr/extrinsics/**",
+        "/*/pointcloud.zarr/intrinsics/**",
+        "/*/pointcloud.zarr/model_intrinsics/**",
+        "/*/pointcloud.zarr/original_coords/**",
+        "/*/pointcloud.zarr/pixel_indices/**",
+        "/*/pointcloud.zarr/depth/**",
+        "/*/pointcloud.zarr/confidence/**",
+        "/*/semantics/*_lifted.zarr/zarr.json",
+    ),
 ) -> dict:
     """
     Fetch a scene's inputs and return its config.
 
     - full runs fetch the curated video
     - leaf re-runs pull the processed scene and reuse one backend's run_config.yaml minus the re-run sections
+    - a semantics-only re-run pulls just what the stage reads; other leaf re-runs pull everything
     - the backend is --set pointcloud.backend, else the only backend with a recorded config
     """
     paths = {"output_path": str(scene_dir)}
@@ -168,13 +191,14 @@ def _prepare_scene(
         config["input_path"] = str(video)
         return config
 
-    # Leaf re-run: pull the processed scene, every member included
+    # Leaf re-run: pull the processed scene; semantics alone skips what it never reads
     if not source.has_processed(scene):
         raise FileNotFoundError(
             f"{scene} has no processed outputs; run the full pipeline first"
         )
 
-    source.pull_processed(scene, scene_dir, on_line=logger.info)
+    includes = semantics_includes if args.stages == ["semantics"] else ()
+    source.pull_processed(scene, scene_dir, on_line=logger.info, includes=includes)
 
     # Backend: the typed one, else the only one the pulled scene recorded
     backend = args.overrides.get("pointcloud", {}).get("backend")

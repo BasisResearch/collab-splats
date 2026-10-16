@@ -108,8 +108,9 @@ class FakeSource:
         self.calls.append(("has_processed", scene))
         return self.processed
 
-    def pull_processed(self, scene, dest_dir, on_line=None):
+    def pull_processed(self, scene, dest_dir, on_line=None, includes=()):
         self.calls.append(("pull", scene))
+        self.includes = includes
         dest_dir.mkdir(parents=True, exist_ok=True)
         if self.run_config is not None:
             run_cfg = Reconstructor.run_config_path(
@@ -798,6 +799,30 @@ def test_leaf_stages_pull_from_processed(tmp_path):
     assert config["output_path"] == str(tmp_path / SCENE)
 
 
+def test_semantics_rerun_pulls_only_what_semantics_reads(tmp_path):
+    source = FakeSource()
+    cli._prepare_scene(
+        source, SCENE, tmp_path / SCENE, _args(tmp_path, stages=["semantics"])
+    )
+    assert "/images/**" in source.includes
+    assert "/*/mesh.ply" in source.includes
+    assert "/*/pointcloud.zarr/depth/**" in source.includes
+
+    # Model-res images and localization features in pointcloud.zarr stay remote
+    assert not any("feedforward.zarr" in g for g in source.includes)
+    assert not any(
+        g.endswith(("/images/**", "/local_features/**")) and "pointcloud.zarr" in g
+        for g in source.includes
+    )
+
+
+@pytest.mark.parametrize("stages", [["mesh"], ["semantics", "mesh"]])
+def test_other_leaf_reruns_pull_everything(tmp_path, stages):
+    source = FakeSource()
+    cli._prepare_scene(source, SCENE, tmp_path / SCENE, _args(tmp_path, stages=stages))
+    assert source.includes == ()
+
+
 @pytest.mark.parametrize("stages", [None, ["pointcloud", "mesh"]])
 def test_any_upstream_stage_fetches_the_curated_video(tmp_path, stages):
     source = FakeSource()
@@ -872,7 +897,7 @@ def test_explicit_backend_without_a_record_raises(tmp_path):
 def test_empty_run_config_file_reads_as_empty(tmp_path):
     # A 0-byte file loads as None; it must read as an empty record, not crash on None
     class _EmptyRunConfig(FakeSource):
-        def pull_processed(self, scene, dest_dir, on_line=None):
+        def pull_processed(self, scene, dest_dir, on_line=None, includes=()):
             self.calls.append(("pull", scene))
             run_cfg = Reconstructor.run_config_path(dest_dir, "vggtx")
             run_cfg.parent.mkdir(parents=True, exist_ok=True)

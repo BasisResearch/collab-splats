@@ -165,6 +165,10 @@ def lift_features(
         # Sample and accumulate visible points only; the rest carry weight 0
         idx = torch.nonzero(w > 0).squeeze(1)
 
+        # No visible point: skip, as an empty index_add_ fails on >2^31-element CUDA tensors
+        if idx.numel() == 0:
+            continue
+
         if indexed:
             ids, values = fmap
             _add_indexed_bilinear(

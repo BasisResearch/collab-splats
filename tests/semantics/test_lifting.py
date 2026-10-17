@@ -9,6 +9,7 @@ from scipy.spatial import cKDTree
 from collab_splats.geometry.projection import depth_residual
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.semantics.lifting import (
+    _add_indexed_bilinear,
     _grid_sample_at_pixels,
     lift_features,
     transfer_features,
@@ -513,3 +514,37 @@ def test_indexed_maps_refuse_the_pixel_indices_fallback(monkeypatch):
 
     with pytest.raises(ValueError, match="pixel_indices"):
         lift_features(lambda i: fmap, result, num_classes=4)
+
+
+def test_frame_with_no_visible_point_is_skipped(monkeypatch):
+    """
+    A frame seeing no point adds nothing and is never accumulated (empty index_add_ crashes CUDA).
+    """
+    monkeypatch.setattr(
+        "collab_splats.semantics.lifting.get_device", lambda: torch.device("cpu")
+    )
+    n, h, w, num_classes = 2, 8, 8, 3
+    pts3d = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+    conf = np.ones((n, h, w), dtype=np.float32)
+
+    # Frame 0 depth matches z=1; frame 1 depth is far off → frame 1 sees nothing
+    depth = np.ones((n, h, w), dtype=np.float32)
+    depth[1] = 100.0
+    result = _make_lift_result(pts3d, None, depth, conf, n=n, h=h, w=w)
+
+    # Every patch holds class 1 with probability 1
+    fmap = (torch.ones(1, h, w, dtype=torch.long), torch.ones(1, h, w))
+
+    # Record the frames that reach the accumulator
+    calls = []
+    add = _add_indexed_bilinear
+    monkeypatch.setattr(
+        "collab_splats.semantics.lifting._add_indexed_bilinear",
+        lambda acc, ids, values, idx, *args: (
+            calls.append(len(idx)) or add(acc, ids, values, idx, *args)
+        ),
+    )
+    out = lift_features(lambda i: fmap, result, num_classes=num_classes)
+
+    assert calls == [1]
+    np.testing.assert_allclose(out[0].numpy(), [0.0, 1.0, 0.0], atol=1e-5)

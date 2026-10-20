@@ -621,7 +621,7 @@
 <span class="sd">        (keypoints, descriptors). descriptors is None on a frame with no detectable</span>
 <span class="sd">        features — a fact about the frame, not an error.</span>
 <span class="sd">    """</span>
-    <span class="k">return</span> <span class="n">cv2</span><span class="o">.</span><span class="n">ORB_create</span><span class="p">(</span><span class="n">nfeatures</span><span class="o">=</span><span class="n">n_features</span><span class="p">)</span><span class="o">.</span><span class="n">detectAndCompute</span><span class="p">(</span><span class="n">gray</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>  <span class="c1"># type: ignore[attr-defined]</span></div>
+    <span class="k">return</span> <span class="n">cv2</span><span class="o">.</span><span class="n">ORB_create</span><span class="p">(</span><span class="n">nfeatures</span><span class="o">=</span><span class="n">n_features</span><span class="p">)</span><span class="o">.</span><span class="n">detectAndCompute</span><span class="p">(</span><span class="n">gray</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>  <span class="c1"># type: ignore[attr-defined, unused-ignore]</span></div>
 
 
 

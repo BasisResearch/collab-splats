@@ -632,7 +632,7 @@
     <span class="c1"># Extract every reference frame, then replace the stored DB</span>
     <span class="n">extractor</span> <span class="o">=</span> <span class="n">LocalMatcher</span><span class="p">(</span><span class="n">extractor_name</span><span class="p">)</span>
     <span class="n">localizer</span> <span class="o">=</span> <span class="n">CameraLocalizer</span><span class="p">(</span>
-        <span class="n">pointcloud</span><span class="o">.</span><span class="n">world_points</span><span class="p">,</span>  <span class="c1"># type: ignore[arg-type]</span>
+        <span class="n">pointcloud</span><span class="o">.</span><span class="n">world_points</span><span class="p">,</span>  <span class="c1"># type: ignore[arg-type, unused-ignore]</span>
         <span class="n">pointcloud</span><span class="o">.</span><span class="n">extrinsics</span><span class="p">,</span>
         <span class="n">images</span><span class="p">,</span>
         <span class="n">ids</span><span class="p">,</span>

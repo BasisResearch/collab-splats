@@ -220,7 +220,7 @@ def _build_localization_db(
     # Extract every reference frame, then replace the stored DB
     extractor = LocalMatcher(extractor_name)
     localizer = CameraLocalizer(
-        pointcloud.world_points,  # type: ignore[arg-type]
+        pointcloud.world_points,  # type: ignore[arg-type, unused-ignore]
         pointcloud.extrinsics,
         images,
         ids,

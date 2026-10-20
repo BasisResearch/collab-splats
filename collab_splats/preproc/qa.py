@@ -201,7 +201,7 @@ def detect_orb(
         (keypoints, descriptors). descriptors is None on a frame with no detectable
         features — a fact about the frame, not an error.
     """
-    return cv2.ORB_create(nfeatures=n_features).detectAndCompute(gray, None)  # type: ignore[attr-defined]
+    return cv2.ORB_create(nfeatures=n_features).detectAndCompute(gray, None)  # type: ignore[attr-defined, unused-ignore]
 
 
 def compute_pair_motion(

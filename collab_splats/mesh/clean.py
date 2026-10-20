@@ -1175,7 +1175,7 @@ def _fill_faces(corners: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
     uint8 mask with each (3, 2) pixel-corner face filled to 255.
     """
     img = np.zeros(shape, np.uint8)
-    cv2.fillPoly(img, corners, 255)  # type: ignore[call-overload]
+    cv2.fillPoly(img, corners, 255)  # type: ignore[call-overload, unused-ignore]
     return img
 
 

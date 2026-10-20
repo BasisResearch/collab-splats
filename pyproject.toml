@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "Feedforward reconstruction, Gaussian-splat training, meshing and localization pipeline"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = { file = "LICENSE.md" }
 keywords = ["gaussian splatting", "depth rasterization", "mesh"]
 authors = [
     { name = "Tommy Botch", email = "tommy@basis.ai" },

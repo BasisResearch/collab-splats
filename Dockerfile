@@ -11,7 +11,7 @@
 # - Docker Desktop > General: enable "Use Rosetta for x86_64/amd64 emulation"; QEMU is far slower
 # - Docker Desktop > Resources: raise memory, then set MAX_JOBS from it
 # - first build still takes hours; the CUDA layer is then cached until pyproject.toml, uv.lock,
-#   LICENSE, setup.sh or collab-data change
+#   LICENSE.md, setup.sh or collab-data change
 #
 # GPU support: TORCH_ARCH_LIST="8.0+PTX" (fused-ssim: CUDA_ARCHITECTURES="80;90", set in setup.sh)
 # - native: Ampere + Ada, sm_80/86/89 (A100, A40, A6000, A10, L4, L40, RTX 3090, RTX 4090)
@@ -72,7 +72,7 @@ COPY --from=collab-data collab_data /workspace/collab-data/collab_data
 # - pass 2 installs the project itself and the non-lock extras
 # - pass 1 also needs setup/hloc.sh: the hloc extra's path source is cloned before any resolve
 WORKDIR /workspace/collab-splats
-COPY pyproject.toml uv.lock LICENSE setup.sh /workspace/collab-splats/
+COPY pyproject.toml uv.lock LICENSE.md setup.sh /workspace/collab-splats/
 COPY setup/hloc.sh /workspace/collab-splats/setup/hloc.sh
 RUN SETUP_DEPS_ONLY=1 bash setup.sh
 COPY . /workspace/collab-splats

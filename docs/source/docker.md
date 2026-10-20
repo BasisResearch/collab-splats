@@ -14,7 +14,7 @@ docker tag collab-splats:release tommybotch/collab-splats:release
 docker push tommybotch/collab-splats:release
 ```
 
-- **First build takes ~2.5 h**; later builds take minutes unless `pyproject.toml`, `uv.lock`, `LICENSE`, `setup.sh`, `setup/hloc.sh` or `collab-data` change.
+- **First build takes ~2.5 h**; later builds take minutes unless `pyproject.toml`, `uv.lock`, `LICENSE.md`, `setup.sh`, `setup/hloc.sh` or `collab-data` change.
 - **`MAX_JOBS`**: Docker memory in GB / 8, at most 6.
 - **GPUs**: Ampere/Ada (A100, A40, L40, RTX 30xx/40xx) and Hopper (H100). Not supported: Volta/Turing, Blackwell.
 

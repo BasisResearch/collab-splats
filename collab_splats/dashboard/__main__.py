@@ -107,7 +107,9 @@ def main() -> None:
     )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=7860)
-    parser.add_argument("--base-dir", default="/workspace/outputs")
+    parser.add_argument(
+        "--base-dir", required=True, help="Local outputs root, one directory per scene."
+    )
     parser.add_argument(
         "--websocket-origin",
         action="append",

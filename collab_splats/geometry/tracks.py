@@ -99,7 +99,7 @@ def extract_tracks(
 
         if isinstance(store, zarr.Group):
             logger.info("Track cache hit (skipping extraction): %s", cache_path)
-            return tuple(np.asarray(store[k]) for k in arrays)  # type: ignore[return-value]
+            return tuple(np.asarray(store[k]) for k in arrays)
 
     # VGGSfM predicts tracks; matcher sources chain verified matches over the prior poses
     if source == "vggsfm":

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import subprocess
 import sys
 
@@ -686,6 +687,44 @@ report = compute_video_quality({tiny_video!r}, motion_stride=2, workers=3)
 assert len(report["frames"]["frame_idx"]) == 60
 """
     subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
+
+
+def test_video_quality_workers_inherit_one_blas_thread(tiny_video, monkeypatch):
+    """
+    A spawned worker sizes BLAS from the env at import, so the pin must precede the pool.
+
+    - unpinned, 16 workers on a 96-CPU pod exhausted its 5120-pid cgroup and hung preproc
+    - the parent's env comes back unchanged
+    """
+    seen = {}
+
+    class InlinePool:
+        # Records the env a spawned worker would inherit, then runs map in-process
+        def __init__(self, n_workers, mp_context=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def map(self, fn, items):
+            seen.update(
+                OMP_NUM_THREADS=os.environ.get("OMP_NUM_THREADS"),
+                OPENBLAS_NUM_THREADS=os.environ.get("OPENBLAS_NUM_THREADS"),
+            )
+            return [fn(item) for item in items]
+
+    monkeypatch.setenv("OMP_NUM_THREADS", "8")
+    monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
+    monkeypatch.setattr(qa, "ProcessPoolExecutor", InlinePool)
+
+    compute_video_quality(tiny_video, motion_stride=2, workers=2)
+
+    assert seen == {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
+    assert os.environ["OMP_NUM_THREADS"] == "8"
+    assert "OPENBLAS_NUM_THREADS" not in os.environ
 
 
 def test_measure_photometry_and_motion_emits_only_the_frames_it_owns(tiny_video):

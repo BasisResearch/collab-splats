@@ -1,17 +1,16 @@
 # syntax=docker/dockerfile:1
 # CUDA 12.1 + torch 2.5.1 + Python 3.11; the env is whatever setup.sh builds.
-# Build (from the collab-splats checkout, with collab-data cloned beside it):
+# Build (from the collab-splats checkout):
 #   docker build --platform=linux/amd64 --progress=plain \
-#     --build-context collab-data=../collab-data \
 #     --build-arg MAX_JOBS=4 -t collab-splats:release .
-# - collab-data is private and locked as a path dep at /workspace/collab-data
+# - no collab-data, no GitHub token: run bash setup.sh in a container to add the remote extra
 # - MAX_JOBS: Docker memory GB / 8 (one cicc peaks ~7.3 GB), ceiling 6
 #
 # Apple Silicon: every nvcc call runs under amd64 emulation
 # - Docker Desktop > General: enable "Use Rosetta for x86_64/amd64 emulation"; QEMU is far slower
 # - Docker Desktop > Resources: raise memory, then set MAX_JOBS from it
 # - first build still takes hours; the CUDA layer is then cached until pyproject.toml, uv.lock,
-#   LICENSE.md, setup.sh or collab-data change
+#   LICENSE.md, .python-version or setup.sh change
 #
 # GPU support: TORCH_ARCH_LIST="8.0+PTX" (fused-ssim: CUDA_ARCHITECTURES="80;90", set in setup.sh)
 # - native: Ampere + Ada, sm_80/86/89 (A100, A40, A6000, A10, L4, L40, RTX 3090, RTX 4090)
@@ -60,11 +59,9 @@ ENV CUDA_HOME=/usr/local/cuda \
     CPATH=/usr/local/cuda/include:${CPATH} \
     CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST} \
-    MAX_JOBS=${MAX_JOBS}
-
-# collab-data: only what its setup.py installs (never .git, notebooks or the config-local symlink)
-COPY --from=collab-data setup.py setup.cfg README.rst /workspace/collab-data/
-COPY --from=collab-data collab_data /workspace/collab-data/collab_data
+    MAX_JOBS=${MAX_JOBS} \
+    UV_PROJECT_ENVIRONMENT=/opt/venv/reconstruction \
+    CCCL_PREFIX=/opt/cccl-12.6.77
 
 # Single source of truth: setup.sh syncs the lock, compiles bae/gsplat/fused-ssim/nvdiffrast AOT,
 # and clones the pinned third_party sources (VDA, LoGeR)
@@ -72,7 +69,7 @@ COPY --from=collab-data collab_data /workspace/collab-data/collab_data
 # - pass 2 installs the project itself and the non-lock extras
 # - pass 1 also needs setup/hloc.sh: the hloc extra's path source is cloned before any resolve
 WORKDIR /workspace/collab-splats
-COPY pyproject.toml uv.lock LICENSE.md setup.sh /workspace/collab-splats/
+COPY pyproject.toml uv.lock LICENSE.md .python-version setup.sh /workspace/collab-splats/
 COPY setup/hloc.sh /workspace/collab-splats/setup/hloc.sh
 RUN SETUP_DEPS_ONLY=1 bash setup.sh
 COPY . /workspace/collab-splats
@@ -122,7 +119,8 @@ ENV CUDA_HOME=/usr/local/cuda \
     TORCH_HOME=/workspace/models \
     HF_HOME=/workspace/models \
     NLTK_DATA=/workspace/models/nltk_data \
-    CUDA_CACHE_MAXSIZE=4294967296
+    CUDA_CACHE_MAXSIZE=4294967296 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv/reconstruction
 
 # Smoke test: torch imports and the AOT extensions survived the stage copy
 # - no GPU during build, so the creator chain is checked at run time (--gpus), not here
@@ -146,10 +144,11 @@ RUN echo "PermitRootLogin yes"        >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication no"  >> /etc/ssh/sshd_config
 
 # Bashrc: activate the venv in interactive sessions
+# - SSH sessions miss the Docker ENV; model caches default here, `docker run -e` values win
 RUN { \
-    echo 'export TORCH_HOME="/workspace/models"'; \
-    echo 'export HF_HOME="/workspace/models"'; \
-    echo 'export NLTK_DATA="/workspace/models/nltk_data"'; \
+    echo 'export TORCH_HOME="${TORCH_HOME:-/workspace/models}"'; \
+    echo 'export HF_HOME="${HF_HOME:-/workspace/models}"'; \
+    echo 'export NLTK_DATA="${NLTK_DATA:-/workspace/models/nltk_data}"'; \
     echo 'export CUDA_HOME=/usr/local/cuda'; \
     echo 'export CUDA_ROOT=/usr/local/cuda'; \
     echo 'export PATH="/usr/local/cuda/bin:${PATH}"'; \

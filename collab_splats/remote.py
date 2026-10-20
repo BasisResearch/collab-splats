@@ -11,9 +11,11 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
-from collab_data.data_dashboard.rclone_client import RcloneClient
+# Annotation-only: collab-data is the optional `remote` extra, imported where a client is built
+if TYPE_CHECKING:
+    from collab_data.data_dashboard.rclone_client import RcloneClient
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,22 @@ STATS_ARGS = ("--stats", "2s", "--stats-one-line", "--stats-log-level", "NOTICE"
 ########################################
 
 
+def _rclone_client() -> RcloneClient:
+    """
+    collab-data's default RcloneClient.
+    """
+    # Imported here: collab-data is the optional `remote` extra (private repo)
+    try:
+        from collab_data.data_dashboard.rclone_client import RcloneClient
+    except ImportError as e:
+        raise ImportError(
+            "remote scene access needs collab-data: install the `remote` extra "
+            "(private BasisResearch/collab-data repo), e.g. uv sync --extra remote"
+        ) from e
+
+    return RcloneClient()
+
+
 class SceneSource:
     """
     Curated scene listing and processed-output transfers for one rclone remote.
@@ -67,6 +85,7 @@ class SceneSource:
         Bind a client and the two buckets.
 
         - a client that fails to construct degrades to None; check_available retries it
+        - collab-data not installed raises ImportError
 
         Args:
             client: rclone client; None builds the default one.
@@ -86,7 +105,10 @@ class SceneSource:
 
         if client is None:
             try:
-                self._client = RcloneClient()
+                self._client = _rclone_client()
+            except ImportError:
+                # A missing install is not transient: fail now, not on first use
+                raise
             except Exception as exc:
                 logger.warning("rclone unavailable: %s", exc)
 
@@ -157,7 +179,7 @@ class SceneSource:
         # Retry a client that failed at construction, or a transient fault would stick forever
         if self._client is None:
             try:
-                self._client = RcloneClient()
+                self._client = _rclone_client()
             except Exception as exc:
                 logger.error("rclone still unavailable on re-attempt: %s", exc)
                 return False

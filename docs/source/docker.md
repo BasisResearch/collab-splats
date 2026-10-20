@@ -1,20 +1,20 @@
 # Docker image
 
-We build the image with the same `setup.sh`, with every CUDA extension compiled ahead of time. Build it from the collab-splats checkout, with `collab-data` cloned beside it (`../collab-data`):
+We build the image with the same `setup.sh`, with every CUDA extension compiled ahead of time. Build it from the collab-splats checkout:
 
 ```sh
-docker build --platform=linux/amd64 --progress=plain --build-context collab-data=../collab-data --build-arg MAX_JOBS=4 -t collab-splats:release .
+docker build --platform=linux/amd64 --progress=plain --build-arg MAX_JOBS=4 -t collab-splats:release .
 docker run --gpus all -it collab-splats:release bash
 ```
 
-Push it to Docker Hub (keep the repo private: the image contains `collab-data`):
+Push it to Docker Hub. The image has no collab-data; people with access add it with `bash setup.sh` in the container:
 
 ```sh
 docker tag collab-splats:release tommybotch/collab-splats:release
 docker push tommybotch/collab-splats:release
 ```
 
-- **First build takes ~2.5 h**; later builds take minutes unless `pyproject.toml`, `uv.lock`, `LICENSE.md`, `setup.sh`, `setup/hloc.sh` or `collab-data` change.
+- **First build takes ~2.5 h**; later builds take minutes unless `pyproject.toml`, `uv.lock`, `LICENSE.md`, `.python-version`, `setup.sh` or `setup/hloc.sh` change.
 - **`MAX_JOBS`**: Docker memory in GB / 8, at most 6.
 - **GPUs**: Ampere/Ada (A100, A40, L40, RTX 30xx/40xx) and Hopper (H100). Not supported: Volta/Turing, Blackwell.
 

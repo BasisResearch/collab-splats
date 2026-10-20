@@ -320,9 +320,7 @@ def _measure_photometry_and_motion(
     """
     video_path, start, count, emit_from, stride = args
 
-    # Pin cv2, BLAS and PyAV decode to one thread per worker; unpinned fan-out oversubscribes
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    # Pin cv2 and PyAV decode to one thread per worker; BLAS is pinned at spawn
     cv2.setNumThreads(1)
 
     frame_rows: list[dict] = []
@@ -488,10 +486,24 @@ def compute_video_quality(
         results = [measure(ranges[0])]
     else:
         # Spawn, not fork: a forked worker deadlocks in cv2 if the parent already used cv2
+        # - a spawned worker sizes BLAS/OpenMP from the env as it imports numpy
+        # - unpinned, one thread per CPU each: 16 on 96 CPUs exhaust a pids cgroup
+        # - so pin the env the workers inherit, only while the pool is alive
         spawn = multiprocessing.get_context("spawn")
+        one_thread = {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"}
+        saved = {key: os.environ.get(key) for key in one_thread}
+        os.environ.update(one_thread)
 
-        with ProcessPoolExecutor(len(ranges), mp_context=spawn) as pool:
-            results = list(pool.map(measure, ranges))
+        try:
+            with ProcessPoolExecutor(len(ranges), mp_context=spawn) as pool:
+                results = list(pool.map(measure, ranges))
+        finally:
+            # Restore the parent's env: torch imported later would start one thread
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     # pool.map yields in submission order, and the ranges were built in ascending
     # order, so concatenating is the whole merge.

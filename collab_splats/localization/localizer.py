@@ -103,7 +103,11 @@ def _to_query_grid(
     if small_hw == full_hw:
         return result
 
-    K = _rescale_center_intrinsics(result.query_intrinsics, small_hw, full_hw)
+    K = result.query_intrinsics
+
+    if K is not None:
+        K = _rescale_center_intrinsics(K, small_hw, full_hw)
+
     pts2d = result.pts2d
 
     if pts2d is not None:

@@ -58,6 +58,11 @@ version = "1.5.3"
 requires-dist = ["ninja", "numpy", "jaxtyping", "nvtx", "rich>=12", "torch>=2.0"]
 
 [[manifest.dependency-metadata]]
+name = "hloc"
+version = "1.5"
+requires-dist = ["gdown", "h5py", "kornia>=0.6.11", "lightglue @ git+https://github.com/cvg/LightGlue", "matplotlib", "numpy", "opencv-python", "plotly", "pycolmap>=3.13.0", "scipy", "torch>=1.1", "torchvision>=0.3", "tqdm>=4.36.0"]
+
+[[manifest.dependency-metadata]]
 name = "instantsfm"
 version = "0.3.0"
 
@@ -831,14 +836,8 @@ dependencies = [
 [[package]]
 name = "collab-data"
 version = "0.0.1"
-source = { directory = "/workspace/collab-data" }
+source = { git = "https://github.com/BasisResearch/collab-data.git?rev=tlb-3d-tools#8370e090ad1a51f322bb8d4122381da4cf4d3985" }
 dependencies = [
-    { name = "gcsfs" },
-    { name = "loguru" },
-]
-
-[package.metadata]
-requires-dist = [
     { name = "gcsfs" },
     { name = "loguru" },
 ]
@@ -995,7 +994,7 @@ requires-dist = [
     { name = "bae", marker = "extra == 'reconstruction'", git = "https://github.com/pypose/bae.git?rev=0.2.5" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "clip", marker = "extra == 'semantics'", git = "https://github.com/openai/CLIP.git?rev=d05afc436d78f1c48dc0dbf8e5980a9d471f35f6" },
-    { name = "collab-data", marker = "extra == 'remote'", directory = "/workspace/collab-data" },
+    { name = "collab-data", marker = "extra == 'remote'", git = "https://github.com/BasisResearch/collab-data.git?rev=tlb-3d-tools" },
     { name = "collab-splats", extras = ["semantics"], marker = "extra == 'reconstruction'" },
     { name = "cuda-toolkit", extras = ["all"], marker = "extra == 'gpu'", specifier = "==12.1.1" },
     { name = "easydict", marker = "extra == 'instantsfm'", specifier = "==1.13" },

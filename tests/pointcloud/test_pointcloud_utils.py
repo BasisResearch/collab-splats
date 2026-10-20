@@ -200,24 +200,6 @@ def test_frame_depths_excluded_pixels_leave_the_percentile_and_drop():
     assert np.isclose(out[0, 6:], 2.0).all()
 
 
-def test_frame_depths_excluded_pixels_leave_the_percentile_and_drop():
-    depth = np.full((1, 4, 4), 2.0, dtype=np.float32)
-    confidence = np.arange(16, dtype=np.float32).reshape(1, 4, 4)
-    rgbs = np.zeros((1, 8, 8, 3), dtype=np.uint8)
-
-    # Frame top half excluded: model rows 0-1, the 8 least-confident pixels
-    exclude = np.zeros((1, 8, 8), dtype=bool)
-    exclude[0, :4] = True
-
-    out = frame_depths(
-        _depth_result(depth, confidence), rgbs, conf_percentile=50, exclude=exclude
-    )
-
-    # p50 of the remaining 8 keeps only model row 3
-    assert (out[0, :6] == 0).all()
-    assert np.isclose(out[0, 6:], 2.0).all()
-
-
 def test_frame_depths_without_confidence_keeps_every_pixel():
     depth = np.full((1, 4, 4), 2.0, dtype=np.float32)
     rgbs = np.zeros((1, 8, 8, 3), dtype=np.uint8)

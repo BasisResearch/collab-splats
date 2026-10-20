@@ -2,6 +2,8 @@
 
 This package provides an interface for 3D scene reconstruction & semantic feature extraction from 2D RGB videos. We can flexibly configure processing pipelines with a variety of reconstruction backends, mesh texturing, and semantic lifting.
 
+For more details, see the [paper reference and figures](./docs/paper_figures.md).
+
 ## Quickstart
 
 ### Start the container
@@ -49,7 +51,7 @@ For a complete list of configuration options, please see [configs/README.md](con
 
 We also can use `collab-splats` for processing videos hosted in GCloud storage. However, this option requires (1) access to the `collab-data` repository and (2) GCS access (see [Private dependency](docs/source/installation.md#private-dependency-collab-data)). Please follow these steps to set up remote processing:
 
-1. Clone the private [collab-data](https://github.com/BasisResearch/collab-data) repo to `/workspace/collab-data`.
+1. Clone the private [collab-data](https://github.com/BasisResearch/collab-data) repo to `/workspace/collab-data`, then run `bash setup.sh` in `/workspace/collab-splats` to add the `remote` extra.
 2. Ask a maintainer for the GCS service-account key and save it as `/workspace/collab-data/config-local/collab-data.json`.
 3. Create the `collab-data` rclone remote, then check it lists the curated scenes:
 
@@ -125,12 +127,18 @@ curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh   # macOS / Linux; 0.12.
 
 ### 2. Install the package
 
-We install everything with `setup.sh`. It creates the venv at `/opt/venv/reconstruction`, installs all dependencies, and compiles the CUDA extensions (`bae`, `gsplat`, `fused-ssim`, `nvdiffrast`):
+We install everything with `setup.sh`. It creates the venv at `.venv` in the checkout (or uses the active / `UV_PROJECT_ENVIRONMENT` venv), installs all dependencies, and compiles the CUDA extensions (`bae`, `gsplat`, `fused-ssim`, `nvdiffrast`):
 
 ```sh
 git clone https://github.com/BasisResearch/collab-splats.git
 cd collab-splats
 bash setup.sh
+```
+
+Standalone setup w/o CUDA (semantics + dev tools, no CUDA build):
+
+```sh
+bash setup_nocuda.sh
 ```
 
 For extras, the semantics-only install and system requirements, see [Installation](docs/source/installation.md).

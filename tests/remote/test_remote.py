@@ -398,7 +398,7 @@ def test_check_available_false_when_the_client_cannot_be_constructed(monkeypatch
     def _boom():
         raise RuntimeError("rclone is not available")
 
-    monkeypatch.setattr(remote, "RcloneClient", _boom)
+    monkeypatch.setattr(remote, "_rclone_client", _boom)
     source = SceneSource(FakeClient())
     source._client = None
     assert source.check_available() is False
@@ -409,7 +409,7 @@ def test_check_available_reattempts_client_construction(monkeypatch):
     source = SceneSource(FakeClient())
     source._client = None
     recovered = FakeClient()
-    monkeypatch.setattr(remote, "RcloneClient", lambda: recovered)
+    monkeypatch.setattr(remote, "_rclone_client", lambda: recovered)
     assert source.check_available() is True
     assert source._client is recovered
 
@@ -624,7 +624,7 @@ def test_verify_push_false_when_rclone_unavailable(monkeypatch):
     def _boom():
         raise RuntimeError("rclone is not available")
 
-    monkeypatch.setattr(remote, "RcloneClient", _boom)
+    monkeypatch.setattr(remote, "_rclone_client", _boom)
     source = SceneSource()
     assert source._client is None
     assert source.verify_push(Path("/nonexistent/local"), "s") is False
@@ -818,3 +818,25 @@ def test_importing_the_remote_module_stays_light():
         "assert 'torch' not in sys.modules, 'collab_splats.remote import pulled torch'"
     )
     subprocess.run([sys.executable, "-c", code], check=True, timeout=120)
+
+
+########
+# Without collab-data — the optional `remote` extra
+########
+
+
+@pytest.mark.parametrize(
+    "module",
+    ["collab_splats.__main__", "collab_splats.viewer", "collab_splats.dashboard.app"],
+)
+def test_entry_points_import_without_collab_data(module):
+    # Blocking collab_data makes any import of it raise ImportError
+    code = f"import sys; sys.modules['collab_data'] = None; import {module}"
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=300)
+
+
+def test_scene_source_without_collab_data_names_the_extra(monkeypatch):
+    monkeypatch.setitem(sys.modules, "collab_data.data_dashboard.rclone_client", None)
+
+    with pytest.raises(ImportError, match="remote"):
+        SceneSource()

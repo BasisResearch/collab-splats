@@ -6,13 +6,29 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV=/opt/venv/reconstruction
+
+# Venv, first match wins: UV_PROJECT_ENVIRONMENT (the image sets it), the active venv, <repo>/.venv
+VENV="${UV_PROJECT_ENVIRONMENT:-${VIRTUAL_ENV:-$SCRIPT_DIR/.venv}}"
 PYTHON="$VENV/bin/python"
 export PIP_ROOT_USER_ACTION=ignore
 export UV_PROJECT_ENVIRONMENT="$VENV"
+echo "=== venv: $VENV ==="
 
 # uv from PATH: the Docker image puts it in /root/.local/bin, other installs elsewhere
 command -v uv >/dev/null || { echo "setup.sh: uv not on PATH — install it first (README §1)." >&2; exit 1; }
+
+# Existing venv on another Python: uv would delete and recreate it, so stop instead
+# - keeping it via UV_PYTHON is offered only at or above requires-python (3.11)
+WANT_PY="${UV_PYTHON:-$(cat "$SCRIPT_DIR/.python-version")}"
+if [ -x "$PYTHON" ]; then
+    HAVE_PY="$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+    if [ "$HAVE_PY" != "$WANT_PY" ]; then
+        KEEP=", or keep this one with UV_PYTHON=$HAVE_PY"
+        "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' || KEEP=" on Python >= 3.11"
+        echo "setup.sh: $VENV is Python $HAVE_PY, not $WANT_PY. Pick another venv (UV_PROJECT_ENVIRONMENT=...)$KEEP." >&2
+        exit 1
+    fi
+fi
 
 # CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim, nvdiffrast)
 # - toolkit is the user's to provide (docs/source/installation.md#system-requirements)
@@ -65,7 +81,7 @@ fi
 # resurrects the exact __config failure this block exists to prevent.
 # Skipped without nvcc: the overlay only feeds nvcc.
 if [ "$HAVE_NVCC" = 1 ]; then
-    CCCL_PREFIX="${CCCL_PREFIX:-/opt/cccl-12.6.77}"
+    CCCL_PREFIX="${CCCL_PREFIX:-${XDG_CACHE_HOME:-$HOME/.cache}/collab-splats/cccl-12.6.77}"
     CCCL_INC="$CCCL_PREFIX/nvidia/cuda_cccl/include"
     if [ ! -f "$CCCL_INC/cuda/std/optional" ]; then
         uv pip install --target "$CCCL_PREFIX" nvidia-cuda-cccl-cu12==12.6.77
@@ -91,16 +107,11 @@ export CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-80;90}"
 export MAX_JOBS="${MAX_JOBS:-2}"
 export UV_CONCURRENT_BUILDS="${UV_CONCURRENT_BUILDS:-1}"
 
-# collab-data: private repo, locked as a path dependency at /workspace/collab-data
-# - uv sync cannot resolve without it, so it must exist first
-# - Docker build supplies it as a build context; a bare host clones it (needs GitHub auth)
-COLLAB_DATA=/workspace/collab-data
-if [ ! -f "$COLLAB_DATA/setup.py" ]; then
-    echo "=== clone collab-data (private) into $COLLAB_DATA ==="
-    git clone https://github.com/BasisResearch/collab-data.git "$COLLAB_DATA" || {
-        echo "setup.sh: collab-data missing at $COLLAB_DATA and clone failed (no GitHub auth?)." >&2
-        exit 1
-    }
+# collab-data: private repo, the `remote` extra only; skipped without GitHub access
+EXTRAS=(--all-extras)
+if ! GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/BasisResearch/collab-data.git >/dev/null 2>&1; then
+    echo "setup.sh: WARN no access to BasisResearch/collab-data — skipping the remote extra (reconstruct remote, viewer remote, dashboard)." >&2
+    EXTRAS+=(--no-extra remote)
 fi
 
 # hloc: editable path source (pyproject [tool.uv.sources])
@@ -114,13 +125,13 @@ cd "$SCRIPT_DIR"
 # Dependency-only pass: Docker caches the slow CUDA compiles in their own layer
 # - needs only pyproject.toml + uv.lock, so source edits never invalidate it
 if [ "${SETUP_DEPS_ONLY:-0}" = 1 ]; then
-    uv sync --locked --all-extras --no-install-project \
+    uv sync --locked "${EXTRAS[@]}" --no-install-project \
         || sync_failed
     echo "=== setup complete (dependencies only) ==="
     exit 0
 fi
 
-uv sync --locked --all-extras \
+uv sync --locked "${EXTRAS[@]}" \
     || sync_failed
 
 # WordNet corpus for the ocr_lens vocabulary into $NLTK_DATA, else the venv (ships in the image's venv copy)

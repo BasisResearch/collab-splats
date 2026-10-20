@@ -77,9 +77,9 @@ reconstruction = [
     "open3d",
 ]
 
-# reconstruct remote + dashboard GCS access: private collab-data clone at /workspace/collab-data
+# reconstruct remote + dashboard GCS access: private BasisResearch/collab-data, tlb-3d-tools branch
 remote = [
-    "collab_data @ file:///workspace/collab-data",
+    "collab_data @ git+https://github.com/BasisResearch/collab-data.git@tlb-3d-tools",
 ]
 
 # InstantSfM sfm backend (its own requires-dist is blanked below)
@@ -266,6 +266,12 @@ requires-dist = ["numpy"]
 name = "collab-data"
 version = "0.0.1"
 requires-dist = ["gcsfs", "loguru"]
+
+# hloc: a sync without the setup/hloc.sh clone still resolves
+[[tool.uv.dependency-metadata]]
+name = "hloc"
+version = "1.5"
+requires-dist = ["gdown", "h5py", "kornia>=0.6.11", "lightglue @ git+https://github.com/cvg/LightGlue", "matplotlib", "numpy", "opencv-python", "plotly", "pycolmap>=3.13.0", "scipy", "torch>=1.1", "torchvision>=0.3", "tqdm>=4.36.0"]
 
 # instantsfm pins numpy 1.26 etc. exactly; our lock owns those
 [[tool.uv.dependency-metadata]]

@@ -160,7 +160,9 @@ def _allowed_dists() -> set[str]:
     """
     Normalized distribution names in base dependencies plus the semantics extra.
     """
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
     requirements = (
         project["dependencies"] + project["optional-dependencies"]["semantics"]
     )

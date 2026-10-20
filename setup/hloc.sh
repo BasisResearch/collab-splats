@@ -5,7 +5,8 @@
 # - re-pinned every run, as setup/loger.sh does; installing is uv's job, never pip's
 set -euo pipefail
 
-HLOC_DIR="$(cd "$(dirname "$0")/.." && pwd)/third_party/hloc"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+HLOC_DIR="$REPO_DIR/third_party/hloc"
 COMMIT="c13273bd0ecc2917a35910fd843712a1c6243193"
 
 echo "==> hloc @ ${COMMIT:0:7}"
@@ -18,7 +19,7 @@ git -C "$HLOC_DIR" submodule update --init --recursive --quiet
 
 # Weight prefetch: netvlad + LightGlue download on first use otherwise, mid-run
 # - best-effort: a deps-only Docker pass has no venv yet; run again after the sync
-PYTHON=/opt/venv/reconstruction/bin/python
+PYTHON="${UV_PROJECT_ENVIRONMENT:-${VIRTUAL_ENV:-$REPO_DIR/.venv}}/bin/python"
 if [ "${1:-}" = "--prefetch" ]; then
     "$PYTHON" - <<'EOF' || echo "WARN: hloc weight prefetch failed — weights will download on first use."
 from hloc import extract_features, extractors, match_features, matchers

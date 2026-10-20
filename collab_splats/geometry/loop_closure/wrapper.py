@@ -769,7 +769,9 @@ class LoopClosure:
             # Source pixel of each kept point, as global [frame, row, col]
             frame, row, col = np.unravel_index(idx, grid[skip:].shape[:3])
             pix_chunks.append(
-                np.stack([frame + s.frame_start + skip, row, col], axis=1).astype(np.int32)
+                np.stack([frame + s.frame_start + skip, row, col], axis=1).astype(
+                    np.int32
+                )
             )
 
             # Size the per-pixel arrays from the first grid

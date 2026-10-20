@@ -67,9 +67,20 @@ def clean_repair_mesh(
 
     Returns:
         The cleaned mesh, and mesh itself after the floater cut: only fused faces, no hull or hole fill.
+
+    Raises:
+        ValueError: use_convex_hull is on and c2w is None.
     """
     real = remove_floaters(mesh, min_area_frac=min_area_frac, max_gap_frac=max_gap_frac)
-    cleaned = make_convex_hull(real, c2w) if use_convex_hull else real
+    cleaned = real
+
+    # Optional hull between the floater cut and the hole fill; needs the camera poses
+    if use_convex_hull:
+        if c2w is None:
+            raise ValueError("clean_repair_mesh: use_convex_hull needs c2w")
+
+        cleaned = make_convex_hull(real, c2w)
+
     cleaned = fill_holes(
         cleaned,
         max_hole_perimeter_ratio=max_hole_perimeter_ratio,

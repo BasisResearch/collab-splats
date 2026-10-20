@@ -424,18 +424,18 @@
                   
   <section id="docker-image">
 <h1>Docker image<a class="headerlink" href="#docker-image" title="Link to this heading">#</a></h1>
-<p>We build the image with the same <code class="docutils literal notranslate"><span class="pre">setup.sh</span></code>, with every CUDA extension compiled ahead of time. Build it from the collab-splats checkout, with <code class="docutils literal notranslate"><span class="pre">collab-data</span></code> cloned beside it (<code class="docutils literal notranslate"><span class="pre">../collab-data</span></code>):</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>build<span class="w"> </span>--platform<span class="o">=</span>linux/amd64<span class="w"> </span>--progress<span class="o">=</span>plain<span class="w"> </span>--build-context<span class="w"> </span>collab-data<span class="o">=</span>../collab-data<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">MAX_JOBS</span><span class="o">=</span><span class="m">4</span><span class="w"> </span>-t<span class="w"> </span>collab-splats:release<span class="w"> </span>.
+<p>We build the image with the same <code class="docutils literal notranslate"><span class="pre">setup.sh</span></code>, with every CUDA extension compiled ahead of time. Build it from the collab-splats checkout:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>build<span class="w"> </span>--platform<span class="o">=</span>linux/amd64<span class="w"> </span>--progress<span class="o">=</span>plain<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">MAX_JOBS</span><span class="o">=</span><span class="m">4</span><span class="w"> </span>-t<span class="w"> </span>collab-splats:release<span class="w"> </span>.
 docker<span class="w"> </span>run<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-it<span class="w"> </span>collab-splats:release<span class="w"> </span>bash
 </pre></div>
 </div>
-<p>Push it to Docker Hub (keep the repo private: the image contains <code class="docutils literal notranslate"><span class="pre">collab-data</span></code>):</p>
+<p>Push it to Docker Hub. The image has no collab-data; people with access add it with <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">setup.sh</span></code> in the container:</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>docker<span class="w"> </span>tag<span class="w"> </span>collab-splats:release<span class="w"> </span>tommybotch/collab-splats:release
 docker<span class="w"> </span>push<span class="w"> </span>tommybotch/collab-splats:release
 </pre></div>
 </div>
 <ul class="simple">
-<li><p><strong>First build takes ~2.5 h</strong>; later builds take minutes unless <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code>, <code class="docutils literal notranslate"><span class="pre">uv.lock</span></code>, <code class="docutils literal notranslate"><span class="pre">LICENSE</span></code>, <code class="docutils literal notranslate"><span class="pre">setup.sh</span></code>, <code class="docutils literal notranslate"><span class="pre">setup/hloc.sh</span></code> or <code class="docutils literal notranslate"><span class="pre">collab-data</span></code> change.</p></li>
+<li><p><strong>First build takes ~2.5 h</strong>; later builds take minutes unless <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code>, <code class="docutils literal notranslate"><span class="pre">uv.lock</span></code>, <code class="docutils literal notranslate"><span class="pre">LICENSE.md</span></code>, <code class="docutils literal notranslate"><span class="pre">.python-version</span></code>, <code class="docutils literal notranslate"><span class="pre">setup.sh</span></code> or <code class="docutils literal notranslate"><span class="pre">setup/hloc.sh</span></code> change.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">MAX_JOBS</span></code></strong>: Docker memory in GB / 8, at most 6.</p></li>
 <li><p><strong>GPUs</strong>: Ampere/Ada (A100, A40, L40, RTX 30xx/40xx) and Hopper (H100). Not supported: Volta/Turing, Blackwell.</p></li>
 </ul>

@@ -484,10 +484,10 @@
 <section id="dashboard">
 <h2>Dashboard<a class="headerlink" href="#dashboard" title="Link to this heading">#</a></h2>
 <p>We provide a browser dashboard to pick a remote scene and backend, run stages, view the pointcloud or mesh, and query semantics by text. It imports the whole pipeline, so it needs the full install (<code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">setup.sh</span></code>), plus the rclone remote:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>collab-dashboard<span class="w">            </span><span class="c1"># or: python -m collab_splats.dashboard</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>collab-dashboard<span class="w"> </span>--base-dir<span class="w"> </span>/PATH/TO/OUTPUT<span class="w">   </span><span class="c1"># or: python -m collab_splats.dashboard --base-dir ...</span>
 </pre></div>
 </div>
-<p>Then open <code class="docutils literal notranslate"><span class="pre">http://localhost:7860</span></code> (change with <code class="docutils literal notranslate"><span class="pre">--port</span></code>, <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--base-dir</span></code>). When browsing via an IP or forwarded hostname, add <code class="docutils literal notranslate"><span class="pre">--websocket-origin</span> <span class="pre">&lt;host&gt;:&lt;port&gt;</span></code> (or <code class="docutils literal notranslate"><span class="pre">'*'</span></code>), otherwise the page loads but never renders. Restart it to pick up code changes.</p>
+<p>Then open <code class="docutils literal notranslate"><span class="pre">http://localhost:7860</span></code> (change with <code class="docutils literal notranslate"><span class="pre">--port</span></code>, <code class="docutils literal notranslate"><span class="pre">--host</span></code>). When browsing via an IP or forwarded hostname, add <code class="docutils literal notranslate"><span class="pre">--websocket-origin</span> <span class="pre">&lt;host&gt;:&lt;port&gt;</span></code> (or <code class="docutils literal notranslate"><span class="pre">'*'</span></code>), otherwise the page loads but never renders. Restart it to pick up code changes.</p>
 </section>
 <section id="adding-curated-videos">
 <h2>Adding Curated Videos<a class="headerlink" href="#adding-curated-videos" title="Link to this heading">#</a></h2>

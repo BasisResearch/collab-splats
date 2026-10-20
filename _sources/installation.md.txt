@@ -15,10 +15,7 @@ uv sync --extra dev                             # + lint / test tooling
 uv sync --all-extras                            # everything (what setup.sh does)
 ```
 
-Every `uv sync` needs the two path sources in the lock to exist first; `setup.sh` creates both:
-
-- `collab-data` at `/workspace/collab-data` (see [Private dependency](#private-dependency-collab-data)).
-- the hloc clone in `third_party/hloc`: run `bash setup/hloc.sh`.
+`--extra hloc` (and `uv lock`) need the hloc clone first: run `bash setup/hloc.sh`.
 
 The `loger` backend is a source clone, not a package: run `bash setup/loger.sh`.
 
@@ -26,7 +23,7 @@ The `loger` backend is a source clone, not a package: run `bash setup/loger.sh`.
 > - The CUDA extensions build from source and need `nvcc` + `build-essential`; `setup.sh` points the build at your CUDA toolkit and warns if `nvcc` is missing.
 > - `uv pip install` from outside this repo skips our dependency overrides, so it does not match `uv.lock`.
 
-All later commands assume the venv is active (`source /opt/venv/reconstruction/bin/activate`), or prefix them with `uv run`.
+All later commands assume the venv is active (`source .venv/bin/activate`; the image: `/opt/venv/reconstruction`), or prefix them with `uv run`.
 
 ## Semantics only
 
@@ -51,7 +48,7 @@ This covers the `talk2dino`, `dinov2` and `ocr_lens` features and the `insid3` a
 
 ## Private dependency (collab-data)
 
-`collab-data` is a private BasisResearch repo that must sit at `/workspace/collab-data`. `setup.sh` clones it there if missing (needs GitHub credentials).
+`collab-data` is a private BasisResearch repo; the `remote` extra installs it from git (`tlb-3d-tools` branch) and needs GitHub access. Without access, `setup.sh` skips it, and only `reconstruct remote`, `viewer remote` and the dashboard are unavailable.
 
 The dashboard and `reconstruct remote` read and write scenes through an rclone remote named `collab-data` (Google Cloud Storage). Install `rclone` and `jq`:
 

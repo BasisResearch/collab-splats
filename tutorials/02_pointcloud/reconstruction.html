@@ -578,9 +578,9 @@ depth scale: median 5.02, range 4.30-6.77
 <p>Given that no ground truth exists, we evaluate the quality of the reconstruction as multi-view agreement. We project each frame’s depth into the other frames –&gt; two views that see the same surface should align in depth.</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">reconstruction_quality_report</span></code> stage measures:</p>
 <ul class="simple">
-<li><p><strong>multiview agreement:</strong> share of a frame’s pixels whose depth another view confirms within 5%. 1 means every pixel is confirmed.</p></li>
-<li><p><strong>relative depth residual:</strong> (depth seen by view B − depth predicted from view A) / depth. 0 means the views agree; 0.1 means 10% off.</p></li>
-<li><p><strong>parallax:</strong> angle between two views of the same point. Small parallax pins depth poorly.</p></li>
+<li><p>multiview agreement: share of a frame’s pixels whose depth another view confirms within 5%. 1 means every pixel is confirmed.</p></li>
+<li><p>relative depth residual: (depth seen by view B − depth predicted from view A) / depth. 0 means the views agree; 0.1 means 10% off.</p></li>
+<li><p>parallax: angle between two views of the same point. Small parallax pins depth poorly.</p></li>
 </ul>
 <p>The five frames with the lowest agreement:</p>
 <div class="nbinput docutils container">

@@ -42,10 +42,10 @@ Our tutorials in `docs/source/tutorials/` walk through each stage on one shared 
 We provide a browser dashboard to pick a remote scene and backend, run stages, view the pointcloud or mesh, and query semantics by text. It imports the whole pipeline, so it needs the full install (`bash setup.sh`), plus the rclone remote:
 
 ```bash
-collab-dashboard            # or: python -m collab_splats.dashboard
+collab-dashboard --base-dir /PATH/TO/OUTPUT   # or: python -m collab_splats.dashboard --base-dir ...
 ```
 
-Then open `http://localhost:7860` (change with `--port`, `--host`, `--base-dir`). When browsing via an IP or forwarded hostname, add `--websocket-origin <host>:<port>` (or `'*'`), otherwise the page loads but never renders. Restart it to pick up code changes.
+Then open `http://localhost:7860` (change with `--port`, `--host`). When browsing via an IP or forwarded hostname, add `--websocket-origin <host>:<port>` (or `'*'`), otherwise the page loads but never renders. Restart it to pick up code changes.
 
 ## Adding Curated Videos
 

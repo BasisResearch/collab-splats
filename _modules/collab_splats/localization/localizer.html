@@ -512,7 +512,11 @@
     <span class="k">if</span> <span class="n">small_hw</span> <span class="o">==</span> <span class="n">full_hw</span><span class="p">:</span>
         <span class="k">return</span> <span class="n">result</span>
 
-    <span class="n">K</span> <span class="o">=</span> <span class="n">_rescale_center_intrinsics</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">query_intrinsics</span><span class="p">,</span> <span class="n">small_hw</span><span class="p">,</span> <span class="n">full_hw</span><span class="p">)</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">query_intrinsics</span>
+
+    <span class="k">if</span> <span class="n">K</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">K</span> <span class="o">=</span> <span class="n">_rescale_center_intrinsics</span><span class="p">(</span><span class="n">K</span><span class="p">,</span> <span class="n">small_hw</span><span class="p">,</span> <span class="n">full_hw</span><span class="p">)</span>
+
     <span class="n">pts2d</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">pts2d</span>
 
     <span class="k">if</span> <span class="n">pts2d</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>

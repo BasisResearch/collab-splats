@@ -744,9 +744,7 @@
 <span class="sd">    """</span>
     <span class="n">video_path</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">count</span><span class="p">,</span> <span class="n">emit_from</span><span class="p">,</span> <span class="n">stride</span> <span class="o">=</span> <span class="n">args</span>
 
-    <span class="c1"># Pin cv2, BLAS and PyAV decode to one thread per worker; unpinned fan-out oversubscribes</span>
-    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"OMP_NUM_THREADS"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"1"</span>
-    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"OPENBLAS_NUM_THREADS"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"1"</span>
+    <span class="c1"># Pin cv2 and PyAV decode to one thread per worker; BLAS is pinned at spawn</span>
     <span class="n">cv2</span><span class="o">.</span><span class="n">setNumThreads</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 
     <span class="n">frame_rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
@@ -914,10 +912,24 @@
         <span class="n">results</span> <span class="o">=</span> <span class="p">[</span><span class="n">measure</span><span class="p">(</span><span class="n">ranges</span><span class="p">[</span><span class="mi">0</span><span class="p">])]</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="c1"># Spawn, not fork: a forked worker deadlocks in cv2 if the parent already used cv2</span>
+        <span class="c1"># - a spawned worker sizes BLAS/OpenMP from the env as it imports numpy</span>
+        <span class="c1"># - unpinned, one thread per CPU each: 16 on 96 CPUs exhaust a pids cgroup</span>
+        <span class="c1"># - so pin the env the workers inherit, only while the pool is alive</span>
         <span class="n">spawn</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">get_context</span><span class="p">(</span><span class="s2">"spawn"</span><span class="p">)</span>
+        <span class="n">one_thread</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"OMP_NUM_THREADS"</span><span class="p">:</span> <span class="s2">"1"</span><span class="p">,</span> <span class="s2">"OPENBLAS_NUM_THREADS"</span><span class="p">:</span> <span class="s2">"1"</span><span class="p">}</span>
+        <span class="n">saved</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">one_thread</span><span class="p">}</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">one_thread</span><span class="p">)</span>
 
-        <span class="k">with</span> <span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">ranges</span><span class="p">),</span> <span class="n">mp_context</span><span class="o">=</span><span class="n">spawn</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
-            <span class="n">results</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">measure</span><span class="p">,</span> <span class="n">ranges</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">with</span> <span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">ranges</span><span class="p">),</span> <span class="n">mp_context</span><span class="o">=</span><span class="n">spawn</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+                <span class="n">results</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">measure</span><span class="p">,</span> <span class="n">ranges</span><span class="p">))</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="c1"># Restore the parent's env: torch imported later would start one thread</span>
+            <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">saved</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
 
     <span class="c1"># pool.map yields in submission order, and the ranges were built in ascending</span>
     <span class="c1"># order, so concatenating is the whole merge.</span>

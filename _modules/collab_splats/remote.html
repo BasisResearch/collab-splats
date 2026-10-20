@@ -417,9 +417,11 @@
 <span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">collab_data.data_dashboard.rclone_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">RcloneClient</span>
+<span class="c1"># Annotation-only: collab-data is the optional `remote` extra, imported where a client is built</span>
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">collab_data.data_dashboard.rclone_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">RcloneClient</span>
 
 <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
 
@@ -452,6 +454,22 @@
 <span class="c1">########################################</span>
 
 
+<span class="k">def</span><span class="w"> </span><span class="nf">_rclone_client</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">RcloneClient</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    collab-data's default RcloneClient.</span>
+<span class="sd">    """</span>
+    <span class="c1"># Imported here: collab-data is the optional `remote` extra (private repo)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">collab_data.data_dashboard.rclone_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">RcloneClient</span>
+    <span class="k">except</span> <span class="ne">ImportError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ImportError</span><span class="p">(</span>
+            <span class="s2">"remote scene access needs collab-data: install the `remote` extra "</span>
+            <span class="s2">"(private BasisResearch/collab-data repo), e.g. uv sync --extra remote"</span>
+        <span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+
+    <span class="k">return</span> <span class="n">RcloneClient</span><span class="p">()</span>
+
+
 <div class="viewcode-block" id="SceneSource">
 <a class="viewcode-back" href="../../api/reconstructor.html#collab_splats.remote.SceneSource">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">SceneSource</span><span class="p">:</span>
@@ -475,6 +493,7 @@
 <span class="sd">        Bind a client and the two buckets.</span>
 
 <span class="sd">        - a client that fails to construct degrades to None; check_available retries it</span>
+<span class="sd">        - collab-data not installed raises ImportError</span>
 
 <span class="sd">        Args:</span>
 <span class="sd">            client: rclone client; None builds the default one.</span>
@@ -494,7 +513,10 @@
 
         <span class="k">if</span> <span class="n">client</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">RcloneClient</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">_rclone_client</span><span class="p">()</span>
+            <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+                <span class="c1"># A missing install is not transient: fail now, not on first use</span>
+                <span class="k">raise</span>
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
                 <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">"rclone unavailable: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
 
@@ -570,7 +592,7 @@
         <span class="c1"># Retry a client that failed at construction, or a transient fault would stick forever</span>
         <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
             <span class="k">try</span><span class="p">:</span>
-                <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">RcloneClient</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">_rclone_client</span><span class="p">()</span>
             <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
                 <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">"rclone still unavailable on re-attempt: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">exc</span><span class="p">)</span>
                 <span class="k">return</span> <span class="kc">False</span>

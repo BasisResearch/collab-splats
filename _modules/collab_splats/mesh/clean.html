@@ -475,9 +475,20 @@
 
 <span class="sd">    Returns:</span>
 <span class="sd">        The cleaned mesh, and mesh itself after the floater cut: only fused faces, no hull or hole fill.</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        ValueError: use_convex_hull is on and c2w is None.</span>
 <span class="sd">    """</span>
     <span class="n">real</span> <span class="o">=</span> <span class="n">remove_floaters</span><span class="p">(</span><span class="n">mesh</span><span class="p">,</span> <span class="n">min_area_frac</span><span class="o">=</span><span class="n">min_area_frac</span><span class="p">,</span> <span class="n">max_gap_frac</span><span class="o">=</span><span class="n">max_gap_frac</span><span class="p">)</span>
-    <span class="n">cleaned</span> <span class="o">=</span> <span class="n">make_convex_hull</span><span class="p">(</span><span class="n">real</span><span class="p">,</span> <span class="n">c2w</span><span class="p">)</span> <span class="k">if</span> <span class="n">use_convex_hull</span> <span class="k">else</span> <span class="n">real</span>
+    <span class="n">cleaned</span> <span class="o">=</span> <span class="n">real</span>
+
+    <span class="c1"># Optional hull between the floater cut and the hole fill; needs the camera poses</span>
+    <span class="k">if</span> <span class="n">use_convex_hull</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">c2w</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"clean_repair_mesh: use_convex_hull needs c2w"</span><span class="p">)</span>
+
+        <span class="n">cleaned</span> <span class="o">=</span> <span class="n">make_convex_hull</span><span class="p">(</span><span class="n">real</span><span class="p">,</span> <span class="n">c2w</span><span class="p">)</span>
+
     <span class="n">cleaned</span> <span class="o">=</span> <span class="n">fill_holes</span><span class="p">(</span>
         <span class="n">cleaned</span><span class="p">,</span>
         <span class="n">max_hole_perimeter_ratio</span><span class="o">=</span><span class="n">max_hole_perimeter_ratio</span><span class="p">,</span>

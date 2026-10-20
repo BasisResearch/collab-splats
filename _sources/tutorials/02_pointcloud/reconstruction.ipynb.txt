@@ -206,11 +206,11 @@
     "\n",
     "The `reconstruction_quality_report` stage measures:\n",
     "\n",
-    "- **multiview agreement:** share of a frame's pixels whose depth another view confirms within 5%.\n",
+    "- multiview agreement: share of a frame's pixels whose depth another view confirms within 5%.\n",
     "  1 means every pixel is confirmed.\n",
-    "- **relative depth residual:** (depth seen by view B − depth predicted from view A) / depth.\n",
+    "- relative depth residual: (depth seen by view B − depth predicted from view A) / depth.\n",
     "  0 means the views agree; 0.1 means 10% off.\n",
-    "- **parallax:** angle between two views of the same point. Small parallax pins depth poorly.\n",
+    "- parallax: angle between two views of the same point. Small parallax pins depth poorly.\n",
     "\n",
     "The five frames with the lowest agreement:"
    ]

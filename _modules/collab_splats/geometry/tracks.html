@@ -507,7 +507,7 @@
 
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">store</span><span class="p">,</span> <span class="n">zarr</span><span class="o">.</span><span class="n">Group</span><span class="p">):</span>
             <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">"Track cache hit (skipping extraction): </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="n">cache_path</span><span class="p">)</span>
-            <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">store</span><span class="p">[</span><span class="n">k</span><span class="p">])</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">arrays</span><span class="p">)</span>  <span class="c1"># type: ignore[return-value]</span>
+            <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">store</span><span class="p">[</span><span class="n">k</span><span class="p">])</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">arrays</span><span class="p">)</span>
 
     <span class="c1"># VGGSfM predicts tracks; matcher sources chain verified matches over the prior poses</span>
     <span class="k">if</span> <span class="n">source</span> <span class="o">==</span> <span class="s2">"vggsfm"</span><span class="p">:</span>

@@ -22,3 +22,8 @@ evals/baselines/
 # copy would bake in whatever the host has, checkpoints included
 third_party/*
 !third_party/README.md
+
+# Credentials, never part of the image
+api-key*.json
+api-keys/
+config-local/

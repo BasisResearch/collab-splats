@@ -240,3 +240,6 @@ __marimo__/
 config-local/
 evals/data/docs/.cache/
 
+# Credentials
+api-key*.json
+api-keys/

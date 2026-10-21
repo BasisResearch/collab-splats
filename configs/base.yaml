@@ -1,0 +1,109 @@
+# Reconstructor defaults; a run config merges over this file.
+# Keys left out take the module's own defaults; see configs/README.md.
+
+input_path: null
+output_path: null
+
+
+########################################
+# preproc: video -> images/
+########################################
+
+preproc:
+  frame_selection: fps   # fps | uniform | optical_flow
+  fps: 4.0
+  max_frames: 300        # vggt_omega OOMs above ~300
+  on_empty_slot: drop    # fps: a slot with no frame passing quality stays empty
+  quality:               # filter_frame_quality thresholds
+    sharpness_k: 2.0
+    max_clipped_frac: 0.25
+  n_workers: 16          # 1 during GPU runs
+  undistort: false
+
+
+########################################
+# pointcloud: images/ -> <backend>/pointcloud.zarr
+########################################
+
+pointcloud:
+  method: feedforward    # feedforward | sfm
+  backend: vggt_omega    # vggt_omega | vggtx | mapanything | loger | instantsfm | colmap | hloc
+  max_points: 500000
+  clean:
+    enabled: true
+  loop_closure: false
+  bundle_adjustment:        # skipped for sfm
+    enabled: true
+    strategy: global          # with LC: window | global | window+global
+    track_kwargs:
+      pairing: exhaustive     # exhaustive | sequential+retrieval
+      seed_fraction: 1.0      # every frame seeds tracks
+  viz:
+    enabled: false
+    port: 8080
+
+
+########################################
+# semantics: features lifted onto the points
+########################################
+
+semantics:
+  enabled: true
+  extractors: [talk2dino, ocr_lens]   # run in order; talk2dino | dinov2 | maskclip | ocr_lens
+  n_components: 128      # null = full width
+  target_cosine: 0.975   # null = run max_epochs; else stop at this mean reconstruction cosine
+  max_epochs: 30
+
+
+########################################
+# mesh: TSDF fusion -> <backend>/mesh.ply
+########################################
+
+mesh:
+  enabled: true
+  source: feedforward          # feedforward | splats
+
+  # Depth filtering
+  depth_trunc_percentile: 99   # required, max 99
+  conf_percentile: 20          # of non-sky pixels when mask_sky; null = off
+  mask_sky: true
+
+  # TSDF fusion
+  voxel_depth_px: 4.0
+  voxel_ref_percentile: 50
+  sdf_trunc_mult: 6.0
+
+  # Cleanup
+  use_convex_hull: true
+  smooth_iterations: 30
+  max_faces: 1500000
+
+  # Texture
+  texture: true                # CUDA only
+
+
+########################################
+# splats: gsplat training
+########################################
+
+splats:
+  enabled: false
+  primitive: 3dgs        # 3dgs | 2dgs
+
+
+########################################
+# localization: query image -> pose
+########################################
+
+localization:
+  enabled: true
+  matcher: xfeat         # xfeat | loma
+  retrieval: megaloc     # megaloc | dino-salad
+
+
+########################################
+# reconstruction_quality_report
+########################################
+
+reconstruction_quality_report:
+  min_pair_overlap: 0.0

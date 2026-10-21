@@ -1,51 +1,129 @@
 [project]
 name = "collab_splats"
 version = "0.0.1"
-description = "ns-extension: Extension tools and models for nerfstudio"
+description = "Feedforward reconstruction, Gaussian-splat training, meshing and localization pipeline"
 readme = "README.md"
-requires-python = ">=3.8"
-license = { file = "LICENSE" }
+requires-python = ">=3.11"
+license = { file = "LICENSE.md" }
 keywords = ["gaussian splatting", "depth rasterization", "mesh"]
 authors = [
     { name = "Tommy Botch", email = "tommy@basis.ai" },
 ]
 
 dependencies = [
-    "einops",
-    "ftfy",
-    "gdown",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pillow",
+    "pyyaml",
+    "tqdm",
     "matplotlib",
     "mergedeep",
-    "numpy<2.0.0",
-    "scipy==1.11.4", # Require to play nice w/ numpy
-    "lightning",
-    "pillow",
-    "regex",
-    "tqdm",
+    "python-dotenv",
+    "zarr>=2.16",
     "huggingface_hub",
-    "ultralytics",
-    "fairscale",
-    "gradio",
-    "pyvista",
-    "pyntcloud",
-    "trame",
-    "trame-vuetify",
-    "trame-vtk",
-    "meshlib==3.0.9.196",
-    "dotenv",
-    "pyyaml",
-    "mobile_sam @ git+https://github.com/ChaoningZhang/MobileSAM.git",
-    "gsplat @ git+https://github.com/brian-xu/gsplat-rade.git",
-    "maskclip_onnx @ git+https://github.com/RogerQi/maskclip_onnx.git",
-    "nerfstudio @ git+https://github.com/BasisResearch/nerfstudio.git"
 ]
 
 [project.optional-dependencies]
+# 2D features + segmentation: CPU or GPU, no CUDA build
+semantics = [
+    "torch",
+    "torchvision",
+    "transformers>=4.30,<5.0",
+    "timm>=0.9,<2.0",
+    "opencv-python",
+    "scikit-learn",
+    "scikit-image",
+    "kornia",
+    "safetensors",
+    "av>=17.0",                          # PyAV frame decode (preproc)
+    "nltk>=3.8",                         # WordNet vocabulary for ocr_lens
+    "pyarrow",                           # parquet backgrounds for score_ocr_heads
+    "segmentation-models-pytorch==0.5.0",  # unpinned resolves a release needing pretrainedmodels
+    # Talk2DINOv3 remote code needs clip, einops, omegaconf; clip as a direct URL (PyPI `clip` is unrelated)
+    "clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6",
+    "einops",
+    "omegaconf",
+]
+
+# Full pipeline: pointcloud, BA, splats, mesh, localization; needs the CUDA toolchain (setup.sh)
+reconstruction = [
+    "collab_splats[semantics]",
+    "setuptools<70.0",                   # maskclip_onnx needs pkg_resources.packaging
+    "wheel",                             # no-build-isolation builds run in the venv
+    "ninja",
+    "torch==2.5.1+cu121; sys_platform != 'darwin'",
+    "torchvision==0.20.1+cu121; sys_platform != 'darwin'",
+    "ftfy",                              # undeclared maskclip_onnx import
+    "seaborn",
+    "ultralytics",
+    "pyvista[jupyter]",
+    "viser>=1.0",                        # 3D web viewer
+    "meshlib==3.1.4.297",                # mesh decimation + hole patching
+    # nvdiffrast: texture bake rasterizer; compiles its CUDA extension at install (needs nvcc)
+    "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast@253ac4fcea7de5f396371124af597e6cc957bfae",
+    "trimesh",
+    "pydantic==2.10.6",
+    "pycolmap-cuda12==4.1.1",            # GPU SIFT; 4.2 is ~14x slower verifying single-camera scenes
+    # BasisResearch fork, `basis` branch: batched extract + match_batch
+    "vismatch @ git+https://github.com/BasisResearch/vismatch@865d91a52ff23f60096188e0e0a748911768535d",
+    "mobile_sam",
+    "torchpack",                         # undeclared mobilesamv2 import
+    "gsplat",                            # built from source, see [tool.uv.sources]
+    "fused-ssim",                        # CUDA SSIM for gsplat losses
+    "maskclip_onnx",
+    "pypose<0.9",                        # 0.9+ rejects bae 0.2.x at import
+    "nvidia-cudss-cu12==0.6.0.5",        # cuDSS for bae
+    "bae",                               # BA CUDA extension; PyPI `bae` is unrelated, see [tool.uv.sources]
+    "open3d",
+]
+
+# reconstruct remote + dashboard GCS access: private BasisResearch/collab-data, tlb-3d-tools branch
+remote = [
+    "collab_data @ git+https://github.com/BasisResearch/collab-data.git@tlb-3d-tools",
+]
+
+# InstantSfM sfm backend (its own requires-dist is blanked below)
+instantsfm = [
+    "instantsfm",
+    "pyceres==2.3",
+    "scikit-sparse==0.4.15",             # needs libsuitesparse-dev
+    "easydict==1.13",                    # Video-Depth-Anything runtime dep
+]
+
+# Feedforward backends; git sources pinned in [tool.uv.sources]
+feedforward = [
+    "uniception==0.1.7",
+    "viser>=0.2.23",
+    "evo",
+    "safetensors",
+    "open3d",
+    "gtsam>=4.3.0",                      # 4.3 carries SL4
+    "pytorch-metric-learning",           # salad runtime dep
+    "vggt",
+    "vggt-omega",
+    "mapanything",
+    "lightglue",
+    "salad",
+]
+
+# hloc sfm backend: editable clone from setup/hloc.sh
+hloc = ["hloc"]
+
+# CUDA headers/libs torch does not vendor; NOT a compiler, builds need a system toolkit
+gpu = [
+  "cuda-toolkit[all]==12.1.1",
+]
+
+dashboard = [
+  "panel>=1.3.0",
+  "param>=2.0.0",
+]
+
 docs = [
   "setuptools",
   "sphinx",
   "sphinxcontrib-bibtex",
-  "sphinx_rtd_theme",
+  "pydata-sphinx-theme",
   "myst-parser",
   "nbsphinx",
 ]
@@ -54,7 +132,7 @@ dev = [
   "setuptools",
   "sphinx",
   "sphinxcontrib-bibtex",
-  "sphinx_rtd_theme",
+  "pydata-sphinx-theme",
   "myst-parser",
   "nbsphinx",
   "pytest",
@@ -69,21 +147,23 @@ dev = [
   "isort",
   "flake8>=6.0",
   "types-PyYAML",
-  "scikit-build-core",
-  "pybind11",
 ]
 
 [tool.black]
-line-length = 120
+line-length = 88
 
-[project.entry-points."nerfstudio.method_configs"]
-rade-gs = "collab_splats.configs.rade_gs_method:rade_gs_method"
-rade-features = "collab_splats.configs.rade_features_method:rade_features_method"
+[project.scripts]
+collab-dashboard = "collab_splats.dashboard.__main__:main"
+reconstruct = "collab_splats.__main__:main"
 
 [tool.setuptools.packages]
 find = { include = ["collab_splats", "collab_splats.*"] }
 
+[tool.setuptools.package-data]
+"collab_splats.semantics.features" = ["assets/*.pt"]
+
 [build-system]
+# setuptools<70: maskclip_onnx imports pkg_resources.packaging, removed in 70
 requires = ["setuptools<70.0"]
 build-backend = "setuptools.build_meta"
 
@@ -101,11 +181,123 @@ flake8 = [
 ignore_missing_imports = true
 warn_unused_ignores = true
 exclude = "build"
+allow_redefinition = true
+disable_error_code = ["var-annotated"]
 
 [tool.pytest.ini_options]
-addopts = "--doctest-modules --ignore=tests/test_meshlib.py"
+addopts = "--import-mode=importlib -m 'not gpu'"
 testpaths = ["./tests"]
+pythonpath = ["."]
+markers = [
+    "slow: requires network access or GPU (deselect with -m 'not slow')",
+    "gpu: real-model or real-data run, deselected by default; opt in with -m gpu (an explicit -m replaces the default, so -m 'not slow' re-includes gpu tests)",
+]
 
 [tool.isort]
 profile = "black"
 skip_gitignore = true
+# Import groups: stdlib, third-party, model upstreams, our code
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "MODELS", "FIRSTPARTY", "LOCALFOLDER"]
+known_first_party = ["collab_splats", "evals", "tests"]
+known_models = [
+    "bae",
+    "collab_data",
+    "gsplat",
+    "gtsam",
+    "hloc",
+    "instantsfm",
+    "loger",
+    "mapanything",
+    "maskclip_onnx",
+    "mobile_sam",
+    "nvdiffrast",
+    "pypose",
+    "salad",
+    "sam3",
+    "segmentation_models_pytorch",
+    "video_depth_anything",
+    "vggt",
+    "vggt_omega",
+    "vismatch",
+]
+
+##############################
+# uv configuration
+##############################
+
+[tool.uv]
+# Force the torch stack, numpy and a few pins over what transitive deps declare
+override-dependencies = [
+    "torch==2.5.1+cu121; sys_platform != 'darwin'",
+    "torch==2.5.1; sys_platform == 'darwin'",
+    "torchvision==0.20.1+cu121; sys_platform != 'darwin'",
+    "torchvision==0.20.1; sys_platform == 'darwin'",
+    "numpy>=2,<2.2",
+    "uniception==0.1.7",                 # vismatch pins 0.1.1; MapAnything needs 0.1.7
+    "lightning>=2.6",                    # vismatch pins 2.3.3
+    "setuptools<70.0",                   # vismatch asks >=83 (packaging only)
+    "pycolmap; sys_platform == 'never'", # hloc's plain pycolmap would clobber pycolmap-cuda12
+]
+# CUDA extensions import torch at build time
+no-build-isolation-package = ["bae", "gsplat", "fused-ssim", "nvdiffrast"]
+
+# Static metadata so uv never builds these to read their deps
+[[tool.uv.dependency-metadata]]
+name = "bae"
+version = "0.2.5"
+requires-dist = ["torch", "torchvision", "warp-lang"]
+
+[[tool.uv.dependency-metadata]]
+name = "gsplat"
+version = "1.5.3"
+requires-dist = ["ninja", "numpy", "jaxtyping", "nvtx", "rich>=12", "torch>=2.0"]
+
+[[tool.uv.dependency-metadata]]
+name = "fused-ssim"
+version = "1.0.0"
+requires-dist = ["torch>=2.0.0"]
+
+[[tool.uv.dependency-metadata]]
+name = "nvdiffrast"
+version = "0.4.0"
+requires-dist = ["numpy"]
+
+[[tool.uv.dependency-metadata]]
+name = "collab-data"
+version = "0.0.1"
+requires-dist = ["gcsfs", "loguru"]
+
+# hloc: a sync without the setup/hloc.sh clone still resolves
+[[tool.uv.dependency-metadata]]
+name = "hloc"
+version = "1.5"
+requires-dist = ["gdown", "h5py", "kornia>=0.6.11", "lightglue @ git+https://github.com/cvg/LightGlue", "matplotlib", "numpy", "opencv-python", "plotly", "pycolmap>=3.13.0", "scipy", "torch>=1.1", "torchvision>=0.3", "tqdm>=4.36.0"]
+
+# instantsfm pins numpy 1.26 etc. exactly; our lock owns those
+[[tool.uv.dependency-metadata]]
+name = "instantsfm"
+version = "0.3.0"
+requires-dist = []
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }]
+torchvision = [{ index = "pytorch-cu121", marker = "sys_platform != 'darwin'" }]
+instantsfm = { git = "https://github.com/cre185/InstantSfM", rev = "d3e599e1a42b4c5a806a84d9f383e1005d25f61b" }
+# gsplat main @ 2026-07-09: newest rev that builds on torch 2.5.1+cu121; needs the CCCL overlay in setup.sh
+gsplat = { git = "https://github.com/nerfstudio-project/gsplat.git", rev = "d2f5c0f" }
+fused-ssim = { git = "https://github.com/rahul-goel/fused-ssim.git", rev = "a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38" }
+mobile_sam = { git = "https://github.com/ChaoningZhang/MobileSAM.git" }
+maskclip_onnx = { git = "https://github.com/RogerQi/maskclip_onnx.git" }
+bae = { git = "https://github.com/pypose/bae.git", rev = "0.2.5" }
+vggt = { git = "https://github.com/Linketic/VGGT-X.git", rev = "26d1b956cfda6f83926adda9f5c2c53f75dda749" }
+vggt-omega = { git = "https://github.com/facebookresearch/vggt-omega.git", rev = "39a0cb8" }
+mapanything = { git = "https://github.com/facebookresearch/map-anything.git" }
+lightglue = { git = "https://github.com/cvg/LightGlue.git" }
+salad = { git = "https://github.com/Dominic101/salad.git" }
+# setup/hloc.sh clone @ c13273b; must exist before any resolve
+hloc = { path = "third_party/hloc", editable = true }

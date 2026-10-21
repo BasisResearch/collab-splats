@@ -1,174 +1,151 @@
 # collab-splats
 
-Extension tools for nerfstudio enabling depth/normal derivation and meshing (among other functions) for gaussian splatting.
+This package provides an interface for 3D scene reconstruction & semantic feature extraction from 2D RGB videos. We can flexibly configure processing pipelines with a variety of reconstruction backends, mesh texturing, and semantic lifting.
 
 For more details, see the [paper reference and figures](./docs/paper_figures.md).
 
-## Installation
+## Quickstart
 
-### Docker
+### Start the container
 
-We provide a docker image setup for running nerfstudio with collab-splats (along with other abilities!) at ```tommybotch/collab-splats:latest```
-
-Once the docker image is loaded, please clone and install the repository as follows
+Our package runs via a Docker image available at `tommybotch/collab-splats:release` (see [System requirements](docs/source/installation.md#system-requirements)). Run the following code to pull and start the image:
 
 ```bash
-pip install git+https://github.com/BasisResearch/collab-splats
+# Pull the image (private repo: log in first)
+docker login -u <DOCKERHUB_USER>
+docker pull tommybotch/collab-splats:release
+
+# Start a shell with your inputs, outputs and a model cache mounted
+docker run --gpus all -it -p 8080:8080 \
+  -v /PATH/TO/INPUT:/PATH/TO/INPUT \
+  -v /PATH/TO/OUTPUT:/PATH/TO/OUTPUT \
+  -v /PATH/TO/MODELS:/workspace/models \
+  tommybotch/collab-splats:release bash
+
+# Inside the container (the venv is already active)
+cd /workspace/collab-splats
 ```
 
-### Standalone setup w/o CUDA
+### Local video processing
+
+A pipeline runs using a `yaml` config — the default is `configs/base.yaml`. This reconstructs a video with [VGGT Omega](https://arxiv.org/abs/2605.15195), creates a textured mesh, and lifts queryable semantics ([Talk2Dino](https://arxiv.org/abs/2411.19331) and [OCR lens](https://ocr.baulab.info/)).
+
+Single video or batch processing can be run with the following commands:
+
 ```bash
-git clone https://github.com/BasisResearch/collab-splats/
+# run a single video at a path
+reconstruct local --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
+
+# run a batch of scenes (either MP4 file or directory of images read in filename order)
+reconstruct local --output-root /PATH/TO/OUTPUT/ \
+  /PATH/TO/INPUT/INPUT.MP4 \
+  /PATH/TO/INPUT/frames/
+
+# override base.yaml with custom settings
+reconstruct local --config configs/my_run.yaml --output-root /PATH/TO/OUTPUT/ /PATH/TO/INPUT/INPUT.MP4
+```
+
+For a complete list of configuration options, please see [configs/README.md](configs/README.md).
+
+### Remote video processing
+
+We also can use `collab-splats` for processing videos hosted in GCloud storage. However, this option requires (1) access to the `collab-data` repository and (2) GCS access (see [Private dependency](docs/source/installation.md#private-dependency-collab-data)). Please follow these steps to set up remote processing:
+
+1. Clone the private [collab-data](https://github.com/BasisResearch/collab-data) repo to `/workspace/collab-data`, then run `bash setup.sh` in `/workspace/collab-splats` to add the `remote` extra.
+2. Ask a maintainer for the GCS service-account key and save it as `/workspace/collab-data/config-local/collab-data.json`.
+3. Create the `collab-data` rclone remote, then check it lists the curated scenes:
+
+```bash
+# ensure connection to GCS bucket and list directories in bucket
+(cd /workspace/collab-data && ./scripts/setup_local_rclone.sh)
+rclone lsd collab-data:environments-curated
+```
+
+After verifying the connection, we can use the `reconstruct remote` command to process files within the `environments-curated` bucket. The remote command automatically pulls files locally, processes through the pipeline, and pushes output to `environments-processed/<scene>/` — to complete the push it verifies every file uploaded before deleting local files.
+
+```bash
+# process two named scenes
+reconstruct remote --output-root /workspace/outputs \
+  2026_07_20-birds-C0043 2026_07_21-rats-C0100
+
+# process all in the bucket (re-runs and overwrites every scene)
+reconstruct remote --output-root /workspace/outputs --all
+
+# process all files and keep a local copy of the results
+reconstruct remote --output-root /workspace/outputs --all --keep-local
+
+# if outputs exist, we can rerun a single stage of the pipeline without rebuilding the entire scene
+reconstruct remote --output-root /workspace/outputs \
+  --stages mesh --overwrite --config configs/NEW_CONFIG.yaml --all
+```
+
+## Output Structure
+
+Each scene writes to `<output-root>/<scene>/`. Frames and 2D caches are shared; each reconstruction backend gets its own folder:
+
+```
+<output-root>/<scene>/
+├── images/                         # keyframes
+├── video_quality_report.json       # capture quality (blur, exposure, motion)
+├── photometric.png, motion.png     # capture quality plots
+├── sky/                            # cached sky masks
+├── semantics/<extractor>_codes.zarr    # cached 2D features
+└── <backend>/                      # one folder per backend
+    ├── run_config.yaml             # config used for this run
+    ├── depth_vda/                  # VDA depth priors (sfm backends only)
+    ├── pointcloud.zarr             # poses, intrinsics, depth, points
+    ├── sparse_pc.ply               # pointcloud for viewing
+    ├── colmap/sparse/0/            # COLMAP export
+    ├── reconstruction_quality_report.json
+    ├── reconstruction_quality_ncc.png
+    ├── mesh.ply                    # mesh
+    ├── texture/                    # textured mesh (mesh.obj + albedo.png)
+    ├── splats/                     # Gaussian splats, if enabled (ckpt.pt, splats.ply, splats_quality_report.json)
+    └── semantics/<extractor>_lifted.zarr   # point features (+ mesh-vertex features when meshed)
+```
+
+### Viewing completed reconstructions
+
+View the mesh and query its semantics in the browser (`http://localhost:8080`, add `--textured` for the textured mesh):
+
+```bash
+python -m collab_splats.viewer local /PATH/TO/OUTPUT/<scene>/<backend>
+python -m collab_splats.viewer remote             # processed scenes from the bucket, pulled on pick
+```
+
+`local` views scenes on disk: point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene dropdown. `remote` lists the processed bucket and pulls only the mesh, texture and lifted semantics of the scene you pick into `--cache` (default `~/.cache/collab_splats/viewer`), and deletes them when the viewer exits.
+
+## Install
+
+### 1. Install uv
+
+We use [uv](https://docs.astral.sh/uv/) for environment and dependency management. Install it once:
+
+```sh
+curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh   # macOS / Linux; 0.12.19 is the tested release
+```
+
+### 2. Install the package
+
+We install everything with `setup.sh`. It creates the venv at `.venv` in the checkout (or uses the active / `UV_PROJECT_ENVIRONMENT` venv), installs all dependencies, and compiles the CUDA extensions (`bae`, `gsplat`, `fused-ssim`, `nvdiffrast`):
+
+```sh
+git clone https://github.com/BasisResearch/collab-splats.git
 cd collab-splats
-uv venv --python=3.10 && source .venv/bin/activate && uv pip install pip
+bash setup.sh
+```
+
+Standalone setup w/o CUDA (semantics + dev tools, no CUDA build):
+
+```sh
 bash setup_nocuda.sh
 ```
 
+For extras, the semantics-only install and system requirements, see [Installation](docs/source/installation.md).
 
-#### Building the docker image
+## Learn more
 
-The Docker image includes an example video file (`C0043.MP4`) downloaded from Google Cloud Storage during the build process. Follow these steps to build the image:
-
-**Prerequisites:**
-1. Obtain a Google Cloud Storage service account key with access to the `collab-data` bucket
-2. Save the key as a JSON file
-
-**Build Steps:**
-
-1. **Place the service account key file:**
-   ```bash
-   # Copy your GCS service account key to the build directory
-   cp /path/to/your/service-account-key.json ./api-key.json
-   ```
-   **Important:** The key file MUST be named exactly `api-key.json` and placed in the same directory as the Dockerfile.
-
-2. **Build the Docker image:**
-   ```bash
-   docker build --platform=linux/amd64 -t collab-splats:latest .
-   ```
-
-3. **Clean up the key file after build:**
-   ```bash
-   rm ./api-key.json
-   ```
-
-**What happens during build:**
-- The Docker build process installs rclone
-- Uses your service account key to configure GCS access
-- Downloads `fieldwork_processed/2024_02_06-session_0001/SplatsSD/C0043.MP4` to `/opt/data/` in the image
-- Securely removes all credentials from the final image
-- The final image contains rclone (without any stored credentials) and the example video file
-
-**Security Notes:**
-- The service account key is only used during build time
-- No credentials are stored in the final Docker image
-- The key file and rclone configuration are completely removed after the download completes
-
-### Conda
-
-Follow the [NerfStudio instllation instructions](https://docs.nerf.studio/quickstart/installation.html) to install a conda environment. For convenience, here are the commands I've used to successfully build a nerfstudio environment.
-
-**Note:** This requires cuda developer tools -- specifically nvcc
-
-Create an isolated conda environment (I've successfully built with python3.10)
-
-```bash
-# Set our system
-export UBUNTU_VERSION=22.04
-export NVIDIA_CUDA_VERSION=11.8.0
-
-# You can remove some of these and fit them to your system needs 
-export CUDA_ARCHITECTURES="90;89;86;80;75;70;61" 
-
-conda create --name nerfstudio -y python=3.10
-conda activate nerfstudio
-```
-
-Next install torch and torchvision built for cuda11.8 -- this specifically has to be run via pip for tinycuda-nn to detect the packages.
-
-```bash
-# Install torch and torchvision (from specified URL)
-pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-
-# Install cuda developer tools 
-conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y
-```
-
-Install hloc toolbox for SFM options.
-
-```bash
-# Install hloc
-git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc
-cd /opt/hloc
-git checkout v1.4
-git submodule update --init --recursive
-pip install -e . --no-cache-dir
-cd ~
-
-# Bump down for hloc interface
-pip install --no-cache-dir pycolmap==0.4.0 
-```
-
-Downgrade setuptools to avoid tinycuda-nn error --> also need a numpy 1.X.X version
-
-```bash
-conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0'
-```
-
-Now is where pain begins... tinycuda-nn is the big snag point of installation -- it will also take the most amount of time.
-
-```bash
-# Note which CUDA architectures to build for
-export TCNN_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}
-
-pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
-```
-
-Install gsplat-rade and nerfstudio -- this gsplat version **is required** to run this code, as it contains the CUDA kernel for calculating depth and normal maps. 
-
-```bash
-# Install specific gsplat version
-pip install git+https://github.com/brian-xu/gsplat-rade.git
-
-# Install nerfstudio from github (newer features available that are useful)
-git clone https://github.com/nerfstudio-project/nerfstudio.git /opt/nerfstudio
-cd /opt/nerfstudio
-pip install . --no-cache-dir
-
-# Bump the numpy version back down (nerfstudio upgrades for some reason)
-conda install -c conda-forge 'numpy<2.0.0'
-conda install -c conda-forge 'cmake>3.5' ninja gmp cgal ipykernel
-pip install -r /tmp/requirements.txt"
-```
-
-Lastly, install collab-splats -- currently doing direct clone and egg installation due to private repository. For full functionality, you can optionally install collab-data
-
-```bash
-## If public repository could do -- pip install git+https://github.com/BasisResearch/collab-splats
-git clone https://github.com/BasisResearch/collab-splats/
-cd collab-splats
-
-# Runs pip install -e .
-bash setup.sh
-
-# Optional install of collab-data
-pip install git+https://github.com/BasisResearch/collab-data.git
-```
-
-## Usage
-
-collab-splats is built to integrate different gaussian splatting codebases that enable depth and normal map creation. Specifically, it implements the depth-normal consistency loss
-
-Two models are currently offered:
-- **rade-gs:** the baseline extension model that enables depth and normal map creation within the rasterization process. This is built on top of [gsplat-rade](https://github.com/brian-xu/gsplat-rade) and is heavily inspired by the [scaffold-gs-nerfstudio](https://github.com/brian-xu/scaffold-gs-nerfstudio) implementation.
-- **rade-features:**  extends rade-gs to enable splatting of ANN feature spaces. This draws inspiration from the original [feature-splatting-ns](https://github.com/vuer-ai/feature-splatting) implementation but contains additional functionality.
-
-Within the class ```Splatter``` we provide the ability to preprocess, train, and visualize splatting models within nerfstudio. We also enable meshing as a post-processing strategy for all splatting outputs.
-
-For examples of these different functionalities, please navigate to the ```examples/``` directory.
-
-The Docker image contains an example splat video at `/opt/data/C0043.MP4`.
-
-## Problems
-
-Things aren't showing up in plots? Check [VSCode forwarding settings](https://github.com/pyvista/pyvista/issues/5296#issuecomment-1971079419)
+- [Installation](docs/source/installation.md): extras, semantics-only install, collab-data, system requirements
+- [Docker image](docs/source/docker.md): build and push the image, Apple Silicon setup
+- [Configuration](configs/README.md): every config key and stage
+- [Usage](docs/source/usage.md): package organization, Python API and tutorials, dashboard, adding curated videos, evaluation

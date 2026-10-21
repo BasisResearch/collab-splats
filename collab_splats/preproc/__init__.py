@@ -1,0 +1,70 @@
+"""
+Video preprocessing: probe and decode, measure quality, select and store keyframes.
+
+- measure then select: qa.load_video_quality measures and caches a report, the samplers pick from it
+- frames.write_frames stores picks as images/frame_NNNNNN.png
+- plots live in preproc.viz, not re-exported
+"""
+
+from collab_splats.preproc.frames import (
+    frame_idx_from_path,
+    frame_paths,
+    read_frames,
+    write_frames,
+)
+from collab_splats.preproc.qa import (
+    analysis_gray,
+    compute_video_quality,
+    load_video_quality,
+)
+from collab_splats.preproc.sampling import (
+    filter_frame_quality,
+    sample_fps,
+    sample_optical_flow,
+    sample_uniform,
+)
+from collab_splats.preproc.video import extract_frame, get_video_info, iter_frames
+
+
+def __getattr__(name: str) -> object:
+    """
+    Lazy calibrate_camera and undistort_frames.
+
+    - undistort imports pycolmap, which semantics-only installs do not carry
+
+    Args:
+        name: attribute requested from the package.
+
+    Returns:
+        The requested function.
+
+    Raises:
+        AttributeError: any other name.
+    """
+    if name in ("calibrate_camera", "undistort_frames"):
+        # Import on first access: keeps pycolmap out of `import collab_splats.preproc`
+        from collab_splats.preproc import undistort
+
+        return getattr(undistort, name)
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = [
+    "analysis_gray",
+    "calibrate_camera",
+    "compute_video_quality",
+    "extract_frame",
+    "filter_frame_quality",
+    "frame_idx_from_path",
+    "frame_paths",
+    "get_video_info",
+    "iter_frames",
+    "load_video_quality",
+    "read_frames",
+    "sample_fps",
+    "sample_optical_flow",
+    "sample_uniform",
+    "undistort_frames",
+    "write_frames",
+]

@@ -1,241 +1,164 @@
 # syntax=docker/dockerfile:1
+# CUDA 12.1 + torch 2.5.1 + Python 3.11; the env is whatever setup.sh builds.
+# Build (from the collab-splats checkout):
+#   docker build --platform=linux/amd64 --progress=plain \
+#     --build-arg MAX_JOBS=4 -t collab-splats:release .
+# - no collab-data, no GitHub token: run bash setup.sh in a container to add the remote extra
+# - MAX_JOBS: Docker memory GB / 8 (one cicc peaks ~7.3 GB), ceiling 6
+#
+# Apple Silicon: every nvcc call runs under amd64 emulation
+# - Docker Desktop > General: enable "Use Rosetta for x86_64/amd64 emulation"; QEMU is far slower
+# - Docker Desktop > Resources: raise memory, then set MAX_JOBS from it
+# - first build still takes hours; the CUDA layer is then cached until pyproject.toml, uv.lock,
+#   LICENSE.md, .python-version or setup.sh change
+#
+# GPU support: TORCH_ARCH_LIST="8.0+PTX" (fused-ssim: CUDA_ARCHITECTURES="80;90", set in setup.sh)
+# - native: Ampere + Ada, sm_80/86/89 (A100, A40, A6000, A10, L4, L40, RTX 3090, RTX 4090)
+# - JIT on first launch: Hopper, sm_90 (H100, H200); cached per container via CUDA_CACHE_MAXSIZE
+# - NOT supported: Volta/Turing (V100, T4, RTX 2080); add "7.0;7.5" to TORCH_ARCH_LIST
+# - NOT supported: Blackwell (B200, RTX 5090); torch 2.5.1+cu121 itself ships no kernels for it
+
 ARG UBUNTU_VERSION=22.04
-ARG NVIDIA_CUDA_VERSION=11.8.0
-ARG CUDA_ARCHITECTURES="90;89;86;80;75;70;61"
-ARG NERFSTUDIO_VERSION=""
+ARG NVIDIA_CUDA_VERSION=12.1.1
+ARG PYTHON_VERSION=3.11
+ARG TORCH_ARCH_LIST="8.0+PTX"
 
 ##################################################
-#           Builder stage (for compilation)      #
+# Stage 1: Builder — runs setup.sh (uv sync + AOT CUDA extensions)
 ##################################################
 
-FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} as builder
-ARG CUDA_ARCHITECTURES
+FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS builder
+ARG PYTHON_VERSION
+ARG TORCH_ARCH_LIST
+ARG MAX_JOBS=4
 
-# Install build dependencies including rclone
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        wget \
-        curl \
-        unzip \
-        build-essential \
-        g++-11 \
-        gcc-11 \
-        cmake \
-        ninja-build \
-        git \
-        && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install rclone
-RUN curl https://rclone.org/install.sh | bash
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget curl ca-certificates gnupg build-essential git \
+        unzip xz-utils cmake ninja-build \
+        libsuitesparse-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install conda in builder stage
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
-    bash ~/miniconda.sh -b -p /opt/conda && \
-    rm ~/miniconda.sh
+# uv manages the Python install and the venv
+# uv pinned: setup.sh and uv.lock are tested against this release
+RUN curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh
+ENV PATH=/root/.local/bin:${PATH}
 
-ENV PATH="/opt/conda/bin:$PATH"
+RUN uv python install ${PYTHON_VERSION} \
+ && uv venv /opt/venv/reconstruction --python ${PYTHON_VERSION}
 
-# Copy environment files
-COPY ./env.yml /tmp/env.yml
-COPY ./requirements.txt /tmp/requirements.txt
-# COPY ./ /opt/collab-splats
+# System toolkit from the devel image; nvcc cross-compiles to TORCH_CUDA_ARCH_LIST, no GPU needed
+# - CPATH is the toolkit's own include; never add the CCCL overlay here (setup.sh explains)
+ENV CUDA_HOME=/usr/local/cuda \
+    CC=/usr/bin/gcc \
+    CXX=/usr/bin/g++ \
+    PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    LIBRARY_PATH=/usr/local/cuda/lib64:${LIBRARY_PATH} \
+    CPATH=/usr/local/cuda/include:${CPATH} \
+    CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+    TORCH_CUDA_ARCH_LIST=${TORCH_ARCH_LIST} \
+    MAX_JOBS=${MAX_JOBS} \
+    UV_PROJECT_ENVIRONMENT=/opt/venv/reconstruction \
+    CCCL_PREFIX=/opt/cccl-12.6.77
 
-# Set CUDA architectures
-# 61 = GTX 10xx -- e.g. 1080Ti (Pascal SM61)
-# 70 = V100 (Volta SM70)
-# 75 = RTX 20xx -- e.g. 2080Ti (Turing SM75)
-# 80 = A100 (Ampere SM80)
-# 86 = RTX 30xx + A40 -- e.g. 3090 (Ampere SM86)
-# 89 = H100, GH100 -- (Hopper SM89)
-# 90 = RTX 5090, H200 -- Ada Lovelace SM90
-# Set CUDA environment variables
-ENV TCNN_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}
-
-# Accept Anaconda Terms of Service non-interactively
-RUN conda config --set always_yes true && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
-
-
-# Create conda environment
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda env create -n nerfstudio -f /tmp/env.yml"
-
-# Set up build environment variables (cached separately)
-ENV CC=/usr/bin/gcc-11
-ENV CXX=/usr/bin/g++-11
-ENV CUDA_HOME=/opt/conda/envs/nerfstudio
-ENV PATH="${CUDA_HOME}/bin:${PATH}"
-ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
-
-# Install torch and cuda toolkit (cached separately)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118 && \
-    conda install -c 'nvidia/label/cuda-11.8.0' cuda-toolkit -y && \
-    pip install 'kornia>=0.6.11'"
-
-# Install and setup hloc (cached separately)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git /opt/hloc && \
-    cd /opt/hloc && \
-    git checkout v1.4 && \
-    git submodule update --init --recursive && \
-    pip install -e . --no-cache-dir"
-
-# Install pycolmap for hloc interface (cached separately)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    pip install --no-cache-dir pycolmap==0.4.0"
-
-# Fix numpy version after hloc (cached separately)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    conda install -c conda-forge setuptools==69.5.1 'numpy<2.0.0'"
-
-# Install tiny-cuda-nn (cached separately - this is slow)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    export TORCH_CUDA_ARCH_LIST=\"\$(echo \"${CUDA_ARCHITECTURES}\" | tr ';' '\n' | awk '\$0 > 70 {print substr(\$0,1,1)\".\"substr(\$0,2)}' | tr '\n' ' ' | sed 's/ \$//')\" && \
-    pip install -v ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch"
-
-# Install gsplat-rade (cached separately - this is the slowest)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    export TORCH_CUDA_ARCH_LIST=\"\$(echo \"${CUDA_ARCHITECTURES}\" | tr ';' '\n' | awk '\$0 > 70 {print substr(\$0,1,1)\".\"substr(\$0,2)}' | tr '\n' ' ' | sed 's/ \$//')\" && \
-    pip install git+https://github.com/brian-xu/gsplat-rade.git"
-
-# Install nerfstudio from GitHub (this layer will rebuild when you change it)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    git clone https://github.com/nerfstudio-project/nerfstudio.git /opt/nerfstudio && \
-    cd /opt/nerfstudio && \
-    pip install . --no-cache-dir"
-
-# Final package installations and numpy fix (cached separately)
-RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
-    conda activate nerfstudio && \
-    conda install -c conda-forge 'numpy<2.0.0' && \
-    conda install -c conda-forge cmake>3.5 ninja gmp cgal ipykernel && \
-    pip install -r /tmp/requirements.txt"
-
-# Copy example data from GCS using rclone
-# Expects the API key to be provided at build time as a build context file
-COPY api-key.json /tmp/api-key.json
-RUN mkdir -p /opt/data && \
-    rclone config create collab-data "google cloud storage" service_account_file=/tmp/api-key.json && \
-    rclone copy collab-data:fieldwork_processed/2024_02_06-session_0001/SplatsSD/C0043.MP4 /opt/data/ && \
-    rm -f /tmp/api-key.json && \
-    rm -rf ~/.config/rclone
+# Single source of truth: setup.sh syncs the lock, compiles bae/gsplat/fused-ssim/nvdiffrast AOT,
+# and clones the pinned third_party sources (VDA, LoGeR)
+# - pass 1 sees only the lock: the slow CUDA compiles stay cached across source edits
+# - pass 2 installs the project itself and the non-lock extras
+# - pass 1 also needs setup/hloc.sh: the hloc extra's path source is cloned before any resolve
+WORKDIR /workspace/collab-splats
+COPY pyproject.toml uv.lock LICENSE.md .python-version setup.sh /workspace/collab-splats/
+COPY setup/hloc.sh /workspace/collab-splats/setup/hloc.sh
+RUN SETUP_DEPS_ONLY=1 bash setup.sh
+COPY . /workspace/collab-splats
+RUN bash setup.sh
 
 ##################################################
-#           Get pre-built components             #
+# Stage 2: Runtime — no nvcc; every CUDA extension was built AOT above
 ##################################################
 
-# Get conda from official image
-FROM continuumio/miniconda3:latest as conda-source
+FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runtime
 
-# Get nerfstudio components
-FROM ghcr.io/nerfstudio-project/nerfstudio:1.1.5 as nerfstudio
+ENV DEBIAN_FRONTEND=noninteractive
 
-##################################################
-#           Runtime stage                        #
-##################################################
+RUN apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
+        libc6 libgcc-s1 libgl1 libgl1-mesa-glx \
+        libx11-6 libxext6 libsm6 libice6 \
+        libhdf5-dev xvfb \
+        build-essential ffmpeg libsuitesparse-dev \
+        wget curl unzip xz-utils git vim htop tmux less jq \
+        openssh-server gnupg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} as runtime
+# rclone pinned from the release zip: install.sh takes no version argument, apt's rclone is too old
+ARG RCLONE_VERSION=1.75.2
+RUN curl -fsSLo /tmp/rclone.zip https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip \
+ && unzip -q /tmp/rclone.zip -d /tmp \
+ && install -m 0755 /tmp/rclone-v${RCLONE_VERSION}-linux-amd64/rclone /usr/local/bin/rclone \
+ && rm -rf /tmp/rclone.zip /tmp/rclone-v${RCLONE_VERSION}-linux-amd64
 
-# Install minimal runtime dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends --no-install-suggests \
-        libboost-filesystem1.74.0 \
-        libboost-program-options1.74.0 \
-        libc6 \
-        libceres2 \
-        libfreeimage3 \
-        libgcc-s1 \
-        libgl1 \
-        libglew2.2 \
-        libgoogle-glog0v5 \
-        libqt5core5a \
-        libqt5gui5 \
-        libqt5widgets5 \
-        libgl1-mesa-glx \
-        libhdf5-dev \
-        xvfb \
-        python3.10 \
-        python3.10-dev \
-        python-is-python3 \
-        python3-pip \
-        build-essential \
-        ffmpeg \
-        wget \
-        curl \
-        unzip \
-        git \
-        vim \
-        htop \
-        tmux \
-        openssh-server \
-        less \
-        && rm -rf /var/lib/apt/lists/*
+# uv — manages the venv post-build (setup.sh reruns, uv pip into the venv)
+# uv pinned: setup.sh and uv.lock are tested against this release
+RUN curl -LsSf https://astral.sh/uv/0.12.19/install.sh | sh
+ENV PATH=/root/.local/bin:${PATH}
 
-# Install rclone for runtime use (without keys)
-RUN curl https://rclone.org/install.sh | bash
+# venv + the uv-managed interpreter it points at
+COPY --from=builder /opt/venv/reconstruction/ /opt/venv/reconstruction/
+COPY --from=builder /root/.local/share/uv/ /root/.local/share/uv/
 
-# Copy conda installation from conda-source
-COPY --from=conda-source /opt/conda/ /opt/conda
+# collab-splats is an editable install: its path must match the builder's
+# - includes third_party/hloc, the hloc extra's editable source
+COPY --from=builder /workspace/collab-splats /workspace/collab-splats
 
-# Copy compiled conda environment from builder
-COPY --from=builder /opt/conda/envs/nerfstudio/ /opt/conda/envs/nerfstudio/
+ENV CUDA_HOME=/usr/local/cuda \
+    CUDA_ROOT=/usr/local/cuda \
+    PATH=/opt/venv/reconstruction/bin:/root/.local/bin:/usr/local/cuda/bin:${PATH} \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH} \
+    TORCH_HOME=/workspace/models \
+    HF_HOME=/workspace/models \
+    NLTK_DATA=/workspace/models/nltk_data \
+    CUDA_CACHE_MAXSIZE=4294967296 \
+    UV_PROJECT_ENVIRONMENT=/opt/venv/reconstruction
 
-# Copy rade_gs from builder for during development --> otherwise we need to run pip install . (instead of -e)
-# COPY --from=builder /opt/collab-splats /opt/collab-splats
-COPY --from=builder /opt/hloc /opt/hloc
+# Smoke test: torch imports and the AOT extensions survived the stage copy
+# - no GPU during build, so the creator chain is checked at run time (--gpus), not here
+# - a missing .so would JIT-compile on first use, and this stage has no nvcc
+# - cv2/open3d/pycolmap import here so a missing system lib fails the build, not the first run
+RUN python - <<'EOF'
+import glob, sysconfig
+import cv2, open3d, pycolmap, torch
 
-# Copy nerfstudio from builder
-COPY --from=builder /opt/nerfstudio /opt/nerfstudio
+assert pycolmap.has_cuda, "pycolmap is the CPU wheel; expected pycolmap-cuda12"
 
-# Copy example data from builder
-COPY --from=builder /opt/data /opt/data
+site = sysconfig.get_paths()["purelib"]
+for pattern in ("gsplat/csrc*.so", "_nvdiffrast_c*.so", "bae/sparse/*.so"):
+    assert glob.glob(f"{site}/{pattern}"), f"missing AOT build: {pattern}"
+print(f"[Runtime] torch={torch.__version__} cuda={torch.version.cuda}; AOT extensions present; pycolmap={pycolmap.__version__}")
+EOF
 
-# Copy colmap from nerfstudio
-COPY --from=nerfstudio /usr/local/bin/colmap /usr/local/bin/
-COPY --from=nerfstudio /usr/local/lib/libcolmap* /usr/local/lib/
+# SSH
+RUN echo "PermitRootLogin yes"        >> /etc/ssh/sshd_config && \
+    echo "PermitTTY yes"              >> /etc/ssh/sshd_config && \
+    echo "PasswordAuthentication no"  >> /etc/ssh/sshd_config
 
-# Set CUDA environment variables
-ENV CUDA_HOME=/usr/local/cuda
-ENV CUDA_ROOT=/usr/local/cuda
-ENV PATH="/usr/local/cuda/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
-ENV CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
-
-# Set environment variables
-ENV PATH="/opt/conda/bin:$PATH"
-ENV TORCH_HOME="/workspace/models"
-ENV HF_HOME="/workspace/models"
-
-# SSH configuration
-RUN echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
-    echo "PermitTTY yes" >> /etc/ssh/sshd_config && \
-    echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
-
-# Add environment setup to bashrc
-RUN echo 'export PATH="/opt/conda/bin:$PATH"' >> ~/.bashrc && \
-    echo 'export TORCH_HOME="/workspace/models"' >> ~/.bashrc && \
-    echo 'export HF_HOME="/workspace/models"' >> ~/.bashrc && \
-    echo 'export CUDA_HOME=/usr/local/cuda' >> ~/.bashrc && \
-    echo 'export CUDA_ROOT=/usr/local/cuda' >> ~/.bashrc && \
-    echo 'export PATH="/usr/local/cuda/bin:${PATH}"' >> ~/.bashrc && \
-    echo 'export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"' >> ~/.bashrc && \
-    echo 'export CMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc' >> ~/.bashrc && \
-    echo 'source /opt/conda/etc/profile.d/conda.sh' >> ~/.bashrc && \
-    echo 'conda activate nerfstudio' >> ~/.bashrc
+# Bashrc: activate the venv in interactive sessions
+# - SSH sessions miss the Docker ENV; model caches default here, `docker run -e` values win
+RUN { \
+    echo 'export TORCH_HOME="${TORCH_HOME:-/workspace/models}"'; \
+    echo 'export HF_HOME="${HF_HOME:-/workspace/models}"'; \
+    echo 'export NLTK_DATA="${NLTK_DATA:-/workspace/models/nltk_data}"'; \
+    echo 'export CUDA_HOME=/usr/local/cuda'; \
+    echo 'export CUDA_ROOT=/usr/local/cuda'; \
+    echo 'export PATH="/usr/local/cuda/bin:${PATH}"'; \
+    echo 'export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"'; \
+    echo 'source /opt/venv/reconstruction/bin/activate'; \
+    } >> /root/.bashrc
 
 WORKDIR /workspace
 
 CMD bash -c "\
-apt update && \
 mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
 echo \"$PUBLIC_KEY\" >> ~/.ssh/authorized_keys && \
 chmod 600 ~/.ssh/authorized_keys && \

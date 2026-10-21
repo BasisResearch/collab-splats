@@ -1,8 +1,196 @@
 #!/bin/bash
+# Single source of truth for env setup. Runs in the Docker build AND standalone.
+# Floor required from the host/image: gcc/g++ (build-essential) + (at runtime) NVIDIA driver.
+# SETUP_DEPS_ONLY=1: Docker pass 1 — lock only, no project install; keeps the CUDA compile layer
+# cached across source edits.
+set -e
 
-# Install dependencies
-pip install -e .
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Install collab-data
-pip install git+https://github.com/BasisResearch/collab-data.git
+# Venv, first match wins: UV_PROJECT_ENVIRONMENT (the image sets it), the active venv, <repo>/.venv
+VENV="${UV_PROJECT_ENVIRONMENT:-${VIRTUAL_ENV:-$SCRIPT_DIR/.venv}}"
+PYTHON="$VENV/bin/python"
+export PIP_ROOT_USER_ACTION=ignore
+export UV_PROJECT_ENVIRONMENT="$VENV"
+echo "=== venv: $VENV ==="
 
+# uv from PATH: the Docker image puts it in /root/.local/bin, other installs elsewhere
+command -v uv >/dev/null || { echo "setup.sh: uv not on PATH — install it first (README §1)." >&2; exit 1; }
+
+# Existing venv on another Python: uv would delete and recreate it, so stop instead
+# - keeping it via UV_PYTHON is offered only at or above requires-python (3.11)
+WANT_PY="${UV_PYTHON:-$(cat "$SCRIPT_DIR/.python-version")}"
+if [ -x "$PYTHON" ]; then
+    HAVE_PY="$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+    if [ "$HAVE_PY" != "$WANT_PY" ]; then
+        KEEP=", or keep this one with UV_PYTHON=$HAVE_PY"
+        "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' || KEEP=" on Python >= 3.11"
+        echo "setup.sh: $VENV is Python $HAVE_PY, not $WANT_PY. Pick another venv (UV_PROJECT_ENVIRONMENT=...)$KEEP." >&2
+        exit 1
+    fi
+fi
+
+# CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim, nvdiffrast)
+# - toolkit is the user's to provide (docs/source/installation.md#system-requirements)
+# - setup.sh never installs system packages
+# - honors a pre-set CUDA_HOME (conda, /usr/local/cuda-12.1); default /usr/local/cuda
+# - no nvcc: warn and continue — an already-built env (runtime Docker image) compiles nothing;
+#   a failed `uv sync` then prints the recipe below
+cuda_toolkit_help() {
+    cat >&2 <<'MSG'
+setup.sh: uv sync failed with no nvcc under $CUDA_HOME — bae, gsplat, fused-ssim and nvdiffrast
+build from source and need it. The CUDA toolkit is yours to provide
+(docs/source/installation.md#system-requirements). Options:
+Use the Docker image (every extension prebuilt), or the nvidia/cuda:12.1.1-devel image (it supplies
+nvcc + dev headers, but NOT a new enough CCCL — setup.sh overlays that), or install just the two
+apt packages the image ships (verified 2026-09-06 on a bare host, exact match to torch cu121):
+  apt-get install -y --no-install-recommends cuda-nvcc-12-1 cuda-libraries-dev-12-1
+Or build the toolkit with micromamba (verified 2026-08-22):
+  micromamba create -p /opt/cuda-nvcc-12.1 -c nvidia -c conda-forge \
+      cuda-version=12.1 cuda-nvcc=12.1 cuda-cudart-dev=12.1 cuda-libraries-dev=12.1
+  ln -sfn libcudart.so.12 /opt/cuda-nvcc-12.1/lib/libcudart.so   # solver leaves it dangling
+  ln -sfn lib /opt/cuda-nvcc-12.1/lib64 && ln -sfn /opt/cuda-nvcc-12.1 /usr/local/cuda
+MSG
+}
+
+# uv sync failed: CUDA toolkit recipe when nvcc is missing, plus the InstantSfM system lib
+sync_failed() {
+    [ "$HAVE_NVCC" = 0 ] && cuda_toolkit_help
+    echo "setup.sh: uv sync failed. scikit-sparse (instantsfm extra) also needs libsuitesparse-dev: apt-get install -y libsuitesparse-dev" >&2
+    exit 1
+}
+
+export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
+HAVE_NVCC=0
+if [ -x "$CUDA_HOME/bin/nvcc" ]; then
+    HAVE_NVCC=1
+    export PATH="$CUDA_HOME/bin:$PATH"
+else
+    echo "setup.sh: WARN no nvcc at $CUDA_HOME/bin/nvcc — fine if the CUDA extensions are already built." >&2
+fi
+
+# libcu++ (CCCL) floor — REQUIRED even inside nvidia/cuda:12.1.1-devel. gsplat d2f5c0f includes
+# <cuda/std/optional>, which arrived in CCCL 2.2. CUDA 12.1 ships cuda/std/detail/libcxx/include/
+# optional but NOT cuda/std/optional, so with a newer overlay on the path the OUTER header resolves
+# to the overlay while the NESTED one falls back to 12.1's pre-2.2 libcxx and dies with
+# "fatal error: __config: No such file or directory". Measured 2026-09-06: cccl 12.3.101 and
+# 12.4.127 still lack cuda/std/optional; 12.6.77 is the first wheel that carries it. Staged to its
+# own prefix so the venv and the system toolkit are both left alone.
+# The overlay reaches nvcc ONLY through NVCC_PREPEND_FLAGS. Do NOT also put it on CPLUS_INCLUDE_PATH
+# (or CPATH): those rank BELOW the toolkit's own -I on the host preprocessor's search order, which
+# resurrects the exact __config failure this block exists to prevent.
+# Skipped without nvcc: the overlay only feeds nvcc.
+if [ "$HAVE_NVCC" = 1 ]; then
+    CCCL_PREFIX="${CCCL_PREFIX:-${XDG_CACHE_HOME:-$HOME/.cache}/collab-splats/cccl-12.6.77}"
+    CCCL_INC="$CCCL_PREFIX/nvidia/cuda_cccl/include"
+    if [ ! -f "$CCCL_INC/cuda/std/optional" ]; then
+        uv pip install --target "$CCCL_PREFIX" nvidia-cuda-cccl-cu12==12.6.77
+    fi
+    if [ -f "$CCCL_INC/cuda/std/optional" ]; then
+        export NVCC_PREPEND_FLAGS="-I$CCCL_INC ${NVCC_PREPEND_FLAGS:-}"
+    else
+        echo "setup.sh: no <cuda/std/optional> at $CCCL_INC — gsplat d2f5c0f will fail to compile." >&2
+        exit 1
+    fi
+fi
+
+# GPU targets: sm_80 SASS runs natively on all of 8.x, PTX JITs forward to Hopper
+# - bae, gsplat, nvdiffrast read TORCH_CUDA_ARCH_LIST
+# - fused-ssim ignores it: reads CUDA_ARCHITECTURES, SASS only, no PTX
+# - supported/unsupported GPU table: Dockerfile header
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0+PTX}"
+export CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-80;90}"
+# Cap parallel compile jobs by RAM, not cores
+# - torch's cpp_extension defaults to one job per CPU and ignores the cgroup cap
+# - one cicc peaks ~7.3 GB; 6 is the ceiling on a 46.6 GB host
+# - uv builds every source package at once, multiplying MAX_JOBS; build them one at a time
+export MAX_JOBS="${MAX_JOBS:-2}"
+export UV_CONCURRENT_BUILDS="${UV_CONCURRENT_BUILDS:-1}"
+
+# collab-data: private repo, the `remote` extra only; skipped without GitHub access
+EXTRAS=(--all-extras)
+if ! GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/BasisResearch/collab-data.git >/dev/null 2>&1; then
+    echo "setup.sh: WARN no access to BasisResearch/collab-data — skipping the remote extra (reconstruct remote, viewer remote, dashboard)." >&2
+    EXTRAS+=(--no-extra remote)
+fi
+
+# hloc: editable path source (pyproject [tool.uv.sources])
+# - the clone must exist before any resolve, including the deps-only Docker pass below
+bash "$SCRIPT_DIR/setup/hloc.sh"
+
+# --locked: fail if uv.lock is stale against pyproject.toml instead of silently re-resolving
+echo "=== uv sync: full env (all extras incl. gpu toolkit + feedforward) ==="
+cd "$SCRIPT_DIR"
+
+# Dependency-only pass: Docker caches the slow CUDA compiles in their own layer
+# - needs only pyproject.toml + uv.lock, so source edits never invalidate it
+if [ "${SETUP_DEPS_ONLY:-0}" = 1 ]; then
+    uv sync --locked "${EXTRAS[@]}" --no-install-project \
+        || sync_failed
+    echo "=== setup complete (dependencies only) ==="
+    exit 0
+fi
+
+uv sync --locked "${EXTRAS[@]}" \
+    || sync_failed
+
+# WordNet corpus for the ocr_lens vocabulary into $NLTK_DATA, else the venv (ships in the image's venv copy)
+"$PYTHON" -c "import nltk, os, sys; sys.exit(0 if nltk.download('wordnet', download_dir=os.environ.get('NLTK_DATA') or os.path.join(sys.prefix, 'nltk_data'), quiet=True) else 1)" \
+    || echo "WARN: WordNet download failed — run: python -m nltk.downloader wordnet"
+
+# Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
+# Best-effort: a build stage without network/system libs skips it and
+# the weights download lazily on first use instead.
+"$PYTHON" - <<'EOF' || echo "WARN: vismatch weights pre-fetch failed — weights will download on first use."
+import vismatch
+for name in ("loma", "xfeat"):  # the LocalMatcher models
+    vismatch.get_matcher(name, device="cpu")
+    print(f"vismatch weights cached: {name}")
+EOF
+
+# Pre-fetch hloc weights; needs the synced venv, so it runs after the full sync
+# - best-effort like vismatch: the builder stage lacks libGL, so a cv2 import there fails
+bash "$SCRIPT_DIR/setup/hloc.sh" --prefetch \
+    || echo "WARN: hloc weights pre-fetch failed — weights will download on first use."
+
+# --- Video Depth Anything (metric) — source clone only, not pip-installable ------
+# Imported from the clone root via sys.path (collab_splats/pointcloud/depth.py::estimate_depth).
+# Weights are pulled from the HF hub on first use, so this only needs the source clone.
+# The pin is re-applied on every run (idempotent), so an existing clone cannot drift. NOTE: a
+# dangling third_party/Video-Depth-Anything symlink (worktree layouts pointing at an absent
+# main-checkout clone) makes `git clone` fail — fix the link target first.
+VDA_DIR="$SCRIPT_DIR/third_party/Video-Depth-Anything"
+VDA_COMMIT=4f5ae23172ba60fd7bc11ef671cca678842c7072
+if [ ! -d "$VDA_DIR/video_depth_anything" ]; then
+    git clone https://github.com/DepthAnything/Video-Depth-Anything "$VDA_DIR"
+fi
+git -C "$VDA_DIR" cat-file -e "$VDA_COMMIT^{commit}" 2>/dev/null || git -C "$VDA_DIR" fetch --quiet
+git -C "$VDA_DIR" checkout --quiet "$VDA_COMMIT"
+
+# --- LoGeR (wired `loger` feedforward backend) — pinned source clone in third_party/ ---
+bash "$SCRIPT_DIR/setup/loger.sh"
+
+# Smoke test — mandatory: torch + the extensions this script compiled (bae, gsplat, fused-ssim).
+# The full creator chain pulls cv2/open3d, which need GUI/X11 system libs absent in a Docker
+# BUILD stage but present at runtime — so import it best-effort here (verified for real in the
+# runtime image). Keeps the build from failing on runtime-only system libs.
+"$PYTHON" - << 'PYEOF'
+import torch, bae, gsplat, fused_ssim
+assert "12.1" in torch.version.cuda, f"FAIL: cuda={torch.version.cuda}"
+assert torch.__version__.startswith("2.5"), f"FAIL: torch={torch.__version__}"
+print(f"[OK] torch={torch.__version__} cuda={torch.version.cuda}; bae + gsplat + fused-ssim compiled")
+# gsplat and nvdiffrast load lazily: check their AOT .so exists, or first use JIT-compiles (needs nvcc)
+import glob, sysconfig
+site = sysconfig.get_paths()["purelib"]
+for pattern in ("gsplat/csrc*.so", "_nvdiffrast_c*.so"):
+    assert glob.glob(f"{site}/{pattern}"), f"FAIL: no AOT build matching {pattern} in {site}"
+print("[OK] gsplat + nvdiffrast AOT extensions present")
+try:
+    from collab_splats.pointcloud import get_creator
+    for name in ("vggtx", "mapanything", "vggt_omega", "loger"):
+        get_creator(name)
+    print("[OK] creators resolve: vggtx, mapanything, vggt_omega, loger")
+except Exception as e:  # OSError: missing X11/GL; RuntimeError: vggt touches CUDA at import
+    print(f"[WARN] creator import deferred to runtime (no GPU/system lib in build stage): {e}")
+PYEOF
+echo "=== setup complete ==="

@@ -1,15 +1,49 @@
-import pyvista as pv
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Optional, Union, List
+"""
+Notebook plots: semantic overlays, pyvista scenes with camera frustums, reprojection.
 
-# Main visualization code - adaptation of your original
+- semantic: similarity heatmap, PCA feature colors, threshold mask, instance masks
+- 3D: visualize_splat renders a mesh or pointcloud with w2c camera frustums
+- reprojection: z-buffered point splat and a photo / render / blend figure
+"""
+
+from typing import Any
+
+import cv2
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pyvista as pv
+import torch
+from matplotlib.figure import Figure
+
+from collab_splats.geometry.projection import project
+from collab_splats.geometry.transforms import (
+    invert_poses,
+    rescale_intrinsics,
+    shift_intrinsics,
+    transform_points,
+)
+from collab_splats.utils.image import features_to_rgb
+
+# Default pyvista add_mesh kwargs for meshes and RGB pointclouds
 MESH_KWARGS = {
     "scalars": "RGB",
     "rgb": True,
 }
 
-VIZ_KWARGS = {
+PCD_KWARGS = MESH_KWARGS.copy()
+PCD_KWARGS.update(
+    {
+        "render_points_as_spheres": True,
+        "point_size": 3.0,
+        "ambient": 0.3,
+        "diffuse": 0.8,
+        "specular": 0.1,
+    }
+)
+
+
+VIZ_KWARGS: dict[str, Any] = {
     "position": (2, 2, 1),
     "focal_point": (0, 0, 0),
     "view_up": (0, 0, 1),
@@ -34,82 +68,353 @@ CAMERA_KWARGS = {
 }
 
 
-# Main visualization code - adaptation of your original
-def visualize_splat(
-    mesh: Union[str, pv.PolyData],
-    aligned_cameras: Optional[List[np.ndarray]] = None,
-    mesh_kwargs: dict = {},
-    camera_kwargs: dict = {},
-    viz_kwargs: dict = {},
-    out_fn: Optional[str] = None,
-):
+# ── Semantic Visualization ──────────────────────────────────────────────────
+
+
+def apply_viridis(sims: np.ndarray) -> np.ndarray:
     """
-    Visualize point cloud with camera frustums using PyVista
+    Similarity scores mapped to viridis RGB, min-max normalized.
+
+    - NaN scores (unobserved mesh vertices) are left out of the range and drawn grey
 
     Args:
-        ply_path: Path to the ply file
-        aligned_poses: List of 4x4 transformation matrices
+        sims: per-element scores, (P,).
+
+    Returns:
+        RGB colors, (P, 3) uint8.
     """
-    # Create PyVista plotter
+    finite = np.isfinite(sims)
+    s_min, s_max = (
+        (sims[finite].min(), sims[finite].max()) if finite.any() else (0.0, 0.0)
+    )
+    normalized = (
+        (sims - s_min) / (s_max - s_min) if s_max > s_min else np.zeros_like(sims)
+    )
+    rgba = matplotlib.colormaps["viridis"](normalized)
+    rgb = (rgba[:, :3] * 255).astype(np.uint8)
+    rgb[~finite] = 128
+    return rgb
+
+
+def compute_heatmap(
+    image: np.ndarray,
+    sim_map: torch.Tensor | np.ndarray,
+    alpha: float = 0.5,
+    colormap: str = "viridis",
+) -> np.ndarray:
+    """
+    Similarity map as a colormap blended over the image.
+
+    - sim_map is min-max normalized, then resized to the image when shapes differ
+
+    Args:
+        image: (H, W, 3) uint8 image.
+        sim_map: (H, W) or squeezable similarity map, any range.
+        alpha: overlay weight; 0 is the image only, 1 the heatmap only.
+        colormap: matplotlib colormap name.
+
+    Returns:
+        (H, W, 3) uint8 blend.
+    """
+    # Similarity to a numpy (H, W) map on the image grid
+    if isinstance(sim_map, torch.Tensor):
+        sim_map = sim_map.detach().cpu().numpy()
+    sim_map = np.squeeze(sim_map)  # (H,W)
+
+    h, w = image.shape[:2]
+    if sim_map.shape != (h, w):
+        sim_map = cv2.resize(sim_map, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    eps = 1e-8
+    sim_map = (sim_map - sim_map.min()) / (sim_map.max() - sim_map.min() + eps)
+
+    cmap = plt.get_cmap(colormap)
+    heatmap_rgb = (cmap(sim_map)[:, :, :3] * 255).astype(np.uint8)
+
+    blended = (1 - alpha) * image.astype(float) + alpha * heatmap_rgb.astype(float)
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def pca_to_rgb(
+    features: torch.Tensor | np.ndarray,
+    image: np.ndarray,
+    alpha: float = 0.5,
+) -> np.ndarray:
+    """
+    Feature map's top-3 PCA image, resized to the frame and blended over it.
+
+    - the projection is utils.image.features_to_rgb: per-channel normalized
+
+    Args:
+        features: (C, pH, pW) feature map.
+        image: (H, W, 3) uint8 frame.
+        alpha: blend weight of the PCA overlay; 0 is the frame only, 1 the PCA only.
+
+    Returns:
+        (H, W, 3) uint8 blend.
+    """
+    pca_img = features_to_rgb(features)
+
+    # Resize the patch-grid image to the frame and blend
+    H, W = image.shape[:2]
+    pca_resized = cv2.resize(pca_img, (W, H), interpolation=cv2.INTER_LINEAR)
+    blended = (1 - alpha) * image.astype(float) + alpha * pca_resized.astype(float)
+
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def compute_masked_image(
+    image: np.ndarray,
+    sim_map: torch.Tensor | np.ndarray,
+    threshold: float = 0.5,
+) -> np.ndarray:
+    """
+    Image blacked out where similarity is below threshold.
+
+    Args:
+        image: (H, W, 3) uint8 image.
+        sim_map: (H, W) or (H, W, 1) similarity in [0, 1].
+        threshold: pixels with similarity below it are set to black.
+
+    Returns:
+        (H, W, 3) uint8 masked copy.
+    """
+    if isinstance(sim_map, torch.Tensor):
+        sim_map = sim_map.detach().cpu().numpy()
+    sim_map = np.squeeze(sim_map)  # (H, W)
+
+    H, W = image.shape[:2]
+    if sim_map.shape != (H, W):
+        sim_map = cv2.resize(sim_map, (W, H), interpolation=cv2.INTER_LINEAR)
+
+    mask = sim_map >= threshold  # (H, W) bool
+    result = image.copy()
+    result[~mask] = 0
+    return result
+
+
+def overlay_masks(
+    image: np.ndarray,
+    masks: torch.Tensor | np.ndarray,
+    alpha: float = 0.5,
+) -> np.ndarray:
+    """
+    Segmentation masks blended over the image, one tab20 color per mask.
+
+    Args:
+        image: (H, W, 3) uint8 image.
+        masks: (N, mH, mW) binary masks, one per object; resized to the image.
+        alpha: overlay weight; 0 is the image only, 1 the mask colors only.
+
+    Returns:
+        (H, W, 3) uint8 blend.
+    """
+    if isinstance(masks, torch.Tensor):
+        masks_np = masks.detach().cpu().numpy()  # (N, H, W)
+    else:
+        masks_np = masks
+
+    N, mH, mW = masks_np.shape
+    H, W = image.shape[:2]
+
+    cmap = plt.get_cmap("tab20")
+    base = image.astype(float)
+    overlay = base.copy()
+
+    for i in range(N):
+        mask = masks_np[i]  # (mH, mW)
+        if mask.shape != (H, W):
+            mask = mask.astype(np.uint8)
+            mask = cv2.resize(mask, (W, H), interpolation=cv2.INTER_NEAREST)
+        color = np.array(cmap(i % 20)[:3]) * 255  # RGB in [0,255]
+        overlay[mask > 0.5] = (1 - alpha) * base[mask > 0.5] + alpha * color
+
+    return np.clip(overlay, 0, 255).astype(np.uint8)
+
+
+def _resolve_mesh_kwargs(mesh: pv.PolyData, mesh_kwargs: dict) -> dict:
+    """
+    mesh_kwargs, or the RGB pointcloud kwargs when empty and the mesh carries RGB points.
+    """
+    if mesh_kwargs:
+        return mesh_kwargs
+    if (
+        isinstance(mesh, pv.PolyData)
+        and "RGB" in mesh.point_data
+        and mesh.point_data["RGB"].ndim == 2
+        and mesh.point_data["RGB"].shape[1] == 3
+    ):
+        return PCD_KWARGS
+    return {}
+
+
+# ── 3D Visualization ────────────────────────────────────────────────────────
+
+
+def apply_view(plotter: pv.Plotter, viz_kwargs: dict) -> None:
+    """
+    Pin a plotter's camera and add lights from viz_kwargs.
+
+    - missing camera keys fall back to the VIZ_KWARGS defaults; missing `lighting` adds none
+    - view_angle is set absolutely (30 / zoom), so re-applying does not compound like Zoom
+    - lights accumulate: callers re-applying to one plotter clear its lights first
+
+    Args:
+        plotter: plotter whose camera and lights are set.
+        viz_kwargs: position, focal_point, view_up, azimuth, elevation, zoom and lighting.
+    """
+    plotter.camera_position = [
+        viz_kwargs.get("position", (2, 2, 1)),
+        viz_kwargs.get("focal_point", (0, 0, 0)),
+        viz_kwargs.get("view_up", (0, 0, 1)),
+    ]
+    plotter.camera.azimuth = viz_kwargs.get("azimuth", 235)
+    plotter.camera.elevation = viz_kwargs.get("elevation", 15)
+    plotter.camera.view_angle = 30.0 / viz_kwargs.get("zoom", 0.9)
+
+    for light in viz_kwargs.get("lighting", []):
+        plotter.add_light(pv.Light(**light))
+
+
+def camera_view(
+    extrinsics: np.ndarray,
+    points: np.ndarray | None = None,
+    *,
+    azimuth_deg: float = 90.0,
+    elevation_deg: float = 20.0,
+    distance: float = 1.5,
+) -> dict[str, Any]:
+    """
+    Upright side-on viz_kwargs derived from OpenCV camera poses.
+
+    - up: mean camera up (-y of each c2w), so OpenCV y-down scenes render upright
+    - azimuth 90 looks at the scene from the side of the walking direction, 0 from behind it
+    - azimuth/elevation keys are zeroed so apply_view does not rotate the view again
+
+    Args:
+        extrinsics: (N, 4, 4) w2c OpenCV poses.
+        points: (M, 3) scene points; their 5-95 percentile box sets focal point and size.
+        azimuth_deg: angle around up from behind the cameras toward their right side.
+        elevation_deg: angle above the horizontal.
+        distance: eye distance in units of the scene size.
+
+    Returns:
+        A viz_kwargs dict for apply_view / visualize_splat.
+    """
+    # Mean up and forward of the cameras; forward made orthogonal to up
+    c2w = invert_poses(np.asarray(extrinsics, dtype=np.float64))
+    centers = c2w[:, :3, 3]
+    up = -c2w[:, :3, 1].mean(axis=0)
+    up /= np.linalg.norm(up)
+    forward = c2w[:, :3, 2].mean(axis=0)
+    forward -= up * (forward @ up)
+
+    # Cameras facing every way (an orbit): any horizontal direction will do
+    if np.linalg.norm(forward) < 1e-6:
+        forward = np.cross(up, [1.0, 0.0, 0.0])
+
+        if np.linalg.norm(forward) < 1e-6:
+            forward = np.cross(up, [0.0, 1.0, 0.0])
+
+    forward /= np.linalg.norm(forward)
+    right = np.cross(forward, up)
+
+    # Scene center and size: from the points when given, else ahead of the trajectory
+    if points is not None:
+        lo, hi = np.percentile(np.asarray(points), [5, 95], axis=0)
+        focal = (lo + hi) / 2
+        size = float(np.linalg.norm(hi - lo))
+    else:
+        size = float(np.linalg.norm(np.ptp(centers, axis=0)))
+        focal = centers.mean(axis=0) + 0.5 * size * forward
+
+    # Eye on a sphere around the focal point
+    az = np.radians(azimuth_deg)
+    el = np.radians(elevation_deg)
+    horizontal = np.cos(az) * -forward + np.sin(az) * right
+    direction = np.cos(el) * horizontal + np.sin(el) * up
+    position = focal + distance * size * direction
+
+    return {
+        "position": tuple(position),
+        "focal_point": tuple(focal),
+        "view_up": tuple(up),
+        "azimuth": 0,
+        "elevation": 0,
+        "zoom": 1.0,
+    }
+
+
+def visualize_splat(
+    mesh: str | pv.PolyData,
+    aligned_cameras: list[np.ndarray] | None = None,
+    mesh_kwargs: dict | None = None,
+    camera_kwargs: dict | None = None,
+    viz_kwargs: dict | None = None,
+    out_fn: str | None = None,
+) -> pv.Plotter:
+    """
+    PyVista scene of a mesh or pointcloud with camera frustums.
+
+    - every n_poses-th camera gets a frustum (camera_kwargs "n_poses", default 3)
+    - frustums are viridis by frame order with a scalar bar unless camera_kwargs sets color
+
+    Args:
+        mesh: PLY path or PolyData.
+        aligned_cameras: (4, 4) w2c OpenCV poses, e.g. PointcloudResult.extrinsics.
+        mesh_kwargs: add_mesh kwargs; empty auto-detects RGB pointcloud styling.
+        camera_kwargs: frustum geometry (n_poses, scale, aspect_ratio, fov) and add_mesh kwargs.
+        viz_kwargs: camera placement, zoom, lighting and screenshot options.
+        out_fn: screenshot path; no screenshot when omitted.
+
+    Returns:
+        The plotter, not yet shown.
+    """
+    mesh_kwargs = mesh_kwargs or {}
+    camera_kwargs = camera_kwargs or {}
+    viz_kwargs = viz_kwargs or {}
     plotter = pv.Plotter()
 
     # Either a mesh or a point cloud
     if isinstance(mesh, str):
         mesh = pv.read(mesh)
 
+    mesh_kwargs = _resolve_mesh_kwargs(mesh, mesh_kwargs)
     plotter.add_mesh(mesh, **mesh_kwargs)
 
-    # Remove scale from kwargs
+    # Work on a copy so the caller's dict is not mutated across calls
+    cam_kw = dict(camera_kwargs)
+
     if aligned_cameras is not None:
-        n_poses = camera_kwargs.pop("n_poses", 3)
+        n_poses = cam_kw.pop("n_poses", 3)
+        scale = cam_kw.pop("scale", 0.02)
+        aspect_ratio = cam_kw.pop("aspect_ratio", 1.33)
+        fov = cam_kw.pop("fov", 60)
+        frustums = []
 
-        # Create and add camera frustums for every third pose
         for i in range(0, len(aligned_cameras), n_poses):
-            pose = aligned_cameras[i]
-
-            # Make a camera frustum
             frustum = create_camera_frustum_pyvista(
-                pose,
-                scale=camera_kwargs.get("scale", 0.02),
-                aspect_ratio=camera_kwargs.get("aspect_ratio", 1.33),
-                fov=camera_kwargs.get("fov", 60),
+                aligned_cameras[i], scale=scale, aspect_ratio=aspect_ratio, fov=fov
+            )
+            frustum.point_data["frame order"] = np.full(frustum.n_points, i)
+            frustums.append(frustum)
+
+        # One fixed color when given, else viridis by frame order with a scalar bar
+        merged = pv.merge(frustums)
+
+        if "color" in cam_kw:
+            plotter.add_mesh(merged, scalars=None, **cam_kw)
+        else:
+            plotter.add_mesh(
+                merged,
+                scalars="frame order",
+                cmap="viridis",
+                scalar_bar_args={"title": "frame order"},
+                **cam_kw,
             )
 
-            if "color" not in camera_kwargs:
-                cmap = plt.get_cmap("viridis")
-                color = cmap(i / max(1, len(aligned_cameras)))
-                camera_kwargs["color"] = color[:3]
-
-            # Remove non-pyvista kwargs
-            remove_kwargs = ["scale", "aspect_ratio", "fov", "n_poses"]
-            for key in remove_kwargs:
-                camera_kwargs.pop(key, None)
-
-            # Add to plotter with different color for each camera
-            plotter.add_mesh(frustum, **camera_kwargs)
-
-    # Set a specific camera position:
-    # camera_position = [camera_location, focal_point, view_up]
-    plotter.camera_position = [
-        viz_kwargs.get("position", (2, 2, 1)),  # Camera location
-        viz_kwargs.get("focal_point", (0, 0, 0)),  # Look-at point (focal point)
-        viz_kwargs.get("view_up", (0, 0, 1)),  # View-up vector
-    ]
-
-    # Rotate camera
-    plotter.camera.azimuth = viz_kwargs.get(
-        "azimuth", 235
-    )  # Rotate 45° horizontally around focal point
-    plotter.camera.elevation = viz_kwargs.get(
-        "elevation", 15
-    )  # Rotate 30° vertically around focal point
-
-    # Adjust zoom (zoom > 1 zooms in, < 1 zooms out)
-    plotter.camera.Zoom(viz_kwargs.get("zoom", 0.9))  # 1.5x zoom in
-
-    # Enhanced lighting
-    for light in viz_kwargs.get("lighting", []):
-        plotter.add_light(pv.Light(**light))
+    # Pin the camera and add the configured lights
+    apply_view(plotter, viz_kwargs)
 
     if out_fn is not None:
         plotter.screenshot(
@@ -123,71 +428,242 @@ def visualize_splat(
     return plotter
 
 
-def create_camera_frustum_pyvista(pose, scale=0.02, aspect_ratio=1.33, fov=60):
+def create_camera_frustum_pyvista(
+    pose: np.ndarray,
+    scale: float = 0.02,
+    aspect_ratio: float = 1.33,
+    fov: float = 60,
+) -> pv.PolyData:
     """
-    Create a camera frustum using PyVista
-    """
-    # Convert FOV to radians
-    fov_rad = np.radians(fov)
+    Camera frustum wireframe in world space.
 
-    # Calculate frustum dimensions
+    Args:
+        pose: (4, 4) w2c OpenCV pose, e.g. PointcloudResult.extrinsics[i]; inverted here.
+        scale: overall size; near plane at scale * 0.1, far at scale * 5.
+        aspect_ratio: image-plane width / height.
+        fov: vertical field of view in degrees.
+
+    Returns:
+        Apex, near and far planes as line cells.
+    """
+    fov_rad = np.radians(fov)
     near = scale * 0.1
     far = scale * 5.0
 
-    # Near plane dimensions
     near_height = 2 * near * np.tan(fov_rad / 2)
     near_width = near_height * aspect_ratio
-
-    # Far plane dimensions
     far_height = 2 * far * np.tan(fov_rad / 2)
     far_width = far_height * aspect_ratio
 
-    # Define frustum vertices
+    # Frustum in camera space: apex at origin, camera looks in +Z (OpenCV)
     vertices = np.array(
         [
-            # Camera center (apex)
+            # Apex (camera centre)
             [0, 0, 0],
-            # Near plane corners
-            [-near_width / 2, -near_height / 2, -near],
-            [near_width / 2, -near_height / 2, -near],
-            [near_width / 2, near_height / 2, -near],
-            [-near_width / 2, near_height / 2, -near],
-            # Far plane corners
-            [-far_width / 2, -far_height / 2, -far],
-            [far_width / 2, -far_height / 2, -far],
-            [far_width / 2, far_height / 2, -far],
-            [-far_width / 2, far_height / 2, -far],
-        ]
+            # Near plane corners (+Z)
+            [-near_width / 2, -near_height / 2, near],
+            [near_width / 2, -near_height / 2, near],
+            [near_width / 2, near_height / 2, near],
+            [-near_width / 2, near_height / 2, near],
+            # Far plane corners (+Z)
+            [-far_width / 2, -far_height / 2, far],
+            [far_width / 2, -far_height / 2, far],
+            [far_width / 2, far_height / 2, far],
+            [-far_width / 2, far_height / 2, far],
+        ],
+        dtype=np.float64,
     )
 
-    # Define lines connecting vertices to form frustum wireframe
     lines = []
-    # Lines from camera center to near plane corners
+    # Apex → near corners
     for i in range(1, 5):
         lines.extend([2, 0, i])
-
-    # Lines from camera center to far plane corners
+    # Apex → far corners
     for i in range(5, 9):
         lines.extend([2, 0, i])
-
-    # Near plane rectangle
-    near_rect = [4, 1, 2, 3, 4]
-    lines.extend(near_rect)
-
-    # Far plane rectangle
-    far_rect = [4, 5, 6, 7, 8]
-    lines.extend(far_rect)
-
-    # Connect near to far plane corners
+    # Near plane rectangle (closed)
+    lines.extend([5, 1, 2, 3, 4, 1])
+    # Far plane rectangle (closed)
+    lines.extend([5, 5, 6, 7, 8, 5])
+    # Near → far edges
     for i in range(4):
         lines.extend([2, i + 1, i + 5])
 
-    # Create PyVista polydata for the frustum
     frustum = pv.PolyData(vertices, lines=lines)
 
-    points = frustum.points
-    points_homo = np.column_stack([points, np.ones(points.shape[0])])
-    transformed_points = (pose @ points_homo.T).T
-    frustum.points = transformed_points[:, :3]
+    # Transform camera-space vertices to world space via c2w = inv(w2c)
+    c2w = invert_poses(pose)
+    frustum.points = transform_points(frustum.points, c2w)
 
     return frustum
+
+
+def pointcloud_to_polydata(pts3d: np.ndarray, **point_data) -> pv.PolyData:
+    """
+    PolyData of world points with named per-point arrays.
+
+    Args:
+        pts3d: (P, 3) float32 world XYZ.
+        **point_data: per-point arrays by name, e.g. RGB=colors, similarity=scores.
+
+    Returns:
+        The point cloud; pts3d is copied.
+    """
+    cloud = pv.PolyData(pts3d.copy())
+    for k, v in point_data.items():
+        cloud[k] = v
+    return cloud
+
+
+# ── Reprojection ───────────────────────────────────────────────────────────
+
+
+def render_points(
+    points: np.ndarray,
+    colors: np.ndarray,
+    w2c: np.ndarray,
+    K: np.ndarray,
+    hw: tuple[int, int],
+    *,
+    radius: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Z-buffered point splat of a colored pointcloud seen from one pinhole camera.
+
+    - points at or behind the camera (z <= 1e-6) are dropped
+    - each point writes a (2 * radius + 1)^2 pixel square at its rounded projection
+    - nearest point wins per pixel
+    - uint8 colors are read as 0-255, anything else as 0-1
+
+    Args:
+        points: (P, 3) world points.
+        colors: (P, 3) per-point RGB, uint8 0-255 or float 0-1.
+        w2c: (4, 4) or (3, 4) world-to-camera transform, OpenCV convention.
+        K: (3, 3) camera matrix at the output resolution.
+        hw: output (height, width) in pixels.
+        radius: footprint half-width in pixels.
+
+    Returns:
+        (rgb (H, W, 3) float in [0, 1] on a white background, depth (H, W) with inf where empty).
+    """
+    h, w = hw
+
+    # Colors to float 0-1
+    colors = np.asarray(colors)
+    if colors.dtype == np.uint8:
+        colors = colors / 255.0
+    else:
+        colors = colors.astype(np.float64)
+
+    # Project, keep points in front, round to pixel centers
+    points_t = torch.as_tensor(points, dtype=torch.float64)
+    w2c_t = torch.as_tensor(w2c, dtype=torch.float64)
+    K_t = torch.as_tensor(K, dtype=torch.float64)
+    pixels, points_cam = project(points_t, w2c_t, K_t)
+    cam = points_cam.numpy()
+    in_front = cam[:, 2] > 1e-6
+    pixels = pixels.numpy()[in_front]
+    colors = colors[in_front]
+    z = cam[in_front, 2]
+    pixels = np.round(pixels).astype(np.int64)
+    u, v = pixels[:, 0], pixels[:, 1]
+
+    rgb = np.ones((h, w, 3))
+    depth = np.full((h, w), np.inf)
+    rgb_flat = rgb.reshape(-1, 3)
+    depth_flat = depth.reshape(-1)
+
+    for du in range(-radius, radius + 1):
+        for dv in range(-radius, radius + 1):
+            # Shifted footprint pixels inside the image
+            uu = u + du
+            vv = v + dv
+            inside = (uu >= 0) & (uu < w) & (vv >= 0) & (vv < h)
+            flat = vv[inside] * w + uu[inside]
+            zz = z[inside]
+            cc = colors[inside]
+
+            # Nearest write per pixel: sort by pixel then depth, keep each pixel's first entry
+            order = np.lexsort((zz, flat))
+            flat = flat[order]
+            _, first = np.unique(flat, return_index=True)
+            keep = order[first]
+            flat = flat[first]
+
+            # Replace the buffer only where the new write is closer
+            closer = zz[keep] < depth_flat[flat]
+            depth_flat[flat[closer]] = zz[keep][closer]
+            rgb_flat[flat[closer]] = cc[keep][closer]
+
+    return rgb, depth
+
+
+def plot_reprojection(
+    image: np.ndarray,
+    points: np.ndarray,
+    colors: np.ndarray,
+    w2c: np.ndarray,
+    K: np.ndarray,
+    *,
+    max_width: int = 1200,
+    radius: int = 1,
+    title: str | None = None,
+) -> Figure:
+    """
+    Photo, pointcloud render from its solved camera, and a 50/50 blend in one row.
+
+    - photo and K are downscaled together so the width is at most max_width
+    - the render panel's title carries its coverage: the fraction of pixels hit by a point
+
+    Args:
+        image: (H, W, 3) uint8 RGB photo.
+        points: (P, 3) world points.
+        colors: (P, 3) per-point RGB, uint8 0-255 or float 0-1.
+        w2c: (4, 4) or (3, 4) world-to-camera pose of the photo.
+        K: (3, 3) pixel-center camera matrix of the photo at full resolution, as localize returns.
+        max_width: widest displayed width in pixels.
+        radius: point footprint half-width in pixels.
+        title: figure suptitle; none when omitted.
+
+    Returns:
+        The three-panel figure.
+    """
+    h, w = image.shape[:2]
+
+    # Downscale photo and K to max_width
+    scale = min(1.0, max_width / w)
+    out_w = round(w * scale)
+    out_h = round(h * scale)
+    photo = cv2.resize(image, (out_w, out_h), interpolation=cv2.INTER_AREA)
+    photo = photo / 255.0
+
+    # Pixel-center K rescales via the corner convention: shift +0.5, rescale, shift -0.5
+    K_scaled = shift_intrinsics(K, (0.5, 0.5))
+    K_scaled = rescale_intrinsics(K_scaled, (h, w), (out_h, out_w))
+    K_scaled = shift_intrinsics(K_scaled, (-0.5, -0.5))
+
+    # Render and blend
+    rgb, depth = render_points(
+        points, colors, w2c, K_scaled, (out_h, out_w), radius=radius
+    )
+    coverage = np.isfinite(depth).mean()
+    blend = 0.5 * photo + 0.5 * rgb
+
+    # Three panels in one row
+    fig, axes = plt.subplots(1, 3, figsize=(18, 18 * out_h / (3 * out_w) + 1))
+    panels = [
+        (photo, "photo"),
+        (rgb, f"render from pose (coverage {coverage:.0%})"),
+        (blend, "50/50 blend"),
+    ]
+
+    for ax, (panel, panel_title) in zip(axes, panels):
+        ax.imshow(panel)
+        ax.set_title(panel_title)
+        ax.axis("off")
+
+    if title is not None:
+        fig.suptitle(title)
+
+    fig.tight_layout()
+    return fig

@@ -1,9 +1,5 @@
 #!/bin/bash
-
-python -m pip install --upgrade pip setuptools wheel scikit-build-core pybind11
-pip install "numpy<2.0"
-pip install torch==2.1.2+cpu torchvision==0.16.2+cpu --extra-index-url https://download.pytorch.org/whl/cpu
-
-# Install dependencies
-BUILD_NO_CUDA=1 FORCE_CUDA=0 pip install --no-build-isolation -e ".[dev]"
-
+# Standalone setup w/o CUDA: the semantics extra (no CUDA build) + dev tools into <repo>/.venv
+set -e
+cd "$(dirname "${BASH_SOURCE[0]}")"
+uv sync --locked --extra semantics --extra dev

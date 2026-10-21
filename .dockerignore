@@ -1,0 +1,29 @@
+# Keep the Docker build context (and image) lean. COPY . pulls the repo into the
+# builder + runtime stages; exclude history, local outputs, caches, and local docs.
+.git
+.gitignore
+.worktrees/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+evals/results/
+.venv/
+
+# Large local data and outputs, never part of the image
+data/
+evals/data/
+evals/baselines/
+
+# third_party/ is rebuilt by setup.sh at pinned commits (VDA, LoGeR); a local
+# copy would bake in whatever the host has, checkpoints included
+third_party/*
+!third_party/README.md
+
+# Credentials, never part of the image
+api-key*.json
+api-keys/
+config-local/

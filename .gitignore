@@ -1,5 +1,34 @@
 .DS_Store
 .env
+.worktrees/
+third_party/*
+!third_party/README.md
+scratch/
+MagicMock/
+worklog/
+tools/
+stage/
+vendor/
+evals/results/
+
+# Eval benchmark data (downloaded on-demand via evals/data/download_datasets.py)
+data/
+# `data/` excludes the evals/data directory itself, which blocks re-inclusion of
+# files inside it (git won't traverse an excluded dir) — so un-ignore the dir,
+# re-ignore its contents, then re-allow the one script we want tracked.
+!evals/data/
+evals/data/*
+!evals/data/download_datasets.py
+!evals/data/extract_waymo.py
+# Committed tutorial example assets (video + external query frame); data/outputs/
+# stays ignored by the `data/` rule above and holds notebook-regenerated artifacts.
+!data/tutorial/
+# Test fixtures under tests/**/data/ — the bare `data/` rule above matches any
+# directory of that name at any depth, so they are invisible without this.
+!tests/**/data/
+
+# Reconstruction outputs (written to /workspace/outputs/ outside repo)
+outputs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -209,5 +238,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 config-local/
-data/
-.DS_Store
+evals/data/docs/.cache/
+
+# Credentials
+api-key*.json
+api-keys/

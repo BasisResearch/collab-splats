@@ -1,0 +1,158 @@
+"""
+Absent-confidence seams.
+
+A pointcloud.zarr may carry no confidence array (absent, never zeros — e.g. one
+written by an SfM backend). Three seams must tolerate that: mesh fusion
+(Reconstructor.mesh via frame_depths), feature lifting (lift_features), and the splats
+depth-targets block in Reconstructor.splats() (sfm scenes use the same zarr path).
+"""
+
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import numpy as np
+import torch
+
+from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.preproc import frames as fr
+from collab_splats.reconstructor import Reconstructor
+from collab_splats.semantics.lifting import lift_features
+from tests.reconstructor._stubs import minimal_feedforward_result, stub_mesh_cleanup
+
+
+def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
+    """
+    conf_percentile set + no confidence -> fuse unmasked with a log, not ValueError.
+    """
+    result = minimal_feedforward_result()
+    fused = {}
+    mesh_cfg = {
+        "enabled": True,
+        "mask_sky": False,
+        "texture": False,
+        "conf_percentile": 20,
+    }
+    rec = Reconstructor(
+        {
+            "input_path": str(tmp_path / "v.mp4"),
+            "output_path": str(tmp_path),
+            "mesh": mesh_cfg,
+        }
+    )
+
+    def spy_fuse(depths, rgbs, c2w, K, **kwargs):
+        fused["depths"] = depths
+
+    with (
+        patch.object(
+            PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: result)
+        ),
+        patch(
+            "collab_splats.reconstructor.frames.read_frames",
+            return_value=np.zeros((2, 8, 8, 3), np.uint8),
+        ),
+        patch(
+            "collab_splats.pointcloud.utils.upsample_depths",
+            side_effect=lambda d, r, b: d,
+        ),
+        patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
+        patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
+        stub_mesh_cleanup(),
+        caplog.at_level("INFO"),
+    ):
+        rec.mesh()
+
+    np.testing.assert_array_equal(fused["depths"], result.depth)  # unmasked
+    assert any("no confidence" in r.message for r in caplog.records)
+
+
+def test_lift_features_uniform_weights_when_confidence_absent():
+    """Absent confidence must fall back to uniform per-frame weights, not assert or crash.
+
+    Point 0 sits at (0, 0, 1) in world/camera space (identity extrinsics), which
+    K = [[8,0,4],[0,8,4],[0,0,1]] projects to pixel (4, 4) exactly — the grid_sample
+    knot point, so no bilinear blending. depth=1 everywhere matches that projection,
+    so visibility passes in both frames. With confidence absent both frames get
+    weight 1.0, so the lifted feature must equal the plain mean of the two per-frame
+    samples at that pixel, not a confidence-weighted average.
+    """
+    result = minimal_feedforward_result()
+    result.points = np.array(
+        [[0, 0, 1], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], dtype=np.float32
+    )
+    result.pixel_indices = np.zeros((5, 3), dtype=np.int32)
+
+    # Distinguishable, per-frame values at pixel (row=4, col=4); the other 4 points
+    # (at the origin, z=0) get zero visibility weight and fall back to a source sample.
+    fmaps = [torch.zeros(4, 8, 8), torch.zeros(4, 8, 8)]
+    fmaps[0][:, 4, 4] = 1.0
+    fmaps[1][:, 4, 4] = 3.0
+
+    feats = lift_features(fmaps.__getitem__, result)
+    assert feats.shape == (5, 4)
+    expected = torch.full((4,), 2.0)  # uniform-weight mean of 1.0 and 3.0
+    torch.testing.assert_close(feats[0], expected, atol=1e-4, rtol=0)
+
+
+def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
+    """Minimal Reconstructor stub for exercising the splats() depth-targets block.
+
+    Same lightweight pattern as tests/reconstructor/_stubs.py's
+    _stub_reconstructor: patch train() + PointcloudResult.load_zarr, no real
+    training or zarr reconstruction needed.
+    """
+    recon = Reconstructor.__new__(Reconstructor)
+    recon.config = {
+        "output_path": str(tmp_path),
+        "pointcloud": {"method": "feedforward", "backend": "vggtx"},
+        "mesh": {"conf_percentile": 20},
+        "semantics": {"extractors": ["dinov2"]},
+        "splats": {
+            "enabled": True,
+            "max_steps": 1,
+            "losses": {"depth": {"weight": 0.1}},
+        },
+    }
+    # The scene's images/ directory sits directly under output_path, which is tmp_path here
+    frames = np.stack(
+        [np.full((height, width, 3), view * 10, np.uint8) for view in range(n_views)]
+    )
+    fr.write_frames(tmp_path / "images", frames, list(range(n_views)))
+    image_paths = [Path(f"frame_{view:06d}.jpg") for view in range(n_views)]
+    recon._result = SimpleNamespace(
+        image_paths=image_paths,
+        extrinsics=np.tile(np.eye(4, dtype=np.float32), (n_views, 1, 1)),
+        intrinsics=np.tile(np.eye(3, dtype=np.float32), (n_views, 1, 1)),
+        points=np.zeros((10, 3), np.float32),
+        colors=np.zeros((10, 3), np.uint8),
+    )
+    return recon
+
+
+def test_splats_depth_targets_skip_masking_when_confidence_absent(tmp_path, caplog):
+    """pointcloud.zarr without confidence; conf_percentile set -> log and skip masking."""
+    recon = _stub_reconstructor_for_splats(tmp_path)
+    feedforward = SimpleNamespace(
+        image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(2)],
+        depth=np.ones((2, 4, 4), dtype=np.float32),
+        confidence=None,
+        original_coords=np.tile(
+            np.array([0, 0, 4, 4, 4, 4], np.float32), (2, 1)
+        ),  # full-frame box
+    )
+    (recon.backend_dir / "pointcloud.zarr").mkdir(parents=True)
+
+    with (
+        patch("collab_splats.splats.trainer.train") as train,
+        patch(
+            "collab_splats.pointcloud.base.PointcloudResult.load_zarr",
+            return_value=feedforward,
+        ),
+        caplog.at_level("INFO"),
+    ):
+        recon.splats()
+
+    depth_targets = train.call_args.kwargs["depth_targets"]
+    np.testing.assert_allclose(depth_targets, feedforward.depth, rtol=1e-6)  # unmasked
+    assert any("no confidence" in r.message for r in caplog.records)

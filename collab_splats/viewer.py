@@ -5,22 +5,25 @@ Browser 3D scene viewer over viser: arrays in, named scene nodes out.
 - point clouds, camera frusta, line sets and meshes; meshes add vertex picking, label lists and a heat overlay
 - served at http://<host>:<port> over a websocket; no display needed on the host
 - `python -m collab_splats.viewer local <scene>/<backend>`: the mesh, plus a Semantics dropdown
-  over its lifted stores' vertex arrays
-- `python -m collab_splats.viewer local <outputs root>`: a Scene dropdown over every meshed backend
+  over its lifted stores' vertex arrays; `local <outputs root>`: a Scene dropdown over every meshed backend
 - `python -m collab_splats.viewer remote`: a Scene dropdown over processed scenes in the bucket;
-  a pick pulls the mesh, texture and lifted stores into `--cache`; pulled scenes are deleted on exit
+  a pick pulls the mesh, then texture and lifted vertex stores into `--cache`;
+  pulled scenes are deleted at start and exit
+- textured mesh by default, loaded in the background after the vertex-color mesh; `--no-texture` skips it
 
 Usage:
     HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local \\
         /workspace/outputs/<scene>/<backend> --port 8080
     HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer local \\
-        /workspace/outputs --textured --port 8080
+        /workspace/outputs --port 8080
     HF_HOME=/workspace/models HF_HUB_OFFLINE=1 python -m collab_splats.viewer remote \\
-        --textured --port 8080
+        --port 8080
 """
 
 import argparse
+import io
 import logging
+import re
 import shutil
 import signal
 import threading
@@ -36,6 +39,7 @@ import viser
 import viser.transforms as viser_tf
 import zarr
 from PIL import Image
+from viser._gui_handles import GuiProgressBarHandle
 
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.remote import SceneSource
@@ -47,6 +51,12 @@ from collab_splats.utils.visualization import apply_viridis
 
 logger = logging.getLogger(__name__)
 
+# Pick bumps and mesh-node sends: a texture thread's pick check and GLB send never interleave
+_MESH_LOCK = threading.Lock()
+
+# Textured GLB per backend dir, for the session
+_GLBS: dict[Path, bytes] = {}
+
 
 class Viewer:
     """
@@ -54,6 +64,7 @@ class Viewer:
 
     - GUI: camera toggle, flat color per node, point size, up direction, reset view
     - `points` holds name -> (handle, points, colors, point_size) so toggles can re-send clouds
+    - `picks` counts scene picks; a texture thread sends only while it still matches its own
 
     Args:
         port: port the viser server listens on.
@@ -81,6 +92,7 @@ class Viewer:
         self.heat_shifts: dict[str, np.ndarray] = {}
         self._click_registered = False
         self._stop = threading.Event()
+        self.picks = 0
 
         # Camera visibility and flat per-node colors (shows node boundaries)
         self.show_cameras = self.server.gui.add_checkbox(
@@ -217,7 +229,6 @@ class Viewer:
         vertices: np.ndarray,
         faces: np.ndarray,
         colors: np.ndarray,
-        textured: Optional[trimesh.Trimesh] = None,
     ) -> None:
         """
         Upsert a named mesh; picking, labels and the heat overlay index its vertices.
@@ -227,7 +238,6 @@ class Viewer:
             vertices: (V, 3) positions.
             faces: (F, 3) vertex indices.
             colors: (V, 3) uint8 vertex colors.
-            textured: optional display mesh of the same surface, shown instead; picks stay on `vertices`.
         """
         # Ray-cast scene over the pick geometry
         rays = o3d.t.geometry.RaycastingScene()
@@ -237,14 +247,8 @@ class Viewer:
         self.meshes[name] = (vertices, faces, rays)
         self.heat_shifts.pop(name, None)
 
-        # Display the texture when given, else the vertex colors
-        shown = textured
-
-        if shown is None:
-            shown = trimesh.Trimesh(
-                vertices, faces, vertex_colors=colors, process=False
-            )
-
+        # Display the vertex colors
+        shown = trimesh.Trimesh(vertices, faces, vertex_colors=colors, process=False)
         self.server.scene.add_mesh_trimesh(name, shown)
 
     def add_label_list(
@@ -746,25 +750,70 @@ def _text_mode(viewer: Viewer, store_path: Path) -> list:
     return [query, negatives, floor, search_button]
 
 
-def _build(
-    viewer: Viewer, backend_dir: Path, textured: bool, texture_size: int
-) -> Optional[viser.GuiDropdownHandle]:
+# Progress bar and status line of one Scene dropdown
+Progress = tuple[GuiProgressBarHandle, viser.GuiMarkdownHandle]
+
+
+def _progress(viewer: Viewer) -> Progress:
     """
-    Add the mesh and, when vertex stores exist, the Semantics dropdown that switches modes.
-
-    - default selection: ocr_lens when listed, else the first by name; `none` clears
-    - switching clears heat and probe, removes the previous mode's GUI and handlers, builds the new one
-
-    Args:
-        viewer: viewer to populate.
-        backend_dir: `<scene>/<backend>` holding mesh.ply.
-        textured: show texture/mesh.obj; picks stay on mesh.ply.
-        texture_size: displayed texture edge, pixels.
-
-    Returns:
-        The Semantics dropdown, or None when no store has vertex arrays.
+    Hidden progress bar and status line, shown while a scene pulls or loads.
     """
-    # mesh.ply with its vertex colors, light grey when it has none
+    bar = viewer.server.gui.add_progress_bar(0.0, visible=False)
+    note = viewer.server.gui.add_markdown("", visible=False)
+    return bar, note
+
+
+def _status(
+    progress: Progress,
+    text: Optional[str],
+    value: Optional[float] = None,
+    *,
+    busy: bool = True,
+) -> None:
+    """
+    Show one step on the progress bar and status line; None text hides both.
+
+    - value None: striped bar at 100, for steps with no progress callback
+    - busy False: status only, bar hidden (failures, `no texture`)
+    """
+    bar, note = progress
+    note.visible = text is not None
+    bar.visible = text is not None and busy
+
+    if text is None:
+        return
+
+    note.content = text
+    bar.animated = value is None
+    bar.value = 100.0 if value is None else value
+
+
+def _pull_stats(progress: Progress, stage: str) -> Callable[[str], None]:
+    """
+    rclone on_line callback: each one-line stat moves the bar to its percent.
+
+    - status: `<stage>: <text after NOTICE:>`; lines without a `, NN%,` field are skipped
+    """
+
+    def show(line: str) -> None:
+        """
+        Put one rclone stats line on the bar and status.
+        """
+        match = re.search(r", (\d+)%,", line)
+
+        if match is None:
+            return
+
+        text = line.split("NOTICE:")[-1].strip()
+        _status(progress, f"{stage}: {text}", float(match.group(1)))
+
+    return show
+
+
+def _load_mesh(backend_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    mesh.ply as (vertices, faces, colors); light grey colors when it has none.
+    """
     mesh = trimesh.load(backend_dir / "mesh.ply", process=False)
     vertices = np.asarray(mesh.vertices, dtype=np.float32)
     faces = np.asarray(mesh.faces)
@@ -774,22 +823,172 @@ def _build(
     else:
         colors = np.full((len(vertices), 3), 200, dtype=np.uint8)
 
-    # Corner-split OBJ of the same surface, when asked; texture downscaled for display
-    shown = None
+    return vertices, faces, colors
 
-    if textured:
-        shown = trimesh.load(backend_dir / "texture" / "mesh.obj", process=False)
-        material = shown.visual.material
-        material.image = material.image.resize(
-            (texture_size, texture_size), Image.LANCZOS
-        )
 
-    viewer.add_mesh("mesh", vertices, faces, colors, textured=shown)
+def _texture_glb(backend_dir: Path, texture_size: int) -> bytes:
+    """
+    GLB of texture/mesh.obj, its atlas resized to texture_size and embedded as JPEG.
+
+    - integer downscale via Image.reduce: 0.09 s vs 1.2 s LANCZOS at 8192 -> 4096
+    - an atlas no wider than texture_size is kept as is, never upscaled
+    - JPEG-format image: trimesh embeds it as is, no PNG re-encode (0.9 s vs 5.2 s)
+    """
+    # Corner-split OBJ of the same surface as mesh.ply
+    obj = trimesh.load(backend_dir / "texture" / "mesh.obj", process=False)
+    material = obj.visual.material
+    image = material.image.convert("RGB")
+    factor = image.width // texture_size
+
+    # Square atlas down to texture_size: reduce on an integer multiple, else LANCZOS
+    if factor > 1 and image.size == (factor * texture_size, factor * texture_size):
+        image = image.reduce(factor)
+    elif image.width > texture_size:
+        image = image.resize((texture_size, texture_size), Image.LANCZOS)
+
+    # Reopen as JPEG so the export embeds the encoded bytes
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=90)
+    buffer.seek(0)
+    material.image = Image.open(buffer)
+    return obj.export(file_type="glb")
+
+
+def _show_texture(
+    viewer: Viewer,
+    backend_dir: Path,
+    texture_size: int,
+    progress: Progress,
+    pick: int,
+) -> None:
+    """
+    Send the textured GLB over the vertex-color mesh, unless the scene moved on.
+
+    - runs on the texture thread
+    - GLB cached per backend dir for the session: a re-pulled texture still shows the cached GLB
+    - sends and writes status only while `viewer.picks` is still `pick`
+    - a failed send says `texture failed: <error>`; the vertex-color mesh may stay
+    """
+    # A newer pick already started: skip the decode
+    if viewer.picks != pick:
+        logger.info("texture of %s dropped: scene changed", backend_dir)
+        return
+
+    # Cached GLB, else load, downscale and encode the OBJ
+    try:
+        glb = _GLBS.get(backend_dir)
+
+        if glb is None:
+            glb = _texture_glb(backend_dir, texture_size)
+            _GLBS[backend_dir] = glb
+
+    except Exception as error:
+        logger.exception("cannot load the texture of %s", backend_dir)
+
+        with _MESH_LOCK:
+            if viewer.picks == pick:
+                _status(progress, f"texture failed: {error}", busy=False)
+
+        return
+
+    # Replace the mesh node only while it is still this scene's
+    with _MESH_LOCK:
+        if viewer.picks != pick:
+            logger.info("texture of %s dropped: scene changed", backend_dir)
+            return
+
+        _status(progress, f"texture: uploading {len(glb) / 1e6:.0f} MB")
+
+        try:
+            viewer.server.scene.add_glb("mesh", glb)
+        except Exception as error:
+            logger.exception("cannot send the texture of %s", backend_dir)
+            _status(progress, f"texture failed: {error}", busy=False)
+            return
+
+        _status(progress, None)
+
+
+def _start_texture(
+    viewer: Viewer,
+    backend_dir: Path,
+    textured: bool,
+    texture_size: int,
+    progress: Progress,
+    pick: int,
+) -> None:
+    """
+    Last build step: start the texture thread, or end the progress display.
+    """
+    # Untextured: done; textured without an OBJ: say so; else load it in the background
+    if not textured:
+        _status(progress, None)
+    elif not (backend_dir / "texture" / "mesh.obj").exists():
+        _status(progress, "no texture", busy=False)
+    else:
+        _status(progress, "texture: loading")
+        threading.Thread(
+            target=_show_texture,
+            args=(viewer, backend_dir, texture_size, progress, pick),
+            name="viewer-texture",
+            daemon=True,
+        ).start()
+
+
+def _clear(semantics: list[viser.GuiDropdownHandle]) -> None:
+    """
+    Tear down the shown Semantics dropdown; its `none` clears heat, probe, labels and mode GUI.
+
+    - `semantics` holds at most one dropdown; emptied in place
+    """
+    for dropdown in semantics:
+        dropdown.value = "none"
+        dropdown.remove()
+
+    semantics.clear()
+
+
+def _build(
+    viewer: Viewer,
+    backend_dir: Path,
+    textured: bool,
+    texture_size: int,
+    progress: Progress,
+    pick: int,
+) -> Optional[viser.GuiDropdownHandle]:
+    """
+    Add the mesh and, when vertex stores exist, the Semantics dropdown that switches modes.
+
+    - vertex-color mesh.ply first; the textured mesh follows from a background thread
+    - the texture thread is tied to `pick`; a later pick drops it
+    - default selection: ocr_lens when listed, else the first by name; `none` clears
+    - switching clears heat and probe, removes the previous mode's GUI and handlers, builds the new one
+
+    Args:
+        viewer: viewer to populate.
+        backend_dir: `<scene>/<backend>` holding mesh.ply.
+        textured: show texture/mesh.obj once loaded; picks stay on mesh.ply.
+        texture_size: displayed texture edge, pixels.
+        progress: progress bar and status line, as `_progress` returns.
+        pick: `viewer.picks` as the pick that called this bumped it.
+
+    Returns:
+        The Semantics dropdown, or None when no store has vertex arrays.
+    """
+    # mesh.ply with its vertex colors, shown while semantics and the texture load
+    _status(progress, "loading mesh")
+    vertices, faces, colors = _load_mesh(backend_dir)
+
+    with _MESH_LOCK:
+        viewer.add_mesh("mesh", vertices, faces, colors)
+
     stores = _find_stores(backend_dir)
 
     if not stores:
+        _start_texture(viewer, backend_dir, textured, texture_size, progress, pick)
         return None
 
+    _status(progress, "loading semantics")
     initial = "ocr_lens" if "ocr_lens" in stores else next(iter(stores))
     dropdown = viewer.server.gui.add_dropdown(
         "Semantics", options=("none", *stores), initial_value=initial
@@ -828,6 +1027,7 @@ def _build(
 
     dropdown.on_update(switch)
     switch()
+    _start_texture(viewer, backend_dir, textured, texture_size, progress, pick)
     return dropdown
 
 
@@ -849,28 +1049,29 @@ def _swap(
     backend_dir: Path,
     textured: bool,
     texture_size: int,
+    progress: Progress,
+    pick: int,
+    *,
+    reset_view: bool = True,
 ) -> None:
     """
     Replace the shown backend with backend_dir, Semantics dropdown included.
 
-    - the old Semantics dropdown's `none` clears heat, probe, labels and mode GUI before removal
     - same node name: the new mesh upserts over the shown one
-    - `semantics` holds at most one dropdown; this call mutates it
+    - `pick` ties the texture thread to the pick that called this
+    - reset_view False keeps the camera, for a caller that already framed this mesh
     """
     # Tear down the shown backend's Semantics dropdown
-    for dropdown in semantics:
-        dropdown.value = "none"
-        dropdown.remove()
-
-    semantics.clear()
+    _clear(semantics)
 
     # Build the new backend and keep its dropdown for the next swap
-    dropdown = _build(viewer, backend_dir, textured, texture_size)
+    dropdown = _build(viewer, backend_dir, textured, texture_size, progress, pick)
 
     if dropdown is not None:
         semantics.append(dropdown)
 
-    viewer._reset_view()
+    if reset_view:
+        viewer._reset_view()
 
 
 def _browse(
@@ -880,6 +1081,8 @@ def _browse(
     Add a Scene dropdown over meshed backends; switching rebuilds the mesh and its Semantics.
 
     - starts on the first backend by label
+    - a failed load says `load failed: <error>`; the shown mesh stays
+    - the dropdown is disabled while a pick builds, so picks do not overlap
     - switching sets the old Semantics dropdown to `none` (its own teardown), removes it, then builds anew
 
     Args:
@@ -892,14 +1095,40 @@ def _browse(
         The Scene dropdown.
     """
     scene = viewer.server.gui.add_dropdown("Scene", options=tuple(backends))
+    progress = _progress(viewer)
     semantics = []
 
     def switch(_=None) -> None:
         """
         Show the selected backend.
         """
-        _swap(viewer, semantics, backends[scene.value], textured, texture_size)
-        logger.info("scene: %s", scene.value)
+        # Read the pick once; lock the dropdown until this pick is done
+        name = scene.value
+        scene.disabled = True
+
+        # A new pick: texture threads of earlier picks go stale
+        with _MESH_LOCK:
+            viewer.picks += 1
+            pick = viewer.picks
+
+        try:
+            _swap(
+                viewer,
+                semantics,
+                backends[name],
+                textured,
+                texture_size,
+                progress,
+                pick,
+            )
+            logger.info("scene: %s", name)
+
+        except Exception as error:
+            _status(progress, f"load failed: {error}", busy=False)
+            logger.exception("cannot load %s", backends[name])
+
+        finally:
+            scene.disabled = False
 
     scene.on_update(switch)
     switch()
@@ -915,50 +1144,64 @@ def _remote(
     texture_size: int,
     *,
     includes: tuple[str, ...] = (
-        "/*/mesh.ply",
-        "/*/texture/**",
-        "/*/semantics/*_lifted.zarr/**",
+        "/*/semantics/*_lifted.zarr/zarr.json",
+        "/*/semantics/*_lifted.zarr/autoencoder.pt",
+        "/*/semantics/*_lifted.zarr/vertex_*/**",
     ),
+    extra: tuple[str, ...] = ("--transfers", "16", "--checkers", "32"),
 ) -> viser.GuiDropdownHandle:
     """
     Add a Scene dropdown over processed scene ids; picking one pulls it, then shows it.
 
-    - every pick re-runs the pull; rclone copy skips unchanged files, so a cached scene re-checks fast
+    - two pulls per pick: mesh.ply first, shown at once; then texture + semantics, then the full build
+    - every pick re-runs both pulls; rclone copy skips unchanged files, so a cached scene re-checks fast
     - the scene's first backend by label is shown; others are logged
     - the dropdown is disabled while a pick pulls and builds, so picks do not overlap
-    - the label carries state: `Scene (pulling…)`, then `Scene`
-    - failures label `Scene (pull failed)` or `Scene (load failed)`
-    - a failed pull or build keeps the shown mesh
+    - a progress bar and status line under it carry pull percent, load steps and failures
+    - a failed mesh pull keeps the shown mesh; a later failure keeps the new vertex-color mesh
 
     Args:
         viewer: viewer to populate.
         source: processed-bucket source to pull from.
         scenes: processed scene ids, the dropdown options.
         cache_dir: pulled scenes land in `<cache_dir>/<scene>/<backend>`.
-        textured: show each backend's texture/mesh.obj; picks stay on mesh.ply.
+        textured: also pull and show each backend's texture/mesh.obj; picks stay on mesh.ply.
         texture_size: displayed texture edge, pixels.
-        includes: rclone include globs anchored at the scene dir; everything the viewer reads.
+        includes: second-pull rclone include globs for the lifted vertex stores.
+        extra: rclone flags for both pulls.
 
     Returns:
         The Scene dropdown.
     """
     scene = viewer.server.gui.add_dropdown("Scene", options=tuple(scenes))
+    progress = _progress(viewer)
     semantics = []
+    rest = ("/*/texture/**", *includes) if textured else includes
 
     def switch(_=None) -> None:
         """
-        Pull the selected scene into the cache, then show its first backend.
+        Pull the selected scene's mesh and show it, then pull the rest and build it fully.
         """
         # Read the pick once; lock the dropdown until this pick is done
         name = scene.value
         scene_dir = cache_dir / name
         scene.disabled = True
-        scene.label = "Scene (pulling…)"
+
+        # A new pick: texture threads of earlier picks go stale
+        with _MESH_LOCK:
+            viewer.picks += 1
+            pick = viewer.picks
 
         try:
-            # Pull, then find the scene's meshed backends; a failure keeps the shown mesh
+            # Pull mesh.ply, then find the scene's meshed backends; a failure keeps the shown mesh
             try:
-                source.pull_processed(name, scene_dir, includes=includes)
+                source.pull_processed(
+                    name,
+                    scene_dir,
+                    includes=("/*/mesh.ply",),
+                    extra=extra,
+                    on_line=_pull_stats(progress, "pulling mesh"),
+                )
                 backends = {
                     label: path
                     for label, path in _find_backends(cache_dir).items()
@@ -968,9 +1211,9 @@ def _remote(
                 if not backends:
                     raise RuntimeError(f"no <backend>/mesh.ply pulled into {scene_dir}")
 
-            except RuntimeError as error:
-                scene.label = "Scene (pull failed)"
-                logger.error("scene %s: %s", name, error)
+            except Exception as error:
+                _status(progress, f"pull failed: {error}", busy=False)
+                logger.exception("scene %s: mesh pull failed", name)
                 return
 
             # Show the first backend; name the rest
@@ -979,17 +1222,47 @@ def _remote(
             if len(backends) > 1:
                 logger.info("scene %s: also has %s", name, sorted(backends)[1:])
 
-            # Build it; any failure keeps the shown mesh
-            load_failed = False
-
+            # Vertex-color mesh at once, then the rest; any failure keeps what is shown
             try:
-                _swap(viewer, semantics, backend_dir, textured, texture_size)
-                logger.info("scene: %s", label)
-            except Exception:
-                load_failed = True
-                logger.exception("scene %s: cannot load %s", name, backend_dir)
+                _status(progress, "loading mesh")
+                _clear(semantics)
+                vertices, faces, colors = _load_mesh(backend_dir)
 
-            scene.label = "Scene (load failed)" if load_failed else "Scene"
+                with _MESH_LOCK:
+                    viewer.add_mesh("mesh", vertices, faces, colors)
+
+                viewer._reset_view()
+
+                # Pull texture + semantics; a failure keeps the vertex-color mesh
+                try:
+                    source.pull_processed(
+                        name,
+                        scene_dir,
+                        includes=rest,
+                        extra=extra,
+                        on_line=_pull_stats(progress, "pulling texture + semantics"),
+                    )
+                except Exception as error:
+                    _status(progress, f"pull failed: {error}", busy=False)
+                    logger.exception("scene %s: texture + semantics pull failed", name)
+                    return
+
+                # Full build; the camera stays where the vertex-color mesh framed it
+                _swap(
+                    viewer,
+                    semantics,
+                    backend_dir,
+                    textured,
+                    texture_size,
+                    progress,
+                    pick,
+                    reset_view=False,
+                )
+                logger.info("scene: %s", label)
+
+            except Exception as error:
+                _status(progress, f"load failed: {error}", busy=False)
+                logger.exception("scene %s: cannot load %s", name, backend_dir)
 
         finally:
             scene.disabled = False
@@ -1007,9 +1280,9 @@ def _parser() -> argparse.ArgumentParser:
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--port", type=int, default=8080)
     shared.add_argument(
-        "--textured",
+        "--no-texture",
         action="store_true",
-        help="show texture/mesh.obj over the same surface",
+        help="vertex colors only; skip pulling and loading texture/mesh.obj",
     )
     shared.add_argument(
         "--texture-size", type=int, default=4096, help="displayed texture edge, pixels"
@@ -1037,7 +1310,7 @@ def _parser() -> argparse.ArgumentParser:
         "--cache",
         type=Path,
         default=Path("~/.cache/collab_splats/viewer"),
-        help="pulled scenes land in <cache>/<scene>, deleted when the viewer exits",
+        help="pulled scenes land in <cache>/<scene>, deleted when the viewer starts and exits",
     )
 
     return parser
@@ -1050,6 +1323,7 @@ def main(argv: list[str] | None = None) -> None:
     - local: a path holding mesh.ply is one backend; any other path is an outputs root
     - remote: a Scene dropdown over processed scene ids, pulled on pick
     - remote: pulled scene dirs are deleted on exit (Ctrl-C, SIGTERM or SIGHUP)
+    - remote: listed scene dirs are deleted at startup too (pulls left by a kill)
 
     Args:
         argv: arguments after the program name; None reads sys.argv.
@@ -1080,14 +1354,21 @@ def main(argv: list[str] | None = None) -> None:
 
     viewer = Viewer(port=args.port)
     viewer.server.gui.configure_theme(control_layout="fixed")
+    textured = not args.no_texture
 
     if args.command == "remote":
         cache = args.cache.expanduser()
-        _remote(viewer, source, scenes, cache, args.textured, args.texture_size)
+
+        # Pulls left by a killed viewer; only scene-id dirs, never the cache root
+        for name in scenes:
+            shutil.rmtree(cache / name, ignore_errors=True)
+
+        _remote(viewer, source, scenes, cache, textured, args.texture_size)
     elif single:
-        _build(viewer, args.path, args.textured, args.texture_size)
+        progress = _progress(viewer)
+        _build(viewer, args.path, textured, args.texture_size, progress, viewer.picks)
     else:
-        _browse(viewer, backends, args.textured, args.texture_size)
+        _browse(viewer, backends, textured, args.texture_size)
 
     # SIGTERM and SIGHUP stop the server like Ctrl-C, so the cleanup below runs
     signal.signal(signal.SIGTERM, signal.default_int_handler)

@@ -571,6 +571,13 @@ def test_pull_processed_passes_include_flags(tmp_path):
     assert include == ("/*/mesh.ply",) and exclude == ()
 
 
+def test_pull_processed_appends_extra_after_the_stats_flags(tmp_path):
+    client = FakeClient()
+    SceneSource(client).pull_processed("s", tmp_path, extra=("--transfers", "16"))
+    *_, extra = client.calls[0]
+    assert extra == (*STATS_ARGS, "--transfers", "16")
+
+
 ########
 # Verify
 ########

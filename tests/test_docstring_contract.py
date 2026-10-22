@@ -269,8 +269,10 @@ FIXED_FACTS = frozenset(
     }
 )
 
-# Defs whose broad handler is a deliberate fallback: a lazy client
-FALLBACK_OWNERS = frozenset({"SceneSource.__init__"})
+# Defs whose broad handler is a deliberate fallback: a lazy client, viewer status-line failures
+FALLBACK_OWNERS = frozenset(
+    {"SceneSource.__init__", "_show_texture", "_browse", "_remote"}
+)
 
 UPPER_RE = re.compile(r"^_?[A-Z][A-Z0-9_]*$")
 BANNED_RE = re.compile(

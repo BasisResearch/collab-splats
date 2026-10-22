@@ -380,6 +380,7 @@ class SceneSource:
         excludes: tuple[str, ...] = (),
         on_line: Callable[[str], None] | None = None,
         includes: tuple[str, ...] = (),
+        extra: tuple[str, ...] = (),
     ) -> Path:
         """
         Copy a scene's processed outputs into dest_dir.
@@ -390,6 +391,7 @@ class SceneSource:
             excludes: rclone --exclude globs to skip.
             on_line: receives each rclone output line.
             includes: rclone --include globs; when given, only matching files copy.
+            extra: rclone flags appended after the stats flags.
 
         Returns:
             dest_dir.
@@ -403,7 +405,7 @@ class SceneSource:
             str(dest_dir),
             include=includes,
             exclude=excludes,
-            extra=STATS_ARGS,
+            extra=(*STATS_ARGS, *extra),
             on_line=on_line,
         )
 

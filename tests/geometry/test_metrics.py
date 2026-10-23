@@ -15,7 +15,11 @@ import pytest
 import torch
 
 from collab_splats.geometry import metrics
-from collab_splats.geometry.metrics import compute_photometric_ncc
+from collab_splats.geometry.metrics import (
+    compute_photometric_ncc,
+    pose_change,
+    principal_extent_ratio,
+)
 from collab_splats.geometry.projection import depth_agreement, unproject
 from collab_splats.geometry.transforms import (
     invert_poses,
@@ -1542,3 +1546,59 @@ def test_pair_rows_are_the_per_pair_quantiles_and_medians(monkeypatch, device):
 
     for key, want in expected.items():
         assert tuple(rows[key]) == want
+
+
+def test_pose_change_rotation_and_path_fraction():
+    """
+    A 10 deg yaw on frame 2 and a 0.1 shift on frame 1, over a 1.0 camera path.
+    """
+    ext_in = np.tile(np.eye(4), (3, 1, 1))
+    ext_in[:, 0, 3] = [0.0, -0.5, -1.0]
+    ext_out = ext_in.copy()
+    ext_out[1, 1, 3] += 0.1
+    a = np.radians(10.0)
+    ext_out[2, :3, :3] = [
+        [np.cos(a), -np.sin(a), 0],
+        [np.sin(a), np.cos(a), 0],
+        [0, 0, 1],
+    ]
+    ext_out[2, :3, 3] = ext_out[2, :3, :3] @ ext_in[2, :3, 3]
+
+    out = pose_change(ext_in, ext_out)
+
+    np.testing.assert_allclose(out["rotation_deg"]["per_frame"], [0, 0, 10], atol=1e-6)
+    np.testing.assert_allclose(
+        out["translation_frac"]["per_frame"], [0, 0.1, 0], atol=1e-9
+    )
+    assert out["rotation_deg"]["max"] == pytest.approx(10.0)
+    assert set(out["translation_frac"]) == {"per_frame", "median", "p95", "max"}
+
+
+def test_pose_change_static_path_is_nan_fraction():
+    """
+    Cameras that never move have no path length: translation fraction is nan, not inf.
+    """
+    ext = np.tile(np.eye(4), (2, 1, 1))
+
+    out = pose_change(ext, ext)
+
+    assert np.isnan(out["translation_frac"]["max"])
+
+
+def test_principal_extent_ratio_flat_vs_round():
+    """
+    A flat sheet scores near 0, an isotropic blob near 1.
+    """
+    rng = np.random.default_rng(0)
+    blob = rng.standard_normal((5000, 3))
+    sheet = blob * [1.0, 1.0, 1e-3]
+
+    assert principal_extent_ratio(blob) > 0.9
+    assert principal_extent_ratio(sheet) < 1e-2
+
+
+def test_principal_extent_ratio_too_few_points_is_nan():
+    """
+    Fewer than 3 points have no defined extent.
+    """
+    assert np.isnan(principal_extent_ratio(np.zeros((2, 3))))

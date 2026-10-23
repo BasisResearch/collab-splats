@@ -6,6 +6,7 @@ Report-only, scale-free cross-view reconstruction quality, no ground truth.
 - photometric_pairs: NCC of pixel colors after warping one view into another through its depth, at index gaps 1-20
 - frames: per-frame median depth error, multiview agreement, covered fraction, confidence median
 - confidence_median: not comparable across backbones
+- pose_change, principal_extent_ratio: refine diagnostics, before vs after BA
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -530,3 +532,76 @@ def compute_reconstruction_quality(
         "depth_residual_histogram": histogram,
         "photometric_pairs": photometric_pairs,
     }
+
+
+########################################################################
+# Refine diagnostics
+########################################################################
+
+
+def _stats(values: np.ndarray) -> dict[str, Any]:
+    """
+    Per-frame values plus their median, p95 and max; nan-aware.
+    """
+    return {
+        "per_frame": values.tolist(),
+        "median": float(np.nanmedian(values)) if len(values) else float("nan"),
+        "p95": float(np.nanpercentile(values, 95)) if len(values) else float("nan"),
+        "max": float(np.nanmax(values)) if len(values) else float("nan"),
+    }
+
+
+def pose_change(
+    extrinsics_in: np.ndarray, extrinsics_out: np.ndarray
+) -> dict[str, Any]:
+    """
+    Per-frame camera motion between two pose sets of the same frames.
+
+    - rotation: angle of R_out R_in^T, degrees
+    - translation: camera-center shift over the input camera-path length (scale-free)
+    - a static input path has no length: translation fractions are nan
+
+    Args:
+        extrinsics_in: (N, 4, 4) world-to-camera before.
+        extrinsics_out: (N, 4, 4) world-to-camera after.
+
+    Returns:
+        rotation_deg and translation_frac, each with per_frame, median, p95 and max.
+    """
+    ext_in = extrinsics_in.astype(np.float64)
+    ext_out = extrinsics_out.astype(np.float64)
+
+    # Relative rotation angle from its trace
+    cos = (np.einsum("nij,nij->n", ext_out[:, :3, :3], ext_in[:, :3, :3]) - 1.0) / 2.0
+    rotation = np.degrees(np.arccos(np.clip(cos, -1.0, 1.0)))
+
+    # Camera-center shift over the input path length
+    c_in = invert_poses(ext_in)[:, :3, 3]
+    c_out = invert_poses(ext_out)[:, :3, 3]
+    shift = np.linalg.norm(c_out - c_in, axis=1)
+    path = np.linalg.norm(np.diff(c_in, axis=0), axis=1).sum()
+    translation = shift / path if path > 0 else np.full(len(shift), np.nan)
+
+    return {"rotation_deg": _stats(rotation), "translation_frac": _stats(translation)}
+
+
+def principal_extent_ratio(points: np.ndarray) -> float:
+    """
+    Flatness of a point set: 0 = flat sheet, 1 = round blob.
+
+    - ratio of smallest to largest principal standard deviation
+
+    Args:
+        points: (P, 3) points.
+
+    Returns:
+        The extent ratio; nan below 3 points.
+    """
+    if len(points) < 3:
+        return float("nan")
+
+    # Principal standard deviations from the covariance eigenvalues, ascending
+    eig = np.linalg.eigvalsh(np.cov(points.astype(np.float64).T))
+    extent = np.sqrt(np.clip(eig, 0.0, None))
+
+    return float(extent[0] / extent[-1]) if extent[-1] > 0 else float("nan")

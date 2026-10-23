@@ -179,7 +179,7 @@ pointcloud:
 <details>
 <summary><code>pointcloud.bundle_adjustment</code>: the <code>refine</code> stage</summary>
 
-The `refine` stage refines feedforward poses against feature tracks and rewrites the pointcloud in place, so the point count can change. The zarr is rewritten whole, which drops the localization database; after `--stages refine`, re-run every later stage that ran (`splats`, `mesh`, `semantics`, `localize`, `reconstruction_quality_report`) with `--overwrite`.
+The `refine` stage refines feedforward poses against feature tracks and rewrites the pointcloud in place, so the point count can change. The zarr is rewritten whole, which drops the localization database; after `--stages refine`, re-run every later stage that ran (`splats`, `mesh`, `semantics`, `localize`, `reconstruction_quality_report`) with `--overwrite`. `refine` also writes `reconstruction_quality_report_pre_ba.json` (the report on the unrefined arrays) and a `diagnostics` block in `colmap/refine.json`; see the pointcloud API docs.
 
 ```yaml
 # Reprojection + depth only, no photometric term
@@ -190,8 +190,9 @@ pointcloud:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pointcloud.bundle_adjustment.enabled` | bool | `true` | Run `refine`; skipped for `method: sfm` and under loop closure with `strategy: window` |
+| `pointcloud.bundle_adjustment.enabled` | bool | `false` | Run `refine`; skipped for `method: sfm` and under loop closure with `strategy: window` |
 | `pointcloud.bundle_adjustment.strategy` | str | `global` | With loop closure only: `global`, `window` (inside each LC window) or `window+global` |
+| `pointcloud.bundle_adjustment.keep_pre_ba` | bool | `false` | Copy `pointcloud.zarr` to `pointcloud_pre_ba.zarr` before `refine` rewrites it (a full zarr per scene) |
 | `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | `xfeat` or `loma` matcher tracks on full-res frames, or `vggsfm` (set `track_kwargs: {}`) |
 | `pointcloud.bundle_adjustment.track_kwargs` | dict | `{pairing: exhaustive, seed_fraction: 1.0}` | Passed to `extract_tracks`; matchers: `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction`, `min_matches`, `max_transfer_px`, with `sequential+retrieval` also `window`, `retrieval`, `retrieval_k`, `retrieval_nms`; `vggsfm`: `max_query_pts`, `query_frame_num`, `fine_tracking` |
 | `pointcloud.bundle_adjustment.tracks_cache_dir` | str\|null | `null` | Track-cache directory, reused while frames, points and track settings match; `null` = always extract |

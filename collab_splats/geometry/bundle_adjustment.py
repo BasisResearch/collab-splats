@@ -169,7 +169,10 @@ class BundleAdjustment:
     Refines camera poses and focal against VGGSfM or matcher tracks.
 
     - points untouched; the caller re-derives them under the new poses
-    - reports: loss_history (one list per solve, kept across refine calls), alignment_scale, losses
+    - reports: loss_history (one list per solve, kept across refine calls), solve_losses (start /
+      end per solve, each on its own draw), alignment_scale, losses, dropped_frames
+    - solve_losses use the draws' base weights and are kept across refine calls like loss_history;
+      losses use the last re-sample's IRLS weights
     """
 
     def __init__(self, config: BundleAdjustmentConfig | None = None) -> None:
@@ -187,6 +190,12 @@ class BundleAdjustment:
         # Last solve's reports: alignment scale, final loss per term
         self.alignment_scale: float | None = None
         self.losses: dict[str, float] = {}
+
+        # Per solve: per-term losses (and photometric sample count) at its input and final poses
+        self.solve_losses: list[dict[str, dict[str, float]]] = []
+
+        # Last solve's frames cut by the inlier gate; they keep their input poses
+        self.dropped_frames: list[int] = []
 
     def refine(
         self,
@@ -447,6 +456,12 @@ class BundleAdjustment:
                 cam_params, pts3d_tensor, shared_focal, refine_focal=cfg.refine_focal
             )
 
+            # A draw linearizes at its poses, so start and end each draw their own at the finest scale
+            fine = levels[-1][:3] if levels else None
+            start = _side_losses(
+                model, input_dict, fine, focal_tensor, len(obs_2d), cfg
+            )
+
             # bae TrustRegion: non-positive predicted drop counts as rejected (pypose's does not)
             strategy = TrustRegion(up=2.0, down=0.5**4, max=1e6)
 
@@ -492,19 +507,10 @@ class BundleAdjustment:
 
                     # Re-sample pixel brightness and image slope at the current poses and focal
                     if gray_l is not None:
-                        pose_se3 = pp.SE3(model.pose.data[:, :7].detach())
-                        w2c = pose_se3.matrix()
-                        K_cur = K_l.clone()
-
-                        # Scale K's focal by the live focal over the input one
-                        K_cur[:, [0, 1], [0, 1]] *= model.focal() / focal_tensor
-
                         # One seed per re-sample, so every draw picks fresh pixels yet repeats run to run
-                        with torch.no_grad():
-                            samples = photometric_samples(
-                                w2c, gray_l, depth_l, K_cur, seed=n_draws
-                            )
-
+                        samples = _draw_samples(
+                            model, gray_l, depth_l, K_l, focal_tensor, seed=n_draws
+                        )
                         n_draws += 1
 
                         if samples is None:
@@ -584,19 +590,15 @@ class BundleAdjustment:
             # Keep this solve's per-step losses
             self.loss_history.append(loss_hist)
 
-            # 6. Losses, poses, alignment, focal: final loss per term, sliced from the stacked residual
-            with torch.no_grad():
-                final = model(**input_dict).tensor()
-
-            # Track rows first, photometric rows after
+            # 6. Final loss per term under the last re-sample's weights, then on a fresh draw
             M = len(obs_2d)
-            self.losses = {"reprojection": float(final[:M, :2].square().sum())}
+            self.losses = _term_losses(model, input_dict, M, cfg)
 
-            if cfg.use_depth:
-                self.losses["depth"] = float(final[:M, 2].square().sum())
-
-            if cfg.use_photometric:
-                self.losses["photometric"] = float(final[M:, 0].square().sum())
+            # Free the solve's Jacobian and optimizer state before the end draw
+            del optimizer
+            pytorch_gc()
+            end = _side_losses(model, input_dict, fine, focal_tensor, M, cfg)
+            self.solve_losses.append({"start": start, "end": end})
 
         # Recover (3, 4) extrinsics from optimized SE3 quaternion representation
         opt_cam = to_numpy(model.pose.data).astype(np.float64)  # (K, 7) or (K, 8)
@@ -612,6 +614,7 @@ class BundleAdjustment:
 
         # Log frames the inlier gate dropped
         dropped = np.setdiff1d(np.arange(N), active_frames)
+        self.dropped_frames = dropped.tolist()
 
         # Warn only when the gate dropped a frame
         if len(dropped):
@@ -748,6 +751,84 @@ class _BAModel(nn.Module):
 ########################################################################
 # Helpers
 ########################################################################
+
+
+def _draw_samples(
+    model: _BAModel,
+    gray: torch.Tensor,
+    depth: torch.Tensor,
+    K: torch.Tensor,
+    focal: torch.Tensor,
+    seed: int,
+) -> dict[str, torch.Tensor] | None:
+    """
+    Photometric samples at the model's live poses and focal.
+
+    - K is the level K at the input focal; its focal is scaled by live over input focal
+    """
+    pose_se3 = pp.SE3(model.pose.data[:, :7].detach())
+    w2c = pose_se3.matrix()
+    K_cur = K.clone()
+
+    # Scale K's focal by the live focal over the input one
+    K_cur[:, [0, 1], [0, 1]] *= model.focal() / focal
+
+    with torch.no_grad():
+        return photometric_samples(w2c, gray, depth, K_cur, seed=seed)
+
+
+def _side_losses(
+    model: _BAModel,
+    input_dict: dict[str, Any],
+    fine: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None,
+    focal: torch.Tensor,
+    n_tracks: int,
+    cfg: BundleAdjustmentConfig,
+) -> dict[str, float]:
+    """
+    Per-term losses and total on a seed-0 finest-scale draw at the model's live poses.
+
+    - n_photometric counts the draw's samples and stays out of total
+    - n_photometric is 0 when the finest draw is empty, so a per-sample ratio is undefined
+    """
+    samples = None
+
+    if fine is not None:
+        samples = _draw_samples(model, *fine, focal, seed=0)
+
+    inputs = {**input_dict, "photometric": samples}
+    losses = _term_losses(model, inputs, n_tracks, cfg)
+    losses["total"] = sum(losses.values())
+
+    if cfg.use_photometric:
+        losses["n_photometric"] = 0 if samples is None else len(samples["weight"])
+
+    return losses
+
+
+def _term_losses(
+    model: _BAModel,
+    inputs: dict[str, Any],
+    n_tracks: int,
+    cfg: BundleAdjustmentConfig,
+) -> dict[str, float]:
+    """
+    Squared residual per term at the model's current parameters.
+
+    - track rows first (u, v reprojection, then depth), photometric rows after
+    """
+    with torch.no_grad():
+        res = model(**inputs).tensor()
+
+    losses = {"reprojection": float(res[:n_tracks, :2].square().sum())}
+
+    if cfg.use_depth:
+        losses["depth"] = float(res[:n_tracks, 2].square().sum())
+
+    if cfg.use_photometric:
+        losses["photometric"] = float(res[n_tracks:, 0].square().sum())
+
+    return losses
 
 
 def _filter_observations(

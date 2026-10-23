@@ -30,7 +30,11 @@ from collab_splats.geometry.bundle_adjustment import (
     BundleAdjustmentConfig,
 )
 from collab_splats.geometry.loop_closure.wrapper import LoopClosure, LoopClosureConfig
-from collab_splats.geometry.metrics import compute_reconstruction_quality
+from collab_splats.geometry.metrics import (
+    compute_reconstruction_quality,
+    pose_change,
+    principal_extent_ratio,
+)
 from collab_splats.geometry.transforms import invert_poses
 from collab_splats.geometry.viz import plot_photometric_ncc
 from collab_splats.localization.extractors import LocalMatcher
@@ -353,6 +357,7 @@ class Reconstructor:
         )
         ba.setdefault("enabled", True)
         ba.setdefault("strategy", "global")
+        ba.setdefault("keep_pre_ba", False)
 
         # Strategy picks the solve under LC: inside each window, over every frame after, or both
         if ba["strategy"] not in ("window", "global", "window+global"):
@@ -360,10 +365,10 @@ class Reconstructor:
                 f"pointcloud.bundle_adjustment.strategy must be window, global or window+global, got {ba['strategy']!r}"
             )
 
-        # Unknown keys: neither `enabled`/`strategy` nor a BundleAdjustmentConfig field
+        # Unknown keys: neither a stage key (enabled / strategy / keep_pre_ba) nor a BundleAdjustmentConfig field
         unknown = (
             set(ba)
-            - {"enabled", "strategy"}
+            - {"enabled", "strategy", "keep_pre_ba"}
             - {f.name for f in dataclasses.fields(BundleAdjustmentConfig)}
         )
 
@@ -377,7 +382,11 @@ class Reconstructor:
         # Build the BA config so its own checks refuse values the solver cannot run
         try:
             BundleAdjustmentConfig(
-                **{k: v for k, v in ba.items() if k not in ("enabled", "strategy")}
+                **{
+                    k: v
+                    for k, v in ba.items()
+                    if k not in ("enabled", "strategy", "keep_pre_ba")
+                }
             )
         except ValueError as e:
             raise ValueError(f"pointcloud.bundle_adjustment: {e}") from e
@@ -498,6 +507,26 @@ class Reconstructor:
             <backend_dir>/sparse_pc.ply.
         """
         return self.backend_dir / "sparse_pc.ply"
+
+    @property
+    def pre_ba_zarr(self) -> Path:
+        """
+        pointcloud.zarr as it stood before refine; written only with bundle_adjustment.keep_pre_ba.
+
+        Returns:
+            <backend_dir>/pointcloud_pre_ba.zarr.
+        """
+        return self.backend_dir / "pointcloud_pre_ba.zarr"
+
+    @property
+    def pre_ba_report(self) -> Path:
+        """
+        Quality report on the pre-refine arrays, written by refine beside the post-BA report.
+
+        Returns:
+            <backend_dir>/reconstruction_quality_report_pre_ba.json.
+        """
+        return self.backend_dir / "reconstruction_quality_report_pre_ba.json"
 
     @property
     def semantics_cache_dir(self) -> Path:
@@ -869,7 +898,9 @@ class Reconstructor:
 
                 if ba["enabled"] and ba["strategy"] in ("window", "window+global"):
                     terms = {
-                        k: v for k, v in ba.items() if k not in ("enabled", "strategy")
+                        k: v
+                        for k, v in ba.items()
+                        if k not in ("enabled", "strategy", "keep_pre_ba")
                     }
                     ba_cfg = BundleAdjustmentConfig(**terms)
 
@@ -901,8 +932,10 @@ class Reconstructor:
                 **cfg.get(backend, {}),
             )
 
-        # Drop a stale refine marker before touching the artifacts it describes
+        # Drop stale refine artifacts before touching the artifacts they describe
         self.outputs["refine"].unlink(missing_ok=True)
+        self.pre_ba_report.unlink(missing_ok=True)
+        shutil.rmtree(self.pre_ba_zarr, ignore_errors=True)
 
         # Reconstruct; the creator writes the COLMAP model itself
         result = creator.create_pointcloud(
@@ -942,6 +975,8 @@ class Reconstructor:
         - points are re-derived, re-cleaned and re-capped, so their count can change
         - the zarr is rewritten whole, which drops any localization DB built on the old points
         - a matcher track_source (xfeat / loma) reads the full-res frames in the images/ store
+        - diagnostics in refine.json; pre-BA quality report beside the post-BA one
+        - keep_pre_ba snapshots the input zarr
 
         Raises:
             ValueError: pointcloud.method is sfm, or loop closure is on with the window strategy.
@@ -965,7 +1000,7 @@ class Reconstructor:
         terms = {
             k: v
             for k, v in cfg["bundle_adjustment"].items()
-            if k not in ("enabled", "strategy")
+            if k not in ("enabled", "strategy", "keep_pre_ba")
         }
         ba_cfg = BundleAdjustmentConfig(**terms)
 
@@ -974,6 +1009,28 @@ class Reconstructor:
 
         # Refine poses, then re-derive the points under the new cameras
         pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr, load_images=True)
+
+        # Warn before an earlier snapshot goes: a re-run refines already-refined arrays
+        if self.pre_ba_zarr.exists():
+            logger.warning(
+                "refine: removing existing pre-BA snapshot %s; re-running refine works on already-refined arrays",
+                self.pre_ba_zarr,
+            )
+
+        # Pre-BA snapshot: an earlier one removed, a fresh copy only on request
+        shutil.rmtree(self.pre_ba_zarr, ignore_errors=True)
+
+        if cfg["bundle_adjustment"]["keep_pre_ba"]:
+            shutil.copytree(self.pointcloud_zarr, self.pre_ba_zarr)
+
+        # Pre-BA quality report; the report stage writes the post-BA one
+        write_json(self.pre_ba_report, self._quality_report(pointcloud))
+
+        # Inputs the diagnostics compare against
+        extrinsics_in = pointcloud.extrinsics.copy()
+        flat_before = principal_extent_ratio(pointcloud.points)
+        focal_before = pointcloud.model_intrinsics[:, [0, 1], [0, 1]].mean(axis=1)
+
         ba = BundleAdjustment(ba_cfg)
 
         # Full-res store frames in zarr order: matcher track input and track-cache key; vggsfm needs no store
@@ -1024,19 +1081,42 @@ class Reconstructor:
         pointcloud.write_ply(self.sparse_ply)
         self._result = None
 
-        # Marker last: BA config and loss history
+        # Marker last: BA config, loss history and diagnostics
         marker = self.outputs["refine"]
         marker.parent.mkdir(parents=True, exist_ok=True)
         config = {
             k: str(v) if isinstance(v, Path) else v
             for k, v in dataclasses.asdict(ba_cfg).items()
         }
+
+        # Diagnostics: did BA lower its own loss, how far did cameras move, did the scene flatten
+        focal_after = pointcloud.model_intrinsics[:, [0, 1], [0, 1]].mean(axis=1)
+        diagnostics = {
+            "solve_losses": ba.solve_losses,
+            "dropped_frames": ba.dropped_frames,
+            "pose_delta": pose_change(extrinsics_in, pointcloud.extrinsics),
+            "flatness": {
+                "before": flat_before,
+                "after": principal_extent_ratio(pointcloud.points),
+            },
+            "focal": {
+                "before": focal_before.tolist(),
+                "after": focal_after.tolist(),
+                "median_before": float(np.median(focal_before)),
+                "median_after": float(np.median(focal_after)),
+                "max_rel_change": float(
+                    np.max(np.abs(focal_after - focal_before) / focal_before)
+                ),
+            },
+        }
+
         report = {
             "config": config,
             "loss_history": ba.loss_history,
             "losses": ba.losses,
             "alignment_scale": ba.alignment_scale,
             "n_frames": len(pointcloud.image_paths),
+            "diagnostics": diagnostics,
         }
         write_json(marker, report)
 
@@ -1472,18 +1552,12 @@ class Reconstructor:
         )
         logger.info("Splats saved to %s", self.outputs["splats"])
 
-    def reconstruction_quality_report(self) -> None:
+    def _quality_report(self, pointcloud: PointcloudResult) -> dict[str, Any]:
         """
-        Reference-free error report: columnar tables, one reconstruction_quality_report.json.
+        Every report table for one reconstruction, under a scene block.
 
-        - named for the artifact it writes; distinct from the video quality report (capture)
-        - null photometric table without images; columns listed in geometry/metrics.py
-        - a failing measurement raises
-        - runs no model and no matcher; reads the zarr and images/ only
-        - reconstruction_quality_ncc.png beside it: photometric NCC by frame gap
+        - photometric table null without an images/ store
         """
-        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr)
-
         # Optional frames for photometric, read by the zarr's frame ids; images/ may hold frames sfm dropped
         images = None
 
@@ -1512,7 +1586,7 @@ class Reconstructor:
             min_pair_overlap=min_pair_overlap,
         )
 
-        # Atomic write beside the zarr: reuse-by-existence never sees a half file
+        # Scene block ahead of the tables
         scene = {
             "backend": self.config["pointcloud"]["backend"],
             "n_frames": len(pointcloud.depth),
@@ -1521,9 +1595,23 @@ class Reconstructor:
             "zarr": str(self.pointcloud_zarr),
             "min_pair_overlap": min_pair_overlap,
         }
-        write_json(
-            self.outputs["reconstruction_quality_report"], {"scene": scene, **tables}
-        )
+        return {"scene": scene, **tables}
+
+    def reconstruction_quality_report(self) -> None:
+        """
+        Reference-free error report: columnar tables, one reconstruction_quality_report.json.
+
+        - named for the artifact it writes; distinct from the video quality report (capture)
+        - null photometric table without images; columns listed in geometry/metrics.py
+        - a failing measurement raises
+        - runs no model and no matcher; reads the zarr and images/ only
+        - reconstruction_quality_ncc.png beside it: photometric NCC by frame gap
+        """
+        pointcloud = PointcloudResult.load_zarr(self.pointcloud_zarr)
+        report = self._quality_report(pointcloud)
+
+        # Atomic write beside the zarr: reuse-by-existence never sees a half file
+        write_json(self.outputs["reconstruction_quality_report"], report)
         logger.info(
             "Reconstruction quality report written to %s",
             self.outputs["reconstruction_quality_report"],
@@ -1532,7 +1620,7 @@ class Reconstructor:
         # NCC-by-gap plot beside the report; skipped without images
         plot_path = self.backend_dir / "reconstruction_quality_ncc.png"
         plot_photometric_ncc(
-            tables["photometric_pairs"],
+            report["photometric_pairs"],
             plot_path,
-            title=f"{scene['backend']}: cross-view NCC by gap",
+            title=f"{report['scene']['backend']}: cross-view NCC by gap",
         )

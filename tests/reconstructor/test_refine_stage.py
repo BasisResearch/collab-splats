@@ -132,6 +132,7 @@ def test_validate_config_allows_ba_without_lc(tmp_path):
     assert r.config["pointcloud"]["bundle_adjustment"] == {
         "enabled": True,
         "strategy": "global",
+        "keep_pre_ba": False,
     }
 
 
@@ -279,7 +280,11 @@ def test_refine_matcher_source_passes_store_frames_in_zarr_order(tmp_path):
         seen["frame_paths"] = frame_paths
         return fake_refine(self, *args, **kwargs)
 
-    with patch("collab_splats.reconstructor.BundleAdjustment.refine", capture):
+    # Empty frame files: skip the pre-BA report, which decodes them
+    with (
+        patch("collab_splats.reconstructor.BundleAdjustment.refine", capture),
+        patch.object(Reconstructor, "_quality_report", return_value={}),
+    ):
         r.refine()
 
     assert seen["frame_paths"] == [

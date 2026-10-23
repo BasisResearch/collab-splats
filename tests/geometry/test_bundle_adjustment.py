@@ -629,9 +629,10 @@ def test_photometric_level_K_is_pixel_center_rescale():
             confidence,
         )
 
-    assert len(seen) == 3
+    # Start-loss draw at full res, one per scale coarse to fine, then the end-loss draw at full res
+    assert len(seen) == 5
 
-    for K, factor in zip(seen, (4, 2, 1)):
+    for K, factor in zip(seen, (1, 4, 2, 1, 1)):
         np.testing.assert_allclose(
             K[:, [0, 1], [0, 1]], intrinsics[:, [0, 1], [0, 1]] / factor, rtol=1e-6
         )
@@ -1310,3 +1311,110 @@ def test_track_source_rejects_unknown():
     """
     with pytest.raises(ValueError, match="track_source"):
         BundleAdjustmentConfig(track_source="disk")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_optimize_records_start_and_end_losses():
+    """
+    One solve records per-term start and end losses; noisy poses end below their start.
+    """
+    N, P, H, W = 4, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+    rng = np.random.default_rng(0)
+    extrinsics[:, :3, 3] += rng.normal(0, 0.05, (N, 3)).astype(np.float32)
+    cfg = BundleAdjustmentConfig(
+        min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY
+    )
+    ba = BundleAdjustment(cfg)
+
+    ba._optimize(
+        pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
+    )
+
+    assert len(ba.solve_losses) == 1
+    start, end = ba.solve_losses[0]["start"], ba.solve_losses[0]["end"]
+    assert set(start) == set(end) == {"reprojection", "total"}
+    assert start["total"] == pytest.approx(start["reprojection"])
+    assert end["total"] < start["total"]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_optimize_start_end_losses_carry_the_photometric_term():
+    """
+    With photometric on, start and end carry it plus a sample count outside total.
+    """
+    N, P, H, W = 4, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+    images, depth, confidence = _textured_plane(N, H, W)
+    cfg = BundleAdjustmentConfig(
+        use_depth=False, min_inliers_per_frame=10, max_reproj_error=None
+    )
+    ba = BundleAdjustment(cfg)
+
+    ba._optimize(
+        pts3d,
+        extrinsics,
+        intrinsics,
+        *_flat(tracks, vis_mask),
+        images,
+        depth,
+        confidence,
+    )
+
+    for losses in ba.solve_losses[0].values():
+        assert set(losses) == {"reprojection", "photometric", "total", "n_photometric"}
+        assert losses["total"] == pytest.approx(
+            losses["reprojection"] + losses["photometric"]
+        )
+        assert losses["n_photometric"] > 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_optimize_end_photometric_per_sample_below_start():
+    """
+    On noisy poses the photometric loss per sample falls from start to end, each on its own draw.
+    """
+    N, P, H, W = 4, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+    rng = np.random.default_rng(0)
+    extrinsics[:, :3, 3] += rng.normal(0, 0.02, (N, 3)).astype(np.float32)
+    images, depth, confidence = _textured_plane(N, H, W)
+    cfg = BundleAdjustmentConfig(
+        use_depth=False, min_inliers_per_frame=10, max_reproj_error=None
+    )
+    ba = BundleAdjustment(cfg)
+
+    ba._optimize(
+        pts3d,
+        extrinsics,
+        intrinsics,
+        *_flat(tracks, vis_mask),
+        images,
+        depth,
+        confidence,
+    )
+
+    start, end = ba.solve_losses[0]["start"], ba.solve_losses[0]["end"]
+    per_start = start["photometric"] / start["n_photometric"]
+    per_end = end["photometric"] / end["n_photometric"]
+    assert per_end < per_start, (per_start, per_end)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_optimize_records_dropped_frames():
+    """
+    A frame the inlier gate drops is listed in dropped_frames.
+    """
+    N, P, H, W = 5, 60, 128, 128
+    pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
+    vis = vis_mask.astype(np.float32)
+    vis[0] = 0.0
+    cfg = BundleAdjustmentConfig(
+        lm_steps=3, min_inliers_per_frame=10, max_reproj_error=None, **REPROJ_ONLY
+    )
+    ba = BundleAdjustment(cfg)
+    assert ba.dropped_frames == []
+
+    ba._optimize(pts3d, extrinsics, intrinsics, *_flat(tracks, vis), None, None, None)
+
+    assert ba.dropped_frames == [0]

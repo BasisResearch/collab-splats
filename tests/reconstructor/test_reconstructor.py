@@ -1,7 +1,9 @@
 import contextlib
+import dataclasses
 import hashlib
 import itertools
 import json
+import logging
 import weakref
 from pathlib import Path
 from unittest.mock import MagicMock, call, create_autospec, patch
@@ -2080,6 +2082,199 @@ def test_report_raises_when_photometric_raises(tmp_path, monkeypatch):
         rec.reconstruction_quality_report()
 
 
+class _FakeBundleAdjustment:
+    """
+    BundleAdjustment stand-in: frame 1 moved 1 cm along x, focal x1.1, fixed reports.
+    """
+
+    solve_losses = [
+        {
+            "start": {"reprojection": 2.0, "total": 2.0},
+            "end": {"reprojection": 1.0, "total": 1.0},
+        }
+    ]
+
+    def __init__(self, config):
+        self.loss_history = [[2.0, 1.0]]
+        self.losses = {"reprojection": 1.0}
+        self.alignment_scale = None
+        self.solve_losses = _FakeBundleAdjustment.solve_losses
+        self.dropped_frames = [2]
+
+    def refine(
+        self,
+        images,
+        confidence,
+        world_points,
+        extrinsics,
+        intrinsics,
+        depth,
+        frame_paths=None,
+    ):
+        extrinsics = extrinsics.copy()
+        extrinsics[1, 0, 3] += 0.01
+        intrinsics = intrinsics.copy()
+        intrinsics[:, [0, 1], [0, 1]] *= 1.1
+        return extrinsics, intrinsics
+
+
+def _refine_reconstructor(tmp_path, ba=None):
+    """
+    Reconstructor with BA on (vggsfm tracks, no photometric) over a tiny reprojectable zarr.
+    """
+    ba_cfg = {
+        "enabled": True,
+        "track_source": "vggsfm",
+        "track_kwargs": {},
+        "use_photometric": False,
+    }
+    config = _make_config(
+        tmp_path, {"pointcloud": {"bundle_adjustment": {**ba_cfg, **(ba or {})}}}
+    )
+    rec = Reconstructor(config)
+    _save_tiny_zarr(rec)
+
+    # Every pixel is a point, so refine's reproject() has source pixels
+    pc = PointcloudResult.load_zarr(rec.pointcloud_zarr)
+    pix = np.argwhere(np.ones(pc.depth.shape, bool)).astype(np.int32)
+    pc = dataclasses.replace(
+        pc, pixel_indices=pix, colors=np.zeros((len(pix), 3), np.uint8)
+    )
+    pc.reproject().save_zarr(rec.pointcloud_zarr)
+    return rec
+
+
+def _run_refine(rec):
+    """
+    refine() with the fake BA and the COLMAP writes stubbed.
+    """
+    with (
+        patch.object(R, "BundleAdjustment", _FakeBundleAdjustment),
+        patch.object(R, "write_colmap_reconstruction"),
+        patch.object(PointcloudResult, "to_colmap"),
+    ):
+        rec.refine()
+
+    return json.loads(rec.outputs["refine"].read_text())
+
+
+def test_refine_writes_diagnostics(tmp_path):
+    """
+    refine.json carries BA's losses and dropped frames, the pose delta and the flatness pair.
+    """
+    rec = _refine_reconstructor(tmp_path)
+
+    diag = _run_refine(rec)["diagnostics"]
+
+    assert diag["solve_losses"] == _FakeBundleAdjustment.solve_losses
+    assert diag["dropped_frames"] == [2]
+
+    # Camera centers 0, 0.15, 0.3 along x: frame 1's 1 cm move is 1/30 of the path
+    translation = diag["pose_delta"]["translation_frac"]["per_frame"]
+    np.testing.assert_allclose(translation, [0, 0.01 / 0.3, 0], atol=1e-5)
+    assert diag["pose_delta"]["rotation_deg"]["max"] == pytest.approx(0.0, abs=1e-6)
+    assert set(diag["flatness"]) == {"before", "after"}
+
+
+def test_refine_diagnostics_focal_when_refined(tmp_path):
+    """
+    With refine_focal on, the median focal before and after BA is recorded.
+    """
+    rec = _refine_reconstructor(tmp_path, {"refine_focal": True, "solver": "lm"})
+
+    focal = _run_refine(rec)["diagnostics"]["focal"]
+
+    assert focal["median_before"] == pytest.approx(50.0)
+    assert focal["median_after"] == pytest.approx(55.0)
+
+
+def test_refine_diagnostics_focal_always_per_frame(tmp_path):
+    """
+    With refine_focal off, per-frame (fx+fy)/2 before and after BA is still recorded.
+    """
+    rec = _refine_reconstructor(tmp_path)
+
+    # Per-frame focals with fx != fy, so the record is per frame and the fx/fy mean
+    pc = PointcloudResult.load_zarr(rec.pointcloud_zarr)
+    K = pc.model_intrinsics.copy()
+    K[:, 0, 0] = [48.0, 50.0, 52.0]
+    K[:, 1, 1] = [50.0, 52.0, 54.0]
+    dataclasses.replace(pc, model_intrinsics=K).save_zarr(rec.pointcloud_zarr)
+
+    focal = _run_refine(rec)["diagnostics"]["focal"]
+
+    np.testing.assert_allclose(focal["before"], [49.0, 51.0, 53.0], rtol=1e-6)
+    np.testing.assert_allclose(focal["after"], [53.9, 56.1, 58.3], rtol=1e-6)
+    assert focal["median_before"] == pytest.approx(51.0)
+    assert focal["median_after"] == pytest.approx(56.1)
+    assert focal["max_rel_change"] == pytest.approx(0.1, rel=1e-5)
+
+
+def test_refine_pre_ba_report_matches_report_stage_on_input(tmp_path):
+    """
+    The pre-BA report equals the report stage run on the unrefined zarr: the pilot's arm sanity check.
+    """
+    rec = _refine_reconstructor(tmp_path)
+
+    # Textured keyframes at the zarr's frame ids, so both reports carry photometric pairs
+    fr.write_frames(rec.images_dir, _texture_frames(), [0, 4, 8])
+
+    rec.reconstruction_quality_report()
+    expected = json.loads(rec.outputs["reconstruction_quality_report"].read_text())
+
+    _run_refine(rec)
+
+    pre_ba = json.loads(rec.pre_ba_report.read_text())
+    assert expected["photometric_pairs"] is not None
+    assert expected["photometric_pairs"]["photometric_ncc"]
+    assert pre_ba == expected
+
+
+def test_refine_keep_pre_ba_snapshots_the_input_zarr(tmp_path):
+    """
+    keep_pre_ba copies the unrefined zarr aside; the live zarr carries the refined poses.
+    """
+    rec = _refine_reconstructor(tmp_path, {"keep_pre_ba": True})
+    before = PointcloudResult.load_zarr(rec.pointcloud_zarr).extrinsics
+
+    _run_refine(rec)
+
+    kept = PointcloudResult.load_zarr(rec.pre_ba_zarr).extrinsics
+    after = PointcloudResult.load_zarr(rec.pointcloud_zarr).extrinsics
+    np.testing.assert_array_equal(kept, before)
+    assert not np.array_equal(after, before)
+
+
+def test_refine_drops_a_stale_pre_ba_snapshot(tmp_path, caplog):
+    """
+    Without keep_pre_ba, a snapshot left by an earlier refine is removed with a warning.
+    """
+    rec = _refine_reconstructor(tmp_path)
+    rec.pre_ba_zarr.mkdir(parents=True)
+
+    with caplog.at_level(logging.WARNING, logger="collab_splats.reconstructor"):
+        _run_refine(rec)
+
+    assert not rec.pre_ba_zarr.exists()
+    assert "existing pre-BA snapshot" in caplog.text
+
+
+def test_pointcloud_stage_drops_stale_pre_ba_artifacts(tmp_path):
+    """
+    A fresh pointcloud invalidates the pre-BA report and snapshot of the old one.
+    """
+    rec = Reconstructor(_make_config(tmp_path))
+    rec.pre_ba_zarr.mkdir(parents=True)
+    rec.pre_ba_report.write_text("{}")
+    creator_cls = stub_creator_cls(_make_mock_pointcloud_result(tmp_path))
+
+    with patch("collab_splats.reconstructor.get_creator", return_value=creator_cls):
+        rec.pointcloud()
+
+    assert not rec.pre_ba_zarr.exists()
+    assert not rec.pre_ba_report.exists()
+
+
 def test_run_skips_the_report_and_never_touches_the_reconstruction(tmp_path):
     """Skip is checked BEFORE the stage runs, so a config-driven re-run costs nothing."""
     config = _make_config(tmp_path)
@@ -2224,4 +2419,29 @@ def test_track_kwargs_kept_when_unset(tmp_path):
     assert (
         recon.config["pointcloud"]["bundle_adjustment"]["track_kwargs"]["pairing"]
         == "exhaustive"
+    )
+
+
+def test_bundle_adjustment_keep_pre_ba_defaults_false(tmp_path):
+    """
+    keep_pre_ba is a Reconstructor-level key: defaulted, accepted, never a solver field.
+    """
+    rec = Reconstructor(_make_config(tmp_path))
+    assert rec.config["pointcloud"]["bundle_adjustment"]["keep_pre_ba"] is False
+
+    on = {"pointcloud": {"bundle_adjustment": {"enabled": True, "keep_pre_ba": True}}}
+    rec = Reconstructor(_make_config(tmp_path, on))
+    assert rec.config["pointcloud"]["bundle_adjustment"]["keep_pre_ba"] is True
+
+
+def test_pre_ba_paths_sit_beside_the_zarr(tmp_path):
+    """
+    The pre-BA snapshot and report live in the backend dir next to their post-BA twins.
+    """
+    rec = Reconstructor(_make_config(tmp_path))
+
+    assert rec.pre_ba_zarr == rec.backend_dir / "pointcloud_pre_ba.zarr"
+    assert (
+        rec.pre_ba_report
+        == rec.backend_dir / "reconstruction_quality_report_pre_ba.json"
     )

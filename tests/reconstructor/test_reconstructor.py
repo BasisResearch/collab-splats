@@ -929,6 +929,20 @@ def test_mesh_depth_trunc_percentile_required(tmp_path, monkeypatch, pct):
         )
 
 
+@pytest.mark.parametrize("brightness", [0, 1, 1.5, -0.2])
+def test_mesh_texture_brightness_range(tmp_path, monkeypatch, brightness):
+    """
+    A texture_brightness outside (0, 1) raises before any fusion.
+    """
+    with pytest.raises(ValueError, match="texture_brightness"):
+        _mesh_fuse(
+            tmp_path,
+            monkeypatch,
+            _tsdf_mesh_ff(model_hw=(16, 16)),
+            texture_brightness=brightness,
+        )
+
+
 def test_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
     """
     conf_percentile zeroes the depth under the percentile before it reaches the fusion.
@@ -1039,7 +1053,7 @@ def test_mesh_textures_the_prepared_mesh_behind_the_real_surface(tmp_path, monke
     assert mesh is prepared
     assert occluder is real
     assert out_dir == rec.backend_dir / "texture"
-    assert texture_mesh.call_args.kwargs == {"voxel_size": 0.01}
+    assert texture_mesh.call_args.kwargs == {"voxel_size": 0.01, "brightness": 0.4}
 
 
 def test_mesh_texture_without_cuda_raises_before_fusion(tmp_path, monkeypatch):
@@ -1839,6 +1853,7 @@ def test_base_yaml_mesh_has_fidelity_keys():
         "mask_sky",
         "max_faces",
         "texture",
+        "texture_brightness",
         "use_convex_hull",
         "smooth_iterations",
     }

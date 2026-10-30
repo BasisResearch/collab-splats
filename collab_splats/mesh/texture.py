@@ -49,6 +49,7 @@ def create_texture_mesh(
     *,
     voxel_size: float,
     tex_size: int = 8192,
+    brightness: float | None = None,
 ) -> Path:
     """
     Unwrap and texture a prepared mesh.
@@ -66,6 +67,7 @@ def create_texture_mesh(
         K: (N, 3, 3) intrinsics at image resolution.
         voxel_size: TSDF voxel the mesh was fused at, world units.
         tex_size: atlas edge in texels.
+        brightness: median luminance a darker bake is raised to (_color_correction); None = off.
 
     Returns:
         Path to out_dir/mesh.obj.
@@ -104,6 +106,7 @@ def create_texture_mesh(
         tex_size,
         occlusion_eps=voxel_size,
         occluder=occluder_vf,
+        brightness=brightness,
     )
     albedo = _dilate_chart_gutters(albedo, uvs, boxes)
 
@@ -526,6 +529,7 @@ def project_images_to_texture(
     occluder: tuple[np.ndarray, np.ndarray] | None = None,
     view_ratio: float = 1.5,
     blur_pix_sigma: float = 16.0,
+    brightness: float | None = None,
 ) -> np.ndarray:
     """
     Visibility-weighted projection of images into a mesh's UV atlas.
@@ -550,6 +554,7 @@ def project_images_to_texture(
         occluder: (verts, faces) to depth-test against instead of the mesh.
         view_ratio: keep views whose pixel size at the texel is within this factor of the texel's best.
         blur_pix_sigma: base band Gaussian sigma in source pixels; 0 takes the whole image from the view_ratio views.
+        brightness: median luminance a darker bake is raised to (_color_correction); None = off.
 
     Returns:
         (tex_size, tex_size, 3) uint8 albedo.
@@ -629,6 +634,7 @@ def project_images_to_texture(
         detail_acc / detail_w.clamp(min=1e-12)[:, None]
         + base_acc / base_w.clamp(min=1e-12)[:, None]
     )
+    color[hit] = _color_correction(color[hit].clamp(0, 1), brightness)
     albedo[covered] = color.clamp(0, 1) * hit[:, None]
     seen = torch.zeros(tex_size, tex_size, dtype=torch.bool, device="cuda")
     seen[covered] = hit
@@ -644,6 +650,38 @@ def project_images_to_texture(
     # Fill everything no view reached, then quantize
     albedo = fill_missing_pixels(albedo.cpu().numpy(), seen.cpu().numpy())
     return to_uint8_hwc(albedo, channels_first=False)
+
+
+def _color_correction(color: torch.Tensor, brightness: float | None) -> torch.Tensor:
+    """
+    Seen-texel colors brightened by one luminance gamma until their median reaches brightness.
+
+    - brighten only: brightness None, no texels, or a median already at brightness returns color as is
+    - RGB scaled by the luminance ratio, so hue holds and black stays black
+    - color: (M, 3) in [0, 1]
+    """
+    if brightness is None or len(color) == 0:
+        return color
+
+    # Median luminance; floored so an all-black scene cannot hit log(0)
+    luma = color @ color.new_tensor([0.299, 0.587, 0.114])
+    median = float(luma.median().clamp(min=1e-4))
+
+    if median >= brightness:
+        logger.info(
+            "color correction: median %.2f >= brightness %.2f, unchanged",
+            median,
+            brightness,
+        )
+        return color
+
+    # One gamma maps the median onto brightness; scale RGB by the luminance ratio
+    gamma = float(np.log(brightness) / np.log(median))
+    logger.info(
+        "color correction: median %.2f -> %.2f (gamma %.2f)", median, brightness, gamma
+    )
+    luma = luma.clamp(min=1e-12)
+    return (color * (luma.pow(gamma) / luma)[:, None]).clamp(0, 1)
 
 
 def _visible_pixel_size(

@@ -1330,7 +1330,8 @@ class Reconstructor:
         Raises:
             FileNotFoundError: the splats source has no ckpt.pt on disk.
             ValueError: mesh.source is neither feedforward nor splats, mesh.depth_trunc_percentile is outside
-                (0, 99], sky masks mismatch the depths, or no positive depth is left to fuse.
+                (0, 99], sky masks mismatch the depths, no positive depth is left to fuse, or mesh.texture_brightness
+                is outside (0, 1).
             RuntimeError: mesh.texture is on but no CUDA device is available.
         """
         cfg = self.config["mesh"]
@@ -1348,6 +1349,14 @@ class Reconstructor:
         if cfg["texture"] and not torch.cuda.is_available():
             raise RuntimeError(
                 "mesh.texture needs CUDA (nvdiffrast); set mesh.texture: false on CPU-only machines"
+            )
+
+        # Texture brightness is a median luminance in (0, 1); null leaves the bake as is
+        brightness = cfg["texture_brightness"]
+
+        if brightness is not None and not 0 < brightness < 1:
+            raise ValueError(
+                f"mesh.texture_brightness must be in (0, 1) or null, got {brightness!r}"
             )
 
         # Splats source: renders at frame resolution, with the poses they were rendered from
@@ -1483,6 +1492,7 @@ class Reconstructor:
                 c2w,
                 intrinsics,
                 voxel_size=voxel_size,
+                brightness=brightness,
             )
 
         # Write mesh.ply last, so it exists only when every step above finished

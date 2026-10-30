@@ -259,6 +259,59 @@ def test_project_images_to_texture_back_faces_get_nothing():
     assert albedo.max() == 0  # nothing seen, so the fill has nothing to spread
 
 
+######## _color_correction
+
+
+def _luma(color):
+    return color @ torch.tensor([0.299, 0.587, 0.114])
+
+
+def test_color_correction_raises_dark_median_to_brightness():
+    """
+    A dark scene's seen-texel luminance median lands on the brightness.
+    """
+    rng = np.random.default_rng(0)
+    dark = torch.from_numpy(rng.uniform(0.0, 0.2, (1000, 3)).astype(np.float32))
+
+    lifted = texture._color_correction(dark, 0.4)
+
+    assert abs(float(_luma(lifted).median()) - 0.4) < 1e-2
+
+
+def test_color_correction_leaves_bright_and_off_unchanged():
+    """
+    A median already at or above brightness, or brightness None, returns the input as is.
+    """
+    bright = torch.full((10, 3), 0.6)
+    dark = bright * 0.1
+
+    assert texture._color_correction(bright, 0.4) is bright
+    assert texture._color_correction(dark, None) is dark
+
+
+def test_color_correction_keeps_black_and_hue():
+    """
+    Black stays black; each texel's RGB ratios survive the correction.
+    """
+    color = torch.tensor([[0.0, 0.0, 0.0], [0.10, 0.05, 0.02], [0.08, 0.04, 0.02]])
+
+    lifted = texture._color_correction(color, 0.4)
+
+    torch.testing.assert_close(lifted[0], torch.zeros(3))
+    torch.testing.assert_close(
+        lifted[1:] / lifted[1:, :1], color[1:] / color[1:, :1], rtol=1e-4, atol=1e-6
+    )
+
+
+def test_color_correction_empty_is_noop():
+    """
+    No seen texel: nothing to measure, the input comes back.
+    """
+    empty = torch.zeros((0, 3))
+
+    assert texture._color_correction(empty, 0.4) is empty
+
+
 ######## create_texture_mesh
 
 

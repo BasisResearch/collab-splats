@@ -81,6 +81,7 @@ mesh:
 
   # Texture
   texture: true                # CUDA only
+  texture_brightness: 0.4      # floor: raise darker bakes to this median luminance, never darken; null = off
 
 
 ########################################

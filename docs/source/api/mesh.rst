@@ -220,7 +220,14 @@ to ``<backend>/texture/``.
    Gaussian-blurred base (``blur_pix_sigma=16`` source pixels) and its detail; detail comes
    only from views that resolve the texel nearly as finely as its best (``view_ratio=1.5``),
    the base averages every view that sees it, so per-frame exposure does not step where the
-   sharp views change. ``fill_missing_pixels`` (push-pull) fills every texel no view reached.
+   sharp views change. ``_color_correction`` then brightens night footage: a bake whose
+   seen-texel median luminance is below ``mesh.texture_brightness`` (``0.4``; ``null`` = off) is
+   raised by one luminance gamma onto it, RGB scaled by the luminance ratio, in float before
+   quantization. It is a floor, not a standard: brighter bakes are never darkened, because a
+   daytime median (0.34-0.56 across our scenes) is surface color, and a gamma above 1 crushes
+   shadows. It runs at the bake, not on the frames: lifting C0125's frames before the pipeline
+   left depth confidence unchanged and made cross-frame depth agreement slightly worse.
+   ``fill_missing_pixels`` (push-pull) fills every texel no view reached.
 3. ``_dilate_chart_gutters``: chart edge texels grow into their own padding, so bilinear
    lookups never pull in a neighboring chart.
 4. ``write_textured_obj`` (``collab_splats.utils.io``): ``mesh.obj`` + ``mesh.mtl`` +

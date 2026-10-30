@@ -264,6 +264,7 @@ mesh:
 | `mesh.enabled` | bool | `true` | Fuse a TSDF mesh into `<backend>/mesh.ply` |
 | `mesh.source` | str | `feedforward` | Fuse `pointcloud.zarr` depth, or `splats` rendered depth (needs the splats stage) |
 | `mesh.texture` | bool | `true` | UV-unwrap and texture into `<backend>/texture/`; needs a GPU, set `false` without one |
+| `mesh.texture_brightness` | float \| null | `0.4` | Brightness floor: raise a darker bake's median luminance to this (night scenes); brighter bakes are never darkened; `null` = off |
 
 <details>
 <summary>Depth filtering</summary>

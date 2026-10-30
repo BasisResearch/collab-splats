@@ -40,6 +40,7 @@ def _stub_reconstructor(tmp_path, n_views=3, height=8, width=8):
             "conf_percentile": 20,
             "mask_sky": False,
             "texture": False,
+            "texture_brightness": None,
             "use_convex_hull": False,
             "smooth_iterations": 0,
         },

@@ -10,6 +10,7 @@ from zarr.codecs.blosc import BloscCname
 
 import collab_splats.semantics.store as store
 from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.grouping import SegmentGroups
 from collab_splats.semantics.store import read_point_features, write_point_features
 
 ########################################################################
@@ -343,3 +344,26 @@ def test_semantics_stores_write_lz4(tmp_path):
     lifted_store = zarr.open(str(lifted), mode="r")
     assert _cnames(lifted_store["features"]) == [BloscCname.lz4]
     assert _cnames(lifted_store["vertex_features"]) == [BloscCname.lz4]
+
+
+def test_write_segment_groups_round_trips(tmp_path):
+    groups = SegmentGroups(
+        labels=np.array([0, 1, 1], np.int32),
+        labeled=np.array([True, True, False]),
+        parent=np.array([-1, 0], np.int32),
+        n_frames=np.array([9, 8], np.int32),
+    )
+    path = tmp_path / "mobilesamv2_segments.zarr"
+    store.write_segment_groups(
+        path, groups, vertex_labels=np.array([1, -1], np.int32), attrs={"tau": 0.6}
+    )
+
+    # Every array and attr back, no tmp dir left behind
+    z = zarr.open(str(path), mode="r")
+    assert z["labels"][:].tolist() == [0, 1, 1]
+    assert z["labeled"][:].tolist() == [True, True, False]
+    assert z["parent"][:].tolist() == [-1, 0]
+    assert z["n_frames"][:].tolist() == [9, 8]
+    assert z["vertex_labels"][:].tolist() == [1, -1]
+    assert z.attrs["n_groups"] == 2 and z.attrs["tau"] == 0.6
+    assert not (tmp_path / "mobilesamv2_segments.zarr.tmp").exists()

@@ -8,6 +8,7 @@ Config-driven reconstruction pipeline, one output tree per scene.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import itertools
 import logging
 import shutil
@@ -77,12 +78,15 @@ from collab_splats.semantics.features.ocr_lens import (
     word_probabilities,
     word_vocabulary,
 )
+from collab_splats.semantics.grouping import lift_segments, nearest_labels
 from collab_splats.semantics.lifting import lift_features
-from collab_splats.semantics.segmentation import sky_masks
+from collab_splats.semantics.segmentation import BaseSegmentation, sky_masks
 from collab_splats.semantics.store import (
+    read_point_features,
     valid_feature_cache,
     write_feature_cache,
     write_point_features,
+    write_segment_groups,
 )
 from collab_splats.utils.colmap import write_colmap_reconstruction
 from collab_splats.utils.io import file_sha256, read_image, to_json_safe, write_json
@@ -415,6 +419,34 @@ class Reconstructor:
             except ValueError as e:
                 raise ValueError(f"semantics.extractors: {e}") from e
 
+        # Segments: a known strategy, lift_segments keys, and when on a feature source from this run
+        seg = config["semantics"]["segments"]
+
+        if seg["strategy"] not in ("object", "auto"):
+            raise ValueError(
+                f"semantics.segments.strategy must be object or auto, got {seg['strategy']!r}"
+            )
+
+        if (
+            seg["enabled"]
+            and seg["features"] is not None
+            and seg["features"] not in extractors
+        ):
+            raise ValueError(
+                f"semantics.segments.features must be one of semantics.extractors {extractors} or null, "
+                f"got {seg['features']!r}"
+            )
+
+        params = set(inspect.signature(lift_segments).parameters) - {
+            "frame_masks",
+            "result",
+            "features",
+        }
+        unknown = set(seg) - {"enabled", "strategy", "features"} - params
+
+        if unknown:
+            raise ValueError(f"semantics.segments has unknown keys {sorted(unknown)}")
+
         # Refuse LC with sfm: LC wraps a feedforward creator in sequential submaps
         if method == "sfm" and lc["enabled"]:
             raise ValueError(
@@ -586,6 +618,16 @@ class Reconstructor:
             for name in self.config["semantics"]["extractors"]
         }
 
+    @property
+    def segments_store(self) -> Path:
+        """
+        Segment groups store.
+
+        Returns:
+            <backend_dir>/semantics/mobilesamv2_segments.zarr.
+        """
+        return self.outputs["semantics"] / "mobilesamv2_segments.zarr"
+
     def fresh_lifted_stores(self) -> dict[str, Path]:
         """
         The configured lifted stores on disk that still index the current mesh.
@@ -610,6 +652,26 @@ class Reconstructor:
                 fresh[name] = path
 
         return fresh
+
+    def _segments_fresh(self) -> bool:
+        """
+        True when segments are off, or their store exists and indexes the current mesh.
+        """
+        if not self.config["semantics"]["segments"]["enabled"]:
+            return True
+
+        if not self.segments_store.exists():
+            return False
+
+        recorded = zarr.open(str(self.segments_store), mode="r").attrs.get(
+            "mesh_sha256"
+        )
+        mesh_path = self.outputs["mesh"]
+
+        if recorded is None or not mesh_path.exists():
+            return True
+
+        return recorded == file_sha256(mesh_path)
 
     ########################################
     # Stage dispatch
@@ -638,7 +700,8 @@ class Reconstructor:
 
         # Semantics needs every configured extractor's lifted store, each fresh against mesh.ply
         if stage == "semantics":
-            return self.fresh_lifted_stores().keys() == self.lifted_stores.keys()
+            lifted = self.fresh_lifted_stores().keys() == self.lifted_stores.keys()
+            return lifted and self._segments_fresh()
 
         return self.outputs[stage].exists()
 
@@ -1144,10 +1207,74 @@ class Reconstructor:
 
         - extractors run in config order, one model resident at a time; all share n_components and AE settings
         - each rebuilds its lifted store; a valid codes cache skips its extraction and AE fit
+        - then segment groups, when semantics.segments.enabled
         """
         for name, path in self.lifted_stores.items():
             logger.info("semantics: %s", name)
             self._semantics_extractor(name, path)
+
+        # View-consistent segment groups, after the extractors whose features they read
+        if self.config["semantics"]["segments"]["enabled"]:
+            logger.info("semantics: segments")
+            self._semantics_segments()
+
+    def _semantics_segments(self) -> None:
+        """
+        MobileSAMv2 masks per pointcloud frame, merged into view-consistent groups by lift_segments.
+
+        - masks are computed per frame inside the lift, so no frame's masks outlive it
+        - `features` names this run's lifted store for the veto and fill; null skips both
+        - with mesh.ply: each vertex takes its nearest point's group, -1 beyond 5x the median point spacing
+        """
+        cfg = dict(self.config["semantics"]["segments"])
+        cfg.pop("enabled")
+        strategy = cfg.pop("strategy")
+        features_name = cfg.pop("features")
+
+        # The zarr's frames, in the zarr's order, as images/ files
+        pointcloud = PointcloudResult.load_zarr(
+            self.pointcloud_zarr, load_world_points=False
+        )
+        paths = frames.frame_paths(self.images_dir)
+        rows = store_rows(self.images_dir, pointcloud.image_paths)
+
+        # Point features for the veto and fill, when configured
+        features = None
+
+        if features_name is not None:
+            features = read_point_features(self.lifted_stores[features_name])
+
+        # Segment each frame as the lift asks for it
+        segmenter = BaseSegmentation.get("mobilesamv2")(strategy=strategy)
+
+        def frame_masks(i: int) -> torch.Tensor:
+            masks, _ = segmenter.segment(read_image(paths[rows[i]]))
+            return masks
+
+        groups = lift_segments(frame_masks, pointcloud, features=features, **cfg)
+        del segmenter, features
+        pytorch_gc()
+
+        attrs: dict[str, Any] = {
+            "segmenter": "mobilesamv2",
+            "strategy": strategy,
+            "features": features_name,
+            **cfg,
+        }
+        vertex_labels = None
+        mesh_path = self.outputs["mesh"]
+
+        # Mesh vertices: nearest point's group within a scale-relative cutoff
+        if mesh_path.exists():
+            vertices = np.asarray(
+                o3d.io.read_triangle_mesh(str(mesh_path)).vertices, dtype=np.float32
+            )
+            vertex_labels = nearest_labels(vertices, pointcloud.points, groups.labels)
+            attrs["mesh_sha256"] = file_sha256(mesh_path)
+
+        write_segment_groups(
+            self.segments_store, groups, vertex_labels=vertex_labels, attrs=attrs
+        )
 
     def _semantics_extractor(self, name: str, lifted_path: Path) -> None:
         """

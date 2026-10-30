@@ -54,6 +54,15 @@ semantics:
   n_components: 128      # null = full width
   target_cosine: 0.975   # null = run max_epochs; else stop at this mean reconstruction cosine
   max_epochs: 30
+  segments:              # MobileSAMv2 masks -> view-consistent point groups
+    enabled: false
+    strategy: object     # object (YOLOv8 boxes) | auto (grid, ~35x slower)
+    features: talk2dino  # extractor whose lifted features veto merges and fill; null = none
+    tau: 0.6             # co-visible overlap, both ways, for two masks to be one object
+    dup_iou: 0.7         # same-frame masks share a group only above this IoU
+    veto_cos: 0.5        # min mean-feature cosine for two groups to merge
+    min_frames: 8        # distinct frames a group needs
+    min_group_frac: 0.001  # share of all points a group needs
 
 
 ########################################

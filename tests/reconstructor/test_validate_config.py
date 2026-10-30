@@ -202,3 +202,30 @@ def test_base_config_path_is_read(tmp_path):
 def test_base_yaml_mesh_sdf_trunc_mult_default_is_six():
     # base.yaml widens mesh.sdf_trunc_mult past Open3D's 4.0 to average more views per voxel
     assert _base_config()["mesh"]["sdf_trunc_mult"] == 6.0
+
+
+########################################
+# semantics.segments
+########################################
+
+
+@pytest.mark.parametrize(
+    "segments, match",
+    [
+        ({"strategy": "everything"}, "strategy"),
+        ({"enabled": True, "features": "maskclip"}, "features"),
+        ({"bogus": 1}, "unknown keys"),
+    ],
+)
+def test_bad_segments_config_is_refused(segments, match):
+    cfg = _base_config()
+    cfg["semantics"]["segments"].update(segments)
+
+    with pytest.raises(ValueError, match=match):
+        Reconstructor.validate_config(cfg)
+
+
+def test_segments_without_features_is_accepted():
+    cfg = _base_config()
+    cfg["semantics"]["segments"].update({"enabled": True, "features": None})
+    Reconstructor.validate_config(cfg)

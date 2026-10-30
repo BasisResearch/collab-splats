@@ -34,6 +34,7 @@ from collab_splats.semantics.store import (
     valid_feature_cache,
     write_feature_cache,
     write_point_features,
+    write_segment_groups,
 )
 from collab_splats.semantics.utils import cluster_points, compute_semantic_contrast
 
@@ -53,6 +54,7 @@ __all__ = [
     "write_feature_cache",
     "valid_feature_cache",
     "write_point_features",
+    "write_segment_groups",
     "read_point_features",
     # segmentation
     "BaseSegmentation",

@@ -319,6 +319,14 @@ semantics:
 | `semantics.n_components` | int\|null | `128` | Autoencoder latent dim; `null` = no compression |
 | `semantics.target_cosine` | float\|null | `0.975` | Stop training at this mean reconstruction cosine; `null` = run `max_epochs` |
 | `semantics.max_epochs` | int | `30` | Autoencoder epochs |
+| `semantics.segments.enabled` | bool | `false` | Merge MobileSAMv2 masks into view-consistent point groups → `semantics/mobilesamv2_segments.zarr` (labels per point, and per mesh vertex when a mesh exists) |
+| `semantics.segments.strategy` | str | `object` | `object` (YOLOv8 boxes, ~0.14 s/frame) or `auto` (point grid, ~5 s/frame) |
+| `semantics.segments.features` | str\|null | `talk2dino` | Extractor in `semantics.extractors` whose lifted features veto merges and weight the fill; `null` = overlap only |
+| `semantics.segments.tau` | float | `0.6` | Co-visible overlap, both ways, for two masks to be one object |
+| `semantics.segments.dup_iou` | float | `0.7` | Two masks of one frame share a group only above this IoU |
+| `semantics.segments.veto_cos` | float | `0.5` | Minimum cosine of two groups' mean features for them to merge |
+| `semantics.segments.min_frames` | int | `8` | Distinct frames a group needs |
+| `semantics.segments.min_group_frac` | float | `0.001` | Share of all points a group needs |
 
 ---
 

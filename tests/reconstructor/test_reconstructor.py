@@ -27,7 +27,12 @@ from collab_splats.preproc import frames as fr
 from collab_splats.preproc.undistort import calibrate_camera, undistort_frames
 from collab_splats.reconstructor import STAGES, Reconstructor
 from collab_splats.semantics.compression import FeatureAutoencoder
-from collab_splats.semantics.store import write_feature_cache, write_point_features
+from collab_splats.semantics.grouping import SegmentGroups
+from collab_splats.semantics.store import (
+    write_feature_cache,
+    write_point_features,
+    write_segment_groups,
+)
 from tests.reconstructor._stubs import (
     minimal_feedforward_result,
     stub_creator_cls,
@@ -2460,3 +2465,94 @@ def test_pre_ba_paths_sit_beside_the_zarr(tmp_path):
         rec.pre_ba_report
         == rec.backend_dir / "reconstruction_quality_report_pre_ba.json"
     )
+
+
+def _segments_config(tmp_path):
+    """dinov2 only, with segments enabled and fed by dinov2's features."""
+    semantics = {
+        "extractors": ["dinov2"],
+        "n_components": None,
+        "segments": {"enabled": True, "features": "dinov2"},
+    }
+    return _make_config(tmp_path, {"semantics": semantics})
+
+
+def _groups(n_points=1):
+    """One top-level group holding every point."""
+    return SegmentGroups(
+        labels=np.zeros(n_points, np.int32),
+        labeled=np.ones(n_points, bool),
+        parent=np.array([-1], np.int32),
+        n_frames=np.array([8], np.int32),
+    )
+
+
+def test_done_semantics_needs_segments_when_enabled(tmp_path):
+    rec = Reconstructor(_segments_config(tmp_path))
+    write_point_features(
+        rec.lifted_stores["dinov2"], np.zeros((1, 2), np.float32), None
+    )
+    assert rec.done("semantics") is False
+
+    write_segment_groups(rec.segments_store, _groups())
+    assert rec.done("semantics") is True
+
+
+def test_done_semantics_segments_stale_once_mesh_ply_changes(tmp_path):
+    rec = Reconstructor(_segments_config(tmp_path))
+    write_point_features(
+        rec.lifted_stores["dinov2"], np.zeros((1, 2), np.float32), None
+    )
+    _seed_mesh(rec)
+    sha = hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
+    write_segment_groups(rec.segments_store, _groups(), attrs={"mesh_sha256": sha})
+    assert rec.done("semantics") is True
+
+    rec.outputs["mesh"].write_bytes(rec.outputs["mesh"].read_bytes() + b"\n")
+    assert rec.done("semantics") is False
+
+
+def test_semantics_segments_lifts_zarr_frames_and_labels_mesh(tmp_path):
+    rec = Reconstructor(_segments_config(tmp_path))
+    _seed_pointcloud_markers(rec)
+    _touch_frames(rec, [0, 1, 2])
+    _seed_disk_reconstruction(rec, [2, 0])
+    vertices = _seed_mesh(rec)
+    features = np.ones((1, 2), np.float32)
+
+    # Segmenter answers with the image it was given; the lift itself is stubbed
+    segmenter = MagicMock()
+    segmenter.segment.side_effect = lambda image: (image, [])
+    registry = MagicMock()
+    registry.get.return_value.return_value = segmenter
+
+    # The stubbed lift asks for every frame's masks while the segmenter is alive
+    seen = []
+
+    def lift_segments(frame_masks, result, **kwargs):
+        seen.extend(frame_masks(i) for i in range(len(result.image_paths)))
+        return _groups()
+
+    with (
+        patch.object(R, "BaseSegmentation", registry),
+        patch.object(R, "read_image", side_effect=lambda p: Path(p).name),
+        patch.object(R, "read_point_features", return_value=features) as read,
+        patch.object(R, "lift_segments", side_effect=lift_segments) as lift,
+    ):
+        rec._semantics_segments()
+
+    # Masks come from the zarr's frames, in the zarr's order, with dinov2's features
+    assert seen == ["frame_000002.png", "frame_000000.png"]
+    assert lift.call_args.kwargs["features"] is features
+    assert read.call_args.args == (rec.lifted_stores["dinov2"],)
+    registry.get.assert_called_once_with("mobilesamv2")
+
+    # Store: point labels, one vertex label per mesh vertex, the mesh hash
+    store = zarr.open(str(rec.segments_store), mode="r")
+    assert store["labels"][:].tolist() == [0]
+    assert store["vertex_labels"].shape == (len(vertices),)
+    assert (
+        store.attrs["mesh_sha256"]
+        == hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
+    )
+    assert store.attrs["strategy"] == "object"

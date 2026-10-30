@@ -4,6 +4,7 @@ Semantics stores: the 2D patch cache and the lifted per-point store.
 - `<extractor>_codes.zarr` (`_features.zarr` while extracting): `features` (N, D, H_p, W_p) float16, one chunk per frame
 - `<extractor>_lifted.zarr`: `features` (P, latent), plus `autoencoder.pt` when compressed, plus mesh-vertex
   arrays (`vertex_word_ids` / `vertex_word_probs` or `vertex_features`) when the mesh existed
+- `<segmenter>_segments.zarr`: lift_segments' groups, plus `vertex_labels` when the mesh existed
 - paths come from `Reconstructor`
 """
 
@@ -20,6 +21,7 @@ import zarr
 
 from collab_splats.preproc.frames import frame_paths
 from collab_splats.semantics.compression import FeatureAutoencoder
+from collab_splats.semantics.grouping import SegmentGroups
 from collab_splats.utils.io import LZ4, open_valid, to_json_safe
 from collab_splats.utils.torch_utils import get_device
 
@@ -30,6 +32,7 @@ __all__ = [
     "valid_feature_cache",
     "write_feature_cache",
     "write_point_features",
+    "write_segment_groups",
 ]
 
 
@@ -248,3 +251,59 @@ def read_point_features(
         start = end
 
     return decoded.numpy()
+
+
+########################################################
+########## Segment groups (<segmenter>_segments.zarr) ##
+########################################################
+
+
+def write_segment_groups(
+    store_path: Path,
+    groups: SegmentGroups,
+    vertex_labels: Optional[np.ndarray] = None,
+    attrs: Optional[dict[str, Any]] = None,
+) -> None:
+    """
+    Write segment groups atomically via a `.tmp` dir renamed into place.
+
+    - arrays: `labels`, `labeled` (P,), `parent`, `n_frames` (G,), optional `vertex_labels` (V,)
+
+    Args:
+        store_path: the segments store path.
+        groups: lift_segments' output.
+        vertex_labels: (V,) int32 group per mesh vertex, -1 for none; None without a mesh.
+        attrs: extra store attrs, e.g. parameters and `mesh_sha256`; None for none.
+    """
+    store_path = Path(store_path)
+    tmp = store_path.with_name(f"{store_path.name}.tmp")
+    arrays = {
+        "labels": groups.labels,
+        "labeled": groups.labeled,
+        "parent": groups.parent,
+        "n_frames": groups.n_frames,
+    }
+
+    if vertex_labels is not None:
+        arrays["vertex_labels"] = vertex_labels
+
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    # Arrays then attrs into the tmp dir; a failure removes it
+    try:
+        store = zarr.open(str(tmp), mode="w")
+
+        for key, array in arrays.items():
+            store.create_array(key, data=array, compressors=LZ4)
+
+        store.attrs.update(
+            {"n_groups": len(groups.parent), **to_json_safe(attrs or {})}
+        )
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+
+    # Swap the finished store in under its real name
+    shutil.rmtree(store_path, ignore_errors=True)
+    tmp.rename(store_path)

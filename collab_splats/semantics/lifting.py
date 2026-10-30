@@ -28,6 +28,43 @@ if TYPE_CHECKING:
 ########################################################
 
 
+def frame_visibility(
+    points: torch.Tensor,
+    extrinsics: torch.Tensor,
+    intrinsics: torch.Tensor,
+    depth: torch.Tensor,
+    *,
+    depth_tol: float = 0.05,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Which points one frame sees, and where they land on its model grid.
+
+    - visible: in front, in bounds, and ``|residual| / |z_proj| < depth_tol`` against the depth map
+    - depth_residual reads the depth map nearest-neighbor; round the coordinates for that pixel
+    - nan/inf coordinates (degenerate points) become 0; such points are never visible
+
+    Args:
+        points: (P, 3) world points.
+        extrinsics: (4, 4) world-to-camera.
+        intrinsics: (3, 3) on the model grid.
+        depth: (H, W) the frame's depth map.
+        depth_tol: relative depth tolerance.
+
+    Returns:
+        (visible, u, v): (P,) bool, then (P,) float column and row coordinates.
+    """
+    residual, expected, _, valid, pixels = depth_residual(
+        points, extrinsics, intrinsics, depth
+    )
+    depth_ok = residual.abs() / (expected.abs() + 1e-8) < depth_tol
+
+    # Finite coordinates for indexing and sampling; valid is already False where they were not
+    u = torch.nan_to_num(pixels[:, 0], nan=0.0, posinf=0.0, neginf=0.0)
+    v = torch.nan_to_num(pixels[:, 1], nan=0.0, posinf=0.0, neginf=0.0)
+
+    return valid & depth_ok, u, v
+
+
 def lift_features(
     frame_features: Callable[[int], torch.Tensor | tuple[torch.Tensor, torch.Tensor]],
     result: PointcloudResult,
@@ -138,28 +175,19 @@ def lift_features(
             width = num_classes if indexed else cast(torch.Tensor, fmap).shape[0]
             features_sum = torch.zeros((P, width), dtype=torch.float32, device=device)
 
-        # Visibility: in front, in bounds, depth-consistent against frame i's depth map
-        # - depth_residual projects all P points and reads the depth map nearest-neighbor
-        # - the relative tolerance stays lifting's own, applied to the returned depths
-        residual, expected, _, valid, pixels = depth_residual(
-            pts, ext[i], intr[i], depth[i]
+        # Visibility against frame i's depth map, with nan-safe pixel coordinates
+        visible, u_safe, v_safe = frame_visibility(
+            pts, ext[i], intr[i], depth[i], depth_tol=depth_tol
         )
-        depth_ok = residual.abs() / (expected.abs() + 1e-8) < depth_tol
-        u = pixels[:, 0]
-        v = pixels[:, 1]
 
         # Confidence weight at the pixel the depth test read
         # - rounded, as depth_residual's nearest read, so one pixel per point for test + weight
-        # - nan/inf coords (degenerate points) → 0 for indexing/sampling; valid is False there
-        u_safe = torch.nan_to_num(u, nan=0.0, posinf=0.0, neginf=0.0)
-        v_safe = torch.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
         u_px = torch.round(u_safe)
         v_px = torch.round(v_safe)
         u_idx = u_px.clamp(0, W - 1)
         v_idx = v_px.clamp(0, H - 1)
         u_idx = u_idx.long()
         v_idx = v_idx.long()
-        visible = valid & depth_ok
         w = conf[i, v_idx, u_idx] * visible.float()  # (P,)
 
         # Sample and accumulate visible points only; the rest carry weight 0

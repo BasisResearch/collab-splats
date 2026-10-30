@@ -104,7 +104,7 @@ Four backends behind ``BaseSegmentation.get(name)``:
   ``set_context(ref_image, ref_mask)`` then ``segment``, or ``segment_with_mask``.
 - ``sam3``: text-prompted; ``segment_with_text(img, prompt)`` returns masks, boxes and scores.
   It is a gated model: request access at https://huggingface.co/facebook/sam3, run
-  ``huggingface-cli login``, and install from https://github.com/facebookresearch/sam3; until
+  ``hf auth login``, and install from https://github.com/facebookresearch/sam3; until
   then construction raises ``ImportError`` with those steps.
 - ``skywater``: SegFormer sky masks. ``sky_masks(images_dir, idxs, cache_dir=...)`` returns (N, H, W)
   bool and caches sky probability PNGs in ``cache_dir`` (the pipeline uses ``<scene>/sky/``); the

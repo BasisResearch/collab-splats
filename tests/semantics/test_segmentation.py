@@ -313,7 +313,7 @@ def test_sam3_segment_with_text_interface():
 
 def test_sam3_missing_dep_names_install():
     with patch.dict(sys.modules, {"sam3": None}):
-        with pytest.raises(ImportError, match="huggingface-cli login"):
+        with pytest.raises(ImportError, match="hf auth login"):
             SAM3Segmentation()
 
 

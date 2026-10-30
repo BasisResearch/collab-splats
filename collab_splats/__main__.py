@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 from mergedeep import merge
 
 from collab_splats.reconstructor import LEAF_STAGES, STAGES, Reconstructor
@@ -426,6 +427,9 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Process exit code.
     """
+    # HF_TOKEN and other credentials from a local .env; the environment wins over the file
+    load_dotenv()
+
     # Configure logging and parse the command line
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"

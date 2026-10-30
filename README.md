@@ -26,6 +26,24 @@ docker run --gpus all -it -p 8080:8080 \
 cd /workspace/collab-splats
 ```
 
+### Hugging Face access
+
+The default backend, [VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega), is a gated model. A run without access stops before preprocessing with a message naming the repo. Set up access once:
+
+1. Request access at [facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega) and wait for approval.
+2. Create a read token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+3. Give the token to `collab-splats` in one of two ways:
+
+```bash
+# Option A: log in inside the container; the token is saved on the mounted /workspace/models
+hf auth login
+
+# Option B: a .env file in the repo root, read by the reconstruct CLI
+echo "HF_TOKEN=<your token>" >> /workspace/collab-splats/.env
+```
+
+The Docker image contains no token, and `.env` is never copied into it. Once the weights are cached in `/workspace/models`, runs need no token.
+
 ### Local video processing
 
 A pipeline runs using a `yaml` config — the default is `configs/base.yaml`. This reconstructs a video with [VGGT Omega](https://arxiv.org/abs/2605.15195), creates a textured mesh, and lifts queryable semantics ([Talk2Dino](https://arxiv.org/abs/2411.19331) and [OCR lens](https://ocr.baulab.info/)).
@@ -140,6 +158,8 @@ Standalone setup w/o CUDA (semantics + dev tools, no CUDA build):
 ```sh
 bash setup_nocuda.sh
 ```
+
+Then set up [Hugging Face access](#hugging-face-access): the default backend needs it.
 
 For extras, the semantics-only install and system requirements, see [Installation](docs/source/installation.md).
 

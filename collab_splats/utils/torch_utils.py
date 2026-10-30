@@ -15,7 +15,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 import torch
-from huggingface_hub import hf_hub_download
+from huggingface_hub import auth_check, hf_hub_download, try_to_load_from_cache
+from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -202,6 +203,37 @@ def load_hf_weights(repo_id: str, filename: str) -> str:
         Local path to the downloaded (or cached) file.
     """
     return hf_hub_download(repo_id=repo_id, filename=filename)
+
+
+def check_hf_access(repo_id: str, filename: str) -> None:
+    """
+    Fail fast when a Hugging Face repo's weights are neither cached nor accessible.
+
+    - cached weights pass without a network call, so offline runs keep working
+    - a network error is not an access error: logged, the model load reports it later
+
+    Args:
+        repo_id: Hub repo, e.g. "facebook/VGGT-Omega".
+        filename: weights file within the repo, checked in the local cache.
+
+    Raises:
+        RuntimeError: the repo is gated or not found for the current credentials.
+    """
+    # Cached weights need no access check
+    if isinstance(try_to_load_from_cache(repo_id, filename), str):
+        return
+
+    # Ask the Hub whether the current token can read the repo
+    try:
+        auth_check(repo_id)
+    except (GatedRepoError, RepositoryNotFoundError) as e:
+        raise RuntimeError(
+            f"No access to https://huggingface.co/{repo_id}: request access on that page, "
+            "create a read token at https://huggingface.co/settings/tokens, then run "
+            "`hf auth login` or put HF_TOKEN=<token> in the repo's .env"
+        ) from e
+    except OSError as e:
+        logger.warning("could not check access to %s: %s", repo_id, e)
 
 
 def load_torchhub_model(repo_id: str, model_name: str) -> torch.nn.Module:

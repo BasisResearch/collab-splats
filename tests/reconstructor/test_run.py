@@ -4,7 +4,13 @@ Stage table dispatch: order, dependencies, skip and refuse rules.
 
 import pytest
 
-from collab_splats.reconstructor import LEAF_STAGES, STAGES, Reconstructor
+import collab_splats.reconstructor as reconstructor
+from collab_splats.reconstructor import (
+    GATED_WEIGHTS,
+    LEAF_STAGES,
+    STAGES,
+    Reconstructor,
+)
 
 
 def _recon(tmp_path, monkeypatch, done=()):
@@ -113,3 +119,70 @@ def test_report_does_not_demote_any_existing_leaf():
     """
     for s in ("refine", "semantics", "mesh", "localize"):
         assert s in LEAF_STAGES
+
+
+def _record_hf_checks(monkeypatch):
+    """Replace the gated-weights preflight with a recorder; returns the list of (repo, file) checks."""
+    checks = []
+    monkeypatch.setattr(
+        reconstructor, "check_hf_access", lambda *gated: checks.append(gated)
+    )
+    return checks
+
+
+def test_pointcloud_run_checks_gated_weights_before_preproc(tmp_path, monkeypatch):
+    r, calls = _recon(tmp_path, monkeypatch)
+    checks = []
+
+    def check(*gated):
+        checks.append(gated)
+        assert calls == []
+
+    monkeypatch.setattr(reconstructor, "check_hf_access", check)
+    r.run(["preproc", "pointcloud"])
+    assert checks == [GATED_WEIGHTS["vggt_omega"]]
+
+
+def test_preflight_error_stops_before_any_stage(tmp_path, monkeypatch):
+    r, calls = _recon(tmp_path, monkeypatch)
+
+    def deny(*gated):
+        raise RuntimeError("No access")
+
+    monkeypatch.setattr(reconstructor, "check_hf_access", deny)
+
+    with pytest.raises(RuntimeError, match="No access"):
+        r.run(["preproc", "pointcloud"])
+
+    assert calls == []
+
+
+def test_no_preflight_when_pointcloud_done_or_not_planned(tmp_path, monkeypatch):
+    r, _ = _recon(tmp_path, monkeypatch, done={"preproc", "pointcloud"})
+    checks = _record_hf_checks(monkeypatch)
+    r.run(["preproc", "pointcloud"])
+    r.run(["mesh"])
+    assert checks == []
+
+
+def test_preflight_runs_on_overwrite_of_done_pointcloud(tmp_path, monkeypatch):
+    r, _ = _recon(tmp_path, monkeypatch, done={"preproc", "pointcloud"})
+    checks = _record_hf_checks(monkeypatch)
+    r.run(["pointcloud"], overwrite=True)
+    assert checks == [GATED_WEIGHTS["vggt_omega"]]
+
+
+def test_no_preflight_with_local_model_path(tmp_path, monkeypatch):
+    r, _ = _recon(tmp_path, monkeypatch)
+    r.config["pointcloud"]["vggt_omega"] = {"model_path": str(tmp_path / "w.pt")}
+    checks = _record_hf_checks(monkeypatch)
+    r.run(["preproc", "pointcloud"])
+    assert checks == []
+
+
+def test_no_preflight_for_ungated_backend(tmp_path, monkeypatch):
+    r, _ = _recon(tmp_path, monkeypatch)
+    r.config["pointcloud"]["backend"] = "mapanything"
+    checks = _record_hf_checks(monkeypatch)
+    r.run(["preproc", "pointcloud"])
+    assert checks == []

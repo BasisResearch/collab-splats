@@ -51,6 +51,10 @@ from collab_splats.mesh import (
 )
 from collab_splats.pointcloud import BaseFeedforwardCreator, get_creator
 from collab_splats.pointcloud.base import PointcloudResult
+from collab_splats.pointcloud.feedforward.vggt_omega import (
+    VGGT_OMEGA_DEFAULT_FILENAME,
+    VGGT_OMEGA_HF_REPO,
+)
 from collab_splats.pointcloud.sfm import SFM_CREATORS
 from collab_splats.pointcloud.utils import clean_pointcloud, frame_depths
 from collab_splats.preproc import frames, get_video_info
@@ -84,6 +88,7 @@ from collab_splats.utils.colmap import write_colmap_reconstruction
 from collab_splats.utils.io import file_sha256, read_image, to_json_safe, write_json
 from collab_splats.utils.torch_utils import (
     batch_iterator,
+    check_hf_access,
     get_device,
     pytorch_gc,
     to_numpy,
@@ -108,6 +113,11 @@ STAGES: dict[str, tuple[str, ...]] = {
     "semantics": ("pointcloud",),
     "localize": ("pointcloud",),
     "reconstruction_quality_report": ("pointcloud",),
+}
+
+# Gated Hugging Face weights per pointcloud backend: (repo, weights file)
+GATED_WEIGHTS: dict[str, tuple[str, str]] = {
+    "vggt_omega": (VGGT_OMEGA_HF_REPO, VGGT_OMEGA_DEFAULT_FILENAME),
 }
 
 # Stages nothing depends on; only these re-run alone against processed outputs
@@ -706,6 +716,14 @@ class Reconstructor:
                 raise ValueError(
                     f"stage '{stage}' output already exists; pass overwrite=True to replace it"
                 )
+
+        # Gated weights: fail before preproc when a pointcloud run could not download them
+        if "pointcloud" in stages and (overwrite or not self.done("pointcloud")):
+            pc = self.config["pointcloud"]
+            gated = GATED_WEIGHTS.get(pc["backend"])
+
+            if gated is not None and not pc.get(pc["backend"], {}).get("model_path"):
+                check_hf_access(*gated)
 
         # Run in table order; skip done stages; finish the PNG write and drop preproc's frames on any exit
         try:

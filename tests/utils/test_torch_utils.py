@@ -2,13 +2,18 @@
 
 import sys
 import threading
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 import torch
+from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
 
+import collab_splats.utils.torch_utils as torch_utils
 from collab_splats.utils.torch_utils import (
     batch_iterator,
+    check_hf_access,
     full_fp32_matmul,
     hold_matmul_precision,
     infer_batch_size,
@@ -139,3 +144,55 @@ def test_full_fp32_matmul_waits_for_a_held_precision():
         assert torch.get_float32_matmul_precision() == "high"
     finally:
         release.set()
+
+
+def _hub(monkeypatch, cached=None, error=None):
+    """Stub the Hub cache lookup and auth_check; returns the list of repos auth_check saw."""
+    seen = []
+
+    def auth(repo):
+        seen.append(repo)
+
+        if error is not None:
+            raise error
+
+    monkeypatch.setattr(torch_utils, "try_to_load_from_cache", lambda r, f: cached)
+    monkeypatch.setattr(torch_utils, "auth_check", auth)
+    return seen
+
+
+def test_check_hf_access_cached_weights_skip_the_hub(monkeypatch):
+    seen = _hub(monkeypatch, cached="/models/w.pt")
+    check_hf_access("org/repo", "w.pt")
+    assert seen == []
+
+
+def test_check_hf_access_passes_with_access(monkeypatch):
+    seen = _hub(monkeypatch)
+    check_hf_access("org/repo", "w.pt")
+    assert seen == ["org/repo"]
+
+
+@pytest.mark.parametrize("error_cls", [GatedRepoError, RepositoryNotFoundError])
+def test_check_hf_access_denied_names_repo_and_both_logins(monkeypatch, error_cls):
+    _hub(monkeypatch, error=error_cls("denied", response=MagicMock()))
+
+    with pytest.raises(RuntimeError) as info:
+        check_hf_access("org/repo", "w.pt")
+
+    message = str(info.value)
+    assert "https://huggingface.co/org/repo" in message
+    assert "hf auth login" in message
+    assert "HF_TOKEN" in message
+
+
+def test_check_hf_access_network_error_only_warns(monkeypatch, caplog):
+    _hub(monkeypatch, error=ConnectionError("offline"))
+    check_hf_access("org/repo", "w.pt")
+    assert "could not check access to org/repo" in caplog.text
+
+
+def test_dockerignore_keeps_env_files_out_of_the_image():
+    lines = (Path(__file__).parents[2] / ".dockerignore").read_text().splitlines()
+    assert ".env" in lines
+    assert ".env.*" in lines

@@ -25,7 +25,7 @@ class SAM3Segmentation(BaseSegmentation):
     """
     SAM3 text-prompted segmentation backend.
 
-    - gated model: request access to facebook/sam3, then `huggingface-cli login`
+    - gated model: request access to facebook/sam3, then `hf auth login`
     - Sam3Processor places the model on a device itself; no device argument
 
     Args:
@@ -46,7 +46,7 @@ class SAM3Segmentation(BaseSegmentation):
                 raise
             raise ImportError(
                 "sam3 is not installed. Request access at https://huggingface.co/facebook/sam3, "
-                "wait for approval, run `huggingface-cli login`, then install from "
+                "wait for approval, run `hf auth login`, then install from "
                 "https://github.com/facebookresearch/sam3"
             ) from e
         self._processor = Sam3Processor(

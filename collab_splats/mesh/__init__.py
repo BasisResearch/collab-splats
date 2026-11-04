@@ -12,6 +12,7 @@ from __future__ import annotations
 from collab_splats.mesh.clean import clean_repair_mesh, prepare_mesh
 from collab_splats.mesh.texture import create_texture_mesh
 from collab_splats.mesh.tsdf import (
+    calibrate_confidence,
     compute_tsdf_voxel_size,
     create_tsdf_mesh,
     lift_weights,
@@ -19,6 +20,7 @@ from collab_splats.mesh.tsdf import (
 )
 
 __all__ = [
+    "calibrate_confidence",
     "clean_repair_mesh",
     "compute_tsdf_voxel_size",
     "create_texture_mesh",

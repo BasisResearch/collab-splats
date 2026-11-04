@@ -17,12 +17,18 @@ import cv2
 import numpy as np
 import open3d as o3d
 import open3d.core as o3c
+import torch
 from scipy import ndimage
 from tqdm.auto import tqdm
 
-from collab_splats.geometry.projection import unproject_frames
+from collab_splats.geometry.projection import (
+    depth_residual,
+    unproject,
+    unproject_frames,
+)
 from collab_splats.geometry.transforms import invert_poses, shift_intrinsics
 from collab_splats.mesh.utils import validate_views
+from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +337,104 @@ def compute_tsdf_voxel_size(
 ########################################################################
 # Fusion weights
 ########################################################################
+
+
+def calibrate_confidence(
+    depth: np.ndarray,
+    confidence: np.ndarray,
+    extrinsics: np.ndarray,
+    model_intrinsics: np.ndarray,
+    *,
+    sdf_trunc: float,
+    min_pixels: int = 200,
+) -> tuple[float, float]:
+    """
+    Per-scene confidence gate c* and error slope gamma from cross-view depth residuals.
+
+    - every 2nd frame, every 2nd pixel: median |depth residual| over views ±2, ±5, ±10
+    - occluded samples (sampled < 0.9 x expected) dropped; needs 2+ valid views
+    - conf-bin medians of error / sdf_trunc, log-log line: c* where it crosses 1, gamma = -slope
+    - runs on CUDA when available, else the CPU
+
+    Args:
+        depth: (N, h, w) model-grid depth, 0 = none.
+        confidence: (N, h, w) depth confidence.
+        extrinsics: (N, 4, 4) world-to-camera.
+        model_intrinsics: (N, 3, 3) pixel-center intrinsics on the model grid.
+        sdf_trunc: the fusion's TSDF band in world units.
+        min_pixels: a conf bin enters the fit with more pixels than this.
+
+    Returns:
+        (c_star, gamma).
+
+    Raises:
+        ValueError: fewer than 3 conf bins to fit, or error does not fall with confidence.
+    """
+    device = get_device()
+    depth_t = torch.from_numpy(np.ascontiguousarray(depth, np.float32)).to(device)
+    w2c = torch.from_numpy(np.asarray(extrinsics, np.float32)).to(device)
+    K = torch.from_numpy(np.asarray(model_intrinsics, np.float32)).to(device)
+    n = len(depth_t)
+
+    # Per-pixel cross-view error on a stride-2 grid of every 2nd frame
+    errs, confs, deps = [], [], []
+    for i in range(0, n, 2):
+        others = [j for j in (i - 10, i - 5, i - 2, i + 2, i + 5, i + 10) if 0 <= j < n]
+        if len(others) < 2:
+            continue
+
+        points = unproject(depth_t[i], w2c[i], K[i])[::2, ::2].reshape(-1, 3)
+        residual, expected, sampled, valid, _ = depth_residual(
+            points, w2c[others], K[others], depth_t[others]
+        )
+
+        # Occluded or depthless samples out; a pixel needs two views left
+        ok = valid & (sampled > 0) & (sampled >= 0.9 * expected)
+        err = torch.where(ok, residual.abs(), torch.nan)
+        err = torch.nanmedian(err, 0).values
+        err[ok.sum(0) < 2] = torch.nan
+
+        errs.append(err.cpu().numpy())
+        confs.append(np.asarray(confidence[i, ::2, ::2]).ravel())
+        deps.append(np.asarray(depth[i, ::2, ::2]).ravel())
+
+    err = np.concatenate(errs)
+    conf = np.concatenate(confs)
+    keep = np.isfinite(err) & (np.concatenate(deps) > 0) & (err > 0)
+    err, conf = err[keep], conf[keep]
+
+    # Median error per confidence bin, in units of the band
+    edges = (1, 1.5, 2, 3, 5, 10, 20, 40, 80, 1e9)
+    medians = []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        in_bin = (conf >= lo) & (conf < hi)
+        if in_bin.sum() > min_pixels:
+            medians.append((np.median(conf[in_bin]), np.median(err[in_bin]) / sdf_trunc))
+
+    if len(medians) < 3:
+        raise ValueError(
+            f"calibrate_confidence: {len(medians)} conf bins with > {min_pixels} pixels; need 3"
+        )
+
+    # Log-log line; c* is where the error equals the band
+    log_conf, log_err = np.log(np.array(medians)).T
+    slope, intercept = np.polyfit(log_conf, log_err, 1)
+
+    if slope >= 0:
+        raise ValueError(
+            f"calibrate_confidence: error does not fall with confidence (slope {slope:.3f})"
+        )
+
+    c_star = float(np.exp(-intercept / slope))
+    gamma = float(-slope)
+    logger.info(
+        "calibrate_confidence: c* %.3f, gamma %.3f over %d bins (%d pixels)",
+        c_star,
+        gamma,
+        len(medians),
+        len(err),
+    )
+    return c_star, gamma
 
 
 def pixel_weights(

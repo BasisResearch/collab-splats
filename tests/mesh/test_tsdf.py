@@ -3,6 +3,7 @@ import open3d as o3d
 import pytest
 
 from collab_splats.mesh.tsdf import (
+    calibrate_confidence,
     compute_tsdf_voxel_size,
     create_tsdf_mesh,
     lift_weights,
@@ -252,3 +253,39 @@ def test_lift_weights_nearest_through_crop_box():
     assert (lifted[0, :, [0, 5]] == 0).all()  # outside the box
     np.testing.assert_array_equal(lifted[0, 0, 1:5], [1, 1, 2, 2])
     np.testing.assert_array_equal(lifted[0, 3, 1:5], [3, 3, 4, 4])
+
+
+def _noisy_planes(a, gamma, n=24, h=64, w=64, seed=0):
+    """
+    Plane z=1 seen by n x-shifted cameras; depth noise std a * conf^-gamma, conf ramps by row.
+
+    - x-shift keeps a point on its row, so neighbor views sample the same confidence
+    """
+    rng = np.random.default_rng(seed)
+    conf = np.tile(np.geomspace(1.1, 70, h)[:, None], (n, 1, w)).astype(np.float32)
+    noise = a * conf**-gamma * rng.standard_normal((n, h, w))
+    depth = (1 + noise).astype(np.float32)
+    w2c = np.tile(np.eye(4, dtype=np.float32), (n, 1, 1))
+    w2c[:, 0, 3] = -0.01 * np.arange(n)
+    K = np.array([[w, 0, w / 2], [0, w, h / 2], [0, 0, 1]], np.float32)
+    return depth, conf, w2c, np.tile(K, (n, 1, 1))
+
+
+def test_calibrate_confidence_recovers_gamma():
+    for gamma in (0.9, 1.2):
+        depth, conf, w2c, K = _noisy_planes(0.02, gamma)
+        _, fitted = calibrate_confidence(depth, conf, w2c, K, sdf_trunc=0.005)
+        assert fitted == pytest.approx(gamma, rel=0.05)
+
+
+def test_calibrate_confidence_gate_scales_with_noise():
+    # Doubling the noise moves the break-even confidence by 2^(1/gamma)
+    c1, g1 = calibrate_confidence(*_noisy_planes(0.02, 0.9), sdf_trunc=0.005)
+    c2, _ = calibrate_confidence(*_noisy_planes(0.04, 0.9), sdf_trunc=0.005)
+    assert c2 / c1 == pytest.approx(2 ** (1 / g1), rel=0.05)
+
+
+def test_calibrate_confidence_needs_three_bins():
+    depth, conf, w2c, K = _noisy_planes(0.02, 0.9)
+    with pytest.raises(ValueError, match="bins"):
+        calibrate_confidence(depth, np.full_like(conf, 2.0), w2c, K, sdf_trunc=0.005)

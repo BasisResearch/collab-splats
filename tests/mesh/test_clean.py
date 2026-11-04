@@ -10,6 +10,7 @@ from collab_splats.mesh.clean import (
     _local_median,
     _mesh_coverage_mask,
     bridge_mesh_edges,
+    build_volume_ground,
     clean_repair_mesh,
     decimate_mesh,
     fill_holes,
@@ -18,6 +19,7 @@ from collab_splats.mesh.clean import (
     make_manifold,
     prepare_mesh,
     remove_floaters,
+    solve_ground,
     trim_mesh_edges,
 )
 
@@ -722,3 +724,96 @@ def test_prepare_mesh_max_faces_caps_the_face_count():
     free = prepare_mesh(sphere, voxel_size=1e-5)
     capped = prepare_mesh(sphere, voxel_size=1e-5, max_faces=500)
     assert len(free.triangles) > 500 >= len(capped.triangles)
+
+
+######## solve_ground
+
+
+def test_solve_ground_stays_under_every_observation():
+    rng = np.random.default_rng(0)
+    lowest = rng.uniform(0.0, 1.0, (64, 64)).astype(np.float32)
+    lowest[rng.uniform(size=lowest.shape) < 0.5] = np.inf
+
+    g = solve_ground(lowest, 0.1, 30.0)
+
+    known = np.isfinite(lowest)
+    assert g.shape == lowest.shape
+    assert np.all(g[known] <= lowest[known] + 1e-6)
+
+
+def test_solve_ground_fills_a_gap_in_flat_ground_flat():
+    lowest = np.zeros((64, 64), np.float32)
+    lowest[24:40, 24:40] = np.inf
+
+    g = solve_ground(lowest, 0.1, 30.0)
+
+    np.testing.assert_allclose(g, 0.0, atol=1e-3)
+
+
+def test_solve_ground_stays_under_a_raised_box():
+    # Flat ground at 0, a 1-unit box observed on top; low pressure must not lift the membrane onto it
+    lowest = np.zeros((64, 64), np.float32)
+    lowest[24:40, 24:40] = 1.0
+
+    g = solve_ground(lowest, 0.1, 1.0)
+
+    assert g[24:40, 24:40].max() < 0.5
+    np.testing.assert_allclose(g[:16], 0.0, atol=1e-3)
+
+
+######## build_volume_ground
+
+
+def _floor_views(n=3, size=256, hole=48):
+    """n cameras looking +z at a floor at z=1 (2-unit field of view), a square depth hole mid-frame."""
+    depths = np.ones((n, size, size), np.float32)
+    a, b = size // 2 - hole // 2, size // 2 + hole // 2
+    depths[:, a:b, a:b] = 0.0
+    rgbs = np.full((n, size, size, 3), 90, np.uint8)
+    c2w = np.tile(np.eye(4), (n, 1, 1))
+    c2w[:, 0, 3] = 0.02 * np.arange(n)
+    K = np.tile(
+        np.array([[size / 2, 0, size / 2], [0, size / 2, size / 2], [0, 0, 1.0]]),
+        (n, 1, 1),
+    )
+    return depths, np.ones_like(depths), rgbs, c2w, K
+
+
+def _fine_cell(ground, world):
+    """(row, col) of a world point's column on the ground's voxel grid, and its local height."""
+    local = (np.asarray(world, float) - ground.center) @ ground.frame.T
+    col, row = np.floor((local[:2] - ground.lo) / ground.voxel_size).astype(int)
+    return row, col, local[2]
+
+
+def test_build_volume_ground_covers_the_hole_at_floor_height():
+    depths, weights, rgbs, c2w, K = _floor_views()
+
+    ground = build_volume_ground(
+        depths, weights, rgbs, c2w, K, voxel_size=0.02, sdf_trunc=0.08, stride=4
+    )
+
+    # Up points at the cameras (-z); the hole's middle is written at floor height and color
+    assert ground.frame[2] @ [0.0, 0.0, -1.0] > 0.99
+    row, col, height = _fine_cell(ground, [0.02, 0.0, 1.0])
+    assert ground.inside[row, col]
+    assert abs(ground.height[row // 4, col // 4] - height) < 0.02
+    np.testing.assert_allclose(ground.color[row // 4, col // 4], 90.0, atol=1.0)
+
+    # Observed floor far from the hole is not the ground's to write
+    row, col, _ = _fine_cell(ground, [0.6, 0.6, 1.0])
+    assert not ground.inside[row, col]
+
+    # The band reaches the hole's block
+    hole_block = np.floor(np.array([0.02, 0.0, 1.0]) / (16 * 0.02)).astype(np.int64)
+    assert (ground.blocks == hole_block).all(axis=1).any()
+
+
+def test_build_volume_ground_is_none_without_weighted_depth():
+    depths, weights, rgbs, c2w, K = _floor_views()
+
+    ground = build_volume_ground(
+        depths, 0 * weights, rgbs, c2w, K, voxel_size=0.02, sdf_trunc=0.08
+    )
+
+    assert ground is None

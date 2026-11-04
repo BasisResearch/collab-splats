@@ -9,7 +9,13 @@ Meshing from depth + RGB arrays.
 
 from __future__ import annotations
 
-from collab_splats.mesh.clean import clean_repair_mesh, prepare_mesh
+from collab_splats.mesh.clean import (
+    VolumeGround,
+    build_volume_ground,
+    clean_repair_mesh,
+    prepare_mesh,
+    solve_ground,
+)
 from collab_splats.mesh.texture import create_texture_mesh
 from collab_splats.mesh.tsdf import (
     calibrate_confidence,
@@ -20,6 +26,8 @@ from collab_splats.mesh.tsdf import (
 )
 
 __all__ = [
+    "VolumeGround",
+    "build_volume_ground",
     "calibrate_confidence",
     "clean_repair_mesh",
     "compute_tsdf_voxel_size",
@@ -28,4 +36,5 @@ __all__ = [
     "lift_weights",
     "pixel_weights",
     "prepare_mesh",
+    "solve_ground",
 ]

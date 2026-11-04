@@ -5,6 +5,7 @@ Mesh cleanup at full density, then preparation for UV unwrapping.
 - remove_floaters: drop components that are small or far from the main body
 - fill_holes: patch interior loops under a perimeter bound; the outer rim stays open
 - make_convex_hull: trim_mesh_edges, patch the ground out to a rounded hull, bridge_mesh_edges
+  (build_volume_ground: obstacle membrane create_tsdf_mesh writes into unobserved voxels)
 - prepare_mesh: fill_holes, decimate_mesh (error-bounded QEM), make_manifold into a clean manifold mesh
 - thresholds are scene-relative: fractions of get_scene_scale, or cells of the median edge
 """
@@ -12,7 +13,9 @@ Mesh cleanup at full density, then preparation for UV unwrapping.
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 import cv2
 import meshlib.mrmeshnumpy as mn
@@ -20,6 +23,8 @@ import meshlib.mrmeshpy as mm
 import numpy as np
 import open3d as o3d
 import scipy.sparse as sp
+import torch
+import torch.nn.functional as F
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse.linalg import splu
 from scipy.spatial import Delaunay, cKDTree
@@ -33,6 +38,7 @@ from collab_splats.mesh.utils import (
     to_meshlib,
 )
 from collab_splats.utils.image import fill_missing_pixels
+from collab_splats.utils.torch_utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -698,6 +704,252 @@ def _connect_mesh_hull(
         patch = patch[~bad]
 
     return grid_local, grid_colors, patch
+
+
+########################################################################
+# Volume ground
+########################################################################
+
+# Ported from session 8e887a96 scratchpad: volground.build, proto_hull.solve_ground
+
+
+@dataclass
+class VolumeGround:
+    """
+    Ground membrane on a top-down grid in the ground frame, plus the TSDF blocks its band touches.
+
+    - local coords: (world - center) @ frame.T; local z is height above the ground plane
+    - height and color on the coarse grid (res per cell); inside on the voxel grid, 4x its shape
+    - frame: (3, 3) rows ground x, y, up; center: (3,) world origin; lo: (2,) local xy of cell (0, 0)
+    - color: (Hc, Wc, 3) float32 in 0-255, as the TSDF stores it; blocks: (M, 3) int64 block coords
+    """
+
+    frame: np.ndarray
+    center: np.ndarray
+    lo: np.ndarray
+    res: float
+    voxel_size: float
+    height: np.ndarray
+    inside: np.ndarray
+    color: np.ndarray
+    blocks: np.ndarray
+    sdf_trunc: float
+
+
+def build_volume_ground(
+    depths: np.ndarray,
+    weights: np.ndarray,
+    rgbs: np.ndarray,
+    c2w: np.ndarray,
+    K: np.ndarray,
+    *,
+    voxel_size: float,
+    sdf_trunc: float,
+    kappa: float = 30.0,
+    grow: int = 4,
+    stride: int = 8,
+) -> VolumeGround | None:
+    """
+    Obstacle ground under the fused depth, for create_tsdf_mesh to write into unobserved voxels.
+
+    - points: depth with weight > 0, every stride-th pixel at its pixel center
+    - per 4-voxel cell: the 10th-percentile height (>= 3 points) is the obstacle, its color the ground's
+    - inside: rounded hull of known cells at voxel res, minus closed top-down coverage, grown by grow
+    - covered columns (object tops, overhangs) keep their unobserved interiors empty, as the hull cut does
+    - membrane: solve_ground at 4 voxels per cell, kappa / scene scale
+    - blocks: inside columns x heights within the membrane +- (sdf_trunc + 1 voxel)
+
+    Args:
+        depths: (N, H, W) frame depth, 0 = none; the depths create_tsdf_mesh fuses.
+        weights: (N, H, W) fusion weights; pixels at 0 do not shape the ground.
+        rgbs: (N, H, W, 3) uint8 frames.
+        c2w: (N, 4, 4) camera-to-world poses, OpenCV axes.
+        K: (N, 3, 3) frame intrinsics, unshifted: pixel u's center is u + 0.5.
+        voxel_size: TSDF voxel edge.
+        sdf_trunc: TSDF truncation band.
+        kappa: membrane pressure before the 1 / scene-scale normalization.
+        grow: dilation of the gap mask into the observed ground, voxels.
+        stride: pixel step of the ground points.
+
+    Returns:
+        The ground, or None when no pixel has both depth and weight.
+    """
+    t0 = time.time()
+
+    # Weighted depth points, every stride-th pixel at its center, with their colors
+    points, colors = [], []
+    for i in range(len(depths)):
+        d = depths[i, ::stride, ::stride]
+        v, u = np.nonzero((d > 0) & (weights[i, ::stride, ::stride] > 0))
+        z = d[v, u]
+        x = ((u * stride + 0.5) - K[i, 0, 2]) / K[i, 0, 0] * z
+        y = ((v * stride + 0.5) - K[i, 1, 2]) / K[i, 1, 1] * z
+        points.append(np.column_stack([x, y, z]) @ c2w[i, :3, :3].T + c2w[i, :3, 3])
+        colors.append(rgbs[i, ::stride, ::stride][v, u])
+    points = np.concatenate(points)
+    colors = np.concatenate(colors).astype(np.float32)
+
+    if not len(points):
+        return None
+
+    # Ground frame; coarse top-down grid at 4 voxels per cell
+    frame, center = _find_ground_plane(
+        points[:: max(1, len(points) // 500_000)], c2w, min_up_cos=0.7
+    )
+    local = (points - center) @ frame.T
+    res = 4 * voxel_size
+    lo, shape = _ground_image_bounds(local[:, :2], res, margin=6)
+    px = _ground_xy_to_pixel(local[:, :2], lo, res)
+    cell = px[:, 1] * shape[1] + px[:, 0]
+
+    # Per-cell 10th-percentile height and its point's color; cells with < 3 points unknown
+    order = np.lexsort((local[:, 2], cell))
+    sorted_cells = cell[order]
+    starts = np.flatnonzero(np.r_[True, sorted_cells[1:] != sorted_cells[:-1]])
+    counts = np.diff(np.r_[starts, len(sorted_cells)])
+    pick = order[starts + (0.1 * counts).astype(int)]
+    ok = counts >= 3
+    lowest = np.full(shape[0] * shape[1], np.inf, np.float32)
+    lowest[sorted_cells[starts][ok]] = local[pick[ok], 2]
+    lowest = lowest.reshape(shape)
+    cell_color = np.zeros((shape[0] * shape[1], 3), np.float32)
+    cell_color[sorted_cells[starts][ok]] = colors[pick[ok]]
+
+    known = np.isfinite(lowest)
+    if not known.any():
+        return None
+
+    # Ground color everywhere: known cells filled outward, then softened
+    color = np.stack(
+        [
+            fill_missing_pixels(
+                np.where(known, cell_color[:, k].reshape(shape), 0), known
+            )
+            for k in range(3)
+        ],
+        axis=-1,
+    ).astype(np.float32)
+    color = cv2.GaussianBlur(color, (0, 0), 1)
+
+    # Gap columns at voxel res: rounded hull minus closed coverage, grown into the observed ground
+    fine = cv2.resize(
+        known.astype(np.uint8),
+        (shape[1] * 4, shape[0] * 4),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    inside = _create_rounded_hull_mask(fine, 20)
+    covered = cv2.morphologyEx(fine, cv2.MORPH_CLOSE, _filled_circle(3)) > 0
+    gap = cv2.dilate((inside & ~covered).astype(np.uint8), _filled_circle(grow)) > 0
+    inside &= gap
+
+    # Obstacle membrane under the lowest heights
+    t_solve = time.time()
+    height = solve_ground(lowest, res, kappa / get_scene_scale(points))
+    t_solve = time.time() - t_solve
+
+    # Band blocks (16-voxel Open3D blocks): inside columns x membrane +- (sdf_trunc + 1 voxel)
+    rows, cols = np.nonzero(inside)
+    xy = np.column_stack(
+        [lo[0] + (cols + 0.5) * voxel_size, lo[1] + (rows + 0.5) * voxel_size]
+    )
+    span = np.arange(-sdf_trunc - voxel_size, sdf_trunc + 2 * voxel_size, voxel_size)
+    heights = height[rows // 4, cols // 4][:, None] + span
+    band = np.column_stack([np.repeat(xy, len(span), axis=0), heights.ravel()])
+    blocks = np.floor((band @ frame + center) / (16 * voxel_size)).astype(np.int64)
+    blocks = np.unique(blocks.reshape(-1, 3), axis=0)
+
+    logger.info(
+        "build_volume_ground: %d blocks, %d hull cells, solve %.1fs, total %.1fs",
+        len(blocks),
+        int(inside.sum()),
+        t_solve,
+        time.time() - t0,
+    )
+    return VolumeGround(
+        frame=frame,
+        center=center,
+        lo=lo,
+        res=res,
+        voxel_size=voxel_size,
+        height=height,
+        inside=inside,
+        color=color,
+        blocks=blocks,
+        sdf_trunc=sdf_trunc,
+    )
+
+
+def solve_ground(lowest: np.ndarray, res: float, kappa: float) -> np.ndarray:
+    """
+    Obstacle membrane: the lowest surface under every observed height, pushed up by uniform pressure.
+
+    - fixed point: observed cells g = mean4(g) + kappa h^2 / 4, gaps mean4(g); g <= lowest everywhere
+    - red-black projected SOR (omega 1.8), coarse-to-fine over a min-pooled pyramid down to 32 cells
+    - per level: up to 20000 sweeps, stopped once 50 sweeps move g by less than 1e-4 res
+
+    Args:
+        lowest: (H, W) observed height per cell; inf or nan = unobserved.
+        res: cell size, world units.
+        kappa: pressure; larger lifts the membrane further into the gaps between observations.
+
+    Returns:
+        (H, W) float32 membrane height.
+    """
+    device = torch.device(get_device())
+    finite = np.where(np.isfinite(lowest), lowest, np.inf).astype(np.float32)
+    levels = [torch.from_numpy(finite).to(device)]
+
+    # Min-pool pyramid down to <= 32 cells on the short side; unobserved stays inf
+    while min(levels[-1].shape) > 32:
+        U = levels[-1]
+        H, W = U.shape
+        U = F.pad(U, (0, W % 2, 0, H % 2), value=float("inf"))
+        levels.append(-F.max_pool2d(-U[None, None], 2)[0, 0])
+
+    # Coarse to fine: each level starts from the coarser solution, upsampled
+    g = None
+    for level in range(len(levels) - 1, -1, -1):
+        U = levels[level]
+        h = res * 2**level
+        known = torch.isfinite(U)
+
+        if g is None:
+            g = torch.full_like(U, float(U[known].min()))
+        else:
+            g = F.interpolate(
+                g[None, None], scale_factor=2, mode="bilinear", align_corners=False
+            )[0, 0, : U.shape[0], : U.shape[1]]
+
+        # Pressure on observed cells; red-black checkerboard
+        source = torch.where(
+            known, torch.full_like(U, kappa * h * h / 4), torch.zeros_like(U)
+        )
+        yy, xx = torch.meshgrid(
+            torch.arange(U.shape[0], device=device),
+            torch.arange(U.shape[1], device=device),
+            indexing="ij",
+        )
+        red = ((yy + xx) % 2).bool()
+
+        # Projected SOR sweeps, capped at the observations
+        for sweep in range(20000):
+            prev = g
+            for color in (red, ~red):
+                pad = F.pad(g[None, None], (1, 1, 1, 1), mode="replicate")[0, 0]
+                target = (
+                    pad[:-2, 1:-1] + pad[2:, 1:-1] + pad[1:-1, :-2] + pad[1:-1, 2:]
+                ) / 4
+                target = target + source
+                g = torch.where(color, torch.minimum(g + 1.8 * (target - g), U), g)
+
+            if sweep % 50 == 49 and float((g - prev).abs().max()) < 1e-4 * res:
+                break
+
+        logger.debug(
+            "solve_ground: level %d %s, %d sweeps", level, tuple(U.shape), sweep + 1
+        )
+
+    return g.cpu().numpy()
 
 
 ########################################################################

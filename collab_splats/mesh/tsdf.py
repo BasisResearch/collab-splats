@@ -6,7 +6,7 @@ Depth + RGB views fused into a mesh.
 - calibrate_confidence: per-scene gate c* and slope gamma from cross-view depth residuals
 - pixel_weights: (conf / c*)^(2 gamma) above the gate, 0 below it and on depth edges
 - lift_weights: model-grid weights onto the frame grid, nearest, through each crop box
-- no file IO: the caller writes the mesh once it is final
+- no file IO: the caller writes the mesh once it is final; an optional volume ground (mesh.clean) fills voxels the views left below w_min
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import numpy as np
 import open3d as o3d
 import open3d.core as o3c
 import torch
+import torch.nn.functional as F
 import torch.utils.dlpack as tdl
 from scipy import ndimage
 from tqdm.auto import tqdm
@@ -28,6 +29,7 @@ from collab_splats.geometry.projection import (
     unproject_frames,
 )
 from collab_splats.geometry.transforms import invert_poses, shift_intrinsics
+from collab_splats.mesh.clean import VolumeGround
 from collab_splats.mesh.utils import validate_views
 from collab_splats.utils.torch_utils import get_device
 
@@ -50,6 +52,7 @@ def create_tsdf_mesh(
     depth_trunc: float | None = None,
     sdf_trunc: float | None = None,
     w_min: float = 1.0,
+    ground: VolumeGround | None = None,
     max_blocks: int = 30_000,
 ) -> o3d.geometry.TriangleMesh:
     """
@@ -60,6 +63,7 @@ def create_tsdf_mesh(
     - the block hashmap starts at 10k blocks and grows on its own
     - u, v floor (pixel-corner, as Open3D), so K shifts +0.5 once here
     - scenes past max_blocks fuse in spatial tiles; the welded mesh equals the single grid's
+    - ground: its band blocks join every tile; after the views, voxels inside its hull with weight <= w_min take its height distance at weight 1.01 w_min
 
     Args:
         depths: (N, H, W) depth in world units, 0 = no observation.
@@ -71,6 +75,7 @@ def create_tsdf_mesh(
         depth_trunc: depth beyond this (world units) is ignored; None keeps every depth.
         sdf_trunc: truncation band in world units; None = 4 × voxel_size.
         w_min: a voxel needs summed weight above this to yield surface.
+        ground: volume ground from build_volume_ground; None fuses the views alone.
         max_blocks: blocks per grid, halo included; Open3D extraction faults past 32,768.
 
     Returns:
@@ -145,6 +150,10 @@ def create_tsdf_mesh(
     del probe
     union = np.unique(np.concatenate(view_blocks), axis=0)
 
+    # The volume ground's band blocks join the scene, so every tile holds its voxels
+    if ground is not None:
+        union = np.unique(np.concatenate([union, ground.blocks]), axis=0)
+
     # One int64 key per block coord, for row-wise set tests; coords stay within ±2^20
     key_weights = np.array([1 << 42, 1 << 21, 1], dtype=np.int64)
     union_keys = (union + (1 << 20)) @ key_weights
@@ -201,6 +210,15 @@ def create_tsdf_mesh(
                 sdf_trunc=sdf_trunc,
                 device=device,
             )
+
+        # Volume ground into the tile's voxels the views left below w_min
+        if ground is not None:
+            ground_blocks = ground.blocks
+            if len(tiles) > 1:
+                ground_blocks = ground_blocks[
+                    np.isin((ground_blocks + (1 << 20)) @ key_weights, halo_keys)
+                ]
+            _inject_ground(grid, ground, ground_blocks, w_min=w_min, device=device)
 
         # Extract voxels whose summed weight passes w_min (Open3D keeps weight > threshold)
         tmesh = grid.extract_triangle_mesh(weight_threshold=float(w_min))
@@ -269,10 +287,11 @@ def create_tsdf_mesh(
         mesh = o3d.geometry.TriangleMesh()
 
     logger.info(
-        "create_tsdf_mesh: %d views, %d blocks in %d tiles, voxel=%.4f sdf_trunc=%.4f w_min=%.2f -> %d vertices",
+        "create_tsdf_mesh: %d views, %d blocks in %d tiles, ground=%d blocks, voxel=%.4f sdf_trunc=%.4f w_min=%.2f -> %d vertices",
         n,
         len(union),
         len(tiles),
+        0 if ground is None else len(ground.blocks),
         voxel_size,
         sdf_trunc,
         w_min,
@@ -345,6 +364,70 @@ def _integrate_weighted(
     tsdf[flat] = (tsdf[flat] * w0 + sdf * w) / w1
     rgb[flat] = (rgb[flat] * w0[:, None] + color[v, u] * w[:, None]) / w1[:, None]
     total[flat] = w1
+
+
+def _inject_ground(
+    grid: o3d.t.geometry.VoxelBlockGrid,
+    ground: VolumeGround,
+    blocks: np.ndarray,
+    *,
+    w_min: float,
+    device: o3c.Device,
+) -> None:
+    """
+    The ground's signed height distance into the grid's unobserved voxels inside its hull.
+
+    - unobserved: summed weight <= w_min, so the voxel would not extract on its own
+    - written at weight 1.01 w_min: Open3D extracts only weight > threshold
+    - membrane height and color bilinear at the voxel's ground xy; color stays 0-255
+    """
+    if not len(blocks):
+        return
+
+    # Activate the ground's blocks; voxel world coords and flat buffer indices
+    hashmap = grid.hashmap()
+    keys = o3c.Tensor(blocks.astype(np.int32), device=device)
+    hashmap.activate(keys)
+    buf_indices, _ = hashmap.find(keys)
+    coords, flat = grid.voxel_coordinates_and_flattened_indices(buf_indices)
+    coords = tdl.from_dlpack(coords.to_dlpack()).double()
+    flat = tdl.from_dlpack(flat.to_dlpack())
+    on = coords.device
+
+    # Each voxel in the ground frame
+    frame = torch.from_numpy(ground.frame).double().to(on)
+    center = torch.from_numpy(ground.center).double().to(on)
+    local = (coords - center) @ frame.T
+
+    # Inside-hull columns on the voxel-res mask
+    inside = torch.from_numpy(ground.inside).to(on)
+    rows_f, cols_f = inside.shape
+    ix = torch.floor((local[:, 0] - ground.lo[0]) / ground.voxel_size).long()
+    iy = torch.floor((local[:, 1] - ground.lo[1]) / ground.voxel_size).long()
+    sel = (ix >= 0) & (iy >= 0) & (ix < cols_f) & (iy < rows_f)
+    sel &= inside[iy.clamp(0, rows_f - 1), ix.clamp(0, cols_f - 1)]
+
+    # Membrane height and color, bilinear between coarse cell centers
+    rows_c, cols_c = ground.height.shape
+    fx = (local[:, 0] - ground.lo[0]) / ground.res - 0.5
+    fy = (local[:, 1] - ground.lo[1]) / ground.res - 0.5
+    sample = torch.stack([fx / (cols_c - 1) * 2 - 1, fy / (rows_c - 1) * 2 - 1], -1)
+    sample = sample[None, None].float()
+    height_img = torch.from_numpy(ground.height).to(on).float()[None, None]
+    height = F.grid_sample(height_img, sample, align_corners=True)[0, 0, 0]
+    color_img = torch.from_numpy(ground.color).to(on).permute(2, 0, 1)[None].float()
+    color = F.grid_sample(color_img, sample, align_corners=True)[0, :, 0].T
+
+    # Unobserved voxels take the clamped height distance, just above w_min
+    tsdf = tdl.from_dlpack(grid.attribute("tsdf").to_dlpack()).view(-1)
+    total = tdl.from_dlpack(grid.attribute("weight").to_dlpack()).view(-1)
+    rgb = tdl.from_dlpack(grid.attribute("color").to_dlpack()).view(-1, 3)
+    sel &= total[flat] <= w_min
+    sdf = (local[:, 2] - height).clamp(-ground.sdf_trunc, ground.sdf_trunc)
+    sdf = (sdf / ground.sdf_trunc).float()
+    tsdf[flat[sel]] = sdf[sel]
+    total[flat[sel]] = 1.01 * w_min
+    rgb[flat[sel]] = color[sel]
 
 
 def compute_tsdf_voxel_size(

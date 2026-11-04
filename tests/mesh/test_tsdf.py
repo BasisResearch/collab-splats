@@ -3,6 +3,7 @@ import open3d as o3d
 import pytest
 
 from collab_splats.mesh import tsdf
+from collab_splats.mesh.clean import VolumeGround
 from collab_splats.mesh.tsdf import (
     calibrate_confidence,
     compute_tsdf_voxel_size,
@@ -435,3 +436,70 @@ def test_calibrate_confidence_needs_three_bins():
     depth, conf, w2c, K = _noisy_planes(0.02, 0.9)
     with pytest.raises(ValueError, match="bins"):
         calibrate_confidence(depth, np.full_like(conf, 2.0), w2c, K, sdf_trunc=0.005)
+
+
+def _flat_ground(voxel_size=0.02, sdf_trunc=0.08, height=0.0, rgb=200.0):
+    """VolumeGround for the _views plane at z=1: up toward the cameras, every column inside."""
+    res = 4 * voxel_size
+    shape = (int(round(2.0 / res)), int(round(2.0 / res)))
+    xs = np.arange(-1.0, 1.0, voxel_size)
+    zs = np.arange(
+        1.0 - height - 2 * sdf_trunc, 1.0 - height + 2 * sdf_trunc, voxel_size
+    )
+    band = np.stack(np.meshgrid(xs, xs, zs, indexing="ij"), -1).reshape(-1, 3)
+    return VolumeGround(
+        frame=np.diag([1.0, -1.0, -1.0]),
+        center=np.array([0.0, 0.0, 1.0]),
+        lo=np.array([-1.0, -1.0]),
+        res=res,
+        voxel_size=voxel_size,
+        height=np.full(shape, height, np.float32),
+        inside=np.ones((4 * shape[0], 4 * shape[1]), bool),
+        color=np.full(shape + (3,), rgb, np.float32),
+        blocks=np.unique(np.floor(band / (16 * voxel_size)).astype(np.int64), axis=0),
+        sdf_trunc=sdf_trunc,
+    )
+
+
+def _near(mesh, xy, radius):
+    """Vertices within radius of xy, top-down."""
+    v = np.asarray(mesh.vertices)
+    return np.linalg.norm(v[:, :2] - xy, axis=1) < radius
+
+
+def test_create_tsdf_mesh_ground_closes_a_depth_hole(monkeypatch):
+    # Every view misses the plane around x 0.05; the ground writes it at the plane's height, in its color
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=3)
+    depths[:, 12:20, 12:20] = 0.0
+    kwargs = dict(
+        weights=np.ones_like(depths), voxel_size=0.02, depth_trunc=2.0, sdf_trunc=0.08
+    )
+
+    holed = create_tsdf_mesh(depths, rgbs, c2w, K, **kwargs)
+    closed = create_tsdf_mesh(depths, rgbs, c2w, K, ground=_flat_ground(), **kwargs)
+
+    assert not _near(holed, [0.05, 0.0], 0.05).any()
+    middle = _near(closed, [0.05, 0.0], 0.05)
+    assert middle.any()
+    np.testing.assert_allclose(np.asarray(closed.vertices)[:, 2], 1.0, atol=0.02)
+    np.testing.assert_allclose(
+        np.asarray(closed.vertex_colors)[middle], 200 / 255, atol=0.05
+    )
+
+
+def test_create_tsdf_mesh_ground_leaves_observed_voxels_alone(monkeypatch):
+    # A ground 0.04 off the plane: voxels three views saw keep their surface at z 1
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=3)
+    kwargs = dict(
+        weights=np.ones_like(depths), voxel_size=0.02, depth_trunc=2.0, sdf_trunc=0.08
+    )
+
+    mesh = create_tsdf_mesh(
+        depths, rgbs, c2w, K, ground=_flat_ground(height=0.04), **kwargs
+    )
+
+    seen = _near(mesh, [-0.35, 0.0], 0.05)
+    assert seen.any()
+    np.testing.assert_allclose(np.asarray(mesh.vertices)[seen, 2], 1.0, atol=0.005)

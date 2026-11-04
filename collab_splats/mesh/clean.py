@@ -2,10 +2,9 @@
 Mesh cleanup at full density, then preparation for UV unwrapping.
 
 - clean_repair_mesh: remove_floaters, optional make_convex_hull, fill_holes
-- remove_floaters: drop components that are small or far from the main body
-- fill_holes: patch interior loops under a perimeter bound; the outer rim stays open
-- make_convex_hull: trim_mesh_edges, patch the ground out to a rounded hull, bridge_mesh_edges
-  (build_volume_ground: obstacle membrane create_tsdf_mesh writes into unobserved voxels)
+- remove_floaters drops small or far components; fill_holes patches interior loops, not the rim
+- make_convex_hull: cut to a rounded ground hull, trim_mesh_edges, bridge_mesh_edges
+- build_volume_ground: obstacle membrane create_tsdf_mesh writes into unobserved voxels
 - prepare_mesh: fill_holes, decimate_mesh (error-bounded QEM), make_manifold into a clean manifold mesh
 - thresholds are scene-relative: fractions of get_scene_scale, or cells of the median edge
 """
@@ -26,8 +25,7 @@ import scipy.sparse as sp
 import torch
 import torch.nn.functional as F
 from scipy.sparse.csgraph import connected_components
-from scipy.sparse.linalg import splu
-from scipy.spatial import Delaunay, cKDTree
+from scipy.spatial import cKDTree
 
 from collab_splats.geometry.transforms import fit_dominant_plane
 from collab_splats.mesh.utils import (
@@ -428,20 +426,18 @@ def make_convex_hull(
     *,
     hull_round: int = 20,
     outline_open: int = 8,
-    rim_max_dz: float = 3.0,
-    rim_max_edge: float = 3.0,
     bridge_radius: float = 3.0,
     min_piece_faces: int = 1000,
     min_up_cos: float = 0.7,
 ) -> o3d.geometry.TriangleMesh:
     """
-    Trim the ragged outer edge, then patch the ground out to a rounded convex hull.
+    Cut the mesh to a rounded convex hull of its ground and trim the ragged outer edge.
 
     - lengths are in cells: pixels of the top-down image of the mesh, one median edge length each
     - ground: first of 3 RANSAC planes facing the camera up, else the largest; up on the cameras' side
     - cut: faces outside the rounded hull, then trim_mesh_edges on the ragged outline
-    - patch: uncovered hull cells get a sheet pinned to the rim, pulled to the eroded ground
-    - join: clashing patch faces dropped, make_manifold, then bridge_mesh_edges closes inlets
+    - no ground patch: the volume ground (mesh.clean) closes the ground inside the TSDF
+    - repair: make_manifold, then bridge_mesh_edges closes inlets
     - assumes a ground-dominated height field; indoor and object scenes should leave it off
 
     Args:
@@ -449,15 +445,13 @@ def make_convex_hull(
         c2w: (N, 4, 4) camera-to-world poses, OpenCV axes; they set the expected up and its sign.
         hull_round: opening radius that rounds the hull's corners, cells.
         outline_open: see trim_mesh_edges.
-        rim_max_dz: join a rim vertex only within this of its neighbors' median height, cells.
-        rim_max_edge: drop patch triangles touching the rim with a 3D edge over this, cells.
         bridge_radius: see bridge_mesh_edges (radius).
         min_piece_faces: pieces with fewer faces are dropped.
         min_up_cos: smallest ``|plane normal . expected up|`` that counts as ground;
             below it on every plane, the largest plane is used.
 
     Returns:
-        New mesh: trimmed, patched out to the hull, manifold.
+        New mesh: cut, trimmed, manifold.
     """
     verts = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
@@ -490,38 +484,19 @@ def make_convex_hull(
     )
     faces = _drop_small_pieces(verts, np.asarray(trimmed.triangles), min_piece_faces)
 
-    # Ground patch out to the hull, joined to the mesh; grid points are appended to the vertices
-    grid_local, grid_colors, patch = _connect_mesh_hull(
-        faces,
-        local,
-        colors,
-        inside,
-        lo,
-        res,
-        rim_max_dz=rim_max_dz,
-        rim_max_edge=rim_max_edge,
-    )
-    all_verts = np.concatenate([verts, grid_local @ frame + center])
-    all_faces = _drop_small_pieces(
-        all_verts, np.concatenate([faces, patch]), min_piece_faces
-    )
-
     # Repair, then bridge the outer rim's necks
     joined = o3d.geometry.TriangleMesh(
-        o3d.utility.Vector3dVector(all_verts), o3d.utility.Vector3iVector(all_faces)
+        o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces)
     )
-    joined.vertex_colors = o3d.utility.Vector3dVector(
-        np.concatenate([colors, grid_colors])
-    )
+    joined.vertex_colors = o3d.utility.Vector3dVector(colors)
     joined = bridge_mesh_edges(make_manifold(joined), radius=bridge_radius)
 
     if not mesh.has_vertex_colors():
         joined.vertex_colors = o3d.utility.Vector3dVector()
 
     logger.info(
-        "make_convex_hull: cell %.4f, %d patch faces, triangles %d -> %d",
+        "make_convex_hull: cell %.4f, triangles %d -> %d",
         res,
-        len(patch),
         len(mesh.triangles),
         len(joined.triangles),
     )
@@ -543,167 +518,6 @@ def _create_rounded_hull_mask(coverage: np.ndarray, hull_round: int) -> np.ndarr
     hull = np.zeros_like(coverage)
     cv2.fillPoly(hull, [cv2.convexHull(np.vstack(contours))], 255)
     return cv2.morphologyEx(hull, cv2.MORPH_OPEN, _filled_circle(hull_round)) > 0
-
-
-def _connect_mesh_hull(
-    faces: np.ndarray,
-    local: np.ndarray,
-    colors: np.ndarray,
-    inside: np.ndarray,
-    lo: np.ndarray,
-    res: float,
-    *,
-    rim_max_dz: float,
-    rim_max_edge: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Ground patch from the mesh's open rim out to the hull, joined to the mesh without clashes.
-
-    - returns grid points (G, 3) in the local frame, their colors, and patch faces indexing [mesh; grid]
-    - prior: per-cell min height, eroded, gaps filled by fill_missing_pixels
-    - heights and colors: harmonic, rim pinned, pulled to the prior away from the mesh
-    - faces wound up; a flip fixes a repeated directed edge, else faces on over-used edges are dropped
-    """
-    xy, height = local[:, :2], local[:, 2]
-    shape = inside.shape
-    vert_px = _ground_xy_to_pixel(xy, lo, res)
-
-    # Gap: hull cells no face covers from above; distance to the mesh in cells
-    covered = _mesh_coverage_mask(xy, faces, lo, res, shape) > 0
-    gap = inside & ~covered
-    dist_mesh = cv2.distanceTransform((~covered).astype(np.uint8), cv2.DIST_L2, 5)
-
-    # Ground prior: per-cell min height, eroded so walls and objects sink to the ground
-    empty = np.finfo(np.float32).max
-    used = np.unique(faces)
-    lowest = np.full(inside.size, empty, dtype=np.float32)
-    np.minimum.at(lowest, vert_px[used, 1] * shape[1] + vert_px[used, 0], height[used])
-    ground = cv2.erode(lowest.reshape(shape), _filled_circle(6))
-    known = ground < empty
-
-    # Empty cells take the smooth continuation of their known neighbors
-    filled = fill_missing_pixels(np.where(known, ground, 0.0), known)
-    prior = cv2.GaussianBlur(filled, (0, 0), 5)
-
-    # Rim vertices: on open edges, bordering the gap
-    edge_ids, per_edge = np.unique(
-        face_edge_ids(faces, len(local), directed=False), return_counts=True
-    )
-    open_edges = edge_ids[per_edge == 1]
-    rim = np.unique(np.concatenate([open_edges // len(local), open_edges % len(local)]))
-    near_gap = cv2.dilate(gap.astype(np.uint8), _filled_circle(2)).astype(bool)
-    rim = rim[near_gap[vert_px[rim, 1], vert_px[rim, 0]]]
-
-    # Height gate: a rim vertex far off its neighbours' median (wall top, spike) stays unjoined
-    rim = rim[
-        np.abs(height[rim] - _local_median(xy[rim], height[rim], 6 * res))
-        < rim_max_dz * res
-    ]
-    rim_height = _local_median(xy[rim], height[rim], 6 * res)
-    n_rim = len(rim)
-
-    # Grid points in the gap, one cell clear of the mesh
-    clear = cv2.distanceTransform(gap.astype(np.uint8), cv2.DIST_L2, 5) >= 1.0
-    rows, cols = np.nonzero(clear)
-    grid_xy = np.stack([lo[0] + cols * res, lo[1] + rows * res], axis=1)
-    n_grid = len(grid_xy)
-
-    # Triangulate rim + grid; keep short triangles over the gap, rim-only ones shorter still
-    points = np.concatenate([xy[rim], grid_xy])
-    tris = Delaunay(points).simplices
-    center_px = _ground_xy_to_pixel(points[tris].mean(axis=1), lo, res)
-    gap_wide = cv2.dilate(gap.astype(np.uint8), _filled_circle(1)).astype(bool)
-    keep = (
-        gap_wide[center_px[:, 1], center_px[:, 0]]
-        & inside[center_px[:, 1], center_px[:, 0]]
-    )
-    longest = np.linalg.norm(
-        points[tris] - points[np.roll(tris, 1, axis=1)], axis=2
-    ).max(axis=1)
-    keep &= longest < 3 * res
-    keep &= ~(tris < n_rim).all(axis=1) | (longest < 1.5 * res)
-    tris = tris[keep]
-
-    # Build a smooth height + color system on the grid, pinned to the rim and pulled to the ground prior
-    tri_edges = np.unique(face_edge_ids(tris, len(points), directed=False))
-    ends = np.stack([tri_edges // len(points), tri_edges % len(points)], axis=1)
-    src = np.concatenate([ends[:, 0], ends[:, 1]])
-    dst = np.concatenate([ends[:, 1], ends[:, 0]])
-    on_grid = src >= n_rim
-    src, dst = src[on_grid] - n_rim, dst[on_grid]
-    pull = 1e-6 + 0.5 * np.clip(dist_mesh[rows, cols] / 20, 0, 1) ** 2
-    target = np.column_stack(
-        [
-            prior[rows, cols].astype(np.float64),
-            np.tile(np.median(colors, axis=0), (n_grid, 1)),
-        ]
-    )
-    pinned = np.column_stack([rim_height, colors[rim]])
-    rhs = pull[:, None] * target
-    to_rim = dst < n_rim
-    np.add.at(rhs, src[to_rim], pinned[dst[to_rim]])
-    laplacian = sp.csc_matrix(
-        (-np.ones((~to_rim).sum()), (src[~to_rim], dst[~to_rim] - n_rim)),
-        shape=(n_grid, n_grid),
-    ) + sp.diags(pull + np.bincount(src, minlength=n_grid))
-
-    # Solve: grid heights and colors
-    solution = splu(laplacian.tocsc()).solve(rhs)
-    grid_local = np.concatenate([grid_xy, solution[:, :1]], axis=1)
-    grid_colors = np.clip(solution[:, 1:], 0, 1)
-
-    # 3D edge cap on rim triangles: one reaching up a wall or to a spike is a strand
-    points3 = np.concatenate([np.column_stack([xy[rim], height[rim]]), grid_local])
-    longest3 = np.linalg.norm(
-        points3[tris] - points3[np.roll(tris, 1, axis=1)], axis=2
-    ).max(axis=1)
-    tris = tris[(longest3 < rim_max_edge * res) | ~(tris < n_rim).any(axis=1)]
-
-    # Wind every face up (+z), then renumber from [rim; grid] to [mesh; grid]
-    corners = points3[tris]
-    down = (
-        np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])[:, 2] < 0
-    )
-    tris[down] = tris[down][:, [0, 2, 1]]
-    patch = np.concatenate([rim, len(local) + np.arange(n_grid)])[tris]
-    n_verts = len(local) + n_grid
-
-    # Patch faces meet the mesh only at rim vertices: keep the mesh edges joining two of them
-    on_rim = np.zeros(n_verts, dtype=bool)
-    on_rim[rim] = True
-    mesh_dir = face_edge_ids(faces, n_verts, directed=True).ravel()
-    mesh_dir = mesh_dir[on_rim[mesh_dir // n_verts] & on_rim[mesh_dir % n_verts]]
-    start, end = mesh_dir // n_verts, mesh_dir % n_verts
-    mesh_und = np.minimum(start, end) * n_verts + np.maximum(start, end)
-    mesh_ids = np.unique(mesh_dir)
-
-    # Flip a face that repeats a mesh directed edge, if the flip repeats none
-    repeats = np.isin(face_edge_ids(patch, n_verts, directed=True), mesh_ids).any(
-        axis=1
-    )
-    flipped = patch[repeats][:, [0, 2, 1]]
-    ok = ~np.isin(face_edge_ids(flipped, n_verts, directed=True), mesh_ids).any(axis=1)
-    patch[np.flatnonzero(repeats)[ok]] = flipped[ok]
-
-    # Drop faces on an edge of >2 faces or a repeated direction; each pass shrinks the patch
-    while True:
-        patch_und = face_edge_ids(patch, n_verts, directed=False).ravel()
-        patch_dir = face_edge_ids(patch, n_verts, directed=True).ravel()
-        all_und = np.concatenate([mesh_und, patch_und])
-        all_dir = np.concatenate([mesh_dir, patch_dir])
-        _, edge_of, per_edge = np.unique(
-            all_und, return_inverse=True, return_counts=True
-        )
-        _, dir_of, per_dir = np.unique(all_dir, return_inverse=True, return_counts=True)
-        bad = (per_edge[edge_of[len(mesh_und) :].reshape(-1, 3)] > 2).any(axis=1)
-        bad |= (per_dir[dir_of[len(mesh_dir) :].reshape(-1, 3)] > 1).any(axis=1)
-
-        if not bad.any():
-            break
-
-        patch = patch[~bad]
-
-    return grid_local, grid_colors, patch
 
 
 ########################################################################
@@ -1348,35 +1162,6 @@ def _drop_small_pieces(
     """
     cluster_ids, cluster_sizes, _ = face_components(verts, faces)
     return faces[cluster_sizes[cluster_ids] >= min_faces]
-
-
-def _local_median(xy: np.ndarray, values: np.ndarray, radius: float) -> np.ndarray:
-    """
-    Median of values over the points within radius of each point, in the ground plane.
-
-    - one k-nearest query, k = the largest neighborhood; missing slots pad with +inf and sort last
-    - memory: (N, k) floats; k stays small since the rim is a thin band
-    """
-    if len(xy) == 0:
-        return np.zeros(0)
-
-    # Neighborhood size per point, then one k-nearest query sized to the largest
-    tree = cKDTree(xy)
-    count = tree.query_ball_point(xy, radius, workers=-1, return_length=True)
-    bound = np.nextafter(radius, np.inf)
-    _, neighbors = tree.query(
-        xy, k=int(count.max()), distance_upper_bound=bound, workers=-1
-    )
-
-    # Neighbor values, +inf in the slots past each point's count, sorted per row
-    found = neighbors < len(xy)
-    vals = np.full(neighbors.shape, np.inf)
-    vals[found] = values[neighbors[found]]
-    vals.sort(axis=1)
-
-    # Middle element, or mean of the two middle ones for an even count
-    row = np.arange(len(xy))
-    return (vals[row, (count - 1) // 2] + vals[row, count // 2]) / 2
 
 
 ########################################################################

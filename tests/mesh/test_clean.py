@@ -7,7 +7,6 @@ from scipy.spatial import cKDTree
 
 from collab_splats.mesh.clean import (
     _find_ground_plane,
-    _local_median,
     _mesh_coverage_mask,
     bridge_mesh_edges,
     build_volume_ground,
@@ -293,13 +292,13 @@ def test_make_convex_hull_then_fill_holes_leaves_one_manifold_piece_with_only_th
     assert _n_components(filled) == 1
 
 
-def test_make_convex_hull_patch_lies_on_the_ground_and_is_kept():
+def test_make_convex_hull_adds_no_vertices():
+    # Ground comes from the volume now: the hull only cuts, trims and bridges
     scene = _ground_scene()
     hull = make_convex_hull(scene, _orbit_cameras())
     dist, _ = cKDTree(np.asarray(scene.vertices)).query(np.asarray(hull.vertices))
-    patch = np.asarray(hull.vertices)[dist > 1e-6]
-    assert len(patch) > 500
-    assert np.abs(patch[:, 2]).max() < 0.01
+    assert dist.max() < 1e-6
+    assert len(hull.triangles) < len(scene.triangles)
 
 
 def test_bridge_mesh_edges_turns_a_narrow_inlet_into_an_interior_hole():
@@ -339,40 +338,6 @@ def test_make_convex_hull_shortens_the_outline():
         _loop_perimeters(make_convex_hull(scene, _orbit_cameras()))[-1]
         < 0.8 * _loop_perimeters(scene)[-1]
     )
-
-
-def test_make_convex_hull_caps_patch_edges_that_touch_the_rim():
-    # Jitter the outer ground band, so rim heights jump but stay inside the rim height gate
-    scene = _ground_scene()
-    verts = np.asarray(scene.vertices).copy()
-    band = (verts[:, 2] < 1e-6) & (
-        np.linalg.norm(verts[:, :2], axis=1) > 0.2 * 140 * 0.17
-    )
-    verts[band, 2] += np.random.default_rng(1).uniform(-3.5, 3.5, band.sum()) * 0.17
-    scene.vertices = o3d.utility.Vector3dVector(verts)
-    faces = np.asarray(scene.triangles)
-    res = np.median(
-        np.linalg.norm(verts[faces] - verts[np.roll(faces, 1, axis=1)], axis=2)
-    )
-
-    # Bridges off: they span two rim edges by design, the cap is on patch faces
-    hull = make_convex_hull(
-        scene, _orbit_cameras(), rim_max_edge=3.0, bridge_radius=0.0
-    )
-
-    # Patch faces with both a source vertex and a patch vertex: none reaches past the cap
-    hull_verts = np.asarray(hull.vertices)
-    dist, _ = cKDTree(verts).query(hull_verts)
-    is_source = dist < 1e-6
-    hull_faces = np.asarray(hull.triangles)
-    mixed = hull_faces[
-        is_source[hull_faces].any(axis=1) & ~is_source[hull_faces].all(axis=1)
-    ]
-    assert len(mixed) > 0
-    longest = np.linalg.norm(
-        hull_verts[mixed] - hull_verts[np.roll(mixed, 1, axis=1)], axis=2
-    ).max(axis=1)
-    assert longest.max() < 3.0 * res
 
 
 def test_find_ground_plane_warns_and_takes_the_largest_plane_without_ground(caplog):
@@ -624,22 +589,6 @@ def test_make_manifold_splits_every_extra_fan_in_vertex_then_face_order():
     vo, co = np.asarray(out.vertices), np.asarray(out.vertex_colors)
     np.testing.assert_array_equal(vo[[9, 10]], v[[0, 5]])
     np.testing.assert_array_equal(co[[9, 10]], np.asarray(m.vertex_colors)[[0, 5]])
-
-
-def test_local_median_matches_per_point_median():
-    rng = np.random.default_rng(0)
-    xy = rng.random((300, 2))
-    values = rng.random(300)
-    tree = cKDTree(xy)
-    expected = np.array(
-        [np.median(values[ix]) for ix in tree.query_ball_point(xy, 0.1)]
-    )
-    counts = tree.query_ball_point(xy, 0.1, return_length=True)
-
-    # Both parities present, so both middle-element branches are checked
-    assert (counts % 2 == 0).any() and (counts % 2 == 1).any()
-    np.testing.assert_array_equal(_local_median(xy, values, 0.1), expected)
-    assert len(_local_median(np.zeros((0, 2)), np.zeros(0), 0.1)) == 0
 
 
 def test_mesh_coverage_mask_fills_each_face():

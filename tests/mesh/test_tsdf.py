@@ -25,7 +25,15 @@ def _views(n=3, h=32, w=32):
 
 def test_create_tsdf_mesh_returns_a_colored_mesh():
     depths, rgbs, c2w, K = _views()
-    mesh = create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.02, depth_trunc=2.0)
+    mesh = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        K,
+        weights=np.ones_like(depths),
+        voxel_size=0.02,
+        depth_trunc=2.0,
+    )
     assert len(mesh.vertices) > 0 and len(mesh.triangles) > 0
     assert mesh.has_vertex_colors()
     assert np.allclose(np.asarray(mesh.vertex_colors), 128 / 255, atol=0.05)
@@ -35,16 +43,29 @@ def test_create_tsdf_mesh_skips_a_view_with_no_valid_depth():
     """An all-zero depth view (e.g. all sky) touches no block; Open3D would raise on it."""
     depths, rgbs, c2w, K = _views()
     depths[1] = 0.0
-    mesh = create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.02, depth_trunc=2.0)
+    mesh = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        K,
+        weights=np.ones_like(depths),
+        voxel_size=0.02,
+        depth_trunc=2.0,
+    )
     assert len(mesh.triangles) > 0
 
 
 def test_create_tsdf_mesh_falls_back_to_cpu_without_cuda(monkeypatch):
     depths, rgbs, c2w, K = _views()
-    gpu = create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.02, depth_trunc=2.0)
+    weights = np.ones_like(depths)
+    gpu = create_tsdf_mesh(
+        depths, rgbs, c2w, K, weights=weights, voxel_size=0.02, depth_trunc=2.0
+    )
 
     monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
-    cpu = create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.02, depth_trunc=2.0)
+    cpu = create_tsdf_mesh(
+        depths, rgbs, c2w, K, weights=weights, voxel_size=0.02, depth_trunc=2.0
+    )
 
     assert len(cpu.triangles) > 0 and cpu.has_vertex_colors()
     assert np.allclose(
@@ -61,6 +82,7 @@ def test_create_tsdf_mesh_rejects_float_rgb():
             rgbs.astype(np.float32) / 255,
             c2w,
             K,
+            weights=np.ones_like(depths),
             voxel_size=0.02,
             depth_trunc=2.0,
         )
@@ -73,40 +95,55 @@ def test_create_tsdf_mesh_rejects_principal_point_outside_grid():
     )
 
     with pytest.raises(ValueError, match="Principal point"):
-        create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.02, depth_trunc=2.0)
+        create_tsdf_mesh(
+            depths,
+            rgbs,
+            c2w,
+            K,
+            weights=np.ones_like(depths),
+            voxel_size=0.02,
+            depth_trunc=2.0,
+        )
 
 
 def test_create_tsdf_mesh_rejects_frame_count_mismatch():
     depths, rgbs, c2w, K = _views()
 
     with pytest.raises(ValueError, match="views"):
-        create_tsdf_mesh(depths, rgbs[:2], c2w, K, voxel_size=0.02, depth_trunc=2.0)
+        create_tsdf_mesh(
+            depths,
+            rgbs[:2],
+            c2w,
+            K,
+            weights=np.ones_like(depths),
+            voxel_size=0.02,
+            depth_trunc=2.0,
+        )
 
 
 def test_create_tsdf_mesh_sdf_trunc_defaults_to_four_voxels(monkeypatch):
-    seen = []
-
-    class _Recorder:
-        def __init__(self, *, voxel_size, **kwargs):
-            seen.append(voxel_size)
-
-        def compute_unique_block_coordinates(self, *args):
-            seen.append(args[-1])
-            return o3d.core.Tensor(np.zeros((1, 3), np.int32))
-
-        def integrate(self, *args):
-            seen.append(args[-1])
-
-        def extract_triangle_mesh(self, weight_threshold):
-            sphere = o3d.geometry.TriangleMesh.create_sphere(0.1)
-            sphere.paint_uniform_color((0.5, 0.5, 0.5))
-            return o3d.t.geometry.TriangleMesh.from_legacy(sphere)
-
-    monkeypatch.setattr(o3d.t.geometry, "VoxelBlockGrid", _Recorder)
-    depths, rgbs, c2w, K = _views(n=1)
-    create_tsdf_mesh(depths, rgbs, c2w, K, voxel_size=0.01, depth_trunc=2.0)
-    # Probe grid, then one tile's grid
-    assert seen == [0.01, pytest.approx(4.0), 0.01, pytest.approx(4.0)]
+    # Vertex order follows the block hashmap, so compare position-sorted rows
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views()
+    weights = np.ones_like(depths)
+    default = create_tsdf_mesh(
+        depths, rgbs, c2w, K, weights=weights, voxel_size=0.02, depth_trunc=2.0
+    )
+    explicit = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        K,
+        weights=weights,
+        voxel_size=0.02,
+        depth_trunc=2.0,
+        sdf_trunc=0.08,
+    )
+    np.testing.assert_array_equal(
+        np.unique(np.asarray(default.vertices), axis=0),
+        np.unique(np.asarray(explicit.vertices), axis=0),
+    )
+    assert len(default.vertices) == len(explicit.vertices) > 0
 
 
 def _canonical(mesh):
@@ -136,8 +173,11 @@ def test_create_tsdf_mesh_tiles_to_the_single_grid_mesh(monkeypatch):
     rgbs[..., 0] = (xx * 5).astype(np.uint8)
     args = (depths, rgbs, c2w, K)
 
-    single = create_tsdf_mesh(*args, voxel_size=0.01, depth_trunc=2.0)
-    tiled = create_tsdf_mesh(*args, voxel_size=0.01, depth_trunc=2.0, max_blocks=40)
+    weights = np.ones_like(depths)
+    single = create_tsdf_mesh(*args, weights=weights, voxel_size=0.01, depth_trunc=2.0)
+    tiled = create_tsdf_mesh(
+        *args, weights=weights, voxel_size=0.01, depth_trunc=2.0, max_blocks=40
+    )
 
     single_v, single_t = _canonical(single)
     tiled_v, tiled_t = _canonical(tiled)
@@ -157,6 +197,7 @@ def test_create_tsdf_mesh_refuses_a_band_narrower_than_a_voxel():
             rgbs,
             np.eye(4)[None],
             np.eye(3)[None],
+            weights=np.ones_like(depths),
             voxel_size=0.1,
             depth_trunc=5.0,
             sdf_trunc=0.05,
@@ -193,7 +234,9 @@ def test_compute_tsdf_voxel_size_refuses_empty_depth():
 
 def test_create_tsdf_mesh_without_depth_trunc_keeps_every_depth():
     depths, rgbs, c2w, K = _views()
-    mesh = create_tsdf_mesh(5 * depths, rgbs, c2w, K, voxel_size=0.1)
+    mesh = create_tsdf_mesh(
+        5 * depths, rgbs, c2w, K, weights=np.ones_like(depths), voxel_size=0.1
+    )
     assert len(mesh.triangles) > 0
 
 
@@ -205,11 +248,92 @@ def test_create_tsdf_mesh_reads_k_as_pixel_center(monkeypatch):
     K = np.array([[[10.0, 0, 10.0], [0, 10.0, 10.0], [0, 0, 1]]])
 
     mesh = create_tsdf_mesh(
-        depths, rgbs, np.eye(4)[None], K, voxel_size=0.01, depth_trunc=2.0
+        depths,
+        rgbs,
+        np.eye(4)[None],
+        K,
+        weights=np.full_like(depths, 2.0),
+        voxel_size=0.01,
+        depth_trunc=2.0,
     )
 
     corner = np.asarray(mesh.vertices)[:, :2].min(axis=0)
     assert corner == pytest.approx([-1.05, -1.05], abs=0.01)
+
+
+def test_create_tsdf_mesh_zero_weight_view_adds_nothing(monkeypatch):
+    # A view at a wrong depth with weight 0 leaves the mesh as the other views make it
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=4)
+    weights = np.ones_like(depths)
+    reference = create_tsdf_mesh(
+        depths[:3],
+        rgbs[:3],
+        c2w[:3],
+        K[:3],
+        weights=weights[:3],
+        voxel_size=0.02,
+        depth_trunc=2.0,
+    )
+
+    depths[3] = 1.5
+    weights[3] = 0.0
+    mesh = create_tsdf_mesh(
+        depths, rgbs, c2w, K, weights=weights, voxel_size=0.02, depth_trunc=2.0
+    )
+
+    assert len(mesh.triangles) == len(reference.triangles)
+    np.testing.assert_allclose(np.asarray(mesh.vertices)[:, 2], 1.0, atol=0.02)
+
+
+def test_create_tsdf_mesh_surface_needs_weight_above_w_min(monkeypatch):
+    # One view at weight 1: nothing passes w_min 1.0, everything passes w_min 0.5
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=1)
+    weights = np.ones_like(depths)
+    kwargs = dict(weights=weights, voxel_size=0.02, depth_trunc=2.0)
+
+    assert len(create_tsdf_mesh(depths, rgbs, c2w, K, **kwargs).triangles) == 0
+    assert (
+        len(create_tsdf_mesh(depths, rgbs, c2w, K, w_min=0.5, **kwargs).triangles) > 0
+    )
+
+
+def test_create_tsdf_mesh_weights_pull_the_surface(monkeypatch):
+    # Two depths, 1.00 and 1.04; weight 3:1 puts the surface at the weighted mean 1.01
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=2)
+    c2w[1] = c2w[0]
+    depths[1] = 1.04
+    weights = np.stack([np.full(depths.shape[1:], 3.0), np.full(depths.shape[1:], 1.0)])
+    weights = weights.astype(np.float32)
+
+    mesh = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        K,
+        weights=weights,
+        voxel_size=0.01,
+        depth_trunc=2.0,
+        sdf_trunc=0.08,
+    )
+
+    z = np.asarray(mesh.vertices)[:, 2]
+    assert np.median(z) == pytest.approx(1.01, abs=0.003)
+
+
+def test_create_tsdf_mesh_rejects_weights_shape_mismatch():
+    depths, rgbs, c2w, K = _views()
+    with pytest.raises(ValueError, match="weights"):
+        create_tsdf_mesh(
+            depths,
+            rgbs,
+            c2w,
+            K,
+            weights=np.ones((3, 4, 4), np.float32),
+            voxel_size=0.02,
+        )
 
 
 def test_pixel_weights_gate_and_power():

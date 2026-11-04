@@ -1,7 +1,7 @@
 """
 Depth + RGB views fused into a mesh.
 
-- create_tsdf_mesh: the entry point, Open3D VoxelBlockGrid (CUDA when available) then extract
+- create_tsdf_mesh: the entry point, per-pixel weighted fusion into an Open3D VoxelBlockGrid (CUDA when available) then extract
 - compute_tsdf_voxel_size: voxel edge from the depth's own pixel footprint, coarsened to a memory budget
 - calibrate_confidence: per-scene gate c* and slope gamma from cross-view depth residuals
 - pixel_weights: (conf / c*)^(2 gamma) above the gate, 0 below it and on depth edges
@@ -18,6 +18,7 @@ import numpy as np
 import open3d as o3d
 import open3d.core as o3c
 import torch
+import torch.utils.dlpack as tdl
 from scipy import ndimage
 from tqdm.auto import tqdm
 
@@ -44,14 +45,17 @@ def create_tsdf_mesh(
     c2w: np.ndarray,
     K: np.ndarray,
     *,
+    weights: np.ndarray,
     voxel_size: float,
     depth_trunc: float | None = None,
     sdf_trunc: float | None = None,
+    w_min: float = 1.0,
     max_blocks: int = 30_000,
 ) -> o3d.geometry.TriangleMesh:
     """
     Integrate depth + RGB views into a VoxelBlockGrid and extract its mesh.
 
+    - each pixel's sample carries its weight: tsdf and color are weighted running averages, the voxel weight their sum
     - runs on CUDA:0 when Open3D has CUDA, else on the CPU; same grid, same mesh
     - the block hashmap starts at 10k blocks and grows on its own
     - Open3D floors projected u, v (pixel-corner), so K shifts +0.5 once here
@@ -62,9 +66,11 @@ def create_tsdf_mesh(
         rgbs: (N, H, W, 3) uint8 RGB at the same resolution as depths.
         c2w: (N, 4, 4) camera-to-world poses.
         K: (N, 3, 3) pixel-center intrinsics at the depth resolution.
+        weights: (N, H, W) per-pixel fusion weight (pixel_weights); 0 skips the pixel.
         voxel_size: TSDF voxel edge in world units.
         depth_trunc: depth beyond this (world units) is ignored; None keeps every depth.
         sdf_trunc: truncation band in world units; None = 4 × voxel_size.
+        w_min: a voxel needs summed weight above this to yield surface.
         max_blocks: blocks per grid, halo included; Open3D extraction faults past 32,768.
 
     Returns:
@@ -72,9 +78,16 @@ def create_tsdf_mesh(
 
     Raises:
         ValueError: sdf_trunc is narrower than voxel_size.
+        ValueError: weights is not shaped like depths.
     """
     rgbs, c2w, K, depths = validate_views(rgbs, c2w, K, depths)
     assert depths is not None
+
+    # One weight per depth pixel
+    if weights.shape != depths.shape:
+        raise ValueError(
+            f"create_tsdf_mesh: weights are {weights.shape} but depths are {depths.shape}"
+        )
 
     if sdf_trunc is None:
         sdf_trunc = 4 * voxel_size
@@ -88,6 +101,7 @@ def create_tsdf_mesh(
     # CUDA:0 when Open3D was built with it, else the CPU
     on_cuda = o3c.cuda.is_available()
     device = o3c.Device("CUDA:0" if on_cuda else "CPU:0")
+    torch_device = torch.device("cuda:0" if on_cuda else "cpu")
 
     # Sparse voxel grid of 16³ blocks: TSDF, weight and float color per voxel
     grid_kwargs = dict(
@@ -107,6 +121,7 @@ def create_tsdf_mesh(
         float(depths.max()) + voxel_size if depth_trunc is None else float(depth_trunc)
     )
     depths = np.ascontiguousarray(depths, dtype=np.float32)
+    weights = np.ascontiguousarray(weights, dtype=np.float32)
     rgbs = np.ascontiguousarray(rgbs)
     K = shift_intrinsics(K, (0.5, 0.5))
     w2c = invert_poses(c2w)
@@ -162,7 +177,9 @@ def create_tsdf_mesh(
     for t, (core, halo) in enumerate(tiles):
         grid = o3d.t.geometry.VoxelBlockGrid(**grid_kwargs)
         halo_keys = (halo + (1 << 20)) @ key_weights
-        desc = f"TSDF integration (voxel {voxel_size:g}, {device}, tile {t + 1}/{len(tiles)})"
+        desc = (
+            f"weighted TSDF (voxel {voxel_size:g}, {device}, tile {t + 1}/{len(tiles)})"
+        )
 
         for i in tqdm(range(n), desc=desc):
             blocks = view_blocks[i]
@@ -171,30 +188,36 @@ def create_tsdf_mesh(
             if not len(blocks):
                 continue
 
-            # Depth is already in world units (scale 1.0); color goes in as float in [0, 1]
-            depth = o3c.Tensor(depths[i], device=device)
-            depth = o3d.t.geometry.Image(depth)
-            color = o3c.Tensor(rgbs[i], device=device)
-            color = color.to(o3c.float32) / 255.0
-            color = o3d.t.geometry.Image(color)
-            intrinsic = o3c.Tensor(K[i])
-            extrinsic = o3c.Tensor(w2c[i])
-            grid.integrate(
-                o3c.Tensor(blocks.astype(np.int32), device=device),
-                depth,
-                color,
-                intrinsic,
-                intrinsic,
-                extrinsic,
-                1.0,
-                depth_trunc,
-                trunc_mult,
+            # Weighted running average of this view's samples into the tile's voxels
+            _integrate_weighted(
+                grid,
+                blocks,
+                torch.from_numpy(depths[i]).to(torch_device),
+                torch.from_numpy(rgbs[i]).to(torch_device).float(),
+                torch.from_numpy(weights[i]).to(torch_device),
+                K[i],
+                w2c[i],
+                depth_trunc=depth_trunc,
+                sdf_trunc=sdf_trunc,
+                device=device,
             )
 
-        # Extract; averaged colors can overshoot 1.0 by float error, so clip before the PLY writer clamps noisily
-        tmesh = grid.extract_triangle_mesh(weight_threshold=0.0)
+        # Extract voxels whose summed weight passes w_min (Open3D keeps weight > threshold)
+        tmesh = grid.extract_triangle_mesh(weight_threshold=float(w_min))
+
+        # A tile whose every sample weighs 0 (e.g. canopy) has no surface
+        if not len(tmesh.vertex.positions):
+            del grid
+            if len(tiles) == 1:
+                mesh = o3d.geometry.TriangleMesh()
+                break
+            continue
+
+        # Averaged colors can overshoot 1.0 by float error, so clip before the PLY writer clamps noisily
         tmesh.vertex.colors = tmesh.vertex.colors.clip(0.0, 1.0)
         del grid
+        if on_cuda:
+            torch.cuda.empty_cache()
 
         # One tile is the whole scene: the mesh as extracted
         if len(tiles) == 1:
@@ -218,7 +241,7 @@ def create_tsdf_mesh(
 
     # Weld tiles at bit-equal positions; attributes come from a copy a kept triangle references
     # - halo-edge copies carry one-sided normals, so the first copy is not safe
-    if len(tiles) > 1:
+    if len(tiles) > 1 and parts:
         offsets = np.cumsum([0] + [len(p[0]) for p in parts[:-1]])
         v = np.concatenate([p[0] for p in parts])
         f = np.concatenate([p[1] + o for p, o in zip(parts, offsets)])
@@ -243,17 +266,86 @@ def create_tsdf_mesh(
         mesh.vertex_colors = o3d.utility.Vector3dVector(
             colors[source[used]].astype(np.float64)
         )
+    elif len(tiles) > 1:
+        mesh = o3d.geometry.TriangleMesh()
 
     logger.info(
-        "create_tsdf_mesh: %d views, %d blocks in %d tiles, voxel=%.4f sdf_trunc=%.4f -> %d vertices",
+        "create_tsdf_mesh: %d views, %d blocks in %d tiles, voxel=%.4f sdf_trunc=%.4f w_min=%.2f -> %d vertices",
         n,
         len(union),
         len(tiles),
         voxel_size,
         sdf_trunc,
+        w_min,
         len(mesh.vertices),
     )
     return mesh
+
+
+########################################################################
+# Weighted integration
+########################################################################
+
+
+def _integrate_weighted(
+    grid: o3d.t.geometry.VoxelBlockGrid,
+    blocks: np.ndarray,
+    depth: torch.Tensor,
+    color: torch.Tensor,
+    weight: torch.Tensor,
+    K: np.ndarray,
+    w2c: np.ndarray,
+    *,
+    depth_trunc: float,
+    sdf_trunc: float,
+    device: o3c.Device,
+) -> None:
+    """
+    One view's samples into the grid: per-pixel weight, tsdf and 0-255 color averaged in place.
+
+    - K is already shifted +0.5: u, v floor like Open3D's own integrate
+    - inliers: depth in (0, depth_trunc), sdf >= -sdf_trunc; sdf clamps to the band and scales to [-1, 1]
+    - attribute buffers are re-read after activate, which can reallocate them
+    """
+    # Activate the view's blocks; voxel world coords and flat buffer indices
+    hashmap = grid.hashmap()
+    keys = o3c.Tensor(blocks.astype(np.int32), device=device)
+    hashmap.activate(keys)
+    buf_indices, _ = hashmap.find(keys)
+    coords, flat = grid.voxel_coordinates_and_flattened_indices(buf_indices)
+    coords = tdl.from_dlpack(coords.to_dlpack())
+    flat = tdl.from_dlpack(flat.to_dlpack())
+
+    # Voxels into the view; keep those landing on the depth grid
+    R = torch.from_numpy(w2c[:3, :3]).float().to(coords.device)
+    t = torch.from_numpy(w2c[:3, 3]).float().to(coords.device)
+    xyz = coords @ R.T + t
+    z = xyz[:, 2]
+    u = torch.floor(float(K[0, 0]) * xyz[:, 0] / z + float(K[0, 2])).long()
+    v = torch.floor(float(K[1, 1]) * xyz[:, 1] / z + float(K[1, 2])).long()
+    height, width = depth.shape
+    on_grid = (z > 0) & (u >= 0) & (v >= 0) & (u < width) & (v < height)
+    flat, z, u, v = flat[on_grid], z[on_grid], u[on_grid], v[on_grid]
+
+    # Truncated signed distance along the ray's z; samples of weight 0 drop out
+    d = depth[v, u]
+    sdf = d - z
+    inlier = (d > 0) & (d < depth_trunc) & (sdf >= -sdf_trunc)
+    flat, u, v = flat[inlier], u[inlier], v[inlier]
+    sdf = sdf[inlier].clamp(max=sdf_trunc) / sdf_trunc
+    w = weight[v, u]
+    keep = w > 0
+    flat, sdf, w, u, v = flat[keep], sdf[keep], w[keep], u[keep], v[keep]
+
+    # Weighted running average of tsdf and color; the voxel weight sums
+    tsdf = tdl.from_dlpack(grid.attribute("tsdf").to_dlpack()).view(-1)
+    total = tdl.from_dlpack(grid.attribute("weight").to_dlpack()).view(-1)
+    rgb = tdl.from_dlpack(grid.attribute("color").to_dlpack()).view(-1, 3)
+    w0 = total[flat]
+    w1 = w0 + w
+    tsdf[flat] = (tsdf[flat] * w0 + sdf * w) / w1
+    rgb[flat] = (rgb[flat] * w0[:, None] + color[v, u] * w[:, None]) / w1[:, None]
+    total[flat] = w1
 
 
 def compute_tsdf_voxel_size(
@@ -400,7 +492,9 @@ def calibrate_confidence(
 
     # Short sequences leave no frame with enough neighbors
     if not errs:
-        raise ValueError("calibrate_confidence: no frame has 2+ neighbor views; need >= 4 frames")
+        raise ValueError(
+            "calibrate_confidence: no frame has 2+ neighbor views; need >= 4 frames"
+        )
 
     err = np.concatenate(errs)
     conf = np.concatenate(confs)
@@ -413,7 +507,9 @@ def calibrate_confidence(
     for lo, hi in zip(edges[:-1], edges[1:]):
         in_bin = (conf >= lo) & (conf < hi)
         if in_bin.sum() > min_pixels:
-            medians.append((np.median(conf[in_bin]), np.median(err[in_bin]) / sdf_trunc))
+            medians.append(
+                (np.median(conf[in_bin]), np.median(err[in_bin]) / sdf_trunc)
+            )
 
     if len(medians) < 3:
         raise ValueError(

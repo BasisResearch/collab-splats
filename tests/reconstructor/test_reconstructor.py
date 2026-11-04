@@ -21,6 +21,7 @@ from mergedeep import merge
 from collab_splats import reconstructor as R
 from collab_splats.geometry import metrics
 from collab_splats.geometry.loop_closure.wrapper import LoopClosureConfig
+from collab_splats.mesh import lift_weights
 from collab_splats.pointcloud import utils as pointcloud_utils
 from collab_splats.pointcloud.base import PointcloudResult
 from collab_splats.preproc import frames as fr
@@ -983,6 +984,13 @@ def test_mesh_fuses_every_depth_with_calibrated_weights(tmp_path, monkeypatch):
     # No percentile cut: every model-grid depth is lifted
     assert (seen["depths"] > 0).all()
 
+    # Calibrated on the zarr's own model grid: raw depth, w2c extrinsics, model K
+    depth, confidence, w2c, K = calibrate.call_args.args
+    np.testing.assert_array_equal(depth, ff.depth)
+    np.testing.assert_array_equal(confidence, ff.confidence)
+    np.testing.assert_array_equal(w2c, ff.extrinsics)
+    np.testing.assert_array_equal(K, ff.model_intrinsics)
+
     # Calibrated against the run's band, and the weights follow the gate
     assert calibrate.call_args.kwargs["sdf_trunc"] == pytest.approx(6.0 * 0.01)
     weights = fuse.call_args.kwargs["weights"]
@@ -1014,12 +1022,70 @@ def test_mesh_builds_the_volume_ground_only_with_the_hull(
     assert build.called == use_convex_hull
     assert fuse.call_args.kwargs["ground"] is (ground if use_convex_hull else None)
 
-    # The ground sees the fusion's band and weights
+    # The ground sees the fusion's depths, weights, frame-res K and band
     if use_convex_hull:
         assert build.call_args.kwargs["sdf_trunc"] == pytest.approx(6.0 * 0.01)
+        assert build.call_args.args[0] is fuse.call_args.args[0]
         np.testing.assert_array_equal(
             build.call_args.args[1], fuse.call_args.kwargs["weights"]
         )
+        assert build.call_args.args[4] is fuse.call_args.args[3]
+
+
+@pytest.mark.parametrize("with_confidence", [True, False])
+def test_mesh_zeroes_model_grid_sky_weights_before_lifting(
+    tmp_path, monkeypatch, with_confidence
+):
+    """
+    With mask_sky, model-grid sky pixels weigh 0 before the lift, with or without confidence.
+    """
+    ff = _tsdf_mesh_ff(model_hw=(16, 16))
+    if with_confidence:
+        ff.confidence = np.full((2, 16, 16), 2.0, np.float32)
+
+    # Bottom quarter of each 32x32 frame is sky: model rows 12 and below
+    sky = np.zeros((2, 32, 32), bool)
+    sky[:, 24:] = True
+    monkeypatch.setattr(R, "sky_masks", MagicMock(return_value=sky))
+
+    # Spy on the model-grid weights as they enter the lift
+    lifted = {}
+
+    def spy_lift(weights, original_coords, frame_hw):
+        lifted["weights"] = weights.copy()
+        return lift_weights(weights, original_coords, frame_hw)
+
+    monkeypatch.setattr(R, "lift_weights", spy_lift)
+
+    fuse = _mesh_fuse(tmp_path, monkeypatch, ff, mask_sky=True)
+
+    model = lifted["weights"]
+    assert (model[:, 12:] == 0).all()
+    assert (model[:, :12] > 0).all()
+
+    # The frame-grid weights fused carry the same sky zeros
+    frame = fuse.call_args.kwargs["weights"]
+    assert (frame[:, 24:] == 0).all()
+    assert (frame[:, :24] > 0).all()
+
+
+def test_mesh_failing_calibration_leaves_no_mesh_ply(tmp_path, monkeypatch):
+    """
+    A calibration failure removes the stale mesh.ply, so the stage never reads as done.
+    """
+    ff = _tsdf_mesh_ff(model_hw=(16, 16))
+    ff.confidence = np.full((2, 16, 16), 2.0, np.float32)
+
+    # A previous run's mesh.ply, which the failed run must remove
+    rec = Reconstructor(_make_config(tmp_path, {"mesh": {"enabled": True}}))
+    rec.backend_dir.mkdir(parents=True, exist_ok=True)
+    rec.outputs["mesh"].write_text("stale")
+
+    calibrate = MagicMock(side_effect=ValueError("calibrate_confidence: 0 conf bins"))
+    with pytest.raises(ValueError, match="conf bins"):
+        _mesh_fuse(tmp_path, monkeypatch, ff, calibrate=calibrate)
+
+    assert not rec.outputs["mesh"].exists()
 
 
 def _run_prepared_mesh(tmp_path, monkeypatch, texture, texture_error=None):

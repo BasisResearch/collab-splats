@@ -61,7 +61,11 @@ from collab_splats.pointcloud.feedforward.vggt_omega import (
     VGGT_OMEGA_HF_REPO,
 )
 from collab_splats.pointcloud.sfm import SFM_CREATORS
-from collab_splats.pointcloud.utils import clean_pointcloud, frame_depths
+from collab_splats.pointcloud.utils import (
+    _to_model_grid,
+    clean_pointcloud,
+    frame_depths,
+)
 from collab_splats.preproc import frames, get_video_info
 from collab_splats.preproc.qa import load_video_quality
 from collab_splats.preproc.sampling import (
@@ -1581,7 +1585,6 @@ class Reconstructor:
                 "mesh.mask_sky: dropped %.2f%% of valid depth pixels as sky",
                 100 * dropped,
             )
-            del sky
 
         # Cut far depth before voxel sizing; refuse depth that masking emptied
         sub = depths[:, ::8, ::8]
@@ -1604,6 +1607,10 @@ class Reconstructor:
             depth_px=cfg["voxel_depth_px"],
             ref_percentile=cfg["voxel_ref_percentile"],
         )
+
+        # mesh.ply marks the stage done, so a stale one must not outlive a failed re-run
+        mesh_path = self.outputs["mesh"]
+        mesh_path.unlink(missing_ok=True)
 
         # The fusion band; calibration measures depth error in its units
         sdf_trunc = cfg["sdf_trunc_mult"] * voxel_size
@@ -1631,10 +1638,20 @@ class Reconstructor:
                 )
                 del confidence
 
-            # Share of depth pixels that fuse nothing (below the gate or on an edge)
+            # Sky on the model grid fuses nothing; calibration above still saw it
             has_depth = model_depth > 0
+
+            if sky is not None:
+                model_sky = _to_model_grid(
+                    sky, pointcloud.original_coords, model_depth.shape[1:]
+                )
+                weights[model_sky] = 0.0
+                has_depth &= ~model_sky
+                del model_sky
+
+            # Share of non-sky depth pixels that fuse nothing (below the gate or on an edge)
             logger.info(
-                "mesh: %.1f%% of depth pixels weigh 0",
+                "mesh: %.1f%% of non-sky depth pixels weigh 0",
                 100 * float((weights[has_depth] == 0).mean())
                 if has_depth.any()
                 else 0.0,
@@ -1647,6 +1664,9 @@ class Reconstructor:
             del pointcloud, model_depth, has_depth
         else:
             weights = pixel_weights(depths)
+
+        # Sky is in the depths and weights now; nothing below reads the masks
+        del sky
 
         # Volume ground under the weighted depth; the hull cut relies on it to close the ground
         ground = None
@@ -1661,10 +1681,6 @@ class Reconstructor:
                 voxel_size=voxel_size,
                 sdf_trunc=sdf_trunc,
             )
-
-        # mesh.ply marks the stage done, so a stale one must not outlive a failed re-run
-        mesh_path = self.outputs["mesh"]
-        mesh_path.unlink(missing_ok=True)
 
         # Fuse every view into one TSDF mesh
         mesh = create_tsdf_mesh(

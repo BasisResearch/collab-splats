@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import json
 import logging
 import socket
 import subprocess
@@ -133,15 +134,28 @@ def test_on_click_hands_the_picked_vertex_to_the_callback(viewer):
 
 
 def _capture_heat(viewer, monkeypatch):
-    """Record (name, mesh) for every add_mesh_trimesh; handles get a no-op remove."""
+    """Record (name, mesh) for every add_glb, unencoded; handles get a no-op remove."""
     sent = []
 
     def add(name, mesh):
         sent.append((name, mesh))
         return SimpleNamespace(remove=lambda: None)
 
-    monkeypatch.setattr(viewer.server.scene, "add_mesh_trimesh", add)
+    monkeypatch.setattr(viewer_module, "_double_sided_glb", lambda mesh: mesh)
+    monkeypatch.setattr(viewer.server.scene, "add_glb", add)
     return sent
+
+
+def test_add_mesh_sends_every_material_double_sided(viewer, monkeypatch):
+    sent = _record_glbs(viewer, monkeypatch)
+    viewer.add_mesh("quad", *_quad())
+
+    # One-sided sheets must not be culled from behind
+    glb = sent[-1][1]
+    length = int.from_bytes(glb[12:16], "little")
+    tree = json.loads(glb[20 : 20 + length])
+    assert tree["materials"] and all(m["doubleSided"] for m in tree["materials"])
+    assert all("material" in p for m in tree["meshes"] for p in m["primitives"])
 
 
 def test_show_heat_keeps_faces_reaching_the_floor_on_their_used_vertices(
@@ -220,10 +234,10 @@ def test_show_heat_replaces_clears_and_sends_nothing_below_the_floor(
     viewer.heats.pop("quad", None)
     removed = []
 
-    def add(name, mesh):
+    def add(name, glb):
         return SimpleNamespace(remove=lambda: removed.append(name))
 
-    monkeypatch.setattr(viewer.server.scene, "add_mesh_trimesh", add)
+    monkeypatch.setattr(viewer.server.scene, "add_glb", add)
 
     # A second call drops the first overlay
     viewer.show_heat("quad", np.ones(4), floor=0.5)
@@ -383,7 +397,7 @@ def _join_texture():
 
 
 def _record_glbs(viewer, monkeypatch):
-    """Record every add_glb send as (name, bytes); add_mesh_trimesh sends through it too."""
+    """Record every add_glb send as (name, bytes)."""
     sent = []
     add_glb = viewer.server.scene.add_glb
 

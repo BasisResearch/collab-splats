@@ -39,6 +39,7 @@ import viser
 import viser.transforms as viser_tf
 import zarr
 from PIL import Image
+from trimesh.exchange.gltf import export_glb
 from viser._gui_handles import GuiProgressBarHandle
 
 from collab_splats.geometry.transforms import invert_poses
@@ -56,6 +57,31 @@ _MESH_LOCK = threading.Lock()
 
 # Textured GLB per backend dir, for the session
 _GLBS: dict[Path, bytes] = {}
+
+
+def _double_sided_glb(mesh: trimesh.Trimesh) -> bytes:
+    """
+    GLB of a mesh with every material double-sided.
+
+    - one-sided sheets (a wall seen from one side only) stay visible from behind
+    - glTF materials default to single-sided, so the viewer would cull them
+    - a vertex-colored mesh exports no material; it gets one carrying only the flag
+    """
+
+    # Flag every exported material double-sided; materialless primitives get a flag-only one
+    def double_sided(tree: dict) -> None:
+        materials = tree.setdefault("materials", [])
+
+        for material in materials:
+            material["doubleSided"] = True
+
+        for gltf_mesh in tree.get("meshes", []):
+            for primitive in gltf_mesh["primitives"]:
+                if "material" not in primitive:
+                    primitive["material"] = len(materials)
+                    materials.append({"doubleSided": True})
+
+    return export_glb(mesh, tree_postprocessor=double_sided)
 
 
 class Viewer:
@@ -249,7 +275,7 @@ class Viewer:
 
         # Display the vertex colors
         shown = trimesh.Trimesh(vertices, faces, vertex_colors=colors, process=False)
-        self.server.scene.add_mesh_trimesh(name, shown)
+        self.server.scene.add_glb(name, _double_sided_glb(shown))
 
     def add_label_list(
         self,
@@ -351,7 +377,9 @@ class Viewer:
         lifted = vertices[used] + offset * self.heat_shifts[name][used]
         heat = trimesh.Trimesh(lifted, sub_faces, vertex_colors=rgb, process=False)
 
-        self.heats[name] = self.server.scene.add_mesh_trimesh(f"{name}/heat", heat)
+        self.heats[name] = self.server.scene.add_glb(
+            f"{name}/heat", _double_sided_glb(heat)
+        )
 
     ########################################################################
     # Picking
@@ -851,7 +879,7 @@ def _texture_glb(backend_dir: Path, texture_size: int) -> bytes:
     image.save(buffer, format="JPEG", quality=90)
     buffer.seek(0)
     material.image = Image.open(buffer)
-    return obj.export(file_type="glb")
+    return _double_sided_glb(obj)
 
 
 def _show_texture(

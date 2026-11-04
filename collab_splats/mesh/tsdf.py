@@ -58,7 +58,7 @@ def create_tsdf_mesh(
     - each pixel's sample carries its weight: tsdf and color are weighted running averages, the voxel weight their sum
     - runs on CUDA:0 when Open3D has CUDA, else on the CPU; same grid, same mesh
     - the block hashmap starts at 10k blocks and grows on its own
-    - Open3D floors projected u, v (pixel-corner), so K shifts +0.5 once here
+    - u, v floor (pixel-corner, as Open3D), so K shifts +0.5 once here
     - scenes past max_blocks fuse in spatial tiles; the welded mesh equals the single grid's
 
     Args:
@@ -204,10 +204,12 @@ def create_tsdf_mesh(
 
         # Extract voxels whose summed weight passes w_min (Open3D keeps weight > threshold)
         tmesh = grid.extract_triangle_mesh(weight_threshold=float(w_min))
+        del grid
+        if on_cuda:
+            torch.cuda.empty_cache()
 
         # A tile whose every sample weighs 0 (e.g. canopy) has no surface
         if not len(tmesh.vertex.positions):
-            del grid
             if len(tiles) == 1:
                 mesh = o3d.geometry.TriangleMesh()
                 break
@@ -215,9 +217,6 @@ def create_tsdf_mesh(
 
         # Averaged colors can overshoot 1.0 by float error, so clip before the PLY writer clamps noisily
         tmesh.vertex.colors = tmesh.vertex.colors.clip(0.0, 1.0)
-        del grid
-        if on_cuda:
-            torch.cuda.empty_cache()
 
         # One tile is the whole scene: the mesh as extracted
         if len(tiles) == 1:

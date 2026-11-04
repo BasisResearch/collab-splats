@@ -2,6 +2,7 @@ import numpy as np
 import open3d as o3d
 import pytest
 
+from collab_splats.mesh import tsdf
 from collab_splats.mesh.tsdf import (
     calibrate_confidence,
     compute_tsdf_voxel_size,
@@ -67,10 +68,15 @@ def test_create_tsdf_mesh_falls_back_to_cpu_without_cuda(monkeypatch):
         depths, rgbs, c2w, K, weights=weights, voxel_size=0.02, depth_trunc=2.0
     )
 
+    # Same torch math on both devices: same vertices up to float error, same counts
     assert len(cpu.triangles) > 0 and cpu.has_vertex_colors()
-    assert np.allclose(
-        cpu.get_center(), gpu.get_center(), atol=0.02
-    )  # same plane, within a voxel
+    assert len(cpu.vertices) == len(gpu.vertices)
+    assert len(cpu.triangles) == len(gpu.triangles)
+    np.testing.assert_allclose(
+        np.unique(np.asarray(cpu.vertices), axis=0),
+        np.unique(np.asarray(gpu.vertices), axis=0),
+        atol=1e-5,
+    )
 
 
 def test_create_tsdf_mesh_rejects_float_rgb():
@@ -122,28 +128,29 @@ def test_create_tsdf_mesh_rejects_frame_count_mismatch():
 
 
 def test_create_tsdf_mesh_sdf_trunc_defaults_to_four_voxels(monkeypatch):
-    # Vertex order follows the block hashmap, so compare position-sorted rows
+    # Record the band each view integrates with; omitted sdf_trunc means 4 voxels
     monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    seen = []
+    integrate = tsdf._integrate_weighted
+
+    def _record(*args, **kwargs):
+        seen.append(kwargs["sdf_trunc"])
+        return integrate(*args, **kwargs)
+
+    monkeypatch.setattr(tsdf, "_integrate_weighted", _record)
     depths, rgbs, c2w, K = _views()
-    weights = np.ones_like(depths)
-    default = create_tsdf_mesh(
-        depths, rgbs, c2w, K, weights=weights, voxel_size=0.02, depth_trunc=2.0
-    )
-    explicit = create_tsdf_mesh(
+    create_tsdf_mesh(
         depths,
         rgbs,
         c2w,
         K,
-        weights=weights,
+        weights=np.ones_like(depths),
         voxel_size=0.02,
         depth_trunc=2.0,
-        sdf_trunc=0.08,
     )
-    np.testing.assert_array_equal(
-        np.unique(np.asarray(default.vertices), axis=0),
-        np.unique(np.asarray(explicit.vertices), axis=0),
-    )
-    assert len(default.vertices) == len(explicit.vertices) > 0
+
+    assert len(seen) == len(depths)
+    assert seen == [pytest.approx(4 * 0.02)] * len(depths)
 
 
 def _canonical(mesh):

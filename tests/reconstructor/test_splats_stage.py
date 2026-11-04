@@ -232,11 +232,12 @@ def test_mesh_sfm_zarr_fuses(tmp_path):
             "collab_splats.pointcloud.base.PointcloudResult.load_zarr", return_value=sfm
         ),
         patch("collab_splats.reconstructor.create_tsdf_mesh") as fuse,
+        patch("collab_splats.reconstructor.build_volume_ground", return_value=None),
         stub_mesh_cleanup(),
     ):
         recon.mesh()
 
-    # Unmasked unit depth: sfm carries no confidence, so conf_percentile cannot drop anything
+    # Unmasked unit depth: sfm carries no confidence, so every pixel fuses at weight 1
     depths = fuse.call_args.args[0]
     assert depths.shape == (3, 8, 8)
     assert np.all(depths == 1.0)

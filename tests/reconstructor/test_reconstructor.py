@@ -805,11 +805,20 @@ def _unit_upsample(depths, rgbs, boxes):
     return np.ones((2, 32, 32), np.float32)
 
 
-def _mesh_fuse(tmp_path, monkeypatch, ff, upsample=_unit_upsample, **mesh_overrides):
+def _mesh_fuse(
+    tmp_path,
+    monkeypatch,
+    ff,
+    upsample=_unit_upsample,
+    calibrate=None,
+    build_ground=None,
+    **mesh_overrides,
+):
     """
     Run rec.mesh() over a zarr double and return the create_tsdf_mesh mock.
 
     - upsample stands in for the frame-grid lift inside frame_depths
+    - calibrate / build_ground replace calibrate_confidence / build_volume_ground; stubs by default
     """
     mesh_cfg = {
         "enabled": True,
@@ -828,6 +837,12 @@ def _mesh_fuse(tmp_path, monkeypatch, ff, upsample=_unit_upsample, **mesh_overri
     fuse = MagicMock()
     tet = o3d.geometry.TriangleMesh.create_tetrahedron()
     monkeypatch.setattr(R, "compute_tsdf_voxel_size", MagicMock(return_value=0.01))
+    monkeypatch.setattr(
+        R, "calibrate_confidence", calibrate or MagicMock(return_value=(1.0, 0.5))
+    )
+    monkeypatch.setattr(
+        R, "build_volume_ground", build_ground or MagicMock(return_value=None)
+    )
     monkeypatch.setattr(R, "create_tsdf_mesh", fuse)
     monkeypatch.setattr(R, "clean_repair_mesh", MagicMock(return_value=(tet, tet)))
     monkeypatch.setattr(R, "prepare_mesh", lambda mesh, **kw: mesh)
@@ -948,24 +963,63 @@ def test_mesh_texture_brightness_range(tmp_path, monkeypatch, brightness):
         )
 
 
-def test_mesh_masks_depth_by_confidence(tmp_path, monkeypatch):
+def test_mesh_fuses_every_depth_with_calibrated_weights(tmp_path, monkeypatch):
     """
-    conf_percentile zeroes the depth under the percentile before it reaches the fusion.
+    Depth reaches fusion unmasked; confidence enters as weights from the calibrated gate.
     """
     ff = _tsdf_mesh_ff(model_hw=(16, 16))
-    ff.confidence = np.tile(np.linspace(0.0, 1.0, 16 * 16).reshape(16, 16), (2, 1, 1))
+    ff.confidence = np.tile(np.linspace(1.0, 9.0, 16 * 16).reshape(16, 16), (2, 1, 1))
+    calibrate = MagicMock(return_value=(3.0, 1.0))
     seen = {}
 
     def spy_upsample(depths, rgbs, boxes):
         seen["depths"] = depths
         return np.ones((2, 32, 32), np.float32)
 
-    _mesh_fuse(tmp_path, monkeypatch, ff, upsample=spy_upsample, conf_percentile=20)
+    fuse = _mesh_fuse(
+        tmp_path, monkeypatch, ff, upsample=spy_upsample, calibrate=calibrate
+    )
 
-    # The bottom 20% of a linear ramp is zeroed, the rest is untouched
-    masked = seen["depths"]
-    assert (masked == 0).mean() == pytest.approx(0.2, abs=0.02)
-    assert masked.max() == ff.depth.max()
+    # No percentile cut: every model-grid depth is lifted
+    assert (seen["depths"] > 0).all()
+
+    # Calibrated against the run's band, and the weights follow the gate
+    assert calibrate.call_args.kwargs["sdf_trunc"] == pytest.approx(6.0 * 0.01)
+    weights = fuse.call_args.kwargs["weights"]
+    assert weights.shape == (2, 32, 32)
+
+    # conf < 3 on a 1..9 ramp is a quarter of the pixels
+    assert (weights == 0).mean() == pytest.approx(0.25, abs=0.03)
+    assert weights.max() == pytest.approx((9.0 / 3.0) ** 2, rel=1e-3)
+
+
+@pytest.mark.parametrize("use_convex_hull", [True, False])
+def test_mesh_builds_the_volume_ground_only_with_the_hull(
+    tmp_path, monkeypatch, use_convex_hull
+):
+    """
+    The volume ground replaces the hull's ground patch, so it follows use_convex_hull.
+    """
+    ground = object()
+    build = MagicMock(return_value=ground)
+
+    fuse = _mesh_fuse(
+        tmp_path,
+        monkeypatch,
+        _tsdf_mesh_ff(),
+        build_ground=build,
+        use_convex_hull=use_convex_hull,
+    )
+
+    assert build.called == use_convex_hull
+    assert fuse.call_args.kwargs["ground"] is (ground if use_convex_hull else None)
+
+    # The ground sees the fusion's band and weights
+    if use_convex_hull:
+        assert build.call_args.kwargs["sdf_trunc"] == pytest.approx(6.0 * 0.01)
+        np.testing.assert_array_equal(
+            build.call_args.args[1], fuse.call_args.kwargs["weights"]
+        )
 
 
 def _run_prepared_mesh(tmp_path, monkeypatch, texture, texture_error=None):
@@ -997,6 +1051,8 @@ def _run_prepared_mesh(tmp_path, monkeypatch, texture, texture_error=None):
     cleaned = o3d.geometry.TriangleMesh.create_sphere(radius=0.5, resolution=10)
     real = o3d.geometry.TriangleMesh.create_tetrahedron()
     monkeypatch.setattr(R, "compute_tsdf_voxel_size", MagicMock(return_value=0.01))
+    monkeypatch.setattr(R, "calibrate_confidence", MagicMock(return_value=(1.0, 0.5)))
+    monkeypatch.setattr(R, "build_volume_ground", MagicMock(return_value=None))
     monkeypatch.setattr(R, "create_tsdf_mesh", MagicMock(return_value=fused))
     monkeypatch.setattr(R, "clean_repair_mesh", MagicMock(return_value=(cleaned, real)))
 
@@ -1765,6 +1821,7 @@ def test_mesh_reads_frames_and_poses_from_the_zarr_on_disk(tmp_path):
 
     with (
         patch.object(R, "create_tsdf_mesh") as fuse,
+        patch.object(R, "build_volume_ground", return_value=None),
         stub_mesh_cleanup(),
     ):
         rec.mesh()

@@ -304,6 +304,7 @@ def test_mesh_fuses_the_frames_the_zarr_rows_came_from(tmp_path):
         ),
         patch(f"{RECONSTRUCTOR}.compute_tsdf_voxel_size", return_value=0.01),
         patch(f"{RECONSTRUCTOR}.create_tsdf_mesh", side_effect=spy_fuse),
+        patch(f"{RECONSTRUCTOR}.build_volume_ground", return_value=None),
         stub_mesh_cleanup(),
     ):
         recon.mesh()

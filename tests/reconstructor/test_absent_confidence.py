@@ -23,7 +23,7 @@ from tests.reconstructor._stubs import minimal_feedforward_result, stub_mesh_cle
 
 def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
     """
-    conf_percentile set + no confidence -> fuse unmasked with a log, not ValueError.
+    No confidence -> unmasked depth and unit weights, with a log, not ValueError.
     """
     result = minimal_feedforward_result()
     fused = {}
@@ -31,7 +31,6 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
         "enabled": True,
         "mask_sky": False,
         "texture": False,
-        "conf_percentile": 20,
     }
     rec = Reconstructor(
         {
@@ -43,6 +42,7 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
 
     def spy_fuse(depths, rgbs, c2w, K, **kwargs):
         fused["depths"] = depths
+        fused["weights"] = kwargs["weights"]
 
     with (
         patch.object(
@@ -58,12 +58,16 @@ def test_tsdf_inputs_skip_masking_when_confidence_absent(tmp_path, caplog):
         ),
         patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
+        patch("collab_splats.reconstructor.build_volume_ground", return_value=None),
         stub_mesh_cleanup(),
         caplog.at_level("INFO"),
     ):
         rec.mesh()
 
     np.testing.assert_array_equal(fused["depths"], result.depth)  # unmasked
+
+    # Unit depth has no edges, so every pixel weighs 1
+    np.testing.assert_array_equal(fused["weights"], np.ones_like(result.depth))
     assert any("no confidence" in r.message for r in caplog.records)
 
 

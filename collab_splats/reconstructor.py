@@ -44,10 +44,14 @@ from collab_splats.localization.localizer import (
     localization_db_exists,
 )
 from collab_splats.mesh import (
+    build_volume_ground,
+    calibrate_confidence,
     clean_repair_mesh,
     compute_tsdf_voxel_size,
     create_texture_mesh,
     create_tsdf_mesh,
+    lift_weights,
+    pixel_weights,
     prepare_mesh,
 )
 from collab_splats.pointcloud import BaseFeedforwardCreator, get_creator
@@ -1474,16 +1478,20 @@ class Reconstructor:
         """
         Fuse depth and RGB into a TSDF mesh.ply, clean and prepare it, and optionally texture it.
 
-        - feedforward source: pointcloud.zarr depth, confidence-masked and lifted to the frame grid
+        - feedforward source: pointcloud.zarr depth lifted to the frame grid, every pixel; confidence
+          enters as fusion weights from a per-scene calibrated gate
         - splats source: the checkpoint's own renders and poses; the splats stage is never auto-run
+        - no confidence (sfm) or the splats source: unit weights, depth edges still dropped
+        - use_convex_hull: build_volume_ground closes the unobserved ground inside the TSDF; the hull
+          then only cuts
         - mask_sky zeroes sky depth on either source before fusion
         - mesh.ply is the prepared mesh (filled, decimated, manifold); texture/ is its UV bake
 
         Raises:
             FileNotFoundError: the splats source has no ckpt.pt on disk.
             ValueError: mesh.source is neither feedforward nor splats, mesh.depth_trunc_percentile is outside
-                (0, 99], sky masks mismatch the depths, no positive depth is left to fuse, or mesh.texture_brightness
-                is outside (0, 1).
+                (0, 99], sky masks mismatch the depths, no positive depth is left to fuse, mesh.texture_brightness
+                is outside (0, 1), or calibrate_confidence cannot fit the scene's confidence.
             RuntimeError: mesh.texture is on but no CUDA device is available.
         """
         cfg = self.config["mesh"]
@@ -1543,20 +1551,15 @@ class Reconstructor:
             image_ids = [frames.frame_idx_from_path(p) for p in pointcloud.image_paths]
             rgbs = frames.read_frames(self.images_dir, image_ids)
 
-            # Sky first, so the confidence percentile ranks only the pixels that can fuse
+            # Every pixel's depth; confidence enters as fusion weights below, not a cutoff
             sky = self._sky_masks(image_ids) if cfg["mask_sky"] else None
-            depths = frame_depths(
-                pointcloud, rgbs, conf_percentile=cfg["conf_percentile"], exclude=sky
-            )
+            depths = frame_depths(pointcloud, rgbs, conf_percentile=None)
             c2w = invert_poses(pointcloud.extrinsics)
             intrinsics = pointcloud.intrinsics
             assert intrinsics is not None
 
             # Depth was predicted on the model grid; its pixels, not the frame's, set the voxel
             depth_fx = float(np.median(pointcloud.model_intrinsics[:, 0, 0]))
-
-            # Free the zarr's model-grid arrays; only poses and intrinsics are used from here
-            del pointcloud
 
         else:
             raise ValueError(
@@ -1602,6 +1605,63 @@ class Reconstructor:
             ref_percentile=cfg["voxel_ref_percentile"],
         )
 
+        # The fusion band; calibration measures depth error in its units
+        sdf_trunc = cfg["sdf_trunc_mult"] * voxel_size
+
+        # Per-pixel fusion weights: calibrated confidence on the model grid, or unit without it
+        if source == "feedforward":
+            model_depth = to_numpy(pointcloud.depth).astype(np.float32)
+
+            if pointcloud.confidence is None:
+                logger.info(
+                    "mesh: pointcloud has no confidence; every depth pixel weighs 1"
+                )
+                weights = pixel_weights(model_depth)
+            else:
+                confidence = to_numpy(pointcloud.confidence)
+                c_star, gamma = calibrate_confidence(
+                    model_depth,
+                    confidence,
+                    to_numpy(pointcloud.extrinsics),
+                    to_numpy(pointcloud.model_intrinsics),
+                    sdf_trunc=sdf_trunc,
+                )
+                weights = pixel_weights(
+                    model_depth, confidence, c_star=c_star, gamma=gamma
+                )
+                del confidence
+
+            # Share of depth pixels that fuse nothing (below the gate or on an edge)
+            has_depth = model_depth > 0
+            logger.info(
+                "mesh: %.1f%% of depth pixels weigh 0",
+                100 * float((weights[has_depth] == 0).mean())
+                if has_depth.any()
+                else 0.0,
+            )
+            weights = lift_weights(
+                weights, pointcloud.original_coords, depths.shape[1:]
+            )
+
+            # Free the zarr's model-grid arrays; only poses and intrinsics are used from here
+            del pointcloud, model_depth, has_depth
+        else:
+            weights = pixel_weights(depths)
+
+        # Volume ground under the weighted depth; the hull cut relies on it to close the ground
+        ground = None
+
+        if cfg["use_convex_hull"]:
+            ground = build_volume_ground(
+                depths,
+                weights,
+                rgbs,
+                c2w,
+                intrinsics,
+                voxel_size=voxel_size,
+                sdf_trunc=sdf_trunc,
+            )
+
         # mesh.ply marks the stage done, so a stale one must not outlive a failed re-run
         mesh_path = self.outputs["mesh"]
         mesh_path.unlink(missing_ok=True)
@@ -1612,12 +1672,14 @@ class Reconstructor:
             rgbs,
             c2w,
             intrinsics,
+            weights=weights,
             voxel_size=voxel_size,
-            sdf_trunc=cfg["sdf_trunc_mult"] * voxel_size,
+            sdf_trunc=sdf_trunc,
+            ground=ground,
         )
 
-        # Free the fused depth before cleanup; nothing below reads it
-        del depths
+        # Free the fused depth, weights and ground before cleanup; nothing below reads them
+        del depths, weights, ground
 
         # Clean; the floater-cut real surface comes back as the texture occluder
         cleaned, real = clean_repair_mesh(

@@ -54,6 +54,7 @@ def _run_feedforward_mesh(tmp_path, fused, sky_return, **mesh_overrides):
         ),
         patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
+        patch("collab_splats.reconstructor.build_volume_ground", return_value=None),
         stub_mesh_cleanup(),
         patch("collab_splats.reconstructor.sky_masks", return_value=sky_return) as sky,
     ):
@@ -128,6 +129,7 @@ def test_mask_sky_asks_for_splats_frames_in_checkpoint_order(tmp_path):
         ),
         patch("collab_splats.reconstructor.compute_tsdf_voxel_size", return_value=0.01),
         patch("collab_splats.reconstructor.create_tsdf_mesh", side_effect=spy_fuse),
+        patch("collab_splats.reconstructor.build_volume_ground", return_value=None),
         stub_mesh_cleanup(),
         patch(
             "collab_splats.reconstructor.sky_masks", side_effect=fake_sky_masks

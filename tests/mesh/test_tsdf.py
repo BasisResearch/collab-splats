@@ -4,6 +4,7 @@ import re
 import numpy as np
 import open3d as o3d
 import pytest
+import torch
 
 from collab_splats.mesh import tsdf
 from collab_splats.mesh.clean import VolumeGround
@@ -411,6 +412,22 @@ def test_calibrate_confidence_recovers_gamma():
         depth, conf, w2c, K = _noisy_planes(0.02, gamma)
         _, fitted = calibrate_confidence(depth, conf, w2c, K, sdf_trunc=0.005)
         assert fitted == pytest.approx(gamma, rel=0.05)
+
+
+def test_calibrate_confidence_ignores_global_tf32():
+    # A global TF32 (mapanything import) must not move the fit
+    planes = _noisy_planes(0.02, 1.2)
+    precision = torch.get_float32_matmul_precision()
+
+    try:
+        torch.set_float32_matmul_precision("highest")
+        reference = calibrate_confidence(*planes, sdf_trunc=0.005)
+        torch.set_float32_matmul_precision("high")
+        under_tf32 = calibrate_confidence(*planes, sdf_trunc=0.005)
+    finally:
+        torch.set_float32_matmul_precision(precision)
+
+    assert under_tf32 == pytest.approx(reference, rel=1e-6)
 
 
 def test_calibrate_confidence_matches_reference_values():

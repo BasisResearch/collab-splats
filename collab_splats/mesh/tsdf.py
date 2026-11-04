@@ -31,7 +31,7 @@ from collab_splats.geometry.projection import (
 from collab_splats.geometry.transforms import invert_poses, shift_intrinsics
 from collab_splats.mesh.clean import VolumeGround
 from collab_splats.mesh.utils import validate_views
-from collab_splats.utils.torch_utils import get_device
+from collab_splats.utils.torch_utils import full_fp32_matmul, get_device
 
 logger = logging.getLogger(__name__)
 
@@ -531,6 +531,7 @@ def calibrate_confidence(
     - occluded samples (sampled < 0.9 x expected) dropped; needs 2+ valid views
     - conf-bin medians of error / sdf_trunc, log-log line: c* where it crosses 1, gamma = -slope
     - runs on CUDA when available, else the CPU
+    - projects at full fp32 matmul: a global TF32 (mapanything import) would round the residuals
 
     Args:
         depth: (N, h, w) model-grid depth, 0 = none.
@@ -554,25 +555,30 @@ def calibrate_confidence(
 
     # Per-pixel cross-view error on a stride-2 grid of every 2nd frame
     errs, confs, deps = [], [], []
-    for i in range(0, n, 2):
-        others = [j for j in (i - 10, i - 5, i - 2, i + 2, i + 5, i + 10) if 0 <= j < n]
-        if len(others) < 2:
-            continue
 
-        points = unproject(depth_t[i], w2c[i], K[i])[::2, ::2].reshape(-1, 3)
-        residual, expected, sampled, valid, _ = depth_residual(
-            points, w2c[others], K[others], depth_t[others]
-        )
+    # Full fp32 matmul, so a global TF32 cannot round the residuals
+    with full_fp32_matmul():
+        for i in range(0, n, 2):
+            others = [
+                j for j in (i - 10, i - 5, i - 2, i + 2, i + 5, i + 10) if 0 <= j < n
+            ]
+            if len(others) < 2:
+                continue
 
-        # Occluded or depthless samples out; a pixel needs two views left
-        ok = valid & (sampled > 0) & (sampled >= 0.9 * expected)
-        err = torch.where(ok, residual.abs(), torch.nan)
-        err = torch.nanmedian(err, 0).values
-        err[ok.sum(0) < 2] = torch.nan
+            points = unproject(depth_t[i], w2c[i], K[i])[::2, ::2].reshape(-1, 3)
+            residual, expected, sampled, valid, _ = depth_residual(
+                points, w2c[others], K[others], depth_t[others]
+            )
 
-        errs.append(err.cpu().numpy())
-        confs.append(np.asarray(confidence[i, ::2, ::2]).ravel())
-        deps.append(np.asarray(depth[i, ::2, ::2]).ravel())
+            # Occluded or depthless samples out; a pixel needs two views left
+            ok = valid & (sampled > 0) & (sampled >= 0.9 * expected)
+            err = torch.where(ok, residual.abs(), torch.nan)
+            err = torch.nanmedian(err, 0).values
+            err[ok.sum(0) < 2] = torch.nan
+
+            errs.append(err.cpu().numpy())
+            confs.append(np.asarray(confidence[i, ::2, ::2]).ravel())
+            deps.append(np.asarray(depth[i, ::2, ::2]).ravel())
 
     # Short sequences leave no frame with enough neighbors
     if not errs:

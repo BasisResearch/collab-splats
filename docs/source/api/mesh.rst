@@ -4,8 +4,8 @@ Mesh
 TSDF meshing from posed depth + RGB, then cleaning, decimation and texturing. Every entry point
 takes plain arrays, never a ``PointcloudResult``: only the caller knows which resolution grid
 it is on. ``collab_splats.mesh`` exports ``compute_tsdf_voxel_size``, ``calibrate_confidence``,
-``pixel_weights``, ``lift_weights``, ``build_volume_ground``, ``create_tsdf_mesh``,
-``clean_repair_mesh``, ``prepare_mesh`` and ``create_texture_mesh``. The pipeline runs it as
+``pixel_weights``, ``lift_weights``, ``build_volume_ground``, ``solve_ground``,
+``VolumeGround``, ``create_tsdf_mesh``, ``clean_repair_mesh``, ``prepare_mesh`` and ``create_texture_mesh``. The pipeline runs it as
 the ``mesh`` stage (``mesh:`` in the yaml, ``--stages mesh``; keys in :doc:`/configuration`);
 the ``04_mesh`` tutorial walks through fusion, cleaning and texturing.
 
@@ -105,6 +105,7 @@ model grid and lifted with ``lift_weights`` (nearest, through each crop box):
    depths = frame_depths(result, rgbs, conf_percentile=None)
    c2w = invert_poses(result.extrinsics)
    K = result.intrinsics  # full-res; depth_fx from result.model_intrinsics
+   # voxel_size: compute_tsdf_voxel_size above; 6.0 is mesh.sdf_trunc_mult
    c_star, gamma = calibrate_confidence(
        result.depth, result.confidence, result.extrinsics, result.model_intrinsics,
        sdf_trunc=6.0 * voxel_size,
@@ -129,9 +130,10 @@ ground, fuse.
   it.
 - With ``mesh.mask_sky`` the stage zeroes the sky weights on the model grid before the lift, so
   sky fuses nothing; calibration still sees it.
-- At model resolution (notebooks, evals): ``result.depth``, ``result.images`` transposed to
+- At model resolution (evals): ``result.depth``, ``result.images`` transposed to
   ``(N, H, W, 3)`` and scaled to uint8, ``invert_poses(result.extrinsics)`` and
-  ``result.model_intrinsics``. No lift.
+  ``result.model_intrinsics``. No lift: ``pixel_weights`` runs directly on the model grid and
+  its weights need no lift either.
 
 **From a trained splat.** ``render_tsdf_inputs`` (``collab_splats.splats.checkpoint``) renders
 every training camera from the splats stage's ``ckpt.pt``, at frame resolution, with the poses
@@ -209,12 +211,11 @@ which ignores a stray far component.
 
 **Convex hull** (``mesh.use_convex_hull``, ``true`` in ``configs/base.yaml``; set ``false``
 indoors and for objects). ``make_convex_hull(mesh, c2w)`` finds the ground plane from the camera
-path and right vectors, cuts the mesh to a rounded convex hull and trims the ragged outer edge;
-the ground inside comes from the volume ground at fusion. When no RANSAC plane faces the camera up, the largest plane is the ground
-and a warning is logged; steps are in its docstring below.
+path and right vectors. When no RANSAC plane faces the camera up, the largest plane is the
+ground and a warning is logged; steps are in its docstring below.
 
 - ``make_convex_hull`` cuts the mesh to a rounded convex hull of its ground, trims the ragged
-  outer edge, drops small pieces, makes it manifold and bridges inlets. It adds no geometry: the
+  outer edge, drops small pieces, makes it manifold and bridges inlets. It adds no vertices: the
   ground inside the hull comes from the volume ground at fusion. A stitched ground patch was
   rejected; it attached the ground to random high points.
 

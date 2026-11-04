@@ -2,7 +2,12 @@ import numpy as np
 import open3d as o3d
 import pytest
 
-from collab_splats.mesh.tsdf import compute_tsdf_voxel_size, create_tsdf_mesh
+from collab_splats.mesh.tsdf import (
+    compute_tsdf_voxel_size,
+    create_tsdf_mesh,
+    lift_weights,
+    pixel_weights,
+)
 
 
 def _views(n=3, h=32, w=32):
@@ -204,3 +209,46 @@ def test_create_tsdf_mesh_reads_k_as_pixel_center(monkeypatch):
 
     corner = np.asarray(mesh.vertices)[:, :2].min(axis=0)
     assert corner == pytest.approx([-1.05, -1.05], abs=0.01)
+
+
+def test_pixel_weights_gate_and_power():
+    # Flat depth (no edges); conf 1, 2, 4, 8 against c* 2, gamma 1 -> power 2
+    depth = np.ones((1, 4, 4), np.float32)
+    conf = np.tile(np.array([1.0, 2.0, 4.0, 8.0], np.float32), (1, 4, 1))
+
+    weights = pixel_weights(depth, conf, c_star=2.0, gamma=1.0)
+
+    assert weights.dtype == np.float32
+    np.testing.assert_allclose(weights[0, 0], [0.0, 1.0, 4.0, 16.0])
+
+
+def test_pixel_weights_zero_on_depth_edges_and_missing_depth():
+    # Step from depth 1 to 2 between columns 3 and 4; column 0 has no depth
+    depth = np.ones((1, 6, 8), np.float32)
+    depth[:, :, 4:] = 2.0
+    depth[:, :, 0] = 0.0
+
+    weights = pixel_weights(depth)
+
+    assert (weights[0, :, [3, 4]] == 0).all()  # both sides of the step
+    assert (weights[0, :, [0, 1]] == 0).all()  # missing depth and its neighbor
+    assert (weights[0, :, [2, 5, 6, 7]] == 1).all()
+
+
+def test_pixel_weights_without_confidence_is_unit():
+    depth = np.ones((2, 5, 5), np.float32)
+    weights = pixel_weights(depth, None)
+    np.testing.assert_array_equal(weights, np.ones_like(depth))
+
+
+def test_lift_weights_nearest_through_crop_box():
+    # 2x2 model grid into a 4x6 frame through the box x 1..5, y 0..4
+    weights = np.array([[[1.0, 2.0], [3.0, 4.0]]], np.float32)
+    coords = np.array([[1, 0, 5, 4, 6, 4]], np.float32)
+
+    lifted = lift_weights(weights, coords, (4, 6))
+
+    assert lifted.shape == (1, 4, 6)
+    assert (lifted[0, :, [0, 5]] == 0).all()  # outside the box
+    np.testing.assert_array_equal(lifted[0, 0, 1:5], [1, 1, 2, 2])
+    np.testing.assert_array_equal(lifted[0, 3, 1:5], [3, 3, 4, 4])

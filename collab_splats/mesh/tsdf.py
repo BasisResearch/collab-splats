@@ -3,6 +3,9 @@ Depth + RGB views fused into a mesh.
 
 - create_tsdf_mesh: the entry point, Open3D VoxelBlockGrid (CUDA when available) then extract
 - compute_tsdf_voxel_size: voxel edge from the depth's own pixel footprint, coarsened to a memory budget
+- calibrate_confidence: per-scene gate c* and slope gamma from cross-view depth residuals
+- pixel_weights: (conf / c*)^(2 gamma) above the gate, 0 below it and on depth edges
+- lift_weights: model-grid weights onto the frame grid, nearest, through each crop box
 - no file IO: the caller writes the mesh once it is final
 """
 
@@ -10,9 +13,11 @@ from __future__ import annotations
 
 import logging
 
+import cv2
 import numpy as np
 import open3d as o3d
 import open3d.core as o3c
+from scipy import ndimage
 from tqdm.auto import tqdm
 
 from collab_splats.geometry.projection import unproject_frames
@@ -321,3 +326,81 @@ def compute_tsdf_voxel_size(
         need_gb,
     )
     return voxel
+
+
+########################################################################
+# Fusion weights
+########################################################################
+
+
+def pixel_weights(
+    depth: np.ndarray,
+    confidence: np.ndarray | None = None,
+    *,
+    c_star: float = 1.0,
+    gamma: float = 0.0,
+    edge_rtol: float = 0.03,
+) -> np.ndarray:
+    """
+    Fusion weight per depth pixel: inverse error variance above the confidence gate.
+
+    - error ~ conf^-gamma, so the inverse variance is conf^(2 gamma); normalized to 1 at c*
+    - 0 below c*, where depth is 0, and on depth edges (VGGT-Omega depth_edge rule)
+    - no confidence (sfm, splats renders): 1 on every pixel off an edge
+
+    Args:
+        depth: (N, H, W) depth, 0 = none.
+        confidence: (N, H, W) depth confidence on the same grid, or None.
+        c_star: confidence at which the cross-view error equals the TSDF band.
+        gamma: slope of log error against log confidence, negated.
+        edge_rtol: 3x3 (max - min) / depth above this marks an edge.
+
+    Returns:
+        (N, H, W) float32 weights.
+    """
+    valid = depth > 0
+
+    # Gate and power on confidence, or unit weights without it
+    if confidence is None:
+        weights = valid.astype(np.float32)
+    else:
+        conf = np.asarray(confidence, np.float32)
+        gated = valid & (conf >= c_star)
+        weights = np.where(gated, (conf / c_star) ** (2 * gamma), 0.0)
+        weights = weights.astype(np.float32)
+
+    # Depth edges: a 3x3 relative depth jump straddles two surfaces
+    hi = ndimage.maximum_filter(depth, size=(1, 3, 3))
+    lo = ndimage.minimum_filter(depth, size=(1, 3, 3))
+    edge = (hi - lo) / np.maximum(np.abs(depth), 1e-6) > edge_rtol
+    weights[edge] = 0.0
+
+    return weights
+
+
+def lift_weights(
+    weights: np.ndarray, original_coords: np.ndarray, frame_hw: tuple[int, int]
+) -> np.ndarray:
+    """
+    Model-grid weights resized nearest into each frame's crop box; 0 outside the box.
+
+    - nearest, so a zero-weight edge pixel stays zero instead of blurring into its neighbors
+
+    Args:
+        weights: (N, h, w) model-grid weights.
+        original_coords: (N, 6) rows of x0, y0, x1, y1, W, H; the first four are the crop box.
+        frame_hw: frame grid height and width.
+
+    Returns:
+        (N, H, W) float32 frame-grid weights.
+    """
+    height, width = frame_hw
+    boxes = np.asarray(original_coords)[:, :4].round().astype(int)
+    lifted = np.zeros((len(weights), height, width), np.float32)
+
+    for i, (x0, y0, x1, y1) in enumerate(boxes):
+        lifted[i, y0:y1, x0:x1] = cv2.resize(
+            weights[i], (x1 - x0, y1 - y0), interpolation=cv2.INTER_NEAREST
+        )
+
+    return lifted

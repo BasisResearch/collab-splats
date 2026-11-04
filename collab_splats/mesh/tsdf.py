@@ -63,7 +63,7 @@ def create_tsdf_mesh(
     - the block hashmap starts at 10k blocks and grows on its own
     - u, v floor (pixel-corner, as Open3D), so K shifts +0.5 once here
     - scenes past max_blocks fuse in spatial tiles; the welded mesh equals the single grid's
-    - ground: its band blocks join every tile; after the views, voxels inside its hull with weight <= w_min take its height distance at weight 1.01 w_min
+    - ground: its band blocks join the block union; each tile writes the ones in its halo; after the views, voxels inside its hull with weight <= w_min take its height distance at weight 1.01 w_min
 
     Args:
         depths: (N, H, W) depth in world units, 0 = no observation.
@@ -407,7 +407,9 @@ def _inject_ground(
     sel = (ix >= 0) & (iy >= 0) & (ix < cols_f) & (iy < rows_f)
     sel &= inside[iy.clamp(0, rows_f - 1), ix.clamp(0, cols_f - 1)]
 
-    # Membrane height and color, bilinear between coarse cell centers
+    # Membrane height and color, bilinear at the voxel's ground xy
+    # - fx/fy -0.5: cell centers at lo + (c + 0.5) res, prototype parity
+    # - build_volume_ground bins coarse cells by round, i.e. centers at lo + c res
     rows_c, cols_c = ground.height.shape
     fx = (local[:, 0] - ground.lo[0]) / ground.res - 0.5
     fy = (local[:, 1] - ground.lo[1]) / ground.res - 0.5

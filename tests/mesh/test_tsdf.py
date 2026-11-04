@@ -1,3 +1,6 @@
+import logging
+import re
+
 import numpy as np
 import open3d as o3d
 import pytest
@@ -483,6 +486,7 @@ def test_create_tsdf_mesh_ground_closes_a_depth_hole(monkeypatch):
     middle = _near(closed, [0.05, 0.0], 0.05)
     assert middle.any()
     np.testing.assert_allclose(np.asarray(closed.vertices)[:, 2], 1.0, atol=0.02)
+    np.testing.assert_allclose(np.asarray(closed.vertices)[middle, 2], 1.0, atol=0.005)
     np.testing.assert_allclose(
         np.asarray(closed.vertex_colors)[middle], 200 / 255, atol=0.05
     )
@@ -503,3 +507,55 @@ def test_create_tsdf_mesh_ground_leaves_observed_voxels_alone(monkeypatch):
     seen = _near(mesh, [-0.35, 0.0], 0.05)
     assert seen.any()
     np.testing.assert_allclose(np.asarray(mesh.vertices)[seen, 2], 1.0, atol=0.005)
+
+
+def test_create_tsdf_mesh_ground_stays_out_of_the_hull(monkeypatch):
+    # Columns past x 0.06 are outside the hull: that part of the hole stays open
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=3)
+    depths[:, 12:20, 12:20] = 0.0
+    ground = _flat_ground()
+    ground.inside[:, 53:] = False
+
+    mesh = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        K,
+        weights=np.ones_like(depths),
+        voxel_size=0.02,
+        depth_trunc=2.0,
+        sdf_trunc=0.08,
+        ground=ground,
+    )
+
+    assert _near(mesh, [0.01, 0.0], 0.02).any()
+    assert not _near(mesh, [0.095, 0.0], 0.02).any()
+
+
+def test_create_tsdf_mesh_ground_tiles_to_the_single_grid_mesh(monkeypatch, caplog):
+    # The hole scene with its ground, fused in several tiles, welds to the single grid's mesh
+    monkeypatch.setattr(o3d.core.cuda, "is_available", lambda: False)
+    depths, rgbs, c2w, K = _views(n=3)
+    depths[:, 12:20, 12:20] = 0.0
+    kwargs = dict(
+        weights=np.ones_like(depths),
+        voxel_size=0.02,
+        depth_trunc=2.0,
+        sdf_trunc=0.08,
+        ground=_flat_ground(),
+    )
+
+    single = create_tsdf_mesh(depths, rgbs, c2w, K, **kwargs)
+    with caplog.at_level(logging.INFO, logger="collab_splats.mesh.tsdf"):
+        tiled = create_tsdf_mesh(depths, rgbs, c2w, K, max_blocks=60, **kwargs)
+
+    # The log reports the tile count; more than one
+    tiles = re.search(r"in (\d+) tiles", caplog.text)
+    assert tiles is not None and int(tiles.group(1)) > 1
+
+    assert len(single.vertices) == len(tiled.vertices) > 0
+    assert len(single.triangles) == len(tiled.triangles)
+    single_v = np.unique(np.round(np.asarray(single.vertices), 6), axis=0)
+    tiled_v = np.unique(np.round(np.asarray(tiled.vertices), 6), axis=0)
+    assert np.array_equal(single_v, tiled_v)

@@ -710,7 +710,9 @@ def _connect_mesh_hull(
 # Volume ground
 ########################################################################
 
-# Ported from session 8e887a96 scratchpad: volground.build, proto_hull.solve_ground
+# Ported from the session 8e887a96 scratchpad
+# - recover/sb/volground.py:build, recover/sb/proto_hull.py:solve_ground
+# - spec: docs/superpowers/specs/2026-11-04-weighted-mesh-fusion-design.md
 
 
 @dataclass
@@ -754,8 +756,8 @@ def build_volume_ground(
 
     - points: depth with weight > 0, every stride-th pixel at its pixel center
     - per 4-voxel cell: the 10th-percentile height (>= 3 points) is the obstacle, its color the ground's
-    - inside: rounded hull of known cells at voxel res, minus closed top-down coverage, grown by grow
-    - covered columns (object tops, overhangs) keep their unobserved interiors empty, as the hull cut does
+    - inside: rounded hull of known cells at voxel res, minus closed coverage (tops stay empty), grown
+    - coarse cells bin by round (center lo + c res), fine/band use lo + (c + 0.5) res: prototype parity
     - membrane: solve_ground at 4 voxels per cell, kappa / scene scale
     - blocks: inside columns x heights within the membrane +- (sdf_trunc + 1 voxel)
 
@@ -885,7 +887,7 @@ def solve_ground(lowest: np.ndarray, res: float, kappa: float) -> np.ndarray:
 
     - fixed point: observed cells g = mean4(g) + kappa h^2 / 4, gaps mean4(g); g <= lowest everywhere
     - red-black projected SOR (omega 1.8), coarse-to-fine over a min-pooled pyramid down to 32 cells
-    - per level: up to 20000 sweeps, stopped once 50 sweeps move g by less than 1e-4 res
+    - per level: up to 20000 sweeps; every 50th, stop if that sweep moved g by less than 1e-4 res
 
     Args:
         lowest: (H, W) observed height per cell; inf or nan = unobserved.
@@ -894,7 +896,13 @@ def solve_ground(lowest: np.ndarray, res: float, kappa: float) -> np.ndarray:
 
     Returns:
         (H, W) float32 membrane height.
+
+    Raises:
+        ValueError: no cell of lowest is finite.
     """
+    if not np.isfinite(lowest).any():
+        raise ValueError("solve_ground: no observed cell")
+
     device = torch.device(get_device())
     finite = np.where(np.isfinite(lowest), lowest, np.inf).astype(np.float32)
     levels = [torch.from_numpy(finite).to(device)]
@@ -934,13 +942,13 @@ def solve_ground(lowest: np.ndarray, res: float, kappa: float) -> np.ndarray:
         # Projected SOR sweeps, capped at the observations
         for sweep in range(20000):
             prev = g
-            for color in (red, ~red):
+            for phase in (red, ~red):
                 pad = F.pad(g[None, None], (1, 1, 1, 1), mode="replicate")[0, 0]
                 target = (
                     pad[:-2, 1:-1] + pad[2:, 1:-1] + pad[1:-1, :-2] + pad[1:-1, 2:]
                 ) / 4
                 target = target + source
-                g = torch.where(color, torch.minimum(g + 1.8 * (target - g), U), g)
+                g = torch.where(phase, torch.minimum(g + 1.8 * (target - g), U), g)
 
             if sweep % 50 == 49 and float((g - prev).abs().max()) < 1e-4 * res:
                 break

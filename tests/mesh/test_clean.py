@@ -761,11 +761,18 @@ def test_solve_ground_stays_under_a_raised_box():
     np.testing.assert_allclose(g[:16], 0.0, atol=1e-3)
 
 
+def test_solve_ground_rejects_an_unobserved_image():
+    with pytest.raises(ValueError, match="no observed cell"):
+        solve_ground(np.full((8, 8), np.inf, np.float32), 0.1, 30.0)
+
+
 ######## build_volume_ground
 
 
 def _floor_views(n=3, size=256, hole=48):
-    """n cameras looking +z at a floor at z=1 (2-unit field of view), a square depth hole mid-frame."""
+    """
+    n cameras looking +z at a floor at z=1 (2-unit field of view), a square depth hole mid-frame.
+    """
     depths = np.ones((n, size, size), np.float32)
     a, b = size // 2 - hole // 2, size // 2 + hole // 2
     depths[:, a:b, a:b] = 0.0
@@ -780,7 +787,9 @@ def _floor_views(n=3, size=256, hole=48):
 
 
 def _fine_cell(ground, world):
-    """(row, col) of a world point's column on the ground's voxel grid, and its local height."""
+    """
+    (row, col) of a world point's column on the ground's voxel grid, and its local height.
+    """
     local = (np.asarray(world, float) - ground.center) @ ground.frame.T
     col, row = np.floor((local[:2] - ground.lo) / ground.voxel_size).astype(int)
     return row, col, local[2]

@@ -3,7 +3,8 @@ Mesh
 
 TSDF meshing from posed depth + RGB, then cleaning, decimation and texturing. Every entry point
 takes plain arrays, never a ``PointcloudResult``: only the caller knows which resolution grid
-it is on. ``collab_splats.mesh`` exports ``compute_tsdf_voxel_size``, ``create_tsdf_mesh``,
+it is on. ``collab_splats.mesh`` exports ``compute_tsdf_voxel_size``, ``calibrate_confidence``,
+``pixel_weights``, ``lift_weights``, ``build_volume_ground``, ``create_tsdf_mesh``,
 ``clean_repair_mesh``, ``prepare_mesh`` and ``create_texture_mesh``. The pipeline runs it as
 the ``mesh`` stage (``mesh:`` in the yaml, ``--stages mesh``; keys in :doc:`/configuration`);
 the ``04_mesh`` tutorial walks through fusion, cleaning and texturing.
@@ -28,6 +29,7 @@ Fusion
        rgbs,  # (N, H, W, 3) uint8
        c2w,  # (N, 4, 4) camera-to-world
        K,  # (N, 3, 3) pixel-center, at the depth resolution
+       weights=weights,  # (N, H, W) float32, 0 = skip the pixel
        voxel_size=voxel_size,
    )
    cleaned, real = clean_repair_mesh(mesh, c2w)  # real: floater-cut surface, no hull or fill
@@ -50,6 +52,26 @@ Fusion
   ``mesh.depth_trunc_percentile`` (``99``, in (0, 99]) percentile of positive depth; a far tail crashes Open3D.
 - ``sdf_trunc`` defaults to ``4 × voxel_size``; the stage passes
   ``mesh.sdf_trunc_mult × voxel_size`` (``6.0``). A band narrower than one voxel raises.
+- Fusion is weighted per pixel. Each sample adds its weight to the voxel; tsdf and color are
+  weighted running averages, and surface is extracted only where the summed weight exceeds
+  ``w_min`` (``1.0``). One view at weight 1 is not enough on its own.
+- Weights come from ``pixel_weights``: ``(conf / c*)^(2γ)`` above the gate ``c*``, 0 below it,
+  0 where depth is 0, and 0 on depth edges (3x3 relative jump above ``edge_rtol`` ``0.03``).
+  Without confidence (sfm, splats renders) every pixel off an edge weighs 1.
+- ``c*`` and ``γ`` are fitted per scene by ``calibrate_confidence`` and are never configured.
+  The fit uses cross-view depth error: the median residual against views ±2, ±5 and ±10, with
+  occluded samples dropped, binned by confidence and fitted as a log-log line. ``c*`` is where
+  the error equals the run's ``sdf_trunc``, and ``γ`` is the negated slope. So the voxel size is
+  computed first. Projection runs at full fp32 matmul precision (a global TF32 would round the
+  residuals). Percentile gates were rejected: they do not equalize scenes (GH010238's p20 is
+  confidence 29).
+- With ``ground=`` (from ``build_volume_ground``), voxels inside the ground hull that the views
+  left at summed weight ``<= w_min`` take the ground's signed height distance at weight
+  ``1.01 w_min``. The ground is an obstacle membrane: the lowest surface under every observed
+  height (10th percentile per 4-voxel cell), pushed up into the gaps by a pressure
+  ``kappa / scene scale`` (``kappa`` 30). Observed voxels are never overwritten, so scene and
+  ground come out of marching cubes as one surface, with no stitching. The stage builds it only
+  when ``mesh.use_convex_hull`` is on.
 - ``create_tsdf_mesh`` runs on CUDA when Open3D has it, else on the CPU, and raises rather than
   fusing quietly wrong (``validate_views``): non-uint8 RGB, view-count or resolution
   mismatches, and a principal point outside the depth grid. Pairing one grid's depth with the
@@ -62,31 +84,51 @@ Composing the inputs
 ``mesh.source`` picks the depth: ``feedforward`` (default) or ``splats``.
 
 **Feedforward, at frame resolution.** ``frame_depths`` (``collab_splats.pointcloud.utils``)
-confidence-masks the model-grid depth and guided-upsamples it onto the frames, so the full-res
-``result.intrinsics`` is the ``K`` to fuse with:
+guided-upsamples the model-grid depth onto the frames (``conf_percentile=None``: every pixel),
+so the full-res ``result.intrinsics`` is the ``K`` to fuse with. The weights are computed on the
+model grid and lifted with ``lift_weights`` (nearest, through each crop box):
 
 .. code-block:: python
 
    from collab_splats.geometry.transforms import invert_poses
+   from collab_splats.mesh import (
+       build_volume_ground,
+       calibrate_confidence,
+       lift_weights,
+       pixel_weights,
+   )
    from collab_splats.pointcloud.utils import frame_depths
    from collab_splats.preproc import frame_idx_from_path, read_frames
 
    image_ids = [frame_idx_from_path(p) for p in result.image_paths]
    rgbs = read_frames(images_dir, image_ids)
-   depths = frame_depths(result, rgbs, conf_percentile=20, exclude=sky)
+   depths = frame_depths(result, rgbs, conf_percentile=None)
    c2w = invert_poses(result.extrinsics)
    K = result.intrinsics  # full-res; depth_fx from result.model_intrinsics
+   c_star, gamma = calibrate_confidence(
+       result.depth, result.confidence, result.extrinsics, result.model_intrinsics,
+       sdf_trunc=6.0 * voxel_size,
+   )
+   weights = pixel_weights(result.depth, result.confidence, c_star=c_star, gamma=gamma)
+   weights = lift_weights(weights, result.original_coords, depths.shape[1:])
+   ground = build_volume_ground(
+       depths, weights, rgbs, c2w, K,
+       voxel_size=voxel_size, sdf_trunc=6.0 * voxel_size,
+   )
+
+Pass ``weights=weights`` and ``ground=ground`` to ``create_tsdf_mesh``. The stage orders this as:
+sky zeroes depth, depth is cut at ``depth_trunc_percentile``, the voxel is sized, then
+calibration (on the model grid, sky included), weights, sky zeroed on the model grid, lift,
+ground, fuse.
 
 - ``result`` is the ``PointcloudResult`` from ``pointcloud.zarr``. It stores ``K`` twice:
   ``intrinsics`` on the frame grid and ``model_intrinsics`` on the model grid. Mixing one
   grid's depth with the other grid's ``K`` is the collapse above.
-- ``conf_percentile`` is ``mesh.conf_percentile`` (``20``; ``null`` = off). A reconstruction
-  with no confidence array (``sfm``) fuses unmasked and logs it.
-- ``sky`` is the ``sky_masks`` stack when ``mesh.mask_sky`` is on, else ``None``. Passed as
-  ``exclude=``, the percentile ranks only non-sky pixels, so one setting cuts the same share of
-  real surface whether a video is a quarter sky or none.
-- With ``mesh.mask_sky`` the stage passes the sky masks as ``exclude=``: the percentile ranks
-  only non-sky pixels, so the same setting cuts the same share of real surface on every video.
+- ``mesh.conf_percentile`` is gone: a config that still sets it has it dropped on load with a
+  warning. A reconstruction with no confidence array (``sfm``) fuses with unit weights and logs
+  it.
+- With ``mesh.mask_sky`` the stage zeroes the sky weights on the model grid before the lift, so
+  sky fuses nothing; calibration still sees it.
 - At model resolution (notebooks, evals): ``result.depth``, ``result.images`` transposed to
   ``(N, H, W, 3)`` and scaled to uint8, ``invert_poses(result.extrinsics)`` and
   ``result.model_intrinsics``. No lift.
@@ -129,8 +171,8 @@ segmenter fires, before fusion, on both sources:
   ``image_ids``. Sky probabilities cache as PNGs under ``<scene>/sky/``, so a re-run pays for
   inference once.
 - Backend: ``skywater``, a SegFormer MiT-B2 registered as ``BaseSegmentation.get("skywater")``.
-- Masking applies to mesh depth only, never to the splats stage's depth targets, which do take
-  ``mesh.conf_percentile``: the asymmetry is deliberate.
+- Masking applies to mesh depth only, never to the splats stage's depth targets, which take
+  ``splats.depth_conf_percentile``: the asymmetry is deliberate.
 
 .. automodule:: collab_splats.mesh.tsdf
    :members:
@@ -167,9 +209,14 @@ which ignores a stray far component.
 
 **Convex hull** (``mesh.use_convex_hull``, ``true`` in ``configs/base.yaml``; set ``false``
 indoors and for objects). ``make_convex_hull(mesh, c2w)`` finds the ground plane from the camera
-path and right vectors, cuts and trims the ragged outer edge, then patches the ground out to a
-rounded convex hull. When no RANSAC plane faces the camera up, the largest plane is the ground
+path and right vectors, cuts the mesh to a rounded convex hull and trims the ragged outer edge;
+the ground inside comes from the volume ground at fusion. When no RANSAC plane faces the camera up, the largest plane is the ground
 and a warning is logged; steps are in its docstring below.
+
+- ``make_convex_hull`` cuts the mesh to a rounded convex hull of its ground, trims the ragged
+  outer edge, drops small pieces, makes it manifold and bridges inlets. It adds no geometry: the
+  ground inside the hull comes from the volume ground at fusion. A stitched ground patch was
+  rejected; it attached the ground to random high points.
 
 Preparing mesh.ply
 ~~~~~~~~~~~~~~~~~~

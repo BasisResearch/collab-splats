@@ -368,7 +368,7 @@ def calibrate_confidence(
         (c_star, gamma).
 
     Raises:
-        ValueError: fewer than 3 conf bins to fit, or error does not fall with confidence.
+        ValueError: fewer than 4 frames, fewer than 3 conf bins, or error does not fall with confidence.
     """
     device = get_device()
     depth_t = torch.from_numpy(np.ascontiguousarray(depth, np.float32)).to(device)
@@ -397,6 +397,10 @@ def calibrate_confidence(
         errs.append(err.cpu().numpy())
         confs.append(np.asarray(confidence[i, ::2, ::2]).ravel())
         deps.append(np.asarray(depth[i, ::2, ::2]).ravel())
+
+    # Short sequences leave no frame with enough neighbors
+    if not errs:
+        raise ValueError("calibrate_confidence: no frame has 2+ neighbor views; need >= 4 frames")
 
     err = np.concatenate(errs)
     conf = np.concatenate(confs)

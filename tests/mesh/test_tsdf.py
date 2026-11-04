@@ -278,6 +278,21 @@ def test_calibrate_confidence_recovers_gamma():
         assert fitted == pytest.approx(gamma, rel=0.05)
 
 
+def test_calibrate_confidence_matches_reference_values():
+    # Values recorded when the recipe was verified on this synthetic scene
+    c_star, gamma = calibrate_confidence(*_noisy_planes(0.02, 0.9), sdf_trunc=0.005)
+    assert c_star == pytest.approx(3.865, rel=0.01)
+    assert gamma == pytest.approx(0.906, rel=0.01)
+    c_star, _ = calibrate_confidence(*_noisy_planes(0.04, 0.9), sdf_trunc=0.005)
+    assert c_star == pytest.approx(8.30, rel=0.01)
+
+
+def test_calibrate_confidence_needs_neighbor_views():
+    depth, conf, w2c, K = _noisy_planes(0.02, 0.9, n=3)
+    with pytest.raises(ValueError, match="neighbor"):
+        calibrate_confidence(depth, conf, w2c, K, sdf_trunc=0.005)
+
+
 def test_calibrate_confidence_gate_scales_with_noise():
     # Doubling the noise moves the break-even confidence by 2^(1/gamma)
     c1, g1 = calibrate_confidence(*_noisy_planes(0.02, 0.9), sdf_trunc=0.005)

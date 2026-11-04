@@ -37,7 +37,7 @@ def test_splats_is_a_leaf_stage():
 
 def test_base_yaml_defaults():
     cfg = yaml.safe_load((CONFIG_DIR / "base.yaml").read_text())["splats"]
-    assert cfg == {"enabled": False, "primitive": "3dgs"}
+    assert cfg == {"enabled": False, "primitive": "3dgs", "depth_conf_percentile": 20.0}
 
     # The block must round-trip through from_dict (enabled stripped) and equal dataclass defaults
     parsed = SplatsConfig.from_dict(cfg)

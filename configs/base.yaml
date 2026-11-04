@@ -75,7 +75,6 @@ mesh:
 
   # Depth filtering
   depth_trunc_percentile: 99   # required, max 99
-  conf_percentile: 20          # of non-sky pixels when mask_sky; null = off
   mask_sky: true
 
   # TSDF fusion
@@ -100,6 +99,7 @@ mesh:
 splats:
   enabled: false
   primitive: 3dgs        # 3dgs | 2dgs
+  depth_conf_percentile: 20.0 # depth-loss targets: drop below this confidence percentile; null = off
 
 
 ########################################

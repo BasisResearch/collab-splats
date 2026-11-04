@@ -272,7 +272,6 @@ mesh:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `mesh.depth_trunc_percentile` | float | `99` | Zero depth beyond this percentile; required, in (0, 99] |
-| `mesh.conf_percentile` | float\|null | `20` | Drop depth below this confidence percentile; `null` = off. With `mask_sky`, ranks non-sky pixels only. Also masks the splats depth targets |
 | `mesh.mask_sky` | bool | `true` | Zero sky depth before fusing |
 
 </details>
@@ -286,6 +285,8 @@ mesh:
 | `mesh.voxel_ref_percentile` | float | `50` | Depth percentile the voxel is sized at |
 | `mesh.sdf_trunc_mult` | float | `6.0` | Truncation band in voxels; must be `>= 1.0` |
 
+Fusion weights each depth pixel by its calibrated confidence (no percentile cut); see docs/source/api/mesh.rst.
+
 </details>
 
 <details>
@@ -293,7 +294,7 @@ mesh:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `mesh.use_convex_hull` | bool | `true` | Patch the ground out to a convex hull; outdoor scenes only |
+| `mesh.use_convex_hull` | bool | `true` | Cut to a rounded convex hull of the ground; outdoor scenes only |
 | `mesh.smooth_iterations` | int | `30` | Volume-keeping smoothing passes; `0` = off |
 | `mesh.max_faces` | int\|null | `1500000` | Face budget before texturing; `null` = no cap |
 
@@ -349,6 +350,7 @@ mesh:
 | `splats.enabled` | bool | `false` | Train Gaussian splats |
 | `splats.primitive` | str | `3dgs` | `3dgs` or `2dgs` |
 | `splats.representation` | str | `vanilla` | `vanilla` or `scaffold` |
+| `splats.depth_conf_percentile` | float\|null | `20.0` | Depth-loss targets: drop depth below this confidence percentile; `null` = off |
 | `splats.scaffold` | dict | absent | Scaffold overrides: `n_offsets`, `feat_dim`, `voxel_multiplier`, `update_from`, `update_until`, `refine_every`, `grad_threshold`, `min_opacity`, `update_init_factor`, `success_threshold`, `appearance_dim`, `mlp_bf16`; also `voxel_size`, `start_stat`, `update_depth`, `update_hierarchy_factor`, `lr_max_steps` and learning rates (`*_lr`, `*_lr_final`) |
 | `splats.max_steps` | int | `30000` | Training iterations |
 | `splats.pose_opt` | bool | `true` | Refine camera poses jointly |

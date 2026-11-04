@@ -285,6 +285,13 @@ class Reconstructor:
         defaults = yaml.safe_load(text) or {}
         merged = merge({}, defaults, config)
 
+        # mesh.conf_percentile is gone: fusion weights by calibrated confidence now
+        if merged.get("mesh", {}).pop("conf_percentile", None) is not None:
+            logger.warning(
+                "mesh.conf_percentile is no longer used and was dropped; "
+                "mesh fusion weights by calibrated confidence (splats targets: splats.depth_conf_percentile)"
+            )
+
         # track_kwargs replaces base.yaml's whole: a vggsfm run must drop the matcher-only keys
         ba = config.get("pointcloud", {}).get("bundle_adjustment")
         if isinstance(ba, dict) and "track_kwargs" in ba:
@@ -1660,7 +1667,7 @@ class Reconstructor:
         Train Gaussian splats on the pointcloud.zarr frames, points and cameras.
 
         - frames are read from images/ by the frame index in each zarr row name
-        - depth targets, when the depth loss is on, are the zarr depth masked and lifted like the mesh stage's
+        - depth targets, when the depth loss is on, are the zarr depth masked at splats.depth_conf_percentile and lifted to the frame grid
         """
         # gsplat is CUDA-only; import lazily so Reconstructor stays importable without it
         try:
@@ -1682,7 +1689,7 @@ class Reconstructor:
         assert cfg.losses is not None
 
         if "depth" in cfg.losses and cfg.losses["depth"]["weight"] > 0:
-            conf_percentile = self.config["mesh"]["conf_percentile"]
+            conf_percentile = cfg.depth_conf_percentile
             pointcloud = PointcloudResult.load_zarr(
                 self.pointcloud_zarr, load_images=False, load_world_points=False
             )
@@ -1690,7 +1697,8 @@ class Reconstructor:
                 pointcloud, rgbs, conf_percentile=conf_percentile
             )
             logger.info(
-                "splats depth targets use mesh.conf_percentile=%s", conf_percentile
+                "splats depth targets use splats.depth_conf_percentile=%s",
+                conf_percentile,
             )
 
         assert result.intrinsics is not None

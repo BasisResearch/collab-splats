@@ -67,6 +67,7 @@ class SplatsConfig:
     pose_opt: bool = True
     appearance_opt: bool = False  # per-image color correction
     losses: dict[str, dict] | None = None  # None -> default_losses(primitive)
+    depth_conf_percentile: float | None = 20.0  # depth targets: confidence cut
 
     # Appearance
     sh_degree: int = 3

@@ -1854,7 +1854,6 @@ def test_base_yaml_mesh_has_fidelity_keys():
         "voxel_ref_percentile",
         "sdf_trunc_mult",
         "depth_trunc_percentile",
-        "conf_percentile",
         "mask_sky",
         "max_faces",
         "texture",
@@ -2556,3 +2555,17 @@ def test_semantics_segments_lifts_zarr_frames_and_labels_mesh(tmp_path):
         == hashlib.sha256(rec.outputs["mesh"].read_bytes()).hexdigest()
     )
     assert store.attrs["strategy"] == "object"
+
+
+def test_mesh_conf_percentile_is_dropped_with_a_warning(tmp_path, caplog):
+    config = _make_config(tmp_path, {"mesh": {"conf_percentile": 20}})
+    with caplog.at_level("WARNING"):
+        rec = Reconstructor(config)
+
+    assert "conf_percentile" not in rec.config["mesh"]
+    assert sum("mesh.conf_percentile" in r.message for r in caplog.records) == 1
+
+
+def test_splats_depth_conf_percentile_defaults_to_20(tmp_path):
+    rec = Reconstructor(_make_config(tmp_path, {}))
+    assert rec.config["splats"]["depth_conf_percentile"] == 20

@@ -106,10 +106,11 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
     recon.config = {
         "output_path": str(tmp_path),
         "pointcloud": {"method": "feedforward", "backend": "vggtx"},
-        "mesh": {"conf_percentile": 20},
+        "mesh": {},
         "semantics": {"extractors": ["dinov2"]},
         "splats": {
             "enabled": True,
+            "depth_conf_percentile": 20,
             "max_steps": 1,
             "losses": {"depth": {"weight": 0.1}},
         },
@@ -131,7 +132,7 @@ def _stub_reconstructor_for_splats(tmp_path, n_views=2, height=4, width=4):
 
 
 def test_splats_depth_targets_skip_masking_when_confidence_absent(tmp_path, caplog):
-    """pointcloud.zarr without confidence; conf_percentile set -> log and skip masking."""
+    """pointcloud.zarr without confidence; depth_conf_percentile set -> log and skip masking."""
     recon = _stub_reconstructor_for_splats(tmp_path)
     feedforward = SimpleNamespace(
         image_paths=[Path(f"frame_{view:06d}.jpg") for view in range(2)],

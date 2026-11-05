@@ -604,16 +604,24 @@ def test_canonical_order_is_independent_of_input_order():
     shuffled = o3d.geometry.TriangleMesh(
         o3d.utility.Vector3dVector(v[perm]), o3d.utility.Vector3iVector(f_shuffled)
     )
-    shuffled.vertex_normals = o3d.utility.Vector3dVector(np.asarray(mesh.vertex_normals)[perm])
-    shuffled.vertex_colors = o3d.utility.Vector3dVector(np.asarray(mesh.vertex_colors)[perm])
+    shuffled.vertex_normals = o3d.utility.Vector3dVector(
+        np.asarray(mesh.vertex_normals)[perm]
+    )
+    shuffled.vertex_colors = o3d.utility.Vector3dVector(
+        np.asarray(mesh.vertex_colors)[perm]
+    )
 
     a = tsdf._canonical_order(mesh)
     b = tsdf._canonical_order(shuffled)
 
     np.testing.assert_array_equal(np.asarray(a.vertices), np.asarray(b.vertices))
     np.testing.assert_array_equal(np.asarray(a.triangles), np.asarray(b.triangles))
-    np.testing.assert_array_equal(np.asarray(a.vertex_normals), np.asarray(b.vertex_normals))
-    np.testing.assert_array_equal(np.asarray(a.vertex_colors), np.asarray(b.vertex_colors))
+    np.testing.assert_array_equal(
+        np.asarray(a.vertex_normals), np.asarray(b.vertex_normals)
+    )
+    np.testing.assert_array_equal(
+        np.asarray(a.vertex_colors), np.asarray(b.vertex_colors)
+    )
 
     # Same oriented triangles as the input
     def oriented(m):

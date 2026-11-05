@@ -1043,7 +1043,6 @@ def _find_ground_plane(
     expected /= np.linalg.norm(expected)
 
     # First RANSAC plane that faces expected up; walls and slopes are removed and refit
-    o3d.utility.random.seed(0)
     keep = np.ones(len(verts), dtype=bool)
     cosines = []
     planes = []

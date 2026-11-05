@@ -375,38 +375,74 @@ def estimate_intrinsics_from_points(
     )
 
 
-def fit_dominant_plane(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def fit_dominant_plane(
+    points: np.ndarray,
+    *,
+    distance_threshold: float = 0.02,
+    num_iterations: int = 1000,
+    seed: int = 0,
+    n_score: int = 100_000,
+    chunk: int = 8192,
+) -> tuple[np.ndarray, np.ndarray]:
     """
     RANSAC floor plane, as the rigid transform that puts it at Z-up, z=0.
 
-    - open3d segment_plane over the full cloud; largest inlier set is taken as the floor
+    - seeded 3-point candidates scored on a seeded subsample; most inliers wins, first on ties
+    - least-squares refit on the winner's inliers among all points
+    - elementwise numpy only: bit-identical across runs and thread counts
+      (open3d segment_plane picked thread-timing-dependent planes)
 
     Args:
         points: (N, 3) point cloud.
+        distance_threshold: inlier distance to a candidate plane.
+        num_iterations: number of 3-point candidates.
+        seed: candidate and subsample seed.
+        n_score: most points candidates are scored on.
+        chunk: points scored per block; bounds memory at chunk x num_iterations.
 
     Returns:
         R: (3, 3) rotation taking the floor normal onto [0, 0, 1].
         t: (3,) translation placing the floor at z=0 after that rotation.
-
-    Raises:
-        ImportError: open3d is not installed.
     """
-    # Imported here: open3d ships no wheels past Python 3.12 and only this fit needs it
-    try:
-        import open3d as o3d  # noqa: PLC0415
-    except ImportError as e:
-        raise ImportError("fit_dominant_plane needs open3d: pip install open3d") from e
+    pts = np.asarray(points, dtype=np.float64)
+    rng = np.random.default_rng(seed)
 
-    # RANSAC plane normal · x + d_norm = 0, with a unit normal
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points.astype(np.float64))
-    plane_model, _ = pcd.segment_plane(
-        distance_threshold=0.02, ransac_n=3, num_iterations=1000
+    # Candidate planes from random point triples; collinear triples are dropped
+    triples = pts[rng.integers(0, len(pts), (num_iterations, 3))]
+    normals = np.cross(triples[:, 1] - triples[:, 0], triples[:, 2] - triples[:, 0])
+    norms = np.linalg.norm(normals, axis=1)
+    valid = norms > 1e-12
+    normals = normals[valid] / norms[valid, None]
+    offsets = -(normals * triples[valid, 0]).sum(1)
+
+    # Inlier count per candidate on the subsample, in blocks; elementwise, so no BLAS order
+    scored = pts
+    if len(pts) > n_score:
+        scored = pts[rng.choice(len(pts), n_score, replace=False)]
+
+    counts = np.zeros(len(normals), dtype=np.int64)
+
+    for start in range(0, len(scored), chunk):
+        block = scored[start : start + chunk]
+        dist = (
+            block[:, :1] * normals[:, 0]
+            + block[:, 1:2] * normals[:, 1]
+            + block[:, 2:3] * normals[:, 2]
+            + offsets
+        )
+        counts += (np.abs(dist) < distance_threshold).sum(0)
+
+    # Least-squares refit: smallest-eigenvalue direction of the inliers' scatter
+    best = int(np.argmax(counts))
+    dist = (pts * normals[best]).sum(1) + offsets[best]
+    inliers = pts[np.abs(dist) < distance_threshold]
+    centroid = inliers.mean(0)
+    centered = inliers - centroid
+    scatter = np.array(
+        [[(centered[:, i] * centered[:, j]).sum() for j in range(3)] for i in range(3)]
     )
-    a, b, c, d = plane_model
-    n_mag = np.linalg.norm([a, b, c])
-    normal = np.array([a, b, c]) / n_mag
-    d_norm = d / n_mag
+    normal = np.linalg.eigh(scatter)[1][:, 0]
+    d_norm = -float(normal @ centroid)
 
     # Ensure normal points upward (positive Z component after alignment)
     if normal[2] < 0:

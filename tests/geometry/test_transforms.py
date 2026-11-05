@@ -3,7 +3,10 @@ Tests for collab_splats.geometry.transforms: poses, intrinsics, focal fit, Umeya
 """
 
 import ast
+import os
 import pathlib
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -643,6 +646,62 @@ def test_fit_dominant_plane_returns_valid_rotation():
     R, t = fit_dominant_plane(pts)
     assert abs(np.linalg.det(R) - 1.0) < 1e-6
     np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-6)
+
+
+def test_fit_dominant_plane_is_the_least_squares_plane_of_its_inliers():
+    """
+    Tilted noisy plane: the normal is the inliers' least-squares normal, not a 3-point sample's.
+    """
+    rng = np.random.default_rng(3)
+
+    # Plane z = 0.1 x + 0.05 y with 5 mm noise, plus scattered clutter
+    xy = rng.uniform(-3, 3, (2000, 2))
+    z = 0.1 * xy[:, 0] + 0.05 * xy[:, 1] + rng.normal(0, 0.005, 2000)
+    ground = np.column_stack([xy, z])
+    clutter = rng.uniform(-3, 3, (300, 3))
+    R, t = fit_dominant_plane(np.vstack([ground, clutter]))
+
+    # Least-squares normal of the points within 2 cm of the fitted plane
+    dist = np.abs(ground @ R[2] + t[2])
+    inliers = ground[dist < 0.02]
+    centered = inliers - inliers.mean(0)
+    expected = np.linalg.eigh(centered.T @ centered)[1][:, 0]
+    np.testing.assert_allclose(abs(R[2] @ expected), 1.0, atol=1e-9)
+
+
+def test_fit_dominant_plane_is_identical_across_thread_counts(tmp_path):
+    """
+    Same points in processes with 1 and 8 OpenMP threads give bit-identical R and t.
+    """
+    rng = np.random.default_rng(5)
+
+    # Two near-parallel planes make RANSAC candidates nearly tie
+    xy = rng.uniform(-4, 4, (40000, 2))
+    z = np.where(rng.random(40000) < 0.5, 0.0, 0.004 * xy[:, 0])
+    pts = np.column_stack([xy, z + rng.normal(0, 0.008, 40000)])
+    np.save(tmp_path / "pts.npy", pts)
+
+    # Fit in fresh processes; thread count is fixed when the libraries load
+    script = (
+        "import sys, numpy as np\n"
+        "from collab_splats.geometry.transforms import fit_dominant_plane\n"
+        "R, t = fit_dominant_plane(np.load(sys.argv[1]))\n"
+        "np.save(sys.argv[2], np.concatenate([R.ravel(), t]))\n"
+    )
+    outputs = []
+
+    for threads in ("1", "8"):
+        out = tmp_path / f"fit_{threads}.npy"
+        env = {**os.environ, "OMP_NUM_THREADS": threads}
+        subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path / "pts.npy"), str(out)],
+            env=env,
+            check=True,
+            timeout=300,
+        )
+        outputs.append(np.load(out))
+
+    np.testing.assert_array_equal(outputs[0], outputs[1])
 
 
 ########################################################################

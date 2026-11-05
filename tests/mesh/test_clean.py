@@ -332,6 +332,44 @@ def test_trim_mesh_edges_cuts_a_thin_spur_off_the_rim_and_keeps_the_vertices():
     assert len(kept) > 0.95 * disc.sum()
 
 
+def test_trim_mesh_edges_cuts_a_wide_finger_the_old_eight_cell_opening_kept():
+    """A 20-cell-wide finger out of a disc's rim: kept at outline_open 8, cut at the default."""
+    plane = _dense_plane(n=100)
+    faces = np.asarray(plane.triangles)
+    center = np.asarray(plane.vertices)[faces].mean(axis=1)
+    step = 1.0 / 99
+    disc = np.linalg.norm(center[:, :2] - 0.5, axis=1) < 0.3
+    finger = (np.abs(center[:, 1] - 0.5) < 10 * step) & (center[:, 0] > 0.5)
+    plane.triangles = o3d.utility.Vector3iVector(faces[disc | finger])
+    cameras = _orbit_cameras((0.5, 0.5), 0.3, 0.2)
+
+    # Old radius: the finger survives the opening
+    old = trim_mesh_edges(plane, cameras, outline_open=8)
+    old_kept = np.asarray(old.vertices)[np.asarray(old.triangles)].mean(axis=1)
+    assert old_kept[:, 0].max() > 0.95
+
+    # Default radius: the finger is cut back to the disc
+    trimmed = trim_mesh_edges(plane, cameras)
+    kept = np.asarray(trimmed.vertices)[np.asarray(trimmed.triangles)].mean(axis=1)
+    assert np.linalg.norm(kept[:, :2] - 0.5, axis=1).max() < 0.3 + 3 * step
+    assert len(kept) > 0.95 * disc.sum()
+
+
+def test_trim_mesh_edges_keeps_the_thin_strip_between_a_hole_and_the_rim():
+    """A 30-cell hole 10 cells inside a disc's rim stays a hole: the opening does not breach the strip."""
+    plane = _dense_plane(n=100)
+    faces = np.asarray(plane.triangles)
+    center = np.asarray(plane.vertices)[faces].mean(axis=1)
+    radius = np.linalg.norm(center[:, :2] - 0.5, axis=1)
+    hole = np.linalg.norm(center[:, :2] - (0.65, 0.5), axis=1) < 0.15
+    ring = (radius < 0.4) & ~hole
+    plane.triangles = o3d.utility.Vector3iVector(faces[ring])
+
+    trimmed = trim_mesh_edges(plane, _orbit_cameras((0.5, 0.5), 0.4, 0.2))
+    assert len(trimmed.triangles) > 0.97 * ring.sum()
+    assert len(_loop_perimeters(trimmed)) == 2
+
+
 def test_make_convex_hull_shortens_the_outline():
     scene = _ground_scene()
     assert (

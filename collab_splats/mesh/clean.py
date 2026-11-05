@@ -287,20 +287,22 @@ def trim_mesh_edges(
     mesh: o3d.geometry.TriangleMesh,
     c2w: np.ndarray,
     *,
-    outline_open: int = 8,
+    outline_open: int = 25,
     min_up_cos: float = 0.7,
 ) -> o3d.geometry.TriangleMesh:
     """
     Cut the ragged outer edge: rim-connected regions outside the smoothed top-down outline.
 
-    - outline: the mesh's coverage mask in the top-down image, closed, opened, largest region, holes filled
+    - outline: top-down coverage closed, holes filled, opened, blurred, largest region
+    - opening at outline_open cells removes fingers up to about twice that wide
     - a region outside the outline survives unless it is edge-connected to the outer rim
     - only faces are removed; vertices and their colors are kept as they are
 
     Args:
         mesh: input mesh; not modified.
         c2w: see make_convex_hull.
-        outline_open: opening radius that smooths the outline, cells of the median edge length.
+        outline_open: opening radius that smooths the outline, cells of the median edge length;
+            also sets the blur, sigma outline_open / 3.
         min_up_cos: see make_convex_hull.
 
     Returns:
@@ -316,15 +318,19 @@ def trim_mesh_edges(
     xy = ((verts - center) @ frame.T)[:, :2]
     lo, shape = _ground_image_bounds(xy, res, margin=outline_open)
 
-    # Faces whose centroid falls outside the smoothed outline
-    outline = cv2.morphologyEx(
-        _mesh_coverage_mask(xy, faces, lo, res, shape),
-        cv2.MORPH_CLOSE,
-        _filled_circle(3),
-    )
+    # Faces whose centroid falls outside the smoothed outline; holes fill first so the opening keeps their rims
     outline = _keep_largest_region_fill_holes(
-        cv2.morphologyEx(outline, cv2.MORPH_OPEN, _filled_circle(outline_open))
+        cv2.morphologyEx(
+            _mesh_coverage_mask(xy, faces, lo, res, shape),
+            cv2.MORPH_CLOSE,
+            _filled_circle(3),
+        )
     )
+    outline = cv2.morphologyEx(outline, cv2.MORPH_OPEN, _filled_circle(outline_open))
+
+    # Blur and re-threshold so the outline curves smoothly between the opening's arcs
+    blurred = cv2.GaussianBlur(outline.astype(np.float32), (0, 0), outline_open / 3)
+    outline = _keep_largest_region_fill_holes((blurred > 127).astype(np.uint8) * 255)
     center_px = _ground_xy_to_pixel(xy[faces].mean(axis=1), lo, res)
     outside = outline[center_px[:, 1], center_px[:, 0]] == 0
     mmesh = to_meshlib(mesh)
@@ -425,7 +431,7 @@ def make_convex_hull(
     c2w: np.ndarray,
     *,
     hull_round: int = 20,
-    outline_open: int = 8,
+    outline_open: int = 25,
     bridge_radius: float = 3.0,
     min_piece_faces: int = 1000,
     min_up_cos: float = 0.7,

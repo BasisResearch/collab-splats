@@ -297,7 +297,50 @@ def create_tsdf_mesh(
         w_min,
         len(mesh.vertices),
     )
-    return mesh
+    return _canonical_order(mesh)
+
+
+def _canonical_order(mesh: o3d.geometry.TriangleMesh) -> o3d.geometry.TriangleMesh:
+    """
+    Same mesh with vertices sorted by position and faces sorted by their vertex indices.
+
+    - Open3D's CUDA hashmap places blocks in a run-dependent order, so extraction order varies
+    - downstream cleanup is order-sensitive; a fixed order makes the mesh stage repeatable
+    - each face is rotated to start at its smallest index, which keeps its winding
+    """
+    if not len(mesh.vertices):
+        return mesh
+
+    v = np.asarray(mesh.vertices)
+    f = np.asarray(mesh.triangles).astype(np.int64)
+    normals = np.asarray(mesh.vertex_normals)
+    colors = np.asarray(mesh.vertex_colors)
+
+    # Vertex order: position first, then normal and color to break ties
+    keys = [v[:, 2], v[:, 1], v[:, 0]]
+    if len(colors):
+        keys = [colors[:, 2], colors[:, 1], colors[:, 0], *keys]
+    if len(normals):
+        keys = [normals[:, 2], normals[:, 1], normals[:, 0], *keys]
+    order = np.lexsort(keys)
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+
+    # Faces: remap, rotate smallest index first, then sort rows
+    f = rank[f]
+    start = np.argmin(f, axis=1)[:, None]
+    f = np.take_along_axis(f, (start + np.arange(3)) % 3, axis=1)
+    f = f[np.lexsort(f.T[::-1])]
+
+    out = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(v[order]),
+        o3d.utility.Vector3iVector(f.astype(np.int32)),
+    )
+    if len(normals):
+        out.vertex_normals = o3d.utility.Vector3dVector(normals[order])
+    if len(colors):
+        out.vertex_colors = o3d.utility.Vector3dVector(colors[order])
+    return out
 
 
 ########################################################################

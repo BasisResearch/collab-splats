@@ -576,3 +576,68 @@ def test_create_tsdf_mesh_ground_tiles_to_the_single_grid_mesh(monkeypatch, capl
     single_v = np.unique(np.round(np.asarray(single.vertices), 6), axis=0)
     tiled_v = np.unique(np.round(np.asarray(tiled.vertices), 6), axis=0)
     assert np.array_equal(single_v, tiled_v)
+
+
+def test_canonical_order_is_independent_of_input_order():
+    """
+    A mesh and a shuffled copy of it come out with identical arrays, winding kept.
+    """
+    depths, rgbs, c2w, K = _views()
+    mesh = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        K,
+        weights=np.ones_like(depths),
+        voxel_size=0.02,
+        sdf_trunc=0.06,
+    )
+    rng = np.random.default_rng(0)
+
+    # Shuffle vertices (remapping faces), faces, and each face's starting corner
+    v = np.asarray(mesh.vertices)
+    f = np.asarray(mesh.triangles)
+    perm = rng.permutation(len(v))
+    inv = np.argsort(perm)
+    f_shuffled = inv[f][rng.permutation(len(f))]
+    f_shuffled = np.roll(f_shuffled, 1, axis=1)
+    shuffled = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(v[perm]), o3d.utility.Vector3iVector(f_shuffled)
+    )
+    shuffled.vertex_normals = o3d.utility.Vector3dVector(np.asarray(mesh.vertex_normals)[perm])
+    shuffled.vertex_colors = o3d.utility.Vector3dVector(np.asarray(mesh.vertex_colors)[perm])
+
+    a = tsdf._canonical_order(mesh)
+    b = tsdf._canonical_order(shuffled)
+
+    np.testing.assert_array_equal(np.asarray(a.vertices), np.asarray(b.vertices))
+    np.testing.assert_array_equal(np.asarray(a.triangles), np.asarray(b.triangles))
+    np.testing.assert_array_equal(np.asarray(a.vertex_normals), np.asarray(b.vertex_normals))
+    np.testing.assert_array_equal(np.asarray(a.vertex_colors), np.asarray(b.vertex_colors))
+
+    # Same oriented triangles as the input
+    def oriented(m):
+        tri = np.asarray(m.vertices)[np.asarray(m.triangles)]
+        normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        return np.sort(np.round(np.c_[tri.mean(1), normals], 9), axis=0)
+
+    np.testing.assert_allclose(oriented(a), oriented(mesh), atol=1e-12)
+
+
+def test_create_tsdf_mesh_returns_vertices_in_sorted_order():
+    """
+    Output vertices are lexicographically sorted by position, so GPU hashmap order cannot leak.
+    """
+    depths, rgbs, c2w, K = _views()
+    mesh = create_tsdf_mesh(
+        depths,
+        rgbs,
+        c2w,
+        K,
+        weights=np.ones_like(depths),
+        voxel_size=0.02,
+        sdf_trunc=0.06,
+    )
+    v = np.asarray(mesh.vertices)
+    order = np.lexsort(v.T[::-1])
+    np.testing.assert_array_equal(order, np.arange(len(v)))

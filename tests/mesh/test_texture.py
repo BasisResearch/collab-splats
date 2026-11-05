@@ -282,6 +282,71 @@ def test_project_images_to_texture_back_faces_get_nothing():
     assert albedo.max() == 0  # nothing seen, so the fill has nothing to spread
 
 
+######## _fill_unseen_faces
+
+
+def _strip(n_quads):
+    """Row of unit quads along x, two faces each: faces 2i, 2i+1 make quad i."""
+    xs = np.arange(n_quads + 1, dtype=float)
+    verts = np.concatenate(
+        [
+            np.stack([xs, np.zeros_like(xs), xs * 0], 1),
+            np.stack([xs, xs * 0 + 1, xs * 0], 1),
+        ]
+    )
+    top = n_quads + 1
+    faces = np.concatenate(
+        [[[i, i + 1, top + i], [i + 1, top + i + 1, top + i]] for i in range(n_quads)]
+    )
+    return verts, faces
+
+
+def test_fill_unseen_faces_takes_the_mesh_neighbor_color_not_the_atlas_mean():
+    """
+    Unseen quad between a red and a dark quad takes their mean; an unseen quad cut off takes the seen mean.
+
+    - quads: 0 red, 1 unseen, 2 dark, 3 blue; quad 5 unseen and not connected to anything seen
+    """
+    verts, faces = _strip(6)
+    faces = np.concatenate([faces[:8], faces[10:]])  # drop quad 4: quad 5 is cut off
+    texel_face = np.repeat(np.arange(len(faces)), 4)
+    quad_color = {0: [1, 0, 0], 2: [0.1, 0.1, 0.1], 3: [0, 0, 1]}
+    color = np.zeros((len(texel_face), 3))
+    hit = np.zeros(len(texel_face), dtype=bool)
+
+    for q, c in quad_color.items():
+        on = texel_face // 2 == q
+        color[on], hit[on] = c, True
+
+    out, known = texture._fill_unseen_faces(color, hit, texel_face, verts, faces)
+
+    assert known.all()
+    np.testing.assert_allclose(out[texel_face // 2 == 1], [[0.55, 0.05, 0.05]] * 8)
+    np.testing.assert_allclose(out[texel_face // 2 == 4], [color[hit].mean(0)] * 8)
+    np.testing.assert_array_equal(out[hit], color[hit])  # seen texels untouched
+
+
+def test_fill_unseen_faces_groups_through_faces_that_own_no_texel():
+    """
+    A low-density unseen patch whose faces mostly own no texel still takes its seen neighbor's color.
+
+    - quads: 0 red, 1 unseen with no texels, 2 unseen with texels; quad 2 touches red only through quad 1
+    - quad 4 blue and cut off, so the seen mean (the fallback) is purple, not red
+    """
+    verts, faces = _strip(5)
+    faces = np.concatenate([faces[:6], faces[8:]])  # drop quad 3
+    texel_face = np.repeat([0, 1, 4, 5, 6, 7], 4)
+    hit = (texel_face < 2) | (texel_face > 5)
+    color = np.zeros((len(texel_face), 3))
+    color[texel_face < 2] = [1.0, 0, 0]
+    color[texel_face > 5] = [0, 0, 1.0]
+
+    out, known = texture._fill_unseen_faces(color, hit, texel_face, verts, faces)
+
+    assert known.all()
+    np.testing.assert_allclose(out[(texel_face >= 4) & ~hit], [[1.0, 0, 0]] * 8)
+
+
 ######## _color_correction
 
 

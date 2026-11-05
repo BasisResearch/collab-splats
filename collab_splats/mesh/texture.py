@@ -135,7 +135,7 @@ def unwrap_view_charts(
     tile_m: float = 0.5,
     pad: int = 1,
     min_owned: float = 0.5,
-    unseen_gain: float = 0.25,
+    unseen_gain: float = 0.0625,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     UV atlas whose charts are the source images themselves.
@@ -144,7 +144,7 @@ def unwrap_view_charts(
     - the z-buffer gives each pixel to one face, so faces in one camera chart cannot overlap
     - faces no view fully sees get one flat patch per connected group, along its mean normal
     - flipped or overwritten faces regroup into flat patches the same way; any still broken become single charts
-    - unseen patches hold only push-pull fill, so they pack at unseen_gain of the seen texel density
+    - unseen patches hold mostly one flat neighbor color, so they pack at unseen_gain of the seen texel density
 
     Args:
         mesh: prepare_mesh output.
@@ -544,7 +544,7 @@ def project_images_to_texture(
     """
     Visibility-weighted projection of images into a mesh's UV atlas.
 
-    - texels no view reaches take a push-pull fill from their seen surroundings
+    - unseen faces take their seen mesh neighbors' color (_fill_unseen_faces); other gaps push-pull
     - a hole-filled mesh hides its own observed surface, so pass the pre-fill mesh as occluder
     - view_ratio 1.0 is single-best-view (sharpest, seam-prone); large values average everything
     - each image splits into a blurred base (blur_pix_sigma) and the detail left over
@@ -581,6 +581,7 @@ def project_images_to_texture(
     attr, _ = dr.interpolate(torch.from_numpy(corners).cuda()[None], rast, tri)
     texels = attr[0][covered]
     points, dirs = texels[:, :3], F.normalize(texels[:, 3:], dim=1)
+    rast_face = rast[0, ..., 3].long()
     del rast, attr, texels
 
     # Mesh whose per-view depth render decides occlusion; a separate occluder wins when given
@@ -657,9 +658,89 @@ def project_images_to_texture(
         100 * (1 - float(seen.float().mean())),
     )
 
-    # Fill everything no view reached, then quantize
+    # Faces no view reached take their seen neighbors' color, not the atlas-wide fill
+    texel_face = (rast_face[covered] - 1).cpu().numpy()
+    flat, known = _fill_unseen_faces(
+        color.clamp(0, 1).cpu().numpy(), hit.cpu().numpy(), texel_face, verts, faces
+    )
+    albedo[covered] = torch.from_numpy(flat).cuda()
+    seen[covered] = torch.from_numpy(known).cuda()
+
+    # Fill what is left (partly seen faces, gutters), then quantize
     albedo = fill_missing_pixels(albedo.cpu().numpy(), seen.cpu().numpy())
     return to_uint8_hwc(albedo, channels_first=False)
+
+
+def _fill_unseen_faces(
+    color: np.ndarray,
+    hit: np.ndarray,
+    texel_face: np.ndarray,
+    verts: np.ndarray,
+    faces: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    One flat color per connected group of unseen faces: the mean of the seen faces bordering it.
+
+    - push-pull in atlas space paints unseen patches the atlas-wide mean, not their surroundings
+    - unseen face: no texel any view reached, including faces too small to own a texel; they keep groups connected
+    - border faces weighted by world area; a group with no seen border takes the mean seen color
+    - color, hit, texel_face: per covered texel; returns color and hit with the unseen faces' texels filled
+    """
+    n_faces = len(faces)
+
+    # Per-face mean of seen texels
+    seen_face = texel_face[hit]
+    count = np.bincount(seen_face, minlength=n_faces)
+    face_color = (
+        np.stack([np.bincount(seen_face, color[hit, i], n_faces) for i in range(3)], 1)
+        / np.maximum(count, 1)[:, None]
+    )
+    unseen = count == 0
+
+    if not unseen.any() or not hit.any():
+        return color, hit
+
+    # Connected groups of unseen faces
+    pairs = adjacent_face_pairs(faces, len(verts))
+    inner = pairs[unseen[pairs].all(1)]
+    graph = coo_matrix(
+        (np.ones(len(inner)), (inner[:, 0], inner[:, 1])), shape=(n_faces, n_faces)
+    )
+    group = connected_components(graph, directed=False)[1]
+
+    # Area-weighted seen border color per group
+    fv = verts[faces]
+    area = 0.5 * np.linalg.norm(
+        np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0]), axis=1
+    )
+    border = pairs[unseen[pairs].sum(1) == 1]
+    inside = np.where(unseen[border[:, 0]], border[:, 0], border[:, 1])
+    outside = np.where(unseen[border[:, 0]], border[:, 1], border[:, 0])
+    weight = np.bincount(group[inside], area[outside], n_faces)
+    group_color = (
+        np.stack(
+            [
+                np.bincount(
+                    group[inside], area[outside] * face_color[outside, i], n_faces
+                )
+                for i in range(3)
+            ],
+            1,
+        )
+        / np.maximum(weight, 1e-30)[:, None]
+    )
+    group_color[weight == 0] = color[hit].mean(0)
+
+    # Paint every texel of an unseen face its group's color
+    flat = unseen[texel_face]
+    color = color.copy()
+    color[flat] = group_color[group[texel_face[flat]]]
+    logger.info(
+        "unseen faces: %d in %d groups, flat neighbor color",
+        int(unseen.sum()),
+        len(np.unique(group[unseen])),
+    )
+    return color, hit | flat
 
 
 def _color_correction(color: torch.Tensor, brightness: float | None) -> torch.Tensor:

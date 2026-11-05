@@ -135,6 +135,7 @@ def unwrap_view_charts(
     tile_m: float = 0.5,
     pad: int = 1,
     min_owned: float = 0.5,
+    unseen_gain: float = 0.25,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     UV atlas whose charts are the source images themselves.
@@ -143,6 +144,7 @@ def unwrap_view_charts(
     - the z-buffer gives each pixel to one face, so faces in one camera chart cannot overlap
     - faces no view fully sees get one flat patch per connected group, along its mean normal
     - flipped or overwritten faces regroup into flat patches the same way; any still broken become single charts
+    - unseen patches hold only push-pull fill, so they pack at unseen_gain of the seen texel density
 
     Args:
         mesh: prepare_mesh output.
@@ -158,6 +160,7 @@ def unwrap_view_charts(
         tile_m: charts are cut into tiles of this world size, so no box spans the atlas.
         pad: gutter texels around each chart box.
         min_owned: a face owning under this share of its expected texels is overwritten.
+        unseen_gain: linear texel density of unseen patches relative to seen charts; 1.0 = equal.
 
     Returns:
         (F, 3, 2) float32 UVs in [0, 1] with v up, and (C, 4) chart boxes x, y, w, h in texels.
@@ -195,23 +198,26 @@ def unwrap_view_charts(
     patch = _flat_patches(uv, fv, fn, unseen, pairs)
     logger.info("view charts: %d of %d faces unseen", int(unseen.sum()), n_faces)
 
-    # Pack: chart key is the label view, or the plane patch for unseen faces
+    # Pack: chart key is the label view, or the plane patch for unseen faces at unseen_gain
     key = np.where(unseen, n_views + patch, labels)
-    uvs, chart, boxes = _pack_charts(uv, key, area, pairs, tile_m, pad, tex_size)
+    gain = np.where(unseen, unseen_gain, 1.0)
+    uvs, chart, boxes = _pack_charts(uv, key, area, gain, pairs, tile_m, pad, tex_size)
     bad = _find_broken_faces(uvs, chart, unseen, tex_size, min_owned)
 
     # Broken faces regroup into flat patches, so neighbors keep one chart instead of a seam each
     if bad.any():
         patch = _flat_patches(uv, fv, fn, bad, pairs)
         key = np.where(bad, n_views + n_faces + patch, key)
-        uvs, chart, boxes = _pack_charts(uv, key, area, pairs, tile_m, pad, tex_size)
+        uvs, chart, boxes = _pack_charts(
+            uv, key, area, gain, pairs, tile_m, pad, tex_size
+        )
         bad = _find_broken_faces(uvs, chart, unseen | bad, tex_size, min_owned)
 
     # Faces still broken become single flat charts; repack once more
     if bad.any():
         uv[bad] = _plane_uv(fv[bad] - fv[bad][:, :1], fn[bad])
         key = np.where(bad, n_views + 2 * n_faces + np.arange(n_faces), key)
-        uvs, _, boxes = _pack_charts(uv, key, area, pairs, tile_m, pad, tex_size)
+        uvs, _, boxes = _pack_charts(uv, key, area, gain, pairs, tile_m, pad, tex_size)
 
     return uvs, boxes
 
@@ -375,6 +381,7 @@ def _pack_charts(
     uv: np.ndarray,
     key: np.ndarray,
     area: np.ndarray,
+    gain: np.ndarray,
     pairs: np.ndarray,
     tile_m: float,
     pad: int,
@@ -383,6 +390,7 @@ def _pack_charts(
     """
     Charts from (key, adjacency), tiled, scaled to one texel density, rotated, shelf-packed.
 
+    - gain: per-face linear density factor; a chart takes the smallest of its faces'
     - returns (F, 3, 2) float32 UVs with v up, chart id per face, and (C, 4) boxes x, y, w, h
     """
     n_faces = len(key)
@@ -398,8 +406,10 @@ def _pack_charts(
     chart = _same_key_components(tile.ravel(), pairs, n_faces)
     n_charts = int(chart.max()) + 1
 
-    # World-unit corners, centered per chart
-    scale = _chart_world_scale(chart, uv_area, area)
+    # World-unit corners scaled by each chart's gain, centered per chart
+    chart_gain = np.ones(n_charts)
+    np.minimum.at(chart_gain, chart, gain)
+    scale = _chart_world_scale(chart, uv_area, area) * chart_gain
     flat = (uv * scale[chart][:, None, None]).reshape(-1, 2)
     cc = np.repeat(chart, 3)
     mean = (

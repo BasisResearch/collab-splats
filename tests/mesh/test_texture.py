@@ -93,24 +93,47 @@ def _two_planes(n=10):
     return top + bottom
 
 
-@cuda
-def test_unwrap_view_charts_uvs_in_unit_square_at_one_texel_density():
-    mesh = _two_planes()
-    c2w, K = _camera()
-    uv, boxes = unwrap_view_charts(mesh, c2w, K, (128, 128), tex_size=256)
-    assert uv.shape == (len(mesh.triangles), 3, 2)
-    assert uv.min() >= 0.0 and uv.max() <= 1.0
-    assert len(boxes) >= 2  # at least the seen and the hidden plane
-
-    # Seen faces (camera chart) and hidden faces (flat patch) share one texel density
+def _texel_density(mesh, uv):
+    """Atlas area over world area per face."""
     fv = np.asarray(mesh.vertices)[np.asarray(mesh.triangles)]
     world = 0.5 * np.linalg.norm(
         np.cross(fv[:, 1] - fv[:, 0], fv[:, 2] - fv[:, 0]), axis=1
     )
     e1, e2 = uv[:, 1] - uv[:, 0], uv[:, 2] - uv[:, 0]
-    atlas = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e2[:, 0] * e1[:, 1])
-    ratio = atlas / world
+    return 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e2[:, 0] * e1[:, 1]) / world
+
+
+@cuda
+def test_unwrap_view_charts_uvs_in_unit_square_at_one_texel_density():
+    mesh = _two_planes()
+    c2w, K = _camera()
+    uv, boxes = unwrap_view_charts(
+        mesh, c2w, K, (128, 128), tex_size=256, unseen_gain=1.0
+    )
+    assert uv.shape == (len(mesh.triangles), 3, 2)
+    assert uv.min() >= 0.0 and uv.max() <= 1.0
+    assert len(boxes) >= 2  # at least the seen and the hidden plane
+
+    # Without a gain, seen faces (camera chart) and hidden faces (flat patch) share one density
+    ratio = _texel_density(mesh, uv)
     assert np.abs(ratio / np.median(ratio) - 1).max() < 0.02
+
+
+@cuda
+def test_unwrap_view_charts_shrinks_unseen_charts_by_gain():
+    mesh = _two_planes()
+    c2w, K = _camera()
+    uv, _ = unwrap_view_charts(mesh, c2w, K, (128, 128), tex_size=256, unseen_gain=0.25)
+
+    # Top plane sets the seen density; the hidden bottom plane gets gain² of it
+    ratio = _texel_density(mesh, uv)
+    half = len(ratio) // 2
+    dense = ratio[:half].max()
+    assert np.abs(ratio[half:] / dense - 0.25**2).max() < 0.01
+
+    # Every face is at one of the two densities (top faces not fully framed count as unseen)
+    rel = ratio / dense
+    assert np.minimum(np.abs(rel - 1), np.abs(rel - 0.25**2)).max() < 0.01
 
 
 def test_unwrap_view_charts_accepts_float32_cameras():

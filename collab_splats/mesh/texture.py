@@ -581,7 +581,7 @@ def project_images_to_texture(
     best = torch.full((len(points),), torch.inf, device="cuda")
 
     for k in range(len(rgbs)):
-        _, depth = _rasterize_view(ctx, verts_h, faces_t, w2c[k], K_t[k], height, width)
+        depth = _depth_view(ctx, verts_h, faces_t, w2c[k], K_t[k], height, width)
         px_size, _ = _visible_pixel_size(
             points, dirs, depth, w2c[k], K_t[k], occlusion_eps
         )
@@ -595,7 +595,7 @@ def project_images_to_texture(
     frame = torch.tensor([width - 1, height - 1], device="cuda")
 
     for k in range(len(rgbs)):
-        _, depth = _rasterize_view(ctx, verts_h, faces_t, w2c[k], K_t[k], height, width)
+        depth = _depth_view(ctx, verts_h, faces_t, w2c[k], K_t[k], height, width)
         px_size, pixels = _visible_pixel_size(
             points, dirs, depth, w2c[k], K_t[k], occlusion_eps
         )
@@ -781,6 +781,44 @@ def _rasterize_view(
     depth, _ = dr.interpolate(z[None], rast, faces)
     hit = rast[0, ..., 3] > 0
     return rast[0], depth[0, ..., 0] * hit
+
+
+# Faces per nvdiffrast draw; its CUDA rasterizer caps one draw at 2**24 subtriangles
+# (clipping can split a face into several), so stay well under it
+_MAX_FACES_PER_DRAW = 1 << 22
+
+
+def _depth_view(
+    ctx: dr.RasterizeCudaContext,
+    verts_h: torch.Tensor,
+    faces: torch.Tensor,
+    extrinsics: torch.Tensor,
+    K: torch.Tensor,
+    height: int,
+    width: int,
+) -> torch.Tensor:
+    """
+    Camera depth (H, W) of a mesh of any size in one view, 0 where empty.
+
+    - large meshes draw in face chunks; the nearest positive depth per pixel wins, same as one z-buffer
+    """
+    depth = None
+
+    for start in range(0, len(faces), _MAX_FACES_PER_DRAW):
+        chunk = faces[start : start + _MAX_FACES_PER_DRAW].contiguous()
+        _, d = _rasterize_view(ctx, verts_h, chunk, extrinsics, K, height, width)
+
+        if depth is None:
+            depth = d
+            continue
+
+        both = (depth > 0) & (d > 0)
+        depth = torch.where(both, torch.minimum(depth, d), torch.maximum(depth, d))
+
+    if depth is None:
+        return torch.zeros(height, width, device=verts_h.device)
+
+    return depth
 
 
 def _nearest_depth(depth: torch.Tensor, pixels: torch.Tensor) -> torch.Tensor:

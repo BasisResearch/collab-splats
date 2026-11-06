@@ -69,6 +69,7 @@ from collab_splats.pointcloud.utils import (
 from collab_splats.preproc import frames, get_video_info
 from collab_splats.preproc.qa import load_video_quality
 from collab_splats.preproc.sampling import (
+    check_keyframe_spacing,
     sample_fps,
     sample_optical_flow,
     sample_uniform,
@@ -941,8 +942,9 @@ class Reconstructor:
         else:
             frames.write_frames(self.images_dir, rgbs, idxs)
 
-        # Plot the quality report with the kept frames marked
+        # Plot the quality report with the kept frames marked; warn on too-sparse keyframes
         if report is not None:
+            check_keyframe_spacing(report, idxs)
             plot_photometric(report, self.images_dir.parent, selected=idxs)
             plot_motion(report, self.images_dir.parent, selected=idxs)
 

@@ -9,6 +9,7 @@ from collab_splats.preproc import sampling
 from collab_splats.preproc.qa import compute_video_quality
 from collab_splats.preproc.sampling import (
     _eligible,
+    check_keyframe_spacing,
     filter_frame_quality,
     sample_fps,
     sample_optical_flow,
@@ -493,15 +494,17 @@ def test_samplers_require_a_report(tiny_video):
 def test_public_api_surface():
     import collab_splats.preproc as preproc
 
-    # Exactly the 17 public names — viz is opt-in and must NOT be re-exported.
+    # Exactly the 18 public names — viz is opt-in and must NOT be re-exported.
     # The surface is the two-step contract: qa measures the whole video into a
     # report (compute_video_quality / load_video_quality), filter_frame_quality
-    # turns it into a usability mask, and the three samplers select from it.
+    # turns it into a usability mask, the three samplers select from it, and
+    # check_keyframe_spacing warns when the selection is too sparse to reconstruct.
     # frames.py's five flat functions are the images/ keyframe store itself.
     # iter_frames is public because it is the one streamed-decode entry point.
     assert set(preproc.__all__) == {
         "analysis_gray",
         "calibrate_camera",
+        "check_keyframe_spacing",
         "compute_video_quality",
         "extract_frame",
         "filter_frame_quality",
@@ -933,3 +936,44 @@ def test_decode_selection_rejects_non_positive_workers(tiny_video, workers):
             desc="t",
             workers=workers,
         )
+
+
+def _motion_report(translation_px: list, stride: int = 10) -> dict:
+    """
+    Report with one pair per stride frames and the given pair translations.
+    """
+    return {
+        "video": {"total_frames": stride * len(translation_px)},
+        "params": {"motion_stride": stride},
+        "pairs": {
+            "frame_idx_a": [i * stride for i in range(len(translation_px))],
+            "translation_px": translation_px,
+        },
+    }
+
+
+def test_check_keyframe_spacing_sums_pair_motion_between_keyframes(caplog):
+    # 10 px per 10-frame pair = 1 px/frame; keyframes 20 frames apart -> 20 px
+    report = _motion_report([10.0] * 10)
+    with caplog.at_level(logging.WARNING):
+        shift = check_keyframe_spacing(report, [0, 20, 40, 60])
+
+    assert shift == pytest.approx(20.0)
+    assert not caplog.records
+
+
+def test_check_keyframe_spacing_warns_when_keyframes_too_far_apart(caplog):
+    # 100 px per 10 frames; keyframes 20 frames apart -> 200 px, over the 150 default
+    report = _motion_report([100.0] * 10)
+    with caplog.at_level(logging.WARNING):
+        shift = check_keyframe_spacing(report, [0, 20, 40, 60])
+
+    assert shift == pytest.approx(200.0)
+    assert "keyframes move 200 px apart" in caplog.text
+
+
+def test_check_keyframe_spacing_unmatched_pairs_add_no_shift():
+    # The null middle pair (unmatched) contributes 0, not nan
+    report = _motion_report([10.0, None, 10.0])
+    assert check_keyframe_spacing(report, [0, 30]) == pytest.approx(20.0)
+    assert check_keyframe_spacing(report, [0]) == 0.0

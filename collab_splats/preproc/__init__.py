@@ -18,6 +18,7 @@ from collab_splats.preproc.qa import (
     load_video_quality,
 )
 from collab_splats.preproc.sampling import (
+    check_keyframe_spacing,
     filter_frame_quality,
     sample_fps,
     sample_optical_flow,
@@ -53,6 +54,7 @@ def __getattr__(name: str) -> object:
 __all__ = [
     "analysis_gray",
     "calibrate_camera",
+    "check_keyframe_spacing",
     "compute_video_quality",
     "extract_frame",
     "filter_frame_quality",

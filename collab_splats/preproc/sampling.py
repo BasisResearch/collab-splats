@@ -597,3 +597,53 @@ def sample_optical_flow(
             break
 
     return frames, records
+
+
+########################################################################
+# Keyframe spacing check
+########################################################################
+
+
+def check_keyframe_spacing(
+    report: dict, frame_idxs: Sequence[int], *, max_shift_px: float = 150.0
+) -> float:
+    """
+    Median image shift between consecutive keyframes; warns when it is too large to reconstruct.
+
+    - shift summed from the report's pair translation_px, spread evenly over each pair's frames
+    - px at the report's analysis width (480 default); unmatched pairs add no shift
+    - 150 px default: a scene that failed sat at 202 px; scenes that meshed at 28-93 px
+
+    Args:
+        report: a quality report from qa.compute_video_quality or qa.load_video_quality.
+        frame_idxs: selected source frame indices, ascending.
+        max_shift_px: median shift above which the warning fires.
+
+    Returns:
+        Median shift in px, or 0.0 for fewer than two keyframes.
+    """
+    if len(frame_idxs) < 2:
+        return 0.0
+
+    # Per-source-frame shift: each pair's translation over the frames it spans
+    pairs = report["pairs"]
+    stride = report["params"]["motion_stride"]
+    rate = np.zeros(report["video"]["total_frames"] + 1)
+
+    for a, t in zip(pairs["frame_idx_a"], pairs["translation_px"], strict=True):
+        if t is not None and np.isfinite(t):
+            rate[a : a + stride] = t / stride
+
+    # Shift between keyframes = cumulative shift difference
+    cumulative = np.concatenate([[0.0], np.cumsum(rate)])
+    shift = float(np.median(np.diff(cumulative[np.asarray(frame_idxs)])))
+
+    if shift > max_shift_px:
+        logger.warning(
+            "preproc: keyframes move %.0f px apart (median, max %.0f); views may not "
+            "overlap enough to reconstruct; try a shorter clip",
+            shift,
+            max_shift_px,
+        )
+
+    return shift

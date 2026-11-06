@@ -172,6 +172,19 @@ def test_clean_repair_mesh_drops_strays_and_fills_holes():
     assert _n_boundary_edges(cleaned) == 0
 
 
+@pytest.mark.parametrize("use_convex_hull", [False, True])
+def test_clean_repair_mesh_rejects_an_empty_mesh(use_convex_hull):
+    """
+    0 fused vertices -> ValueError naming the empty fusion, not an IndexError in the hull.
+    """
+    with pytest.raises(ValueError, match="0 vertices"):
+        clean_repair_mesh(
+            o3d.geometry.TriangleMesh(),
+            np.eye(4)[None],
+            use_convex_hull=use_convex_hull,
+        )
+
+
 def test_clean_repair_mesh_returns_the_floater_cut_surface_unfilled():
     mesh = _holed_sphere_with_strays()
     _, real = clean_repair_mesh(mesh, max_gap_frac=0.1, max_hole_perimeter_ratio=0.5)

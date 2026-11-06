@@ -73,8 +73,15 @@ def clean_repair_mesh(
         The cleaned mesh, and mesh itself after the floater cut: only fused faces, no hull or hole fill.
 
     Raises:
-        ValueError: use_convex_hull is on and c2w is None.
+        ValueError: mesh has no vertices, or use_convex_hull is on and c2w is None.
     """
+    # Empty fusion means the views never agreed on one surface; name it here, not in a hull step
+    if not len(mesh.vertices):
+        raise ValueError(
+            "clean_repair_mesh: fused mesh has 0 vertices; the views do not agree on one "
+            "surface (check BA dropped frames; keyframes may be too far apart for the motion)"
+        )
+
     real = remove_floaters(mesh, min_area_frac=min_area_frac, max_gap_frac=max_gap_frac)
     cleaned = real
 

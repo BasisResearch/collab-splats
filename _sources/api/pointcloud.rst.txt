@@ -45,6 +45,45 @@ Window solves:
   ``focal``, ``seconds``, ``gpu_max_mib``) land in the ``pointcloud.zarr`` attrs under
   ``window_ba``
 
+Refine diagnostics
+------------------
+
+``refine`` is on by default. At 300 frames the solve only fits with thinned tracks
+(``track_kwargs.seed_fraction``), and a weakly tied stretch of frames can then shift as a block and
+double surfaces in the mesh; check ``pose_delta`` below, and set ``enabled: false`` to skip it.
+
+Report-only; no threshold rejects a solve. ``colmap/refine.json`` gains ``diagnostics``:
+
+- ``solve_losses``: per solve, per-term ``start`` / ``end`` loss plus ``total``; photometric is a
+  seed-0 draw at each side's own poses, with its sample count ``n_photometric`` (compare per
+  sample); ``loss_history`` re-samples every pass, so it is not comparable step to step;
+  start vs end ``total`` not comparable when ``n_photometric`` differs (photometric is a sum over
+  the draw); the end draw picks photometric frame pairs from the final poses, so pairs as well as
+  visibility can differ
+- ``dropped_frames``: frames the inlier gate kept out of the last solve only; with
+  ``increment_size > 0`` they sit at their warm-start poses (earlier increments' output), not the
+  input poses
+- ``pose_delta``: per-frame rotation (deg) and camera shift over the input path length, after
+  the rigid alignment back onto the input poses; median / p95 / max
+- ``flatness``: smallest over largest principal extent of the cleaned points, before / after
+- ``focal``: always present; per-frame (fx+fy)/2 ``before`` / ``after``, ``median_before`` /
+  ``median_after``, ``max_rel_change`` (max abs(after - before) / before); with the defaults
+  (``shared_camera``, no ``refine_focal``) refine replaces each frame's focal by the scene mean
+
+``reconstruction_quality_report_pre_ba.json`` is the quality report on the unrefined arrays,
+beside the post-BA ``reconstruction_quality_report.json``. Both are cross-view consistency only:
+a self-consistent collapse passes both.
+
+Pre-BA report and snapshot caveats:
+
+- the pre-BA report's ``scene.zarr`` names ``pointcloud.zarr``, which holds post-BA arrays once
+  ``refine`` finishes; the kept snapshot, if any, is ``pointcloud_pre_ba.zarr``
+- ``pointcloud.bundle_adjustment.keep_pre_ba: true`` copies the zarr before the solve; a full
+  zarr per scene
+- re-running ``refine`` on an already-refined zarr (leaf ``--stages refine``): the "pre-BA"
+  report and snapshot hold the once-refined arrays, not the feedforward ones; refine logs a
+  warning when it removes an earlier snapshot
+
 Depth alignment (sfm path)
 --------------------------
 

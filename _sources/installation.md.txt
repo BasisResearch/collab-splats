@@ -25,6 +25,16 @@ The `loger` backend is a source clone, not a package: run `bash setup/loger.sh`.
 
 All later commands assume the venv is active (`source .venv/bin/activate`; the image: `/opt/venv/reconstruction`), or prefix them with `uv run`.
 
+## Hugging Face access
+
+The default pointcloud backend loads [facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega), a gated model; the optional `sam3` segmenter needs [facebook/sam3](https://huggingface.co/facebook/sam3). Every other model downloads without a token.
+
+1. Request access on the model page and wait for approval.
+2. Create a read token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+3. Run `hf auth login`, or put `HF_TOKEN=<your token>` in a `.env` file in the repo root (the `reconstruct` CLI reads it; in notebooks, export `HF_TOKEN` yourself).
+
+`hf auth login` stores the token under `$HF_HOME` (`/workspace/models` in the image, the mounted model cache), so it never enters the image. `reconstruct` checks access before preprocessing and stops with the repo URL when the token is missing or not approved; cached weights or a local `pointcloud.vggt_omega.model_path` skip the check.
+
 ## Semantics only
 
 Other projects can install just the semantics stack. It needs no CUDA toolkit and skips `bae`, `pycolmap`, `open3d`, `gsplat` and `collab-data`:
@@ -75,4 +85,3 @@ You provide these; `setup.sh` never installs system packages.
 - **build-essential** (gcc/g++) + a CUDA toolkit to compile the extensions.
 - **libsuitesparse-dev** for `scikit-sparse` (the `instantsfm` extra).
 - Optional: `ffmpeg` + `exiftool` for the curated-video scripts; `rclone` + `jq` for GCloud scenes.
-

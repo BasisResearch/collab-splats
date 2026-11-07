@@ -213,6 +213,9 @@ def test_clean_repair_preserves_vertex_colors():
 
 ######## make_convex_hull fixtures
 
+# TSDF voxel of _ground_scene: its edge length
+_VOXEL = 0.17
+
 
 def _ground_scene(n=140, res=0.17, upside_down=False):
     """Height-field ground at TSDF-like edge length: a raised box, a star-shaped outline, a slit; normals up."""
@@ -297,7 +300,7 @@ def _loop_perimeters(mesh):
 
 def test_make_convex_hull_then_fill_holes_leaves_one_manifold_piece_with_only_the_outer_rim():
     filled = fill_holes(
-        make_convex_hull(_ground_scene(), _orbit_cameras()),
+        make_convex_hull(_ground_scene(), _orbit_cameras(), _VOXEL),
         max_hole_perimeter_ratio=3.9,
     )
     assert len(_loop_perimeters(filled)) == 1
@@ -305,13 +308,61 @@ def test_make_convex_hull_then_fill_holes_leaves_one_manifold_piece_with_only_th
     assert _n_components(filled) == 1
 
 
-def test_make_convex_hull_adds_no_vertices():
-    # Ground comes from the volume now: the hull only cuts, trims and bridges
+def test_make_convex_hull_patches_the_ground_out_to_the_hull_and_no_further():
+    """The star outline's notches are ground gaps: the patch fills them at ground height, inside the hull."""
     scene = _ground_scene()
-    hull = make_convex_hull(scene, _orbit_cameras())
-    dist, _ = cKDTree(np.asarray(scene.vertices)).query(np.asarray(hull.vertices))
-    assert dist.max() < 1e-6
-    assert len(hull.triangles) < len(scene.triangles)
+    hull = make_convex_hull(scene, _orbit_cameras(), _VOXEL)
+    src = np.asarray(scene.vertices)
+    verts = np.asarray(hull.vertices)
+    dist, _ = cKDTree(src).query(verts)
+    added = verts[dist > 1e-6]
+    assert len(added) > 500
+    assert np.abs(added[:, 2]).max() < 3 * 0.17
+
+    # Inside the input's convex outline: the patch never grows the mesh past the hull
+    reach = np.linalg.norm(src[:, :2], axis=1).max()
+    assert np.linalg.norm(added[:, :2], axis=1).max() < reach
+
+
+def _plate_over_ground_gap(plate_z=1.5, n=140, res=0.17):
+    """Ground grid with a 10 x 3 m gap, and a 9 x 2 m up-facing plate plate_z above the gap."""
+    rows, cols = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    x = (cols - n / 2) * res
+    y = (rows - n / 2) * res
+    verts = np.stack([x, y, np.zeros_like(x)], axis=-1).reshape(-1, 3)
+    idx = (rows * n + cols)[:-1, :-1].reshape(-1)
+    quads = np.stack([idx, idx + 1, idx + n + 1, idx + n], axis=1)
+    faces = np.concatenate([quads[:, [0, 1, 2]], quads[:, [0, 2, 3]]])
+
+    # Disc of ground minus the gap; the plate reuses the grid, lifted
+    center = verts[faces].mean(axis=1)
+    gap = (np.abs(center[:, 0]) < 5) & (np.abs(center[:, 1]) < 1.5)
+    ground = faces[(np.linalg.norm(center[:, :2], axis=1) < 10) & ~gap]
+    plate = faces[(np.abs(center[:, 0]) < 4.5) & (np.abs(center[:, 1]) < 1.0)]
+    lifted = verts + [0.0, 0.0, plate_z]
+
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(np.concatenate([verts, lifted])),
+        o3d.utility.Vector3iVector(np.concatenate([ground, plate + len(verts)])),
+    )
+    mesh.vertex_colors = o3d.utility.Vector3dVector(np.full((2 * len(verts), 3), 0.5))
+    mesh.remove_unreferenced_vertices()
+    return mesh
+
+
+@pytest.mark.parametrize("voxel_size, blocked", [(_VOXEL, True), (0.001, False)])
+def test_make_convex_hull_patch_is_blocked_by_an_up_facing_surface_near_the_ground(
+    voxel_size, blocked
+):
+    """
+    A plate 1.5 m over a ground gap covers it within 80 voxels (13.6 m), not within 8 cm.
+    """
+    hull = make_convex_hull(_plate_over_ground_gap(), _orbit_cameras(), voxel_size)
+    verts = np.asarray(hull.vertices)
+    under = (
+        (np.abs(verts[:, 0]) < 4.3) & (np.abs(verts[:, 1]) < 0.8) & (verts[:, 2] < 1.0)
+    )
+    assert (under.sum() == 0) == blocked
 
 
 def test_bridge_mesh_edges_turns_a_narrow_inlet_into_an_interior_hole():
@@ -386,7 +437,7 @@ def test_trim_mesh_edges_keeps_the_thin_strip_between_a_hole_and_the_rim():
 def test_make_convex_hull_shortens_the_outline():
     scene = _ground_scene()
     assert (
-        _loop_perimeters(make_convex_hull(scene, _orbit_cameras()))[-1]
+        _loop_perimeters(make_convex_hull(scene, _orbit_cameras(), _VOXEL))[-1]
         < 0.8 * _loop_perimeters(scene)[-1]
     )
 
@@ -411,9 +462,9 @@ def test_find_ground_plane_warns_and_takes_the_largest_plane_without_ground(capl
 
 
 def test_make_convex_hull_is_the_same_either_way_up():
-    upright = make_convex_hull(_ground_scene(), _orbit_cameras())
+    upright = make_convex_hull(_ground_scene(), _orbit_cameras(), _VOXEL)
     flipped = make_convex_hull(
-        _ground_scene(upside_down=True), _flip_cameras(_orbit_cameras())
+        _ground_scene(upside_down=True), _flip_cameras(_orbit_cameras()), _VOXEL
     )
     flipped.rotate(np.diag([1.0, -1.0, -1.0]), center=(0, 0, 0))
     assert abs(len(flipped.triangles) - len(upright.triangles)) < 0.05 * len(
@@ -430,7 +481,7 @@ def test_make_convex_hull_is_the_same_either_way_up():
 def test_make_convex_hull_leaves_the_input_untouched():
     scene = _ground_scene()
     verts, faces = np.asarray(scene.vertices).copy(), np.asarray(scene.triangles).copy()
-    make_convex_hull(scene, _orbit_cameras())
+    make_convex_hull(scene, _orbit_cameras(), _VOXEL)
     np.testing.assert_array_equal(np.asarray(scene.vertices), verts)
     np.testing.assert_array_equal(np.asarray(scene.triangles), faces)
 
@@ -475,7 +526,9 @@ def test_find_ground_plane_finds_the_ground_on_a_straight_path():
 def test_clean_repair_mesh_runs_the_convex_hull_only_when_asked():
     default, _ = clean_repair_mesh(_ground_scene())
     off, _ = clean_repair_mesh(_ground_scene(), use_convex_hull=False)
-    on, _ = clean_repair_mesh(_ground_scene(), _orbit_cameras(), use_convex_hull=True)
+    on, _ = clean_repair_mesh(
+        _ground_scene(), _orbit_cameras(), _VOXEL, use_convex_hull=True
+    )
     np.testing.assert_array_equal(
         np.asarray(off.triangles), np.asarray(default.triangles)
     )
@@ -826,3 +879,40 @@ def test_build_volume_ground_is_none_without_weighted_depth():
     )
 
     assert ground is None
+
+
+######## remove_floaters keep_frac
+
+
+def test_remove_floaters_keep_frac_drops_a_small_piece():
+    """A small plate loose inside a plane's hole is dropped; the plane is kept whole."""
+    plane = _dense_plane(n=60)
+    faces = np.asarray(plane.triangles).copy()
+    center = np.asarray(plane.vertices)[faces].mean(axis=1)
+    radius = np.linalg.norm(center[:, :2] - 0.5, axis=1)
+    plane.triangles = o3d.utility.Vector3iVector(faces[radius > 0.1])
+
+    # Island: a copy of the hole's faces, lifted clear of the plane
+    island = o3d.geometry.TriangleMesh(plane)
+    island.triangles = o3d.utility.Vector3iVector(faces[radius < 0.05])
+    island.translate((0.0, 0.0, 0.05))
+    mesh = plane + island
+    assert _n_components(mesh) == 2
+
+    kept = remove_floaters(mesh, min_area_frac=0.0, max_gap_frac=np.inf, keep_frac=0.01)
+    assert _n_components(kept) == 1
+    assert len(kept.triangles) == len(plane.triangles)
+
+
+def test_remove_floaters_keeps_pieces_above_keep_frac():
+    """Two equal halves: neither is under 1% of the other, both stay."""
+    plane = _dense_plane(n=60)
+    faces = np.asarray(plane.triangles)
+    center = np.asarray(plane.vertices)[faces].mean(axis=1)
+    plane.triangles = o3d.utility.Vector3iVector(
+        faces[np.abs(center[:, 0] - 0.5) > 0.05]
+    )
+    kept = remove_floaters(
+        plane, min_area_frac=0.0, max_gap_frac=np.inf, keep_frac=0.01
+    )
+    assert _n_components(kept) == 2

@@ -51,9 +51,11 @@ from collab_splats.mesh import (
     compute_tsdf_voxel_size,
     create_texture_mesh,
     create_tsdf_mesh,
+    fill_holes,
     lift_weights,
     pixel_weights,
     prepare_mesh,
+    remove_floaters,
 )
 from collab_splats.pointcloud import BaseFeedforwardCreator, get_creator
 from collab_splats.pointcloud.base import PointcloudResult
@@ -1490,9 +1492,10 @@ class Reconstructor:
         - splats source: the checkpoint's own renders and poses; the splats stage is never auto-run
         - no confidence (sfm) or the splats source: unit weights, depth edges still dropped
         - use_convex_hull: build_volume_ground closes the unobserved ground inside the TSDF; the hull
-          then only cuts
-        - mask_sky zeroes sky depth on either source before fusion
-        - frames BA dropped (refine.json) stay out of calibration, fusion and texture
+          cuts and patches the ground gaps left, remove_floaters (keep_frac) then drops
+          loose patch pieces and fill_holes (3.9) closes where they were
+        - mask_sky zeroes sky depth on either source; frames BA dropped (refine.json) stay out of
+          calibration, fusion and texture
         - mesh.ply is the prepared mesh (filled, decimated, manifold); texture/ is its UV bake
 
         Raises:
@@ -1719,7 +1722,7 @@ class Reconstructor:
 
         # Clean; the floater-cut real surface comes back as the texture occluder
         cleaned, real = clean_repair_mesh(
-            mesh, c2w, use_convex_hull=cfg["use_convex_hull"]
+            mesh, c2w, voxel_size, use_convex_hull=cfg["use_convex_hull"]
         )
 
         # Fill, decimate and repair; the full-density cleaned mesh is freed before texturing
@@ -1730,6 +1733,15 @@ class Reconstructor:
             max_faces=cfg["max_faces"],
         )
         del cleaned
+
+        # Drop the loose pieces the ground patch strands, and fill where they were
+        if cfg["use_convex_hull"]:
+            prepared = remove_floaters(
+                prepared, min_area_frac=0.0, max_gap_frac=np.inf, keep_frac=0.01
+            )
+            prepared = fill_holes(
+                prepared, max_hole_perimeter_ratio=3.9, subdivide_fill=True
+            )
 
         # Optionally UV-unwrap the prepared mesh and project the fused views onto it
         if cfg["texture"]:

@@ -5,7 +5,8 @@ TSDF meshing from posed depth + RGB, then cleaning, decimation and texturing. Ev
 takes plain arrays, never a ``PointcloudResult``: only the caller knows which resolution grid
 it is on. ``collab_splats.mesh`` exports ``compute_tsdf_voxel_size``, ``calibrate_confidence``,
 ``pixel_weights``, ``lift_weights``, ``build_volume_ground``, ``solve_ground``,
-``VolumeGround``, ``create_tsdf_mesh``, ``clean_repair_mesh``, ``prepare_mesh`` and ``create_texture_mesh``. The pipeline runs it as
+``VolumeGround``, ``create_tsdf_mesh``, ``clean_repair_mesh``, ``prepare_mesh``, ``remove_floaters``,
+``fill_holes`` and ``create_texture_mesh``. The pipeline runs it as
 the ``mesh`` stage (``mesh:`` in the yaml, ``--stages mesh``; keys in :doc:`/configuration`);
 the ``04_mesh`` tutorial walks through fusion, cleaning and texturing.
 
@@ -183,7 +184,7 @@ segmenter fires, before fusion, on both sources:
 Cleaning
 --------
 
-``clean_repair_mesh(mesh, c2w=None, ..., use_convex_hull=False)`` returns ``(cleaned, real)``:
+``clean_repair_mesh(mesh, c2w=None, voxel_size=None, ..., use_convex_hull=False)`` returns ``(cleaned, real)``:
 ``remove_floaters`` (in place), optionally ``make_convex_hull``, then ``fill_holes``. ``real``
 is the mesh right after the floater cut, the texture occluder. Cleaning is not optional in the
 pipeline; ``remove_floaters``, ``make_convex_hull``, ``fill_holes``, ``trim_mesh_edges`` and
@@ -210,14 +211,21 @@ which ignores a stray far component.
   closed surface spans a fraction, so a sphere with one hole still gets it filled.
 
 **Convex hull** (``mesh.use_convex_hull``, ``true`` in ``configs/base.yaml``; set ``false``
-indoors and for objects). ``make_convex_hull(mesh, c2w)`` finds the ground plane from the camera
+indoors and for objects). ``make_convex_hull(mesh, c2w, voxel_size)`` finds the ground plane from the camera
 path and right vectors. When no RANSAC plane faces the camera up, the largest plane is the
 ground and a warning is logged; steps are in its docstring below.
 
 - ``make_convex_hull`` cuts the mesh to a rounded convex hull of its ground, trims the ragged
-  outer edge, drops small pieces, makes it manifold and bridges inlets. It adds no vertices: the
-  ground inside the hull comes from the volume ground at fusion. A stitched ground patch was
-  rejected; it attached the ground to random high points.
+  outer edge, patches the ground gaps left inside the hull, drops small pieces, makes it
+  manifold and bridges inlets.
+- The volume ground closes most of the ground at fusion; the patch closes what it leaves
+  (decision 030). The patch is an obstacle membrane over the mesh's lowest height per cell
+  (``kappa`` 30), solved on the gap cells and seamed to the up-facing ground rim. A cell counts
+  as covered, so not patched, when a ground face (within 3 cells of the membrane) or an
+  up-facing face within 80 voxels of it lies over it: a low step or curb top blocks the patch
+  instead of getting a second surface under it. The old stitched patch was rejected because it
+  anchored on any rim vertex and attached the ground to random high points. This patch anchors
+  only on rim vertices that are on the membrane's ground band and face up.
 
 Preparing mesh.ply
 ~~~~~~~~~~~~~~~~~~
@@ -240,7 +248,10 @@ voxel_size, ...)`` returns a new mesh and leaves its input unmodified:
    meshlib ``relaxKeepVolume``, then ``make_manifold``. Last, so decimation never sees it;
    vertices move, faces stay.
 
-Filling only after decimation leaves fold-over faces.
+Filling only after decimation leaves fold-over faces. With the convex hull on, the stage then
+runs ``remove_floaters`` again with only ``keep_frac`` 0.01: pieces under 1% of the largest
+piece's faces go, usually patch fragments left loose; a second ``fill_holes`` (``3.9``,
+subdivided) then closes the openings they leave.
 
 .. automodule:: collab_splats.mesh.clean
    :members:

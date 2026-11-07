@@ -13,7 +13,9 @@ from collab_splats.mesh.clean import (
     VolumeGround,
     build_volume_ground,
     clean_repair_mesh,
+    fill_holes,
     prepare_mesh,
+    remove_floaters,
     solve_ground,
 )
 from collab_splats.mesh.texture import create_texture_mesh
@@ -33,8 +35,10 @@ __all__ = [
     "compute_tsdf_voxel_size",
     "create_texture_mesh",
     "create_tsdf_mesh",
+    "fill_holes",
     "lift_weights",
     "pixel_weights",
     "prepare_mesh",
+    "remove_floaters",
     "solve_ground",
 ]

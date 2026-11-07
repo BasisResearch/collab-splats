@@ -1161,6 +1161,8 @@ def _run_prepared_mesh(tmp_path, monkeypatch, texture, texture_error=None):
     prepared = o3d.geometry.TriangleMesh.create_box()
     prepare = MagicMock(return_value=prepared)
     monkeypatch.setattr(R, "prepare_mesh", prepare)
+    monkeypatch.setattr(R, "remove_floaters", lambda mesh, **kwargs: mesh)
+    monkeypatch.setattr(R, "fill_holes", lambda mesh, **kwargs: mesh)
     texture_mesh = MagicMock(side_effect=texture_error)
     monkeypatch.setattr(R, "create_texture_mesh", texture_mesh)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
@@ -1176,7 +1178,7 @@ def test_mesh_writes_the_prepared_mesh_without_texture(tmp_path, monkeypatch):
         tmp_path, monkeypatch, texture=False
     )
 
-    fused_arg, c2w = R.clean_repair_mesh.call_args.args
+    fused_arg, c2w, _ = R.clean_repair_mesh.call_args.args
     assert fused_arg is fused
     assert c2w.shape[1:] == (4, 4)
     assert prepare.call_args.args == (cleaned,)

@@ -48,9 +48,9 @@ Window solves:
 Refine diagnostics
 ------------------
 
-``refine`` is off by default (``bundle_adjustment.enabled: false``): at 300 frames the solve only
-fits with thinned tracks (``track_kwargs.seed_fraction``), and a weakly tied stretch of frames can
-then shift as a block and double surfaces in the mesh. Opt in with ``enabled: true``.
+``refine`` is on by default. At 300 frames the solve only fits with thinned tracks
+(``track_kwargs.seed_fraction``), and a weakly tied stretch of frames can then shift as a block and
+double surfaces in the mesh; check ``pose_delta`` below, and set ``enabled: false`` to skip it.
 
 Report-only; no threshold rejects a solve. ``colmap/refine.json`` gains ``diagnostics``:
 

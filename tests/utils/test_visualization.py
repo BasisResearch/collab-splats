@@ -327,9 +327,16 @@ def test_camera_view_keys_reset_apply_view_defaults():
     assert view["azimuth"] == 0 and view["elevation"] == 0
 
 
-def test_camera_view_looks_from_the_side():
-    # Walking along +x and looking along +z: the side eye sits along x from the focal point
+def test_camera_view_looks_from_behind_the_cameras():
+    # Looking along +z: the default eye sits behind the focal point, at lower z
     view = camera_view(_walk_poses())
+    offset = np.asarray(view["position"]) - np.asarray(view["focal_point"])
+    assert offset[2] < 0 and abs(offset[2]) > abs(offset[0])
+
+
+def test_camera_view_azimuth_90_looks_from_the_side():
+    # Walking along +x and looking along +z: the side eye sits along x from the focal point
+    view = camera_view(_walk_poses(), azimuth_deg=90)
     offset = np.asarray(view["position"]) - np.asarray(view["focal_point"])
     assert abs(offset[0]) > abs(offset[2])
 

@@ -6,6 +6,7 @@ Lift per-frame 2D masks to point groups that stay consistent across views.
 - cannot-link: a group never holds two masks of one frame unless they are near-duplicates
 - optional features veto merges whose groups disagree and weight the fill of unclaimed points
 - each point keeps its smallest group; a group's parent is the smallest group that contains it
+- fill reaches only a few point spacings; unmasked regions left over become their own groups
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
+import scipy.sparse.csgraph as csgraph
 import torch
 import torch.nn.functional as F
 from scipy.spatial import cKDTree
@@ -40,10 +42,10 @@ class SegmentGroups:
     """
     View-consistent point groups.
 
-    - labels: (P,) int32 smallest group per point; -1 only when no mask claimed any point
+    - labels: (P,) int32 smallest group per point; -1 for small unmasked fragments
     - labeled: (P,) bool, True where masks claimed the point, False where the fill chose it
     - parent: (G,) int32 smallest containing group, -1 for a top-level group
-    - n_frames: (G,) int32 distinct frames whose masks formed the group
+    - n_frames: (G,) int32 distinct frames whose masks formed the group; 0 for unmasked regions
     """
 
     labels: np.ndarray
@@ -55,6 +57,16 @@ class SegmentGroups:
 ########################################################
 ########## Helpers #####################################
 ########################################################
+
+
+def _point_spacing(points: np.ndarray, tree: cKDTree) -> float:
+    """
+    Median nearest-neighbor distance over a subsample of at most ~100k points.
+    """
+    sample = points[:: max(1, len(points) // 100000)]
+    dist, _ = tree.query(sample, k=2, workers=-1)
+
+    return float(np.median(dist[:, 1]))
 
 
 def _mask_point_sets(
@@ -256,11 +268,13 @@ def _fill(
     labels: np.ndarray,
     features: np.ndarray | None,
     k: int,
+    reach: float,
 ) -> np.ndarray:
     """
-    Labels for unclaimed points by a vote of their k nearest claimed points.
+    Labels for unclaimed points by a vote of their k nearest claimed points within reach.
 
     - each vote weighs max(cosine(features), 0) when features are given, else 1
+    - a point with no claimed point within reach stays -1
     - processed in chunks so the (chunk, G) vote table stays small
     """
     labels = labels.copy()
@@ -270,30 +284,75 @@ def _fill(
     if len(claimed) == 0 or len(unclaimed) == 0:
         return labels
 
-    # Nearest claimed points of every unclaimed one
+    # Nearest claimed points of every unclaimed one; misses come back as index len(claimed)
     k = min(k, len(claimed))
-    _, nn = cKDTree(points[claimed]).query(points[unclaimed], k=k, workers=-1)
+    dist, nn = cKDTree(points[claimed]).query(
+        points[unclaimed], k=k, distance_upper_bound=reach, workers=-1
+    )
     nn = nn.reshape(len(unclaimed), k)
+    hit = np.isfinite(dist.reshape(len(unclaimed), k))
     G = labels.max() + 1
 
     for start in range(0, len(unclaimed), 65536):
         rows = unclaimed[start : start + 65536]
-        neighbors = claimed[nn[start : start + 65536]]
+        ok = hit[start : start + 65536]
+        neighbors = claimed[np.where(ok, nn[start : start + 65536], 0)]
         votes = labels[neighbors]
 
-        # Vote weights: feature agreement with each neighbor, or uniform
+        # Vote weights: feature agreement with each neighbor, or uniform; misses weigh 0
         if features is None:
             weights = np.ones(votes.shape, dtype=np.float32)
         else:
             weights = np.einsum("nd,nkd->nk", features[rows], features[neighbors])
             weights = np.maximum(weights, 0.0) + 1e-6
 
-        # Weighted label histogram per point, then its argmax
+        weights = weights * ok
+
+        # Weighted label histogram per point, then its argmax where any neighbor voted
         table = np.zeros((len(rows), G), dtype=np.float32)
         np.add.at(table, (np.arange(len(rows))[:, None], votes), weights)
-        labels[rows] = table.argmax(1)
+        labels[rows] = np.where(ok.any(1), table.argmax(1), -1)
 
     return labels
+
+
+def _leftover_regions(
+    points: np.ndarray,
+    labels: np.ndarray,
+    link: float,
+    min_size: int,
+    first: int,
+) -> tuple[np.ndarray, int]:
+    """
+    Connected regions of still-unlabeled points as new groups numbered from `first`.
+
+    - two unlabeled points connect when closer than `link`
+    - regions under min_size points stay -1
+    """
+    labels = labels.copy()
+    left = np.flatnonzero(labels < 0)
+
+    if len(left) == 0:
+        return labels, 0
+
+    # Radius graph over the unlabeled points, then its components
+    pairs = cKDTree(points[left]).query_pairs(link, output_type="ndarray")
+    graph = sp.coo_matrix(
+        (np.ones(len(pairs), dtype=bool), (pairs[:, 0], pairs[:, 1])),
+        shape=(len(left), len(left)),
+    )
+    _, comp = csgraph.connected_components(graph, directed=False)
+
+    # Large regions become groups, ordered by size
+    ids, counts = np.unique(comp, return_counts=True)
+    big = ids[counts >= min_size][
+        np.argsort(-counts[counts >= min_size], kind="stable")
+    ]
+    remap = np.full(len(ids), -1)
+    remap[big] = first + np.arange(len(big))
+    labels[left] = remap[comp]
+
+    return labels, len(big)
 
 
 ########################################################
@@ -315,6 +374,7 @@ def lift_segments(
     contain: float = 0.8,
     depth_tol: float = 0.05,
     k: int = 8,
+    fill_reach: float = 5.0,
 ) -> SegmentGroups:
     """
     Merge per-frame masks into point groups consistent across views.
@@ -323,6 +383,8 @@ def lift_segments(
     - a point joins a group when at least half the group's frames that see it cover it, twice or more
     - groups seen in fewer than min_frames frames or holding under min_group_frac of points are dropped
     - parent: smallest group holding at least `contain` of the group's points and 1.5x its size
+    - fill: unclaimed points within fill_reach spacings of claimed ones join by kNN vote
+    - unmasked regions beyond reach become top-level groups with n_frames 0
 
     Args:
         frame_masks: frame i's masks, (M_i, h, w) bool at any resolution; called once per frame.
@@ -338,6 +400,7 @@ def lift_segments(
         contain: share of a group's points its parent must hold.
         depth_tol: relative depth tolerance of the visibility test.
         k: claimed neighbors voting on each unclaimed point.
+        fill_reach: fill distance limit and leftover-region linking distance, in median point spacings.
 
     Returns:
         The groups; group ids are contiguous from 0.
@@ -409,13 +472,28 @@ def lift_segments(
         if len(cand):
             parent[g] = cand[np.argmin(size[cand])]
 
-    # Fill unclaimed points from their claimed neighbors
+    # Fill unclaimed points from claimed neighbors within reach
     labeled = labels >= 0
-    labels = _fill(result.points, labels, features, k)
-    logger.info(
-        "segments: %d groups, %.1f%% of points claimed by masks",
+    spacing = _point_spacing(result.points, cKDTree(result.points))
+    labels = _fill(result.points, labels, features, k, fill_reach * spacing)
+
+    # Unmasked regions out of reach become their own top-level groups
+    labels, n_regions = _leftover_regions(
+        result.points,
+        labels,
+        fill_reach * spacing,
+        max(1, int(min_group_frac * P)),
         len(kept),
+    )
+    parent = np.concatenate([parent, np.full(n_regions, -1, dtype=np.int32)])
+    n_frames = np.concatenate([n_frames, np.zeros(n_regions, dtype=int)])
+    logger.info(
+        "segments: %d mask groups + %d unmasked regions, %.1f%% of points claimed by masks, "
+        "%.1f%% unlabeled",
+        len(kept),
+        n_regions,
         100 * labeled.mean(),
+        100 * (labels < 0).mean(),
     )
 
     return SegmentGroups(
@@ -449,11 +527,7 @@ def nearest_labels(
         (Q,) int32 group per query, -1 beyond the cutoff.
     """
     tree = cKDTree(points)
-
-    # Median spacing from a point subsample; k=2 skips each point itself
-    sample = points[:: max(1, len(points) // 100000)]
-    spacing, _ = tree.query(sample, k=2, workers=-1)
-    cutoff = max_spacing * float(np.median(spacing[:, 1]))
+    cutoff = max_spacing * _point_spacing(points, tree)
 
     dist, nn = tree.query(queries, k=1, workers=-1)
     out = labels[nn].astype(np.int32)

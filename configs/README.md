@@ -190,7 +190,7 @@ pointcloud:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pointcloud.bundle_adjustment.enabled` | bool | `false` | Run `refine`; skipped for `method: sfm` and under loop closure with `strategy: window` |
+| `pointcloud.bundle_adjustment.enabled` | bool | `true` | Run `refine`; skipped for `method: sfm` and under loop closure with `strategy: window` |
 | `pointcloud.bundle_adjustment.strategy` | str | `global` | With loop closure only: `global`, `window` (inside each LC window) or `window+global` |
 | `pointcloud.bundle_adjustment.keep_pre_ba` | bool | `false` | Copy `pointcloud.zarr` to `pointcloud_pre_ba.zarr` before `refine` rewrites it (a full zarr per scene) |
 | `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | `xfeat` or `loma` matcher tracks on full-res frames, or `vggsfm` (set `track_kwargs: {}`) |

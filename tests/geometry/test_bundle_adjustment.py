@@ -413,7 +413,7 @@ def test_bundle_adjustment_default_config():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_optimize_captures_loss_history_unconditionally():
-    """_optimize always records one inner list of per-step losses (no flag gates it)."""
+    """_optimize always records one inner list: starting loss, then one per step (no flag gates it)."""
 
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
@@ -436,8 +436,8 @@ def test_optimize_captures_loss_history_unconditionally():
     hist = ba.loss_history
     assert isinstance(hist, list)
     assert len(hist) == 1, f"one _optimize call → one inner list; got {len(hist)}"
-    assert len(hist[0]) == n_steps, (
-        f"expected all {n_steps} LM steps; got {len(hist[0])}. A short history means the "
+    assert len(hist[0]) == 1 + n_steps, (
+        f"expected start + all {n_steps} LM steps; got {len(hist[0])}. A short history means the "
         "StopOnPlateau reject_count abort is back."
     )
     assert all(isinstance(v, float) for v in hist[0])
@@ -474,7 +474,7 @@ def test_optimize_warns_when_no_lm_step_runs(caplog):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_optimize_loss_history_never_increases():
     """
-    Every recorded LM loss is at or below the one before it.
+    Every recorded loss, starting loss first, is at or below the one before it.
     """
     N, P, H, W = 4, 60, 128, 128
     pts3d, extrinsics, intrinsics, tracks, vis_mask = _build_synthetic_scene(N, P, H, W)
@@ -493,6 +493,9 @@ def test_optimize_loss_history_never_increases():
     hist = np.array(ba.loss_history[0])
     assert len(hist) > 1
     assert (np.diff(hist) <= 0).all()
+
+    # The perturbed start sits above the first step's loss
+    assert hist[0] > hist[1]
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
@@ -527,8 +530,8 @@ def test_optimize_undoes_a_step_that_raises_the_loss(caplog):
         )
 
     hist = ba.loss_history[0]
-    assert len(hist) == 3
-    assert hist[0] == hist[1] == hist[2]
+    assert len(hist) == 1 + 3
+    assert hist[0] == hist[1] == hist[2] == hist[3]
     assert "undone" in caplog.text
     np.testing.assert_allclose(refined, extrinsics[:, :3], atol=1e-5)
 
@@ -554,7 +557,7 @@ def test_optimize_stops_after_patience_stalled_steps():
         pts3d, extrinsics, intrinsics, *_flat(tracks, vis_mask), None, None, None
     )
 
-    assert len(ba.loss_history[0]) == 3
+    assert len(ba.loss_history[0]) == 1 + 3
 
 
 def _textured_plane(N, H, W):
@@ -596,7 +599,7 @@ def test_photometric_stall_ends_each_resample_not_the_scale():
         confidence,
     )
 
-    assert len(ba.loss_history[0]) == 6 * 2
+    assert len(ba.loss_history[0]) == 1 + 6 * 2
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")

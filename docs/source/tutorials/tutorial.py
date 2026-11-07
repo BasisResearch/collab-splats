@@ -12,9 +12,13 @@ import os
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pyvista as pv
 
-from collab_splats.reconstructor import Reconstructor
+from collab_splats.pointcloud import PointcloudResult
+from collab_splats.preproc.frames import frame_paths
+from collab_splats.reconstructor import Reconstructor, store_rows
+from collab_splats.utils.io import read_image
 
 ########################################
 # Committed inputs (read-only)
@@ -87,6 +91,26 @@ def tutorial_scene(*stages: str, extractor: str | None = None) -> Reconstructor:
         scene.run(stages=missing)
 
     return scene
+
+
+def first_keyframe(scene: Reconstructor) -> np.ndarray:
+    """
+    The point cloud's first keyframe, the one frame every semantics page shows.
+
+    - read from images/ via the point cloud's frame order, the row the OCR codes use
+
+    Args:
+        scene: tutorial scene with preproc and pointcloud done.
+
+    Returns:
+        (H, W, 3) uint8 RGB.
+    """
+    cloud = PointcloudResult.load_zarr(
+        scene.pointcloud_zarr, load_depth=False, load_world_points=False
+    )
+    row = store_rows(scene.images_dir, cloud.image_paths)[0]
+
+    return read_image(frame_paths(scene.images_dir)[row])
 
 
 def work_dir(page: str) -> Path:

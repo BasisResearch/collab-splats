@@ -280,15 +280,15 @@ def camera_view(
     extrinsics: np.ndarray,
     points: np.ndarray | None = None,
     *,
-    azimuth_deg: float = 90.0,
+    azimuth_deg: float = 0.0,
     elevation_deg: float = 20.0,
     distance: float = 1.5,
 ) -> dict[str, Any]:
     """
-    Upright side-on viz_kwargs derived from OpenCV camera poses.
+    Upright viz_kwargs from behind OpenCV camera poses, looking where they looked.
 
     - up: mean camera up (-y of each c2w), so OpenCV y-down scenes render upright
-    - azimuth 90 looks at the scene from the side of the walking direction, 0 from behind it
+    - azimuth 0 looks from behind the cameras, 90 from their right side
     - azimuth/elevation keys are zeroed so apply_view does not rotate the view again
 
     Args:

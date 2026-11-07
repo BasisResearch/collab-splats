@@ -122,7 +122,7 @@ def test_fill_labels_unclaimed_points():
 
     for features in (None, _two_class_features(result)):
         groups = lift_segments(
-            _masks((-9.0, -0.3), (0.3, 9.0)), result, features=features
+            _masks((-9.0, -0.2), (0.2, 9.0)), result, features=features
         )
 
         # Strip between the masks is filled, each side from its own half
@@ -133,6 +133,23 @@ def test_fill_labels_unclaimed_points():
         right = groups.labels[x > 0.5][0]
         assert (groups.labels[strip & (x < -0.05)] == left).all()
         assert (groups.labels[strip & (x > 0.05)] == right).all()
+
+
+def test_unmasked_region_out_of_reach_becomes_its_own_group():
+    result = _scene()
+    x = result.points[:, 0]
+    groups = lift_segments(_masks((-9.0, -1.0), (1.0, 9.0)), result)
+
+    # Gap center is 20 spacings from any mask: its own mask-free top-level group
+    center = np.abs(x) < 0.5
+    region = groups.labels[center][0]
+    assert (groups.labels[center] == region).all()
+    assert groups.n_frames[region] == 0 and groups.parent[region] == -1
+    assert not groups.labeled[center].any()
+
+    # Gap edges within reach still join the masked side
+    assert groups.labels[np.isclose(x, -0.95)][0] == groups.labels[x < -1.5][0]
+    assert len(groups.n_frames) == 3
 
 
 def test_feature_rows_must_match_points():

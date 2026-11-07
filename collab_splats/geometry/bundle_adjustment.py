@@ -169,8 +169,9 @@ class BundleAdjustment:
     Refines camera poses and focal against VGGSfM or matcher tracks.
 
     - points untouched; the caller re-derives them under the new poses
-    - reports: loss_history (one list per solve, kept across refine calls), solve_losses (start /
-      end per solve, each on its own draw), alignment_scale, losses, dropped_frames
+    - reports: loss_history (one list per solve: starting loss, then one per step; kept across
+      refine calls), solve_losses (start / end per solve, each on its own draw), alignment_scale,
+      losses, dropped_frames
     - solve_losses use the draws' base weights and are kept across refine calls like loss_history;
       losses use the last re-sample's IRLS weights
     """
@@ -184,7 +185,7 @@ class BundleAdjustment:
         """
         self.config = config or BundleAdjustmentConfig()
 
-        # Populated per _optimize() call with that call's per-step LM losses
+        # Populated per _optimize() call: its starting loss, then one LM loss per step
         self.loss_history: list[list[float]] = []
 
         # Last solve's reports: alignment scale, final loss per term
@@ -551,6 +552,10 @@ class BundleAdjustment:
                         before = [p.data.clone() for p in params]
                         loss = optimizer.step(input=input_dict)
                         loss = float(loss)
+
+                        # The solve's first entry is its starting loss, before any step
+                        if not loss_hist:
+                            loss_hist.append(float(optimizer.last))
 
                         # Undo a step that raised the loss
                         if loss > float(optimizer.last):

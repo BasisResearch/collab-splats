@@ -33,7 +33,7 @@ pointcloud:
     enabled: true
   loop_closure: false
   bundle_adjustment:        # skipped for sfm
-    enabled: false            # off: BA can shift a weakly tied stretch of frames and double surfaces
+    enabled: true
     strategy: global          # with LC: window | global | window+global
     keep_pre_ba: false        # true: copy pointcloud.zarr to pointcloud_pre_ba.zarr before refine
     track_kwargs:

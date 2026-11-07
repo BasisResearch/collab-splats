@@ -85,4 +85,3 @@ You provide these; `setup.sh` never installs system packages.
 - **build-essential** (gcc/g++) + a CUDA toolkit to compile the extensions.
 - **libsuitesparse-dev** for `scikit-sparse` (the `instantsfm` extra).
 - Optional: `ffmpeg` + `exiftool` for the curated-video scripts; `rclone` + `jq` for GCloud scenes.
-

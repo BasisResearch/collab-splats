@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import itertools
+import json
 import logging
 import shutil
 import warnings
@@ -1491,6 +1492,7 @@ class Reconstructor:
         - use_convex_hull: build_volume_ground closes the unobserved ground inside the TSDF; the hull
           then only cuts
         - mask_sky zeroes sky depth on either source before fusion
+        - frames BA dropped (refine.json) stay out of calibration, fusion and texture
         - mesh.ply is the prepared mesh (filled, decimated, manifold); texture/ is its UV bake
 
         Raises:
@@ -1548,6 +1550,7 @@ class Reconstructor:
             )
             depth_fx = float(np.median(intrinsics[:, 0, 0]))
             sky = self._sky_masks(image_ids) if cfg["mask_sky"] else None
+            keep = np.ones(len(depths), dtype=bool)
 
         # Feedforward source: the zarr's depth on the zarr's own frames
         elif source == "feedforward":
@@ -1566,6 +1569,18 @@ class Reconstructor:
 
             # Depth was predicted on the model grid; its pixels, not the frame's, set the voxel
             depth_fx = float(np.median(pointcloud.model_intrinsics[:, 0, 0]))
+
+            # Frames BA dropped sit at stale poses: no calibration, fusion or texture
+            keep = np.ones(len(image_ids), dtype=bool)
+
+            if self.outputs["refine"].exists():
+                refine = json.loads(self.outputs["refine"].read_text())
+                keep[refine["diagnostics"]["dropped_frames"]] = False
+
+            if not keep.all():
+                logger.info(
+                    "mesh: leaving out %d BA-dropped frames", int((~keep).sum())
+                )
 
         else:
             raise ValueError(
@@ -1629,10 +1644,10 @@ class Reconstructor:
             else:
                 confidence = to_numpy(pointcloud.confidence)
                 c_star, gamma = calibrate_confidence(
-                    model_depth,
-                    confidence,
-                    to_numpy(pointcloud.extrinsics),
-                    to_numpy(pointcloud.model_intrinsics),
+                    model_depth[keep],
+                    confidence[keep],
+                    to_numpy(pointcloud.extrinsics)[keep],
+                    to_numpy(pointcloud.model_intrinsics)[keep],
                     sdf_trunc=sdf_trunc,
                 )
                 weights = pixel_weights(
@@ -1650,6 +1665,9 @@ class Reconstructor:
                 weights[model_sky] = 0.0
                 has_depth &= ~model_sky
                 del model_sky
+
+            # BA-dropped frames fuse nothing; the volume ground ignores them too
+            weights[~keep] = 0.0
 
             # Share of non-sky depth pixels that fuse nothing (below the gate or on an edge)
             logger.info(
@@ -1720,9 +1738,9 @@ class Reconstructor:
                 prepared,
                 real,
                 texture_dir,
-                rgbs,
-                c2w,
-                intrinsics,
+                rgbs[keep],
+                c2w[keep],
+                intrinsics[keep],
                 voxel_size=voxel_size,
                 brightness=brightness,
             )

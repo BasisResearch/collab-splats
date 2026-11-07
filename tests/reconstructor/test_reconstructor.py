@@ -813,6 +813,7 @@ def _mesh_fuse(
     upsample=_unit_upsample,
     calibrate=None,
     build_ground=None,
+    dropped_frames=None,
     **mesh_overrides,
 ):
     """
@@ -820,6 +821,7 @@ def _mesh_fuse(
 
     - upsample stands in for the frame-grid lift inside frame_depths
     - calibrate / build_ground replace calibrate_confidence / build_volume_ground; stubs by default
+    - dropped_frames: written to a refine.json marker as BA's dropped frames; None writes none
     """
     mesh_cfg = {
         "enabled": True,
@@ -829,6 +831,14 @@ def _mesh_fuse(
         **mesh_overrides,
     }
     rec = Reconstructor(_make_config(tmp_path, {"mesh": mesh_cfg}))
+
+    # BA's refine marker, as the refine stage writes it
+    if dropped_frames is not None:
+        marker = rec.outputs["refine"]
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            json.dumps({"diagnostics": {"dropped_frames": dropped_frames}})
+        )
 
     monkeypatch.setattr(PointcloudResult, "load_zarr", staticmethod(lambda *a, **k: ff))
     monkeypatch.setattr(
@@ -999,6 +1009,31 @@ def test_mesh_fuses_every_depth_with_calibrated_weights(tmp_path, monkeypatch):
     # conf < 3 on a 1..9 ramp is a quarter of the pixels
     assert (weights == 0).mean() == pytest.approx(0.25, abs=0.03)
     assert weights.max() == pytest.approx((9.0 / 3.0) ** 2, rel=1e-3)
+
+
+def test_mesh_leaves_ba_dropped_frames_out_of_calibration_and_fusion(
+    tmp_path, monkeypatch
+):
+    """
+    A frame BA dropped sits at its stale input pose: it neither calibrates nor fuses.
+    """
+    ff = _tsdf_mesh_ff(model_hw=(16, 16))
+    ff.confidence = np.full((2, 16, 16), 9.0)
+    calibrate = MagicMock(return_value=(3.0, 1.0))
+
+    fuse = _mesh_fuse(
+        tmp_path, monkeypatch, ff, calibrate=calibrate, dropped_frames=[1]
+    )
+
+    # Calibration sees frame 0 only
+    depth, confidence, w2c, K = calibrate.call_args.args
+    np.testing.assert_array_equal(depth, ff.depth[:1])
+    np.testing.assert_array_equal(w2c, ff.extrinsics[:1])
+
+    # Frame 0 fuses, frame 1 weighs 0 everywhere
+    weights = fuse.call_args.kwargs["weights"]
+    assert (weights[0] > 0).all()
+    assert (weights[1] == 0).all()
 
 
 @pytest.mark.parametrize("use_convex_hull", [True, False])

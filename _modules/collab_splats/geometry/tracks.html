@@ -433,7 +433,11 @@
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">vggt.dependency.track_predict</span><span class="w"> </span><span class="kn">import</span> <span class="n">predict_tracks</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="n">reprojection_error</span><span class="p">,</span> <span class="n">sample_world_points</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.projection</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">depth_agreement</span><span class="p">,</span>
+    <span class="n">reprojection_error</span><span class="p">,</span>
+    <span class="n">sample_world_points</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.geometry.transforms</span><span class="w"> </span><span class="kn">import</span> <span class="n">extract_intrinsics</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.localization.extractors</span><span class="w"> </span><span class="kn">import</span> <span class="n">LocalMatcher</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">collab_splats.localization.retrieval</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseRetrievalExtractor</span>
@@ -554,12 +558,14 @@
     <span class="n">seed_fraction</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.34</span><span class="p">,</span>
     <span class="n">min_matches</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span>
     <span class="n">max_transfer_px</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">8.0</span><span class="p">,</span>
+    <span class="n">sampson_px</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">"""</span>
 <span class="sd">    Star tracks from verified matcher correspondences, on the model grid.</span>
 
 <span class="sd">    - pairs: every frame pair (exhaustive), or sequential window plus retrieval top-k outside the nms band</span>
 <span class="sd">    - matches gated by symmetric reprojection under the prior poses, then pycolmap-verified in memory</span>
+<span class="sd">    - sampson_px: a match failing the transfer gate is kept if on its epipolar line, on covisible pairs only</span>
 <span class="sd">    - one track per seed keypoint and its direct verified matches, &gt;= 2 observations</span>
 <span class="sd">    - full-res keypoints map to the model grid by separate x / y scales (multiple-of-14 height stretch)</span>
 
@@ -577,6 +583,7 @@
 <span class="sd">        seed_fraction: share of frames, evenly spaced (at least 2), whose keypoints seed tracks.</span>
 <span class="sd">        min_matches: verified inliers a pair needs to join the correspondence graph.</span>
 <span class="sd">        max_transfer_px: symmetric transfer-error gate, model px.</span>
+<span class="sd">        sampson_px: epipolar (Sampson) rescue gate under the prior poses, model px; None = off.</span>
 
 <span class="sd">    Returns:</span>
 <span class="sd">        frame (M,) int32, track (M,) int32, xy (M, 2) model px, score (M,) all 1.0 and pts3d (P, 3) world;</span>
@@ -725,6 +732,10 @@
     <span class="n">matched</span> <span class="o">=</span> <span class="p">[]</span>
     <span class="n">n_raw</span> <span class="o">=</span> <span class="n">n_kept</span> <span class="o">=</span> <span class="mi">0</span>
 
+    <span class="c1"># Sampson rescue only where the prior depths overlap: epipolar lines alone admit far-apart false matches</span>
+    <span class="k">if</span> <span class="n">sampson_px</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">covisible</span> <span class="o">=</span> <span class="n">_covisible_pairs</span><span class="p">(</span><span class="n">world_points</span><span class="p">,</span> <span class="n">extrinsics</span><span class="p">,</span> <span class="n">intrinsics</span><span class="p">,</span> <span class="n">pairs</span><span class="p">)</span>
+
     <span class="k">for</span> <span class="n">start</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">pairs</span><span class="p">),</span> <span class="n">chunk</span><span class="p">):</span>
         <span class="n">batch</span> <span class="o">=</span> <span class="n">pairs</span><span class="p">[</span><span class="n">start</span> <span class="p">:</span> <span class="n">start</span> <span class="o">+</span> <span class="n">chunk</span><span class="p">]</span>
         <span class="n">results</span> <span class="o">=</span> <span class="n">matcher</span><span class="o">.</span><span class="n">match_batch</span><span class="p">([(</span><span class="n">feats</span><span class="p">[</span><span class="n">a</span><span class="p">],</span> <span class="n">feats</span><span class="p">[</span><span class="n">b</span><span class="p">])</span> <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">])</span>
@@ -749,6 +760,20 @@
             <span class="n">kp_world_t</span><span class="p">[</span><span class="n">rows_b</span><span class="p">],</span> <span class="n">w2c</span><span class="p">[</span><span class="n">frame_a</span><span class="p">],</span> <span class="n">K</span><span class="p">[</span><span class="n">frame_a</span><span class="p">],</span> <span class="n">kps_t</span><span class="p">[</span><span class="n">rows_a</span><span class="p">]</span>
         <span class="p">)</span>
         <span class="n">ok</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">maximum</span><span class="p">(</span><span class="n">err_ab</span><span class="p">,</span> <span class="n">err_ba</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">max_transfer_px</span>
+
+        <span class="c1"># Rescue: on the epipolar line under the prior relative pose, on a covisible pair</span>
+        <span class="k">if</span> <span class="n">sampson_px</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">pair_ok</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">([</span><span class="n">covisible</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">batch</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">pair_ok</span> <span class="o">=</span> <span class="n">pair_ok</span><span class="o">.</span><span class="n">repeat_interleave</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">counts</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">))</span>
+            <span class="n">err</span> <span class="o">=</span> <span class="n">_sampson_error</span><span class="p">(</span>
+                <span class="n">kps_t</span><span class="p">[</span><span class="n">rows_a</span><span class="p">],</span>
+                <span class="n">kps_t</span><span class="p">[</span><span class="n">rows_b</span><span class="p">],</span>
+                <span class="n">w2c</span><span class="p">[</span><span class="n">frame_b</span><span class="p">]</span> <span class="o">@</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">w2c</span><span class="p">[</span><span class="n">frame_a</span><span class="p">]),</span>
+                <span class="n">K</span><span class="p">[</span><span class="n">frame_a</span><span class="p">],</span>
+                <span class="n">K</span><span class="p">[</span><span class="n">frame_b</span><span class="p">],</span>
+            <span class="p">)</span>
+            <span class="n">ok</span> <span class="o">|=</span> <span class="n">pair_ok</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">err</span> <span class="o">&lt;</span> <span class="n">sampson_px</span><span class="p">)</span>
+
         <span class="n">ok</span> <span class="o">=</span> <span class="n">to_numpy</span><span class="p">(</span><span class="n">ok</span><span class="p">)</span>
         <span class="n">ok</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">ok</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">counts</span><span class="p">)[:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
 
@@ -840,6 +865,82 @@
 <span class="c1">########################################################################</span>
 <span class="c1"># Steps</span>
 <span class="c1">########################################################################</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_covisible_pairs</span><span class="p">(</span>
+    <span class="n">world_points</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">extrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">intrinsics</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span>
+    <span class="n">pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">stride</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">,</span>
+    <span class="n">rel_thresh</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.1</span><span class="p">,</span>
+    <span class="n">min_agree</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span> <span class="nb">bool</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    Whether each pair's prior depths overlap: a's strided grid points agreeing with b's depth.</span>
+
+<span class="sd">    - share = agreeing points / a's finite grid points; covisible above min_agree</span>
+<span class="sd">    - b's depth is its own world points' camera z; NaN reads as no depth</span>
+<span class="sd">    """</span>
+    <span class="c1"># Per-frame z-depth from its own world points, on the device</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
+    <span class="n">w2c</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">extrinsics</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">K</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">intrinsics</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">wp</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">as_tensor</span><span class="p">(</span><span class="n">world_points</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">depth</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"nhwj,nj-&gt;nhw"</span><span class="p">,</span> <span class="n">wp</span><span class="p">,</span> <span class="n">w2c</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">])</span>
+    <span class="n">depth</span> <span class="o">=</span> <span class="n">depth</span> <span class="o">+</span> <span class="n">w2c</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="n">depth</span> <span class="o">=</span> <span class="n">depth</span><span class="o">.</span><span class="n">nan_to_num</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+
+    <span class="c1"># Group partners by first frame: one batched agreement call per frame</span>
+    <span class="n">partners</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">pairs</span><span class="p">:</span>
+        <span class="n">partners</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+
+    <span class="n">covisible</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">a</span><span class="p">,</span> <span class="n">bs</span> <span class="ow">in</span> <span class="n">partners</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">pts</span> <span class="o">=</span> <span class="n">wp</span><span class="p">[</span><span class="n">a</span><span class="p">,</span> <span class="p">::</span><span class="n">stride</span><span class="p">,</span> <span class="p">::</span><span class="n">stride</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">pts</span> <span class="o">=</span> <span class="n">pts</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">pts</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="mi">1</span><span class="p">)]</span>
+        <span class="n">agree</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">depth_agreement</span><span class="p">(</span><span class="n">pts</span><span class="p">,</span> <span class="n">w2c</span><span class="p">[</span><span class="n">bs</span><span class="p">],</span> <span class="n">K</span><span class="p">[</span><span class="n">bs</span><span class="p">],</span> <span class="n">depth</span><span class="p">[</span><span class="n">bs</span><span class="p">],</span> <span class="n">rel_thresh</span><span class="p">)</span>
+        <span class="n">share</span> <span class="o">=</span> <span class="n">agree</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">pts</span><span class="p">),</span> <span class="mi">1</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">b</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">bs</span><span class="p">,</span> <span class="n">share</span><span class="o">.</span><span class="n">tolist</span><span class="p">()):</span>
+            <span class="n">covisible</span><span class="p">[(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)]</span> <span class="o">=</span> <span class="n">s</span> <span class="o">&gt;</span> <span class="n">min_agree</span>
+
+    <span class="k">return</span> <span class="n">covisible</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_sampson_error</span><span class="p">(</span>
+    <span class="n">xa</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">xb</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">a_to_b</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">K_a</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">K_b</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    First-order epipolar distance per match under a relative pose, px.</span>
+
+<span class="sd">    - one row per match: (M, 2) pixels, (M, 4, 4) a-to-b pose, (M, 3, 3) K per side</span>
+<span class="sd">    """</span>
+    <span class="c1"># Fundamental matrix F = K_b^-T [t]x R K_a^-1</span>
+    <span class="n">R</span><span class="p">,</span> <span class="n">t</span> <span class="o">=</span> <span class="n">a_to_b</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="p">:</span><span class="mi">3</span><span class="p">],</span> <span class="n">a_to_b</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="n">zero</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">t</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">zero</span><span class="p">,</span> <span class="o">-</span><span class="n">t</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">],</span> <span class="n">t</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">t</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">],</span> <span class="n">zero</span><span class="p">,</span> <span class="o">-</span><span class="n">t</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="o">-</span><span class="n">t</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">t</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">zero</span><span class="p">],</span> <span class="mi">1</span>
+    <span class="p">)</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">tx</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+    <span class="n">fmat</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_b</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="o">@</span> <span class="n">tx</span> <span class="o">@</span> <span class="n">R</span> <span class="o">@</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_a</span><span class="p">)</span>
+
+    <span class="c1"># Epipolar lines each way, then the Sampson distance</span>
+    <span class="n">ha</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">xa</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">xa</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">])],</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">hb</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">xb</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">xb</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">1</span><span class="p">])],</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">line_b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"mij,mj-&gt;mi"</span><span class="p">,</span> <span class="n">fmat</span><span class="p">,</span> <span class="n">ha</span><span class="p">)</span>
+    <span class="n">line_a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">einsum</span><span class="p">(</span><span class="s2">"mji,mj-&gt;mi"</span><span class="p">,</span> <span class="n">fmat</span><span class="p">,</span> <span class="n">hb</span><span class="p">)</span>
+    <span class="n">num</span> <span class="o">=</span> <span class="p">(</span><span class="n">hb</span> <span class="o">*</span> <span class="n">line_b</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
+    <span class="n">den</span> <span class="o">=</span> <span class="n">line_b</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">square</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="o">+</span> <span class="n">line_a</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">square</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">num</span> <span class="o">/</span> <span class="n">den</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-12</span><span class="p">))</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_vggsfm_tracks</span><span class="p">(</span>

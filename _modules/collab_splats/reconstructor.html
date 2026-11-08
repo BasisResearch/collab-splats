@@ -882,19 +882,14 @@
         <span class="k">if</span> <span class="n">unknown</span><span class="p">:</span>
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"semantics.segments has unknown keys </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">unknown</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 
-        <span class="c1"># Refuse LC with sfm: LC wraps a feedforward creator in sequential submaps</span>
-        <span class="k">if</span> <span class="n">method</span> <span class="o">==</span> <span class="s2">"sfm"</span> <span class="ow">and</span> <span class="n">lc</span><span class="p">[</span><span class="s2">"enabled"</span><span class="p">]:</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                <span class="s2">"pointcloud.loop_closure is not supported with method: sfm — "</span>
-                <span class="s2">"sfm backends map the whole frame set at once, not in sequential submaps"</span>
+        <span class="c1"># LC is feedforward-only: sfm maps every frame at once; LoGeR's TTT memory already spans frames</span>
+        <span class="k">if</span> <span class="n">lc</span><span class="p">[</span><span class="s2">"enabled"</span><span class="p">]</span> <span class="ow">and</span> <span class="p">(</span><span class="n">method</span> <span class="o">==</span> <span class="s2">"sfm"</span> <span class="ow">or</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">"loger"</span><span class="p">):</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="s2">"pointcloud.loop_closure skipped for </span><span class="si">%s</span><span class="s2">/</span><span class="si">%s</span><span class="s2">: feedforward submaps only"</span><span class="p">,</span>
+                <span class="n">method</span><span class="p">,</span>
+                <span class="n">backend</span><span class="p">,</span>
             <span class="p">)</span>
-
-        <span class="c1"># Refuse LC with LoGeR: no LC verify thresholds are calibrated for it</span>
-        <span class="k">if</span> <span class="n">backend</span> <span class="o">==</span> <span class="s2">"loger"</span> <span class="ow">and</span> <span class="n">lc</span><span class="p">[</span><span class="s2">"enabled"</span><span class="p">]:</span>
-            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-                <span class="s2">"pointcloud.loop_closure is not supported with backend 'loger' — its windowed TTT "</span>
-                <span class="s2">"memory already carries state across frames; use vggt_omega, vggtx or mapanything"</span>
-            <span class="p">)</span>
+            <span class="n">lc</span><span class="p">[</span><span class="s2">"enabled"</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
 
         <span class="k">return</span> <span class="n">config</span></div>
 

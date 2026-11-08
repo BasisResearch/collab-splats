@@ -128,7 +128,7 @@ LoGeR: a Pi3 backbone plus a TTT fast-weight memory, run with sliding-window inf
 with ``bash setup/loger.sh`` (vendors ``Junyi42/LoGeR`` @ ``7685b7a``); weights download from
 HuggingFace on first use.
 
-- for long, ordered captures; refuses ``loop_closure``
+- for long, ordered captures; ``loop_closure`` is skipped with a warning
 - K is fitted, not predicted: ``estimate_intrinsics_from_points`` solves one shared K from the
   pointmap; a degenerate fit raises ``RuntimeError``
 - ``preproc.max_frames`` (default 300) caps the frame count; raise it to use LoGeR's windowing
@@ -144,7 +144,7 @@ SfM backends
 ``instantsfm`` (global), ``colmap`` and ``hloc`` (incremental). Every sfm backend:
 
 - is experimental: the stage emits a ``UserWarning``
-- refuses ``loop_closure`` (``ValueError`` at config validation)
+- skips ``loop_closure`` with a warning at config validation
 - skips bundle adjustment: ``refine`` is dropped from the default stage set (the mapper runs its
   own BA), and naming it explicitly raises ``ValueError``
 - reads the scene-root ``images/`` store in place, so COLMAP image names are the keyframe stems

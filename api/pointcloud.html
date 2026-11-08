@@ -1228,7 +1228,7 @@ keyword arguments.</p>
 with <code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">setup/loger.sh</span></code> (vendors <code class="docutils literal notranslate"><span class="pre">Junyi42/LoGeR</span></code> &#64; <code class="docutils literal notranslate"><span class="pre">7685b7a</span></code>); weights download from
 HuggingFace on first use.</p>
 <ul class="simple">
-<li><p>for long, ordered captures; refuses <code class="docutils literal notranslate"><span class="pre">loop_closure</span></code></p></li>
+<li><p>for long, ordered captures; <code class="docutils literal notranslate"><span class="pre">loop_closure</span></code> is skipped with a warning</p></li>
 <li><p>K is fitted, not predicted: <code class="docutils literal notranslate"><span class="pre">estimate_intrinsics_from_points</span></code> solves one shared K from the
 pointmap; a degenerate fit raises <code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">preproc.max_frames</span></code> (default 300) caps the frame count; raise it to use LoGeR’s windowing</p></li>
@@ -1315,7 +1315,7 @@ pointmap; a degenerate fit raises <code class="docutils literal notranslate"><sp
 <code class="docutils literal notranslate"><span class="pre">instantsfm</span></code> (global), <code class="docutils literal notranslate"><span class="pre">colmap</span></code> and <code class="docutils literal notranslate"><span class="pre">hloc</span></code> (incremental). Every sfm backend:</p>
 <ul class="simple">
 <li><p>is experimental: the stage emits a <code class="docutils literal notranslate"><span class="pre">UserWarning</span></code></p></li>
-<li><p>refuses <code class="docutils literal notranslate"><span class="pre">loop_closure</span></code> (<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> at config validation)</p></li>
+<li><p>skips <code class="docutils literal notranslate"><span class="pre">loop_closure</span></code> with a warning at config validation</p></li>
 <li><p>skips bundle adjustment: <code class="docutils literal notranslate"><span class="pre">refine</span></code> is dropped from the default stage set (the mapper runs its
 own BA), and naming it explicitly raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code></p></li>
 <li><p>reads the scene-root <code class="docutils literal notranslate"><span class="pre">images/</span></code> store in place, so COLMAP image names are the keyframe stems</p></li>

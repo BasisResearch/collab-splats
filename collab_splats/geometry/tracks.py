@@ -27,7 +27,11 @@ import zarr
 
 from vggt.dependency.track_predict import predict_tracks
 
-from collab_splats.geometry.projection import reprojection_error, sample_world_points
+from collab_splats.geometry.projection import (
+    depth_agreement,
+    reprojection_error,
+    sample_world_points,
+)
 from collab_splats.geometry.transforms import extract_intrinsics
 from collab_splats.localization.extractors import LocalMatcher
 from collab_splats.localization.retrieval import BaseRetrievalExtractor
@@ -143,12 +147,14 @@ def build_tracks(
     seed_fraction: float = 0.34,
     min_matches: int = 50,
     max_transfer_px: float = 8.0,
+    sampson_px: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Star tracks from verified matcher correspondences, on the model grid.
 
     - pairs: every frame pair (exhaustive), or sequential window plus retrieval top-k outside the nms band
     - matches gated by symmetric reprojection under the prior poses, then pycolmap-verified in memory
+    - sampson_px: a match failing the transfer gate is kept if on its epipolar line, on covisible pairs only
     - one track per seed keypoint and its direct verified matches, >= 2 observations
     - full-res keypoints map to the model grid by separate x / y scales (multiple-of-14 height stretch)
 
@@ -166,6 +172,7 @@ def build_tracks(
         seed_fraction: share of frames, evenly spaced (at least 2), whose keypoints seed tracks.
         min_matches: verified inliers a pair needs to join the correspondence graph.
         max_transfer_px: symmetric transfer-error gate, model px.
+        sampson_px: epipolar (Sampson) rescue gate under the prior poses, model px; None = off.
 
     Returns:
         frame (M,) int32, track (M,) int32, xy (M, 2) model px, score (M,) all 1.0 and pts3d (P, 3) world;
@@ -314,6 +321,10 @@ def build_tracks(
     matched = []
     n_raw = n_kept = 0
 
+    # Sampson rescue only where the prior depths overlap: epipolar lines alone admit far-apart false matches
+    if sampson_px is not None:
+        covisible = _covisible_pairs(world_points, extrinsics, intrinsics, pairs)
+
     for start in range(0, len(pairs), chunk):
         batch = pairs[start : start + chunk]
         results = matcher.match_batch([(feats[a], feats[b]) for a, b in batch])
@@ -338,6 +349,20 @@ def build_tracks(
             kp_world_t[rows_b], w2c[frame_a], K[frame_a], kps_t[rows_a]
         )
         ok = torch.maximum(err_ab, err_ba) < max_transfer_px
+
+        # Rescue: on the epipolar line under the prior relative pose, on a covisible pair
+        if sampson_px is not None:
+            pair_ok = torch.as_tensor([covisible[p] for p in batch], device=device)
+            pair_ok = pair_ok.repeat_interleave(torch.as_tensor(counts, device=device))
+            err = _sampson_error(
+                kps_t[rows_a],
+                kps_t[rows_b],
+                w2c[frame_b] @ torch.linalg.inv(w2c[frame_a]),
+                K[frame_a],
+                K[frame_b],
+            )
+            ok |= pair_ok & (err < sampson_px)
+
         ok = to_numpy(ok)
         ok = np.split(ok, np.cumsum(counts)[:-1])
 
@@ -428,6 +453,82 @@ def build_tracks(
 ########################################################################
 # Steps
 ########################################################################
+
+
+def _covisible_pairs(
+    world_points: np.ndarray,
+    extrinsics: np.ndarray,
+    intrinsics: np.ndarray,
+    pairs: list[tuple[int, int]],
+    *,
+    stride: int = 8,
+    rel_thresh: float = 0.1,
+    min_agree: float = 0.05,
+) -> dict[tuple[int, int], bool]:
+    """
+    Whether each pair's prior depths overlap: a's strided grid points agreeing with b's depth.
+
+    - share = agreeing points / a's finite grid points; covisible above min_agree
+    - b's depth is its own world points' camera z; NaN reads as no depth
+    """
+    # Per-frame z-depth from its own world points, on the device
+    device = get_device()
+    w2c = torch.as_tensor(extrinsics, dtype=torch.float32, device=device)
+    K = torch.as_tensor(intrinsics, dtype=torch.float32, device=device)
+    wp = torch.as_tensor(world_points, dtype=torch.float32, device=device)
+    depth = torch.einsum("nhwj,nj->nhw", wp, w2c[:, 2, :3])
+    depth = depth + w2c[:, None, None, 2, 3]
+    depth = depth.nan_to_num(0.0)
+
+    # Group partners by first frame: one batched agreement call per frame
+    partners: dict[int, list[int]] = {}
+
+    for a, b in pairs:
+        partners.setdefault(a, []).append(b)
+
+    covisible = {}
+
+    for a, bs in partners.items():
+        pts = wp[a, ::stride, ::stride].reshape(-1, 3)
+        pts = pts[torch.isfinite(pts).all(1)]
+        agree, _, _, _ = depth_agreement(pts, w2c[bs], K[bs], depth[bs], rel_thresh)
+        share = agree.float().sum(1) / max(len(pts), 1)
+
+        for b, s in zip(bs, share.tolist()):
+            covisible[(a, b)] = s > min_agree
+
+    return covisible
+
+
+def _sampson_error(
+    xa: torch.Tensor,
+    xb: torch.Tensor,
+    a_to_b: torch.Tensor,
+    K_a: torch.Tensor,
+    K_b: torch.Tensor,
+) -> torch.Tensor:
+    """
+    First-order epipolar distance per match under a relative pose, px.
+
+    - one row per match: (M, 2) pixels, (M, 4, 4) a-to-b pose, (M, 3, 3) K per side
+    """
+    # Fundamental matrix F = K_b^-T [t]x R K_a^-1
+    R, t = a_to_b[:, :3, :3], a_to_b[:, :3, 3]
+    zero = torch.zeros_like(t[:, 0])
+    tx = torch.stack(
+        [zero, -t[:, 2], t[:, 1], t[:, 2], zero, -t[:, 0], -t[:, 1], t[:, 0], zero], 1
+    )
+    tx = tx.view(-1, 3, 3)
+    fmat = torch.linalg.inv(K_b).transpose(1, 2) @ tx @ R @ torch.linalg.inv(K_a)
+
+    # Epipolar lines each way, then the Sampson distance
+    ha = torch.cat([xa, torch.ones_like(xa[:, :1])], 1)
+    hb = torch.cat([xb, torch.ones_like(xb[:, :1])], 1)
+    line_b = torch.einsum("mij,mj->mi", fmat, ha)
+    line_a = torch.einsum("mji,mj->mi", fmat, hb)
+    num = (hb * line_b).sum(1) ** 2
+    den = line_b[:, :2].square().sum(1) + line_a[:, :2].square().sum(1)
+    return (num / den.clamp(min=1e-12)).sqrt()
 
 
 def _vggsfm_tracks(

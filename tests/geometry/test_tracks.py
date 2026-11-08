@@ -1133,3 +1133,27 @@ def test_matcher_source_needs_frame_paths():
         tracks_mod.extract_tracks(
             "imgs", "conf", "wp", source="xfeat", extrinsics="ext", intrinsics="K"
         )
+
+
+def test_build_tracks_sampson_rescues_frame_with_shifted_pose(tmp_path, scene):
+    # Frame 5's prior pose slides 0.2 along the baseline: transfer fails, epipolar lines hold
+    shifted = {**scene, "extrinsics": scene["extrinsics"].copy()}
+    R = shifted["extrinsics"][5, :3, :3]
+    center = -R.T @ shifted["extrinsics"][5, :3, 3]
+    shifted["extrinsics"][5, :3, 3] = -R @ (center + np.array([0.2, 0, 0]))
+
+    _, vis_off, _ = _build(tmp_path / "off", shifted)
+    _, vis_on, _ = _build(tmp_path / "on", shifted, sampson_px=1.0)
+
+    assert vis_on[5].sum() > vis_off[5].sum() + 50
+
+
+def test_covisible_pairs_overlap_only(scene):
+    pairs = [(0, 1), (0, 11)]
+
+    # Disjoint far frame: push frame 11's world points behind every camera
+    far = scene["world_points"].copy()
+    far[11] = far[11] + np.array([0, 0, -100], np.float32)
+    covisible = tracks_mod._covisible_pairs(far, scene["extrinsics"], scene["K"], pairs)
+
+    assert covisible == {(0, 1): True, (0, 11): False}

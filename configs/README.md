@@ -191,10 +191,10 @@ pointcloud:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `pointcloud.bundle_adjustment.enabled` | bool | `true` | Run `refine`; skipped for `method: sfm` and under loop closure with `strategy: window` |
-| `pointcloud.bundle_adjustment.strategy` | str | `global` | With loop closure only: `global`, `window` (inside each LC window) or `window+global` |
+| `pointcloud.bundle_adjustment.strategy` | str | `window+global` | With loop closure only: `global`, `window` (inside each LC window) or `window+global` |
 | `pointcloud.bundle_adjustment.keep_pre_ba` | bool | `false` | Copy `pointcloud.zarr` to `pointcloud_pre_ba.zarr` before `refine` rewrites it (a full zarr per scene) |
 | `pointcloud.bundle_adjustment.track_source` | str | `xfeat` | `xfeat` or `loma` matcher tracks on full-res frames, or `vggsfm` (set `track_kwargs: {}`) |
-| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{pairing: exhaustive, seed_fraction: 1.0}` | Passed to `extract_tracks`; matchers: `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction`, `min_matches`, `max_transfer_px`, with `sequential+retrieval` also `window`, `retrieval`, `retrieval_k`, `retrieval_nms`; `vggsfm`: `max_query_pts`, `query_frame_num`, `fine_tracking` |
+| `pointcloud.bundle_adjustment.track_kwargs` | dict | `{pairing: exhaustive, seed_fraction: 1.0, sampson_px: 8.0}` | Passed to `extract_tracks`; matchers: `pairing` (`exhaustive` / `sequential+retrieval`), `seed_fraction`, `min_matches`, `max_transfer_px`, `sampson_px` (epipolar rescue of transfer-gate rejects on covisible pairs; `null` = off), with `sequential+retrieval` also `window`, `retrieval`, `retrieval_k`, `retrieval_nms`; `vggsfm`: `max_query_pts`, `query_frame_num`, `fine_tracking` |
 | `pointcloud.bundle_adjustment.tracks_cache_dir` | str\|null | `null` | Track-cache directory, reused while frames, points and track settings match; `null` = always extract |
 | `pointcloud.bundle_adjustment.vis_thresh` | float | `0.2` | Min track score per observation |
 | `pointcloud.bundle_adjustment.max_reproj_error` | float\|null | `4.0` | Pre-solve reprojection gate in px; `null` = off |
@@ -229,7 +229,7 @@ pointcloud:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `pointcloud.loop_closure` | bool\|dict | `false` | Run loop closure (`ValueError` with `method: sfm` or `backend: loger`) |
+| `pointcloud.loop_closure` | bool\|dict | `{enabled: true, submap_size: 100}` | Run loop closure; skipped with a warning for `method: sfm` and `backend: loger` |
 | `pointcloud.loop_closure.enabled` | bool | `true` | In a dict: `false` keeps the keys but turns loop closure off |
 | `pointcloud.loop_closure.retrieval` | str | `dino-salad` | `dino-salad` or `megaloc` (`megaloc` needs its own threshold) |
 | `pointcloud.loop_closure.submap_size` | int | `20` | Window stride; shorter scenes skip windowing |

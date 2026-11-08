@@ -60,19 +60,19 @@ def test_validate_config_accepts_matcher_tracks_with_lc(tmp_path, source):
     assert r.config["pointcloud"]["bundle_adjustment"]["track_source"] == source
 
 
-def test_validate_config_refuses_sfm_before_matcher_tracks_with_lc(tmp_path):
-    """An sfm config with BA, LC and a matcher track_source sees the sfm refusal first."""
+def test_validate_config_skips_lc_for_sfm(tmp_path):
+    """An sfm config with LC on validates with LC off; the mapper sees every frame at once."""
     ba = {"enabled": True, "track_source": "xfeat"}
-    with pytest.raises(ValueError, match="not supported with method: sfm"):
-        Reconstructor(
-            _cfg(
-                tmp_path,
-                method="sfm",
-                backend="instantsfm",
-                bundle_adjustment=ba,
-                loop_closure=True,
-            )
+    r = Reconstructor(
+        _cfg(
+            tmp_path,
+            method="sfm",
+            backend="instantsfm",
+            bundle_adjustment=ba,
+            loop_closure=True,
         )
+    )
+    assert r.config["pointcloud"]["loop_closure"]["enabled"] is False
 
 
 @pytest.mark.parametrize(

@@ -466,19 +466,14 @@ class Reconstructor:
         if unknown:
             raise ValueError(f"semantics.segments has unknown keys {sorted(unknown)}")
 
-        # Refuse LC with sfm: LC wraps a feedforward creator in sequential submaps
-        if method == "sfm" and lc["enabled"]:
-            raise ValueError(
-                "pointcloud.loop_closure is not supported with method: sfm — "
-                "sfm backends map the whole frame set at once, not in sequential submaps"
+        # LC is feedforward-only: sfm maps every frame at once; LoGeR's TTT memory already spans frames
+        if lc["enabled"] and (method == "sfm" or backend == "loger"):
+            logger.warning(
+                "pointcloud.loop_closure skipped for %s/%s: feedforward submaps only",
+                method,
+                backend,
             )
-
-        # Refuse LC with LoGeR: no LC verify thresholds are calibrated for it
-        if backend == "loger" and lc["enabled"]:
-            raise ValueError(
-                "pointcloud.loop_closure is not supported with backend 'loger' — its windowed TTT "
-                "memory already carries state across frames; use vggt_omega, vggtx or mapanything"
-            )
+            lc["enabled"] = False
 
         return config
 

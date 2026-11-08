@@ -54,6 +54,7 @@ def test_pointcloud_stage_writes_sparse_pc_ply(tmp_path):
             "method": "feedforward",
             "backend": "vggtx",
             "clean": {"enabled": False},
+            "loop_closure": False,
         },
     }
     rec = Reconstructor(config)
@@ -112,6 +113,7 @@ def test_pointcloud_stage_zarr_colmap_and_ply_hold_one_cleaned_set(tmp_path):
             "method": "feedforward",
             "backend": "vggtx",
             "clean": {"enabled": True},
+            "loop_closure": False,
         },
     }
     rec = Reconstructor(config)
@@ -149,6 +151,7 @@ def test_pointcloud_stage_clean_off_keeps_every_point_in_zarr_colmap_and_ply(tmp
             "method": "feedforward",
             "backend": "vggtx",
             "clean": {"enabled": False},
+            "loop_closure": False,
         },
     }
     rec = Reconstructor(config)
@@ -178,7 +181,7 @@ def _run(tmp_path, **pointcloud):
     config = {
         "input_path": str(tmp_path / "video.mp4"),
         "output_path": str(tmp_path / "out"),
-        "pointcloud": {"backend": "vggt_omega", **pointcloud},
+        "pointcloud": {"backend": "vggt_omega", "loop_closure": False, **pointcloud},
     }
     rec = Reconstructor(config)
     creator_cls = stub_creator_cls(MagicMock())

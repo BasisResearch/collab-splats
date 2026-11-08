@@ -115,12 +115,12 @@ def test_loop_closure_is_normalized_to_a_dict(tmp_path):
 
 
 @pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
-def test_sfm_refuses_loop_closure(backend):
+def test_sfm_skips_loop_closure(backend):
     cfg = _sfm_cfg(backend)
     cfg["pointcloud"]["loop_closure"] = True
 
-    with pytest.raises(ValueError, match="loop_closure"):
-        Reconstructor.validate_config(cfg)
+    cfg = Reconstructor.validate_config(cfg)
+    assert cfg["pointcloud"]["loop_closure"]["enabled"] is False
 
 
 @pytest.mark.parametrize("backend", ["instantsfm", "colmap", "hloc"])
@@ -159,18 +159,11 @@ def test_sfm_accepts_bundle_adjustment_and_skips_refine(tmp_path, backend):
     assert "refine" not in calls
 
 
-def test_loop_closure_with_loger_is_refused(tmp_path):
-    # Refused at construction, before any inference or images/ read
-    with pytest.raises(
-        ValueError, match="loop_closure is not supported with backend 'loger'"
-    ):
-        Reconstructor(_cfg(tmp_path, backend="loger", loop_closure=True))
-
-
-def test_loop_closure_with_loger_is_refused_in_dict_form(tmp_path):
-    # A knob dict without `enabled` means enabled, so it is refused too
-    with pytest.raises(ValueError, match="backend 'loger'"):
-        Reconstructor(_cfg(tmp_path, backend="loger", loop_closure={"submap_size": 16}))
+@pytest.mark.parametrize("lc", [True, {"submap_size": 16}])
+def test_loop_closure_with_loger_is_skipped(tmp_path, lc):
+    # LC is feedforward-only: a loger config runs the bare creator, bool or dict form
+    rec = Reconstructor(_cfg(tmp_path, backend="loger", loop_closure=lc))
+    assert rec.config["pointcloud"]["loop_closure"]["enabled"] is False
 
 
 def test_loop_closure_disabled_by_dict_is_not_refused_for_loger(tmp_path):

@@ -28,21 +28,16 @@ cd /workspace/collab-splats
 
 ### Hugging Face access
 
-The default backend, [VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega), is a gated model. A run without access stops before preprocessing with a message naming the repo. Set up access once:
+The default backend is gated; runs without access stop before preprocessing and name the repo. One-time setup:
 
-1. Request access at [facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega) and wait for approval.
-2. Create a read token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
-3. Give the token to `collab-splats` in one of two ways:
+1. Request access to [facebook/VGGT-Omega](https://huggingface.co/facebook/VGGT-Omega) and wait for approval
+2. Create an API token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+3. Configure token as follows
 
 ```bash
-# Option A: log in inside the container; the token is saved on the mounted /workspace/models
-hf auth login
-
-# Option B: a .env file in the repo root, read by the reconstruct CLI
-echo "HF_TOKEN=<your token>" >> /workspace/collab-splats/.env
+hf auth login                                                  # inside the container; saved on the mounted /workspace/models
+echo "HF_TOKEN=<your token>" >> /workspace/collab-splats/.env  # read by the reconstruct CLI
 ```
-
-The Docker image contains no token, and `.env` is never copied into it. Once the weights are cached in `/workspace/models`, runs need no token.
 
 ### Local video processing
 
@@ -67,7 +62,7 @@ For a complete list of configuration options, please see [configs/README.md](con
 
 ### Remote video processing
 
-We also can use `collab-splats` for processing videos hosted in GCloud storage. However, this option requires (1) access to the `collab-data` repository and (2) GCS access (see [Private dependency](docs/source/installation.md#private-dependency-collab-data)). Please follow these steps to set up remote processing:
+`collab-splats` can also process videos in GCloud storage. This requires access to the `collab-data` repo and GCS (see [Private dependency](docs/source/installation.md#private-dependency-collab-data)):
 
 1. Clone the private [collab-data](https://github.com/BasisResearch/collab-data) repo to `/workspace/collab-data`, then run `bash setup.sh` in `/workspace/collab-splats` to add the `remote` extra.
 2. Ask a maintainer for the GCS service-account key and save it as `/workspace/collab-data/config-local/collab-data.json`.
@@ -79,7 +74,7 @@ We also can use `collab-splats` for processing videos hosted in GCloud storage. 
 rclone lsd collab-data:environments-curated
 ```
 
-After verifying the connection, we can use the `reconstruct remote` command to process files within the `environments-curated` bucket. The remote command automatically pulls files locally, processes through the pipeline, and pushes output to `environments-processed/<scene>/` — to complete the push it verifies every file uploaded before deleting local files.
+`reconstruct remote` pulls scenes from `environments-curated`, runs the pipeline, and pushes output to `environments-processed/<scene>/`. Local files are deleted only after every upload is verified.
 
 ```bash
 # process two named scenes
@@ -131,7 +126,7 @@ python -m collab_splats.viewer local /PATH/TO/OUTPUT/<scene>/<backend>
 python -m collab_splats.viewer remote             # processed scenes from the bucket, pulled on pick
 ```
 
-`local` views scenes on disk: point it at `/PATH/TO/OUTPUT` instead to pick any meshed scene from a Scene dropdown. `remote` lists the processed bucket and pulls the mesh first, then the texture and lifted vertex semantics of the scene you pick into `--cache` (default `~/.cache/collab_splats/viewer`), and deletes them when the viewer starts and exits.
+`local` also accepts `/PATH/TO/OUTPUT` to pick any meshed scene from a dropdown. `remote` lists the processed bucket and pulls the picked scene (mesh first, then texture and semantics) into `--cache` (default `~/.cache/collab_splats/viewer`), clearing it when the viewer starts and exits.
 
 ## Install
 
@@ -153,15 +148,13 @@ cd collab-splats
 bash setup.sh
 ```
 
-Standalone setup w/o CUDA (semantics + dev tools, no CUDA build):
+Without CUDA (semantics + dev tools only):
 
 ```sh
 bash setup_nocuda.sh
 ```
 
 Then set up [Hugging Face access](#hugging-face-access): the default backend needs it.
-
-For extras, the semantics-only install and system requirements, see [Installation](docs/source/installation.md).
 
 ## Learn more
 

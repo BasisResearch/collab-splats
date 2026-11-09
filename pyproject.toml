@@ -77,9 +77,9 @@ reconstruction = [
     "open3d",
 ]
 
-# reconstruct remote + dashboard GCS access: private BasisResearch/collab-data, tlb-3d-tools branch
+# reconstruct remote + dashboard GCS access: private BasisResearch/collab-data, db-dashboard-3d-tools branch
 remote = [
-    "collab_data @ git+https://github.com/BasisResearch/collab-data.git@tlb-3d-tools",
+    "collab_data @ git+https://github.com/BasisResearch/collab-data.git@db-dashboard-3d-tools",
 ]
 
 # InstantSfM sfm backend (its own requires-dist is blanked below)

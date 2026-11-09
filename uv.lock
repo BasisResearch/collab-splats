@@ -836,7 +836,7 @@ dependencies = [
 [[package]]
 name = "collab-data"
 version = "0.0.1"
-source = { git = "https://github.com/BasisResearch/collab-data.git?rev=tlb-3d-tools#8370e090ad1a51f322bb8d4122381da4cf4d3985" }
+source = { git = "https://github.com/BasisResearch/collab-data.git?rev=db-dashboard-3d-tools#457e1f4a39f272f3519e8198886878f4930f08d3" }
 dependencies = [
     { name = "gcsfs" },
     { name = "loguru" },
@@ -994,7 +994,7 @@ requires-dist = [
     { name = "bae", marker = "extra == 'reconstruction'", git = "https://github.com/pypose/bae.git?rev=0.2.5" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "clip", marker = "extra == 'semantics'", git = "https://github.com/openai/CLIP.git?rev=d05afc436d78f1c48dc0dbf8e5980a9d471f35f6" },
-    { name = "collab-data", marker = "extra == 'remote'", git = "https://github.com/BasisResearch/collab-data.git?rev=tlb-3d-tools" },
+    { name = "collab-data", marker = "extra == 'remote'", git = "https://github.com/BasisResearch/collab-data.git?rev=db-dashboard-3d-tools" },
     { name = "collab-splats", extras = ["semantics"], marker = "extra == 'reconstruction'" },
     { name = "cuda-toolkit", extras = ["all"], marker = "extra == 'gpu'", specifier = "==12.1.1" },
     { name = "easydict", marker = "extra == 'instantsfm'", specifier = "==1.13" },

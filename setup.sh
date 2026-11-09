@@ -138,6 +138,18 @@ uv sync --locked "${EXTRAS[@]}" \
 "$PYTHON" -c "import nltk, os, sys; sys.exit(0 if nltk.download('wordnet', download_dir=os.environ.get('NLTK_DATA') or os.path.join(sys.prefix, 'nltk_data'), quiet=True) else 1)" \
     || echo "WARN: WordNet download failed — run: python -m nltk.downloader wordnet"
 
+# libegl1: glvnd EGL loader for headless VTK (collab-data dashboard PLY viewer)
+# - without it (and no DISPLAY / OSMesa) VTK segfaults on the first render
+# - the image lacks it; installed here so a running container needs no rebuild
+if ! ldconfig -p | grep -q 'libEGL\.so\.1 '; then
+    if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
+        { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libegl1; } \
+            || echo "WARN: libegl1 install failed — headless VTK will crash; run: apt-get install -y libegl1" >&2
+    else
+        echo "WARN: no libEGL.so.1 — headless VTK will crash; run: sudo apt-get install -y libegl1" >&2
+    fi
+fi
+
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
 # Best-effort: a build stage without network/system libs skips it and
 # the weights download lazily on first use instead.

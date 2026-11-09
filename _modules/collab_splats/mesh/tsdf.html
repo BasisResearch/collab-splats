@@ -987,6 +987,7 @@
 <span class="sd">    - every 2nd frame, every 2nd pixel: median |depth residual| over views ±2, ±5, ±10</span>
 <span class="sd">    - occluded samples (sampled &lt; 0.9 x expected) dropped; needs 2+ valid views</span>
 <span class="sd">    - conf-bin medians of error / sdf_trunc, log-log line: c* where it crosses 1, gamma = -slope</span>
+<span class="sd">    - error not falling with confidence: (1.0, 0.0), the no-gate weights</span>
 <span class="sd">    - runs on CUDA when available, else the CPU</span>
 <span class="sd">    - projects at full fp32 matmul: a global TF32 (mapanything import) would round the residuals</span>
 
@@ -1002,7 +1003,7 @@
 <span class="sd">        (c_star, gamma).</span>
 
 <span class="sd">    Raises:</span>
-<span class="sd">        ValueError: fewer than 4 frames, fewer than 3 conf bins, or error does not fall with confidence.</span>
+<span class="sd">        ValueError: fewer than 4 frames or fewer than 3 conf bins.</span>
 <span class="sd">    """</span>
     <span class="n">device</span> <span class="o">=</span> <span class="n">get_device</span><span class="p">()</span>
     <span class="n">depth_t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">from_numpy</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">depth</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
@@ -1067,10 +1068,15 @@
     <span class="n">log_conf</span><span class="p">,</span> <span class="n">log_err</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">medians</span><span class="p">))</span><span class="o">.</span><span class="n">T</span>
     <span class="n">slope</span><span class="p">,</span> <span class="n">intercept</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">polyfit</span><span class="p">(</span><span class="n">log_conf</span><span class="p">,</span> <span class="n">log_err</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
 
+    <span class="c1"># Confidence does not rank the error here, so a gate would only drop pixels at random</span>
     <span class="k">if</span> <span class="n">slope</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">"calibrate_confidence: error does not fall with confidence (slope </span><span class="si">{</span><span class="n">slope</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">)"</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">"calibrate_confidence: error does not fall with confidence (slope </span><span class="si">%.3f</span><span class="s2">); "</span>
+            <span class="s2">"no gate applied. (conf, error / band) per bin: </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span>
+            <span class="n">slope</span><span class="p">,</span>
+            <span class="p">[(</span><span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">c</span><span class="p">),</span> <span class="mi">2</span><span class="p">),</span> <span class="nb">round</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">e</span><span class="p">),</span> <span class="mi">3</span><span class="p">))</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">medians</span><span class="p">],</span>
         <span class="p">)</span>
+        <span class="k">return</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span>
 
     <span class="n">c_star</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">intercept</span> <span class="o">/</span> <span class="n">slope</span><span class="p">))</span>
     <span class="n">gamma</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="o">-</span><span class="n">slope</span><span class="p">)</span>

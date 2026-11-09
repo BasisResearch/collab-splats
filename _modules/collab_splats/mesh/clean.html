@@ -897,7 +897,7 @@
 <span class="sd">            below it on every plane, the largest plane is used.</span>
 
 <span class="sd">    Returns:</span>
-<span class="sd">        New mesh: cut, trimmed, patched, manifold.</span>
+<span class="sd">        New mesh: cut, trimmed, patched, manifold; a copy of the input if no piece survives the cut.</span>
 <span class="sd">    """</span>
     <span class="n">verts</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">vertices</span><span class="p">)</span>
     <span class="n">faces</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mesh</span><span class="o">.</span><span class="n">triangles</span><span class="p">)</span>
@@ -920,6 +920,14 @@
     <span class="p">)</span>
     <span class="n">faces</span> <span class="o">=</span> <span class="n">faces</span><span class="p">[</span><span class="n">inside</span><span class="p">[</span><span class="n">vert_px</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">],</span> <span class="n">vert_px</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]][</span><span class="n">faces</span><span class="p">]</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)]</span>
     <span class="n">faces</span> <span class="o">=</span> <span class="n">_drop_small_pieces</span><span class="p">(</span><span class="n">verts</span><span class="p">,</span> <span class="n">faces</span><span class="p">,</span> <span class="n">min_piece_faces</span><span class="p">)</span>
+
+    <span class="c1"># Too fragmented for a hull: every piece is under the floor, so keep the fused surface</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">len</span><span class="p">(</span><span class="n">faces</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+            <span class="s2">"make_convex_hull: no piece of </span><span class="si">%d</span><span class="s2">+ faces survives the hull cut; mesh left uncut"</span><span class="p">,</span>
+            <span class="n">min_piece_faces</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">TriangleMesh</span><span class="p">(</span><span class="n">mesh</span><span class="p">)</span>
 
     <span class="c1"># Outline trim, then the pieces it strands</span>
     <span class="n">cut</span> <span class="o">=</span> <span class="n">o3d</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">TriangleMesh</span><span class="p">(</span>
@@ -974,12 +982,18 @@
 
 <span class="sd">    - main region: closed, largest region, holes filled, then opened so thin spurs do not stretch the hull</span>
 <span class="sd">    - corners rounded by an opening of hull_round cells</span>
+<span class="sd">    - all False when the opening erases the whole region</span>
 <span class="sd">    """</span>
     <span class="n">solid</span> <span class="o">=</span> <span class="n">_keep_largest_region_fill_holes</span><span class="p">(</span>
         <span class="n">cv2</span><span class="o">.</span><span class="n">morphologyEx</span><span class="p">(</span><span class="n">coverage</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">MORPH_CLOSE</span><span class="p">,</span> <span class="n">_filled_circle</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
     <span class="p">)</span>
     <span class="n">solid</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">morphologyEx</span><span class="p">(</span><span class="n">solid</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">MORPH_OPEN</span><span class="p">,</span> <span class="n">_filled_circle</span><span class="p">(</span><span class="mi">15</span><span class="p">))</span>
     <span class="n">contours</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">findContours</span><span class="p">(</span><span class="n">solid</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">RETR_EXTERNAL</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">CHAIN_APPROX_NONE</span><span class="p">)</span>
+
+    <span class="c1"># Thin mesh: nothing survives the opening, so there is no hull to draw</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">contours</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">coverage</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="nb">bool</span><span class="p">)</span>
+
     <span class="n">hull</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">coverage</span><span class="p">)</span>
     <span class="n">cv2</span><span class="o">.</span><span class="n">fillPoly</span><span class="p">(</span><span class="n">hull</span><span class="p">,</span> <span class="p">[</span><span class="n">cv2</span><span class="o">.</span><span class="n">convexHull</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">(</span><span class="n">contours</span><span class="p">))],</span> <span class="mi">255</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">cv2</span><span class="o">.</span><span class="n">morphologyEx</span><span class="p">(</span><span class="n">hull</span><span class="p">,</span> <span class="n">cv2</span><span class="o">.</span><span class="n">MORPH_OPEN</span><span class="p">,</span> <span class="n">_filled_circle</span><span class="p">(</span><span class="n">hull_round</span><span class="p">))</span> <span class="o">&gt;</span> <span class="mi">0</span>

@@ -623,6 +623,7 @@ inference once.</p></li>
 <li><p>every 2nd frame, every 2nd pixel: median <a href="#id1"><span class="problematic" id="id2">|depth residual|</span></a> over views ±2, ±5, ±10</p></li>
 <li><p>occluded samples (sampled &lt; 0.9 x expected) dropped; needs 2+ valid views</p></li>
 <li><p>conf-bin medians of error / sdf_trunc, log-log line: c* where it crosses 1, gamma = -slope</p></li>
+<li><p>error not falling with confidence: (1.0, 0.0), the no-gate weights</p></li>
 <li><p>runs on CUDA when available, else the CPU</p></li>
 <li><p>projects at full fp32 matmul: a global TF32 (mapanything import) would round the residuals</p></li>
 </ul>
@@ -641,7 +642,7 @@ inference once.</p></li>
 <dd class="field-even"><p>(c_star, gamma).</p>
 </dd>
 <dt class="field-odd">Raises<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – fewer than 4 frames, fewer than 3 conf bins, or error does not fall with confidence.</p>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/builtins/exceptions.html#ValueError" title="(in Python v3.15)"><strong>ValueError</strong></a> – fewer than 4 frames or fewer than 3 conf bins.</p>
 </dd>
 </dl>
 </dd></dl>
@@ -1080,7 +1081,7 @@ below it on every plane, the largest plane is used.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>cut, trimmed, patched, manifold.</p>
+<dd class="field-even"><p>cut, trimmed, patched, manifold; a copy of the input if no piece survives the cut.</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p>New mesh</p>

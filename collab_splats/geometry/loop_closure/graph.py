@@ -235,7 +235,7 @@ class PoseGraph:
         Add one submap's nodes and SL(4) edges to the persistent graph.
 
         - the first submap is anchored at identity with a tight prior
-        - later submaps link to the previous submap's last node through the overlap frames
+        - later submaps link curr[0] to the previous submap's node for that same frame
         - the inter-submap scale comes from the overlap points, rotation_only as VGGT-SLAM
         - overlap points on both sides move into their own frame's camera; upstream skips this
         - scale falls back to 1.0, with a warning, when the overlap points are missing or degenerate
@@ -258,15 +258,18 @@ class PoseGraph:
             prior = gtsam.PriorFactorSL4(key, H_identity, self._anchor_noise)
             self._graph.add(prior)
         else:
-            # Previous submap and the usable overlap length
+            # Previous submap, usable overlap length, and its frame equal to curr[0]
             prev_submap = self._submaps_seen[-1]
             n_prev = len(prev_submap.poses)
             n_overlap = min(overlap_frames, k, n_prev)
+            anchor = n_prev - max(n_overlap, 1)
 
-            # T = inv(K_prev[-1]) @ K_curr[0], VGGT-SLAM's P_temp (solver.py:140); see decompose_camera
-            K_prev_last = intrinsics_4x4(prev_submap.intrinsics[-1].astype(np.float64))
+            # T = inv(K_prev[anchor]) @ K_curr[0], VGGT-SLAM's P_temp (solver.py:140); see decompose_camera
+            K_prev_anchor = intrinsics_4x4(
+                prev_submap.intrinsics[anchor].astype(np.float64)
+            )
             K_curr_first = intrinsics_4x4(submap.intrinsics[0].astype(np.float64))
-            T = np.linalg.inv(K_prev_last) @ K_curr_first
+            T = np.linalg.inv(K_prev_anchor) @ K_curr_first
 
             # Overlap scale, each frame in its own camera (rotation_only; diverges from solver.py:141)
             scale = None
@@ -288,14 +291,14 @@ class PoseGraph:
 
             # H_w = H_overlap @ T @ H_scale, VGGT-SLAM solver.py:153-154 (its proj_mats hold K, so T matches)
             H_scale = np.diag([scale, scale, scale, 1.0])
-            prev_submap_last_nid = self._submap_node_ids[prev_submap.submap_id][-1]
-            H_overlap = self.get_homography(prev_submap_last_nid)
+            prev_anchor_nid = self._submap_node_ids[prev_submap.submap_id][anchor]
+            H_overlap = self.get_homography(prev_anchor_nid)
             H_w = H_overlap @ T @ H_scale
             self.add_homography(node_ids_this[0], H_w)
 
-            # Inter-submap edge from the previous submap's last node
+            # Inter-submap edge from the previous submap's node for the shared frame
             H_rel_inter = np.linalg.inv(H_overlap) @ H_w
-            self.add_between_factor(prev_submap_last_nid, node_ids_this[0], H_rel_inter)
+            self.add_between_factor(prev_anchor_nid, node_ids_this[0], H_rel_inter)
 
         # Chain consecutive frames: H_inner = P[i-1] @ inv(P[i]), each node seeded from its predecessor
         poses = submap.poses.astype(np.float64)

@@ -141,6 +141,40 @@ def test_incremental_pose_graph_returns_correct_shape():
     assert np.isfinite(result).all()
 
 
+def test_add_submap_anchors_first_shared_frame_with_wide_overlap():
+    # One x-axis trajectory, K varying per frame; two submaps sharing frames 2-4
+    n_prev, n_overlap, k = 5, 3, 5
+    shared = n_prev - n_overlap
+    translations = np.array([[-0.1 * i, 0.0, 0.0] for i in range(shared + k)])
+    focals = np.array([400.0 + 10.0 * i for i in range(shared + k)])
+
+    prev = _make_real_submap(0, k=n_prev, frame_start=0)
+    curr = _make_real_submap(1, k=k, frame_start=shared)
+    prev.poses[:, :3, 3] = translations[:n_prev]
+    curr.poses[:, :3, 3] = translations[shared:] - translations[shared]
+    prev.intrinsics[:, 0, 0] = prev.intrinsics[:, 1, 1] = focals[:n_prev]
+    curr.intrinsics[:, 0, 0] = curr.intrinsics[:, 1, 1] = focals[shared:]
+
+    # Same world points in each submap's gauge, so the overlap scale is 1
+    world = np.random.default_rng(3).standard_normal((200, 3)) + [0.0, 0.0, 5.0]
+    conf = np.full(200, 50.0)
+    _set_overlap_points(prev, world, conf)
+    _set_overlap_points(curr, world + translations[shared], conf)
+
+    pg = PoseGraph()
+    pg.add_submap(prev, n_overlap)
+    pg.add_submap(curr, n_overlap)
+
+    # curr[0] is prev[shared]: both nodes hold one camera, before and after the solve
+    np.testing.assert_allclose(
+        pg.get_homography(n_prev), pg.get_homography(shared), atol=1e-4
+    )
+    pg.optimize()
+    np.testing.assert_allclose(
+        pg.get_homography(n_prev), pg.get_homography(shared), atol=1e-4
+    )
+
+
 ########################################
 ####### error handling #################
 ########################################

@@ -1032,6 +1032,9 @@ def solve_ground(lowest: np.ndarray, res: float, kappa: float) -> np.ndarray:
             "solve_ground: level %d %s, %d sweeps", level, tuple(U.shape), sweep + 1
         )
 
+    # The pyramid always has a level, so the loop set g
+    assert g is not None
+
     return g.cpu().numpy()
 
 

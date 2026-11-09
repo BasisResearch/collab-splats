@@ -1263,7 +1263,9 @@ class Reconstructor:
         segmenter = BaseSegmentation.get("mobilesamv2")(strategy=strategy)
 
         def frame_masks(i: int) -> torch.Tensor:
-            masks, _ = segmenter.segment(read_image(paths[rows[i]]))
+            masks, _ = segmenter.segment(  # noqa: F821
+                read_image(paths[rows[i]])
+            )
             return masks
 
         groups = lift_segments(frame_masks, pointcloud, features=features, **cfg)

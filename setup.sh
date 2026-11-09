@@ -107,11 +107,11 @@ export CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-80;90}"
 export MAX_JOBS="${MAX_JOBS:-2}"
 export UV_CONCURRENT_BUILDS="${UV_CONCURRENT_BUILDS:-1}"
 
-# collab-data: private repo, the `remote` extra only; skipped without GitHub access
+# collab-data: private repo, the `remote` and `data-dashboard` extras only; skipped without GitHub access
 EXTRAS=(--all-extras)
 if ! GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/BasisResearch/collab-data.git >/dev/null 2>&1; then
-    echo "setup.sh: WARN no access to BasisResearch/collab-data — skipping the remote extra (reconstruct remote, viewer remote, dashboard)." >&2
-    EXTRAS+=(--no-extra remote)
+    echo "setup.sh: WARN no access to BasisResearch/collab-data — skipping the remote and data-dashboard extras (reconstruct remote, viewer remote, collab-data dashboard)." >&2
+    EXTRAS+=(--no-extra remote --no-extra data-dashboard)
 fi
 
 # hloc: editable path source (pyproject [tool.uv.sources])

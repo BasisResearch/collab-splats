@@ -82,6 +82,11 @@ remote = [
     "collab_data @ git+https://github.com/BasisResearch/collab-data.git@db-dashboard-3d-tools",
 ]
 
+# collab-data's data dashboard (python -m collab_data.data_dashboard.serve); same private repo as `remote`
+data-dashboard = [
+    "collab_data[data-dashboard] @ git+https://github.com/BasisResearch/collab-data.git@db-dashboard-3d-tools",
+]
+
 # InstantSfM sfm backend (its own requires-dist is blanked below)
 instantsfm = [
     "instantsfm",
@@ -265,7 +270,26 @@ requires-dist = ["numpy"]
 [[tool.uv.dependency-metadata]]
 name = "collab-data"
 version = "0.0.1"
-requires-dist = ["gcsfs", "loguru"]
+# base deps + the data-dashboard extra, mirrored from collab-data's setup.py (DATA_DASHBOARD_REQUIRE)
+requires-dist = [
+    "gcsfs",
+    "loguru",
+    "panel==1.9.3 ; extra == 'data-dashboard'",
+    "holoviews ; extra == 'data-dashboard'",
+    "bokeh ; extra == 'data-dashboard'",
+    "param==2.4.0 ; extra == 'data-dashboard'",
+    "jinja2 ; extra == 'data-dashboard'",
+    "flask ; extra == 'data-dashboard'",
+    "pyvista ; extra == 'data-dashboard'",
+    "trame-vtk ; extra == 'data-dashboard'",
+    "trame-vuetify ; extra == 'data-dashboard'",
+    "h5py ; extra == 'data-dashboard'",
+    "hdf5plugin ; extra == 'data-dashboard'",
+    "librosa ; extra == 'data-dashboard'",
+    "pandas ; extra == 'data-dashboard'",
+    "pyarrow<24 ; extra == 'data-dashboard'",
+]
+provides-extras = ["data-dashboard"]
 
 # hloc: a sync without the setup/hloc.sh clone still resolves
 [[tool.uv.dependency-metadata]]

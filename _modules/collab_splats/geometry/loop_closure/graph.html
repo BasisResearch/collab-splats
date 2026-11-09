@@ -660,7 +660,7 @@
 <span class="sd">        Add one submap's nodes and SL(4) edges to the persistent graph.</span>
 
 <span class="sd">        - the first submap is anchored at identity with a tight prior</span>
-<span class="sd">        - later submaps link to the previous submap's last node through the overlap frames</span>
+<span class="sd">        - later submaps link curr[0] to the previous submap's node for that same frame</span>
 <span class="sd">        - the inter-submap scale comes from the overlap points, rotation_only as VGGT-SLAM</span>
 <span class="sd">        - overlap points on both sides move into their own frame's camera; upstream skips this</span>
 <span class="sd">        - scale falls back to 1.0, with a warning, when the overlap points are missing or degenerate</span>
@@ -683,15 +683,18 @@
             <span class="n">prior</span> <span class="o">=</span> <span class="n">gtsam</span><span class="o">.</span><span class="n">PriorFactorSL4</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">H_identity</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_anchor_noise</span><span class="p">)</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_graph</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">prior</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># Previous submap and the usable overlap length</span>
+            <span class="c1"># Previous submap, usable overlap length, and its frame equal to curr[0]</span>
             <span class="n">prev_submap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submaps_seen</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
             <span class="n">n_prev</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">prev_submap</span><span class="o">.</span><span class="n">poses</span><span class="p">)</span>
             <span class="n">n_overlap</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">overlap_frames</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">n_prev</span><span class="p">)</span>
+            <span class="n">anchor</span> <span class="o">=</span> <span class="n">n_prev</span> <span class="o">-</span> <span class="nb">max</span><span class="p">(</span><span class="n">n_overlap</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
 
-            <span class="c1"># T = inv(K_prev[-1]) @ K_curr[0], VGGT-SLAM's P_temp (solver.py:140); see decompose_camera</span>
-            <span class="n">K_prev_last</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">prev_submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
+            <span class="c1"># T = inv(K_prev[anchor]) @ K_curr[0], VGGT-SLAM's P_temp (solver.py:140); see decompose_camera</span>
+            <span class="n">K_prev_anchor</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span>
+                <span class="n">prev_submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="n">anchor</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+            <span class="p">)</span>
             <span class="n">K_curr_first</span> <span class="o">=</span> <span class="n">intrinsics_4x4</span><span class="p">(</span><span class="n">submap</span><span class="o">.</span><span class="n">intrinsics</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">))</span>
-            <span class="n">T</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_prev_last</span><span class="p">)</span> <span class="o">@</span> <span class="n">K_curr_first</span>
+            <span class="n">T</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">K_prev_anchor</span><span class="p">)</span> <span class="o">@</span> <span class="n">K_curr_first</span>
 
             <span class="c1"># Overlap scale, each frame in its own camera (rotation_only; diverges from solver.py:141)</span>
             <span class="n">scale</span> <span class="o">=</span> <span class="kc">None</span>
@@ -713,14 +716,14 @@
 
             <span class="c1"># H_w = H_overlap @ T @ H_scale, VGGT-SLAM solver.py:153-154 (its proj_mats hold K, so T matches)</span>
             <span class="n">H_scale</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">([</span><span class="n">scale</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="n">scale</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">])</span>
-            <span class="n">prev_submap_last_nid</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submap_node_ids</span><span class="p">[</span><span class="n">prev_submap</span><span class="o">.</span><span class="n">submap_id</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
-            <span class="n">H_overlap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_homography</span><span class="p">(</span><span class="n">prev_submap_last_nid</span><span class="p">)</span>
+            <span class="n">prev_anchor_nid</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submap_node_ids</span><span class="p">[</span><span class="n">prev_submap</span><span class="o">.</span><span class="n">submap_id</span><span class="p">][</span><span class="n">anchor</span><span class="p">]</span>
+            <span class="n">H_overlap</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_homography</span><span class="p">(</span><span class="n">prev_anchor_nid</span><span class="p">)</span>
             <span class="n">H_w</span> <span class="o">=</span> <span class="n">H_overlap</span> <span class="o">@</span> <span class="n">T</span> <span class="o">@</span> <span class="n">H_scale</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">add_homography</span><span class="p">(</span><span class="n">node_ids_this</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">H_w</span><span class="p">)</span>
 
-            <span class="c1"># Inter-submap edge from the previous submap's last node</span>
+            <span class="c1"># Inter-submap edge from the previous submap's node for the shared frame</span>
             <span class="n">H_rel_inter</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">H_overlap</span><span class="p">)</span> <span class="o">@</span> <span class="n">H_w</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">add_between_factor</span><span class="p">(</span><span class="n">prev_submap_last_nid</span><span class="p">,</span> <span class="n">node_ids_this</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">H_rel_inter</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_between_factor</span><span class="p">(</span><span class="n">prev_anchor_nid</span><span class="p">,</span> <span class="n">node_ids_this</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">H_rel_inter</span><span class="p">)</span>
 
         <span class="c1"># Chain consecutive frames: H_inner = P[i-1] @ inv(P[i]), each node seeded from its predecessor</span>
         <span class="n">poses</span> <span class="o">=</span> <span class="n">submap</span><span class="o">.</span><span class="n">poses</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>

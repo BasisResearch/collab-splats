@@ -1653,7 +1653,7 @@ the registry: <code class="docutils literal notranslate"><span class="pre">&quot
 <dd><p>Add one submap’s nodes and SL(4) edges to the persistent graph.</p>
 <ul class="simple">
 <li><p>the first submap is anchored at identity with a tight prior</p></li>
-<li><p>later submaps link to the previous submap’s last node through the overlap frames</p></li>
+<li><p>later submaps link curr[0] to the previous submap’s node for that same frame</p></li>
 <li><p>the inter-submap scale comes from the overlap points, rotation_only as VGGT-SLAM</p></li>
 <li><p>overlap points on both sides move into their own frame’s camera; upstream skips this</p></li>
 <li><p>scale falls back to 1.0, with a warning, when the overlap points are missing or degenerate</p></li>

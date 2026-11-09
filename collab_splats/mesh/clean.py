@@ -474,7 +474,7 @@ def make_convex_hull(
             below it on every plane, the largest plane is used.
 
     Returns:
-        New mesh: cut, trimmed, patched, manifold.
+        New mesh: cut, trimmed, patched, manifold; a copy of the input if no piece survives the cut.
     """
     verts = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
@@ -497,6 +497,14 @@ def make_convex_hull(
     )
     faces = faces[inside[vert_px[:, 1], vert_px[:, 0]][faces].all(axis=1)]
     faces = _drop_small_pieces(verts, faces, min_piece_faces)
+
+    # Too fragmented for a hull: every piece is under the floor, so keep the fused surface
+    if not len(faces):
+        logger.warning(
+            "make_convex_hull: no piece of %d+ faces survives the hull cut; mesh left uncut",
+            min_piece_faces,
+        )
+        return o3d.geometry.TriangleMesh(mesh)
 
     # Outline trim, then the pieces it strands
     cut = o3d.geometry.TriangleMesh(
@@ -550,12 +558,18 @@ def _create_rounded_hull_mask(coverage: np.ndarray, hull_round: int) -> np.ndarr
 
     - main region: closed, largest region, holes filled, then opened so thin spurs do not stretch the hull
     - corners rounded by an opening of hull_round cells
+    - all False when the opening erases the whole region
     """
     solid = _keep_largest_region_fill_holes(
         cv2.morphologyEx(coverage, cv2.MORPH_CLOSE, _filled_circle(3))
     )
     solid = cv2.morphologyEx(solid, cv2.MORPH_OPEN, _filled_circle(15))
     contours, _ = cv2.findContours(solid, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+    # Thin mesh: nothing survives the opening, so there is no hull to draw
+    if not contours:
+        return np.zeros(coverage.shape, bool)
+
     hull = np.zeros_like(coverage)
     cv2.fillPoly(hull, [cv2.convexHull(np.vstack(contours))], 255)
     return cv2.morphologyEx(hull, cv2.MORPH_OPEN, _filled_circle(hull_round)) > 0

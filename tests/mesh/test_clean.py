@@ -486,6 +486,35 @@ def test_make_convex_hull_leaves_the_input_untouched():
     np.testing.assert_array_equal(np.asarray(scene.triangles), faces)
 
 
+def test_make_convex_hull_returns_the_input_when_no_piece_survives_the_cut():
+    # Every piece under min_piece_faces: an empty cut must not reach the top-down image
+    scene = _ground_scene()
+    hull = make_convex_hull(scene, _orbit_cameras(), _VOXEL, min_piece_faces=10**9)
+    np.testing.assert_array_equal(
+        np.asarray(hull.triangles), np.asarray(scene.triangles)
+    )
+    np.testing.assert_array_equal(np.asarray(hull.vertices), np.asarray(scene.vertices))
+
+
+def test_make_convex_hull_returns_the_input_when_the_mesh_has_no_main_region():
+    # A strip 3 cells wide: the hull's opening erases it, so there is no outline to hull
+    res = 0.075
+    xs, ys = np.meshgrid(np.arange(400) * res - 15.0, np.arange(4) * res)
+    verts = np.stack([xs.ravel(), ys.ravel(), np.zeros(xs.size)], axis=1)
+    ids = np.arange(xs.size).reshape(xs.shape)
+    a, b, c, d = ids[:-1, :-1], ids[:-1, 1:], ids[1:, :-1], ids[1:, 1:]
+    faces = np.concatenate(
+        [np.stack([a, b, c], -1).reshape(-1, 3), np.stack([b, d, c], -1).reshape(-1, 3)]
+    )
+    strip = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(faces)
+    )
+
+    hull = make_convex_hull(strip, _orbit_cameras(), _VOXEL)
+
+    np.testing.assert_array_equal(np.asarray(hull.triangles), faces)
+
+
 def test_find_ground_plane_skips_a_wall_bigger_than_the_ground():
     """A wall with more vertices than the ground is RANSAC's first plane; the camera path rejects it."""
     ground = np.asarray(_ground_scene().vertices)

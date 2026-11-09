@@ -573,6 +573,7 @@ def calibrate_confidence(
     - every 2nd frame, every 2nd pixel: median |depth residual| over views ±2, ±5, ±10
     - occluded samples (sampled < 0.9 x expected) dropped; needs 2+ valid views
     - conf-bin medians of error / sdf_trunc, log-log line: c* where it crosses 1, gamma = -slope
+    - error not falling with confidence: (1.0, 0.0), the no-gate weights
     - runs on CUDA when available, else the CPU
     - projects at full fp32 matmul: a global TF32 (mapanything import) would round the residuals
 
@@ -588,7 +589,7 @@ def calibrate_confidence(
         (c_star, gamma).
 
     Raises:
-        ValueError: fewer than 4 frames, fewer than 3 conf bins, or error does not fall with confidence.
+        ValueError: fewer than 4 frames or fewer than 3 conf bins.
     """
     device = get_device()
     depth_t = torch.from_numpy(np.ascontiguousarray(depth, np.float32)).to(device)
@@ -653,10 +654,15 @@ def calibrate_confidence(
     log_conf, log_err = np.log(np.array(medians)).T
     slope, intercept = np.polyfit(log_conf, log_err, 1)
 
+    # Confidence does not rank the error here, so a gate would only drop pixels at random
     if slope >= 0:
-        raise ValueError(
-            f"calibrate_confidence: error does not fall with confidence (slope {slope:.3f})"
+        logger.warning(
+            "calibrate_confidence: error does not fall with confidence (slope %.3f); "
+            "no gate applied. (conf, error / band) per bin: %s",
+            slope,
+            [(round(float(c), 2), round(float(e), 3)) for c, e in medians],
         )
+        return 1.0, 0.0
 
     c_star = float(np.exp(-intercept / slope))
     gamma = float(-slope)

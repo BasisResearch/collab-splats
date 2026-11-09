@@ -458,6 +458,12 @@ def test_calibrate_confidence_needs_three_bins():
         calibrate_confidence(depth, np.full_like(conf, 2.0), w2c, K, sdf_trunc=0.005)
 
 
+def test_calibrate_confidence_without_a_falling_error_applies_no_gate():
+    # Error grows with confidence: a confidence gate would keep the worse pixels
+    planes = _noisy_planes(0.02, -0.5)
+    assert calibrate_confidence(*planes, sdf_trunc=0.005) == (1.0, 0.0)
+
+
 def _flat_ground(voxel_size=0.02, sdf_trunc=0.08, height=0.0, rgb=200.0):
     """VolumeGround for the _views plane at z=1: up toward the cameras, every column inside."""
     res = 4 * voxel_size

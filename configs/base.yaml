@@ -32,11 +32,11 @@ pointcloud:
   clean:
     enabled: true
   loop_closure:             # submaps: one feedforward pass per submap_size frames
-    enabled: true
+    enabled: false          # off: separate submap passes disagree on depth, doubling surfaces (C0043)
     submap_size: 100
   bundle_adjustment:        # skipped for sfm
     enabled: true
-    strategy: window+global   # with LC: window | global | window+global
+    strategy: global          # with LC: window | global | window+global
     keep_pre_ba: false        # true: copy pointcloud.zarr to pointcloud_pre_ba.zarr before refine
     track_kwargs:
       pairing: exhaustive     # exhaustive | sequential+retrieval

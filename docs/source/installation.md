@@ -48,7 +48,7 @@ This covers the `talk2dino`, `dinov2` and `ocr_lens` features and the `insid3` a
 
 ## Private dependency (collab-data)
 
-`collab-data` is a private BasisResearch repo; the `remote` extra installs it from git (`tlb-3d-tools` branch) and needs GitHub access. Without access, `setup.sh` skips it, and only `reconstruct remote`, `viewer remote` and the dashboard are unavailable.
+`collab-data` is a private BasisResearch repo; the `remote` extra installs it from git (pinned to a commit on the `db-dashboard-3d-tools` branch) and needs GitHub access. Without access, `setup.sh` skips it, and only `reconstruct remote`, `viewer remote` and the dashboard are unavailable.
 
 The dashboard and `reconstruct remote` read and write scenes through an rclone remote named `collab-data` (Google Cloud Storage). Install `rclone` and `jq`:
 

@@ -77,14 +77,14 @@ reconstruction = [
     "open3d",
 ]
 
-# reconstruct remote + dashboard GCS access: private BasisResearch/collab-data, db-dashboard-3d-tools branch
+# reconstruct remote + dashboard GCS access: private BasisResearch/collab-data, pinned to a db-dashboard-3d-tools commit
 remote = [
-    "collab_data @ git+https://github.com/BasisResearch/collab-data.git@db-dashboard-3d-tools",
+    "collab_data @ git+https://github.com/BasisResearch/collab-data.git@79dbd09a8240972e7f9791c65f7b9b3557004575",
 ]
 
 # collab-data's data dashboard (python -m collab_data.data_dashboard.serve); same private repo as `remote`
 data-dashboard = [
-    "collab_data[data-dashboard] @ git+https://github.com/BasisResearch/collab-data.git@db-dashboard-3d-tools",
+    "collab_data[data-dashboard] @ git+https://github.com/BasisResearch/collab-data.git@79dbd09a8240972e7f9791c65f7b9b3557004575",
 ]
 
 # InstantSfM sfm backend (its own requires-dist is blanked below)

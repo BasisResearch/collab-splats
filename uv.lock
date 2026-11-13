@@ -45,7 +45,7 @@ requires-dist = ["torch", "torchvision", "warp-lang"]
 [[manifest.dependency-metadata]]
 name = "collab-data"
 version = "0.0.1"
-requires-dist = ["gcsfs", "loguru", "panel==1.9.3 ; extra == 'data-dashboard'", "holoviews ; extra == 'data-dashboard'", "bokeh ; extra == 'data-dashboard'", "param==2.4.0 ; extra == 'data-dashboard'", "jinja2 ; extra == 'data-dashboard'", "flask ; extra == 'data-dashboard'", "pyvista ; extra == 'data-dashboard'", "trame-vtk ; extra == 'data-dashboard'", "trame-vuetify ; extra == 'data-dashboard'", "h5py ; extra == 'data-dashboard'", "hdf5plugin ; extra == 'data-dashboard'", "librosa ; extra == 'data-dashboard'", "pandas ; extra == 'data-dashboard'", "pyarrow<24 ; extra == 'data-dashboard'"]
+requires-dist = ["gcsfs", "loguru", "numpy", "opencv-python-headless", "panel==1.9.3 ; extra == 'data-dashboard'", "holoviews ; extra == 'data-dashboard'", "bokeh ; extra == 'data-dashboard'", "param==2.4.0 ; extra == 'data-dashboard'", "jinja2 ; extra == 'data-dashboard'", "flask ; extra == 'data-dashboard'", "pyvista ; extra == 'data-dashboard'", "trame-vtk ; extra == 'data-dashboard'", "trame-vuetify ; extra == 'data-dashboard'", "h5py ; extra == 'data-dashboard'", "hdf5plugin ; extra == 'data-dashboard'", "librosa ; extra == 'data-dashboard'", "pandas ; extra == 'data-dashboard'", "pyarrow<24 ; extra == 'data-dashboard'"]
 provides-extras = ["data-dashboard"]
 
 [[manifest.dependency-metadata]]
@@ -850,6 +850,8 @@ source = { git = "https://github.com/BasisResearch/collab-data.git?rev=79dbd09a8
 dependencies = [
     { name = "gcsfs" },
     { name = "loguru" },
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
 ]
 
 [package.optional-dependencies]

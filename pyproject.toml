@@ -274,6 +274,8 @@ version = "0.0.1"
 requires-dist = [
     "gcsfs",
     "loguru",
+    "numpy",
+    "opencv-python-headless",
     "panel==1.9.3 ; extra == 'data-dashboard'",
     "holoviews ; extra == 'data-dashboard'",
     "bokeh ; extra == 'data-dashboard'",

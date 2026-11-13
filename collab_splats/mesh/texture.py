@@ -783,8 +783,8 @@ def _rasterize_view(
     return rast[0], depth[0, ..., 0] * hit
 
 
-# Faces per nvdiffrast draw; its CUDA rasterizer caps one draw at 2**24 subtriangles
-# (clipping can split a face into several), so stay well under it
+# Faces per nvdiffrast draw, well under its per-draw cap
+# - CUDA rasterizer caps one draw at 2**24 subtriangles; clipping can split a face into several
 _MAX_FACES_PER_DRAW = 1 << 22
 
 
@@ -804,6 +804,7 @@ def _depth_view(
     """
     depth = None
 
+    # Draw each face chunk; the first seeds the depth map
     for start in range(0, len(faces), _MAX_FACES_PER_DRAW):
         chunk = faces[start : start + _MAX_FACES_PER_DRAW].contiguous()
         _, d = _rasterize_view(ctx, verts_h, chunk, extrinsics, K, height, width)
@@ -812,9 +813,11 @@ def _depth_view(
             depth = d
             continue
 
+        # Merge as one z-buffer: nearer depth where both hit, else whichever hit
         both = (depth > 0) & (d > 0)
         depth = torch.where(both, torch.minimum(depth, d), torch.maximum(depth, d))
 
+    # No faces: an empty depth map
     if depth is None:
         return torch.zeros(height, width, device=verts_h.device)
 

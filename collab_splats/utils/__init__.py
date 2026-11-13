@@ -1,12 +1,9 @@
-from .camera_utils import ColmapCamera, convert_to_colmap_camera, depth_double_to_normal
-from .trainer_config import _TrainerConfig, _ExperimentConfig
-from .model_loading import load_checkpoint
+"""
+Low-level helpers shared across collab_splats; import the submodule you need.
 
-__all__ = [
-    "ColmapCamera",
-    "convert_to_colmap_camera",
-    "depth_double_to_normal",
-    "_TrainerConfig",
-    "_ExperimentConfig",
-    "load_checkpoint",
-]
+- io: image decode, float-to-uint8, JSON reports, zarr codec and validity (torch-free)
+- colmap: binary model write (stem names, atomic swap) and read (torch-free)
+- torch_utils: device, GC, batching, registry
+- image, notebook, progress, visualization: older helpers, imported by path
+- no re-exports: a package-level import would pull torch into every torch-free caller
+"""

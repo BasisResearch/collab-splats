@@ -1,0 +1,49 @@
+"""Per-model verify_match_ratio resolution at LoopClosure init (GPU-free)."""
+
+from collab_splats.geometry.loop_closure import LoopClosureConfig
+from collab_splats.geometry.loop_closure.wrapper import LoopClosure
+from collab_splats.pointcloud.feedforward.mapanything import MapAnythingCreator
+from collab_splats.pointcloud.feedforward.vggt_omega import VGGTOmegaCreator
+from collab_splats.pointcloud.feedforward.vggtx import VGGTXCreator
+
+
+class _CreatorWithDefault:
+    """Stand-in creator exposing a per-model calibrated threshold."""
+
+    default_verify_match_ratio = 0.72
+
+
+def test_explicit_config_none_resolves_to_model_default():
+    # Explicit config without verify_match_ratio still picks up the creator's calibrated value
+    lc = LoopClosure(_CreatorWithDefault(), config=LoopClosureConfig(submap_size=16))
+    assert lc.config.verify_match_ratio == 0.72
+    assert lc.config.submap_size == 16
+
+
+def test_explicit_float_wins_over_model_default():
+    cfg = LoopClosureConfig(verify_match_ratio=0.6)
+    lc = LoopClosure(_CreatorWithDefault(), config=cfg)
+    assert lc.config.verify_match_ratio == 0.6
+
+
+def test_no_config_resolves_to_model_default():
+    lc = LoopClosure(_CreatorWithDefault())
+    assert lc.config.verify_match_ratio == 0.72
+
+
+def test_vggtx_has_calibrated_classvar():
+    # Chess d5 layer-sweep calibration (2026-07-09): layer 10, threshold 1.17.
+    assert VGGTXCreator.default_verify_match_ratio == 1.17
+    assert VGGTXCreator._lc_layer_index == 10
+
+
+def test_omega_has_calibrated_classvars():
+    # Chess d5 clean-negative sweep (2026-07-10): layer 13, threshold 1.55.
+    assert VGGTOmegaCreator._lc_layer_index == 13
+    assert VGGTOmegaCreator.default_verify_match_ratio == 1.55
+
+
+def test_mapanything_has_calibrated_classvars():
+    # Chess d5 clean-negative sweep (2026-07-10): layer 4 confirmed, threshold 1.46.
+    assert MapAnythingCreator._lc_layer_index == 4
+    assert MapAnythingCreator.default_verify_match_ratio == 1.46

@@ -32,7 +32,7 @@ fi
 
 # CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim, nvdiffrast)
 # - toolkit is the user's to provide (docs/source/installation.md#system-requirements)
-# - setup.sh never installs system packages
+# - setup.sh installs no system packages, except libegl1 as root (see below)
 # - honors a pre-set CUDA_HOME (conda, /usr/local/cuda-12.1); default /usr/local/cuda
 # - no nvcc: warn and continue — an already-built env (runtime Docker image) compiles nothing;
 #   a failed `uv sync` then prints the recipe below
@@ -140,8 +140,9 @@ uv sync --locked "${EXTRAS[@]}" \
 
 # libegl1: glvnd EGL loader for headless VTK (collab-data dashboard PLY viewer)
 # - without it (and no DISPLAY / OSMesa) VTK segfaults on the first render
-# - the image lacks it; installed here so a running container needs no rebuild
-if ! ldconfig -p | grep -q 'libEGL\.so\.1 '; then
+# - the Dockerfile installs it; older images lack it, so a running container gets it here without a rebuild
+# - no ldconfig on PATH (macOS, non-root Debian): skip the check
+if command -v ldconfig >/dev/null && ! ldconfig -p | grep -q 'libEGL\.so\.1 '; then
     if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
         { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libegl1; } \
             || echo "WARN: libegl1 install failed — headless VTK will crash; run: apt-get install -y libegl1" >&2

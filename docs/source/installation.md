@@ -69,10 +69,11 @@ Save the GCS service-account key to `collab-data/config-local/collab-data.json`,
 
 ## System requirements
 
-You provide these; `setup.sh` never installs system packages.
+You provide these; `setup.sh` installs no system packages, except `libegl1` when run as root with apt.
 
 - **NVIDIA GPU + driver** for the feedforward models, splats and mesh texturing. Other stages fall back to CPU, but slowly and untested.
 - **build-essential** (gcc/g++) + a CUDA toolkit to compile the extensions.
 - **libsuitesparse-dev** for `scikit-sparse` (the `instantsfm` extra).
+- **libegl1** for headless VTK (the collab-data dashboard's PLY viewer); the Docker image includes it.
 - Optional: `ffmpeg` + `exiftool` for the curated-video scripts; `rclone` + `jq` for GCloud scenes.
 

@@ -37,7 +37,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         wget curl ca-certificates gnupg build-essential git \
         unzip xz-utils cmake ninja-build \
-        libsuitesparse-dev \
+        libsuitesparse-dev libegl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # uv manages the Python install and the venv
@@ -84,7 +84,7 @@ FROM nvidia/cuda:${NVIDIA_CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runti
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
-        libc6 libgcc-s1 libgl1 libgl1-mesa-glx \
+        libc6 libgcc-s1 libgl1 libgl1-mesa-glx libegl1 \
         libx11-6 libxext6 libsm6 libice6 \
         libhdf5-dev xvfb \
         build-essential ffmpeg libsuitesparse-dev \

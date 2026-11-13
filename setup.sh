@@ -32,7 +32,7 @@ fi
 
 # CUDA build environment for the source-compiled extensions (bae, gsplat, fused-ssim, nvdiffrast)
 # - toolkit is the user's to provide (docs/source/installation.md#system-requirements)
-# - setup.sh never installs system packages
+# - setup.sh installs no system packages, except libegl1 as root (see below)
 # - honors a pre-set CUDA_HOME (conda, /usr/local/cuda-12.1); default /usr/local/cuda
 # - no nvcc: warn and continue — an already-built env (runtime Docker image) compiles nothing;
 #   a failed `uv sync` then prints the recipe below
@@ -107,11 +107,11 @@ export CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES:-80;90}"
 export MAX_JOBS="${MAX_JOBS:-2}"
 export UV_CONCURRENT_BUILDS="${UV_CONCURRENT_BUILDS:-1}"
 
-# collab-data: private repo, the `remote` extra only; skipped without GitHub access
+# collab-data: private repo, the `remote` and `data-dashboard` extras only; skipped without GitHub access
 EXTRAS=(--all-extras)
 if ! GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/BasisResearch/collab-data.git >/dev/null 2>&1; then
-    echo "setup.sh: WARN no access to BasisResearch/collab-data — skipping the remote extra (reconstruct remote, viewer remote, dashboard)." >&2
-    EXTRAS+=(--no-extra remote)
+    echo "setup.sh: WARN no access to BasisResearch/collab-data — skipping the remote and data-dashboard extras (reconstruct remote, viewer remote, collab-data dashboard)." >&2
+    EXTRAS+=(--no-extra remote --no-extra data-dashboard)
 fi
 
 # hloc: editable path source (pyproject [tool.uv.sources])
@@ -137,6 +137,19 @@ uv sync --locked "${EXTRAS[@]}" \
 # WordNet corpus for the ocr_lens vocabulary into $NLTK_DATA, else the venv (ships in the image's venv copy)
 "$PYTHON" -c "import nltk, os, sys; sys.exit(0 if nltk.download('wordnet', download_dir=os.environ.get('NLTK_DATA') or os.path.join(sys.prefix, 'nltk_data'), quiet=True) else 1)" \
     || echo "WARN: WordNet download failed — run: python -m nltk.downloader wordnet"
+
+# libegl1: glvnd EGL loader for headless VTK (collab-data dashboard PLY viewer)
+# - without it (and no DISPLAY / OSMesa) VTK segfaults on the first render
+# - the Dockerfile installs it; older images lack it, so a running container gets it here without a rebuild
+# - no ldconfig on PATH (macOS, non-root Debian): skip the check
+if command -v ldconfig >/dev/null && ! ldconfig -p | grep -q 'libEGL\.so\.1 '; then
+    if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
+        { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libegl1; } \
+            || echo "WARN: libegl1 install failed — headless VTK will crash; run: apt-get install -y libegl1" >&2
+    else
+        echo "WARN: no libEGL.so.1 — headless VTK will crash; run: sudo apt-get install -y libegl1" >&2
+    fi
+fi
 
 # Pre-fetch vismatch default-model weights so remote/tmux runs never download mid-run.
 # Best-effort: a build stage without network/system libs skips it and

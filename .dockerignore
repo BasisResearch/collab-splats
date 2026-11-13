@@ -29,3 +29,13 @@ third_party/*
 api-key*.json
 api-keys/
 config-local/
+
+# Local tooling and build output, never part of the image
+.claude/
+CLAUDE.md
+.superpowers/
+graphify-out/
+build/
+docs/_build/
+*.log
+output_log.txt

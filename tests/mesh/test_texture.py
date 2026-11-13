@@ -404,6 +404,30 @@ def test_color_correction_empty_is_noop():
 
 
 @cuda
+def test_depth_view_in_chunks_keeps_the_nearest_surface(monkeypatch):
+    """Two stacked planes drawn in many small chunks: the near one wins, as in one z-buffer."""
+    near, far = _dense_plane(40), _dense_plane(40)
+    near.translate((-0.5, -0.5, 2.0))
+    far.translate((-0.5, -0.5, 3.0))
+    verts = np.concatenate([np.asarray(far.vertices), np.asarray(near.vertices)])
+    faces = np.concatenate(
+        [np.asarray(far.triangles), np.asarray(near.triangles) + len(far.vertices)]
+    )
+    verts_h, faces_t = texture._to_cuda_mesh(verts, faces)
+    K = torch.tensor([[100.0, 0, 64], [0, 100.0, 64], [0, 0, 1]], device="cuda")
+    E = torch.eye(4, device="cuda")
+    ctx = texture.dr.RasterizeCudaContext()
+
+    # Far plane first, so a chunk-order bug would leave its depth behind
+    monkeypatch.setattr(texture, "_MAX_FACES_PER_DRAW", 500)
+    depth = texture._depth_view(ctx, verts_h, faces_t, E, K, 128, 128)
+    hit = depth > 0
+
+    assert hit.any()
+    assert torch.allclose(depth[hit], torch.full_like(depth[hit], 2.0), atol=1e-4)
+
+
+@cuda
 def test_create_texture_mesh_writes_obj_mtl_and_albedo(tmp_path):
     plane = _dense_plane(30)
     c2w, K = _camera()

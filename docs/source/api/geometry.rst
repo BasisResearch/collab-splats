@@ -1,0 +1,177 @@
+Geometry
+========
+
+Pose and geometry backend: transforms, bundle adjustment, scene metrics, and
+loop closure.
+
+Transforms
+----------
+
+Pose conversions, Umeyama alignment and intrinsics helpers, including
+``project_to_so3``, ``decompose_camera`` and ``intrinsics_4x4``.
+
+.. automodule:: collab_splats.geometry.transforms
+   :members:
+   :show-inheritance:
+
+Bundle adjustment
+-----------------
+
+``BundleAdjustment.refine`` takes arrays (images, confidence, world points,
+extrinsics, the result's ``model_intrinsics``), the required model-grid ``depth`` and, for
+matcher track sources, the optional full-res ``frame_paths``; it returns
+``(extrinsics, intrinsics)``, K on the model grid.
+
+.. automodule:: collab_splats.geometry.bundle_adjustment
+   :members:
+   :show-inheritance:
+
+Tracks
+------
+
+``extract_tracks`` returns flat observations: ``frame`` (M,), ``track`` (M,),
+``xy`` (M, 2), ``score`` (M,) and ``pts3d`` (P, 3). Bundle adjustment consumes
+them.
+
+.. automodule:: collab_splats.geometry.tracks
+   :members:
+   :show-inheritance:
+
+Photometric
+-----------
+
+Brightness residual and pixel samples for the bundle-adjustment photometric term.
+
+.. automodule:: collab_splats.geometry.photometric
+   :members:
+   :show-inheritance:
+
+Projection
+----------
+
+Pinhole unprojection and projection, ``unproject_frames`` (batched numpy
+unprojection on the device), the cross-view depth residual, and
+``multiview_depth_confidence``, the per-pixel agree/seen counts the
+feedforward multiview filter thresholds.
+
+.. automodule:: collab_splats.geometry.projection
+   :members:
+   :show-inheritance:
+
+Metrics
+-------
+
+``compute_reconstruction_quality`` is the entry point; the Reconstructor stage owns
+the zarr load and the ``reconstruction_quality_report.json`` write.
+
+Report columns
+~~~~~~~~~~~~~~
+
+Report-only, no verdicts; scale-free (1 recon unit is not 1 meter). The model grid
+is the backbone's depth grid; the original grid is the source image. ``null``
+marks a value that does not exist, never a failure.
+
+.. list-table:: ``frames`` — one row per reconstruction frame
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Column
+     - Meaning
+   * - ``frame_idx``
+     - source video frame index; null off the ``frame_{idx:06d}`` stem contract
+   * - ``covered_fraction``
+     - crop area / original canvas area, 0..1, original grid
+   * - ``median_abs_rel_depth_error``
+     - median ``|s - 1|`` over the depth pairs touching the frame, model grid
+   * - ``multiview_agreement``
+     - share of the frame's seen pixels that at least one other view agrees
+       with at ``rel_thresh`` 0.05, model grid; null when no other view sees it
+   * - ``confidence_median``
+     - median per-pixel confidence, model grid; backbone-native, not comparable
+       across backbones; null without a confidence array
+
+.. list-table:: ``depth_pairs`` — model grid, one row per ordered direction
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Column
+     - Meaning
+   * - ``idx1``, ``idx2``
+     - reconstruction frame positions
+   * - ``n_pixels``
+     - model-grid pixels compared
+   * - ``median_depth``
+     - median depth of the compared pixels, recon units, scale-free
+   * - ``median_rel_depth_error``
+     - signed scale offset ``s - 1``, dimensionless
+   * - ``iqr_rel_depth_error``
+     - spread of the relative residual with the bias removed, dimensionless
+   * - ``median_parallax_deg``
+     - median parallax of the compared pixels, degrees
+
+``depth_residual_histogram`` (model grid): ``counts`` and ``bin_edges`` over
+``r / (1 + |r|)``; invert an edge with ``u / (1 - |u|)``.
+
+``photometric_pairs`` scores each pair ``i < j`` whose gap ``j - i`` is in ``separations``
+(default 1, 2, 5, 10, 20); the table is null without ``images/``.
+
+.. list-table:: ``photometric_pairs``: original grid, one row per pair at each gap in ``separations``
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Column
+     - Meaning
+   * - ``idx1``, ``idx2``
+     - reconstruction frame positions
+   * - ``photometric_ncc``
+     - zero-mean NCC of the warped RGB, -1..1
+   * - ``n_pixels``
+     - original-grid pixels compared
+
+``reconstruction_quality_ncc.png`` beside the report plots this table by gap.
+
+.. automodule:: collab_splats.geometry.metrics
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.geometry.viz
+   :members:
+
+Loop closure
+------------
+
+The ``collab_splats.geometry.loop_closure`` package exports ``LoopClosure``,
+``LoopClosureConfig``, ``PoseGraph`` and ``Submap``; import anything else from
+its submodules. ``LoopClosureConfig.retrieval`` names the retrieval backend in
+the registry: ``"dino-salad"`` (default) or ``"megaloc"``, which needs its own
+``lc_retrieval_threshold``.
+
+``geometry.loop_closure.map`` and ``matching`` are internal.
+
+Quickstart
+~~~~~~~~~~
+
+.. code-block:: python
+
+   from pathlib import Path
+
+   from collab_splats.pointcloud import get_creator
+   from collab_splats.geometry.loop_closure import LoopClosure, LoopClosureConfig
+
+   base = get_creator("vggtx")()
+   lc = LoopClosure(base, config=LoopClosureConfig())
+   result = lc.create_pointcloud(Path("path/to/images"), Path("path/to/out"), Path("path/to/out/colmap/sparse/0"))
+
+See :doc:`../tutorials/02_pointcloud/refinement` for the loop-closure walkthrough.
+
+.. automodule:: collab_splats.geometry.loop_closure.graph
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.geometry.loop_closure.submap
+   :members:
+   :show-inheritance:
+
+.. automodule:: collab_splats.geometry.loop_closure.wrapper
+   :members:
+   :show-inheritance:
